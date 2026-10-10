@@ -28,6 +28,92 @@ public static class PipelineTelemetry
     public static readonly ActivitySource ActivitySource = new(SourceName);
     public static readonly Meter Meter = new(SourceName);
 
+    // ── Agent gauge backing state (leader-gated, owner: Scheduler leader) ───────────────────────
+    // Registered once at Scheduler startup via RegisterAgentGaugeCallbacks.
+    // In every other host (API, Web, Job Controller) the callbacks remain null and the gauges
+    // emit no measurements — matching the owner-only pattern used by WorkDistributionTelemetry.
+    // Thread-safety: _agentActiveCallback and _agentTotalCallback are reference types;
+    // Interlocked.CompareExchange provides the acquire fence on first registration.
+    // _agentShouldEmitCallback is assigned after the CompareExchange in the same call —
+    // the write is visible to the collection thread because the observable callback closure
+    // reads all three fields at collection time, which happens after registration completes.
+    private static Func<int>? _agentActiveCallback;
+    private static Func<int>? _agentTotalCallback;
+    private static Func<bool>? _agentShouldEmitCallback;
+
+    static PipelineTelemetry()
+    {
+        // Create the agent gauges once (at type load). The observeValues lambdas read
+        // _agentShouldEmitCallback and the value callbacks at collection time, so a null
+        // callback (pre-registration or wrong host) emits no measurement.
+        Meter.CreateObservableGauge<int>(
+            "agent.jobs.active",
+            observeValues: () =>
+                _agentActiveCallback is not null && (_agentShouldEmitCallback?.Invoke() ?? false)
+                    ? [new Measurement<int>(_agentActiveCallback())]
+                    : [],
+            unit: "{job}",
+            description: "Currently executing agent jobs");
+
+        Meter.CreateObservableGauge<int>(
+            "agent.connections.total",
+            observeValues: () =>
+                _agentTotalCallback is not null && (_agentShouldEmitCallback?.Invoke() ?? false)
+                    ? [new Measurement<int>(_agentTotalCallback())]
+                    : [],
+            unit: "{connection}",
+            description: "Total registered agents");
+    }
+
+    /// <summary>
+    /// Registers callbacks that supply <c>agent.jobs.active</c> and <c>agent.connections.total</c>
+    /// measurements. Called once at startup by the Scheduler leader's <c>WorkItemCountsService</c>.
+    ///
+    /// <para>
+    /// First-registration-wins: if called more than once (misconfigured host or parallel test run),
+    /// a warning is logged and the new callbacks overwrite the previous ones — matching the
+    /// <see cref="WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback"/> pattern.
+    /// </para>
+    ///
+    /// <para>
+    /// <paramref name="shouldEmit"/> is evaluated at collection time. The Scheduler passes a
+    /// lambda that returns <c>true</c> only when the instance is the leader AND has completed
+    /// at least one successful poll, ensuring gauges emit nothing before the first poll and
+    /// nothing after a failed poll.
+    /// </para>
+    /// </summary>
+    /// <param name="observeActive">Returns the current busy-agent count.</param>
+    /// <param name="observeTotal">Returns the current total-agent count.</param>
+    /// <param name="shouldEmit">Returns <c>true</c> when the process should emit measurements.</param>
+    public static void RegisterAgentGaugeCallbacks(
+        Func<int> observeActive,
+        Func<int> observeTotal,
+        Func<bool> shouldEmit)
+    {
+        ArgumentNullException.ThrowIfNull(observeActive);
+        ArgumentNullException.ThrowIfNull(observeTotal);
+        ArgumentNullException.ThrowIfNull(shouldEmit);
+
+        if (Interlocked.CompareExchange(ref _agentActiveCallback, observeActive, null) is not null)
+        {
+            Serilog.Log.Warning(
+                "PipelineTelemetry: RegisterAgentGaugeCallbacks called more than once — " +
+                "previous callbacks overwritten. This indicates a DI misconfiguration or parallel test run.");
+            _agentActiveCallback = observeActive;
+        }
+        // TODO [WARNING]: The three plain writes below (_agentActiveCallback re-assignment on the
+        // re-registration path, _agentTotalCallback, _agentShouldEmitCallback) are not atomic with
+        // respect to each other. A concurrent OTel collection thread could read _agentShouldEmitCallback
+        // from the old registration and _agentActiveCallback from the new one, producing a measurement
+        // from a mismatched pair. In production (single Scheduler process, single registration at startup)
+        // this path is never entered; in tests the [Collection("Metrics")] serialization prevents
+        // concurrent re-registration. Matches the existing latent race in RegisterWorkItemsByStatusCallback.
+        // If this ever needs to be made fully safe, replace the three fields with a single Interlocked-
+        // exchanged reference type holding all three callbacks as a snapshot.
+        _agentTotalCallback = observeTotal;
+        _agentShouldEmitCallback = shouldEmit;
+    }
+
     /// <summary>
     /// Counter: terminal pipeline run outcomes, recorded once per transition in the API.
     /// Tags: run_type, outcome (closed set), failure_reason, pipeline.project_name.

@@ -49,7 +49,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `workdistribution.dispatch_latency_seconds` | Histogram | s | `agent_selector` | API | WorkItem creation (or original enqueue) → dispatched |
 | `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error` |
 | `workdistribution.pod_start_seconds` | Histogram | s | — | API | Dispatched → the agent's first `GET /assignment` |
-| `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | API | Kiro credential PVCs, as last computed during dispatch. Only the API emits them |
+| `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | Scheduler leader | Kiro credential PVCs, polled from the API every 10 s by `WorkItemCountsService`. Only the Scheduler leader emits them |
 | `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | — | API | A dispatch found no free credential PVC |
 | `workdistribution.progress_write_failures` | Counter | `{failure}` | — | API | Failed `LastProgressAt` writes; sustained failures risk false-positive timeouts |
 | `workdistribution.dispatcher_polls` | Counter | `{poll}` | — | Scheduler | Dispatch poll cycles |
@@ -89,7 +89,9 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `github.api.requests` | Counter | `operation`, `outcome` | API, Scheduler, Web | GitHub API attempts, retries included. `outcome`: `success`, `not_found`, `rate_limited`, `error` |
 | `github.rate_limit.remaining` | ObservableGauge | `resource` (`core`, `graphql`) | API, Scheduler, Web | Remaining rate-limit quota; only emitted after the process made a GitHub call |
 
-### Agent connections (API)
+### Agent connections (Scheduler leader)
+
+`agent.jobs.active` and `agent.connections.total` are emitted exclusively by the Scheduler leader. `WorkItemCountsService` polls `GET /api/agents` every 10 s and caches the counts; the gauges emit nothing on non-leaders, before the first successful poll, and after a failed poll. **Grafana panels** filtering these metrics on `service_name="coding-agent-api"` must switch to `service_name="coding-agent-scheduler"` after deploying this change.
 
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|

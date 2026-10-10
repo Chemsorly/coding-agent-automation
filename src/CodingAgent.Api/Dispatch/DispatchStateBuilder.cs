@@ -108,13 +108,11 @@ internal sealed class DispatchStateBuilder
 
             if (recordTelemetry)
             {
-                // NOTE: UpdateCredentialPoolMetrics is intentionally NOT called here.
-                // See the comment on RecordLastPollEpoch above — same reasoning applies.
-                // UpdateCredentialPoolMetrics is owned by the API's WorkItemDispatchEndpoints
-                // (DispatchPendingWorkItem), which has the accurate PVC availability snapshot
-                // at the point of actual dispatch. Calling it here (on the consolidation path,
-                // which only reads PVC state but does not dispatch) would emit a second conflicting
-                // series and undercount claimed PVCs.
+                // NOTE: UpdateCredentialPoolMetrics is NOT called here.
+                // Credential-pool metrics are owned exclusively by the Scheduler leader's
+                // WorkItemCountsService, which polls GET /api/agents/credential-pool on each
+                // leader tick. Calling UpdateCredentialPoolMetrics from the consolidation path
+                // (which only reads PVC state) would emit a conflicting series.
             }
 
             return new DispatchState

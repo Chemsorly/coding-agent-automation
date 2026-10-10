@@ -47,6 +47,14 @@ public record RetentionSweepResultDto(
 public record WorkItemCountDto(string Status, string AgentSelector, long Count);
 
 /// <summary>
+/// Agent counts returned by <c>GET /api/agents</c> as aggregated by the Scheduler leader.
+/// Used to feed the <c>agent.jobs.active</c> and <c>agent.connections.total</c> gauges.
+/// </summary>
+/// <param name="Total">Total number of registered agents (all statuses).</param>
+/// <param name="Busy">Number of agents currently executing a job.</param>
+public record AgentCountsResponseDto(int Total, int Busy);
+
+/// <summary>
 /// Response wrapper for <c>GET /api/work-items/counts-by-status</c>.
 /// Contains work item counts grouped by (Status, AgentSelector) plus the oldest Pending item's
 /// creation timestamp, used by the Scheduler to feed the <c>workdistribution.pending.oldest_age_seconds</c> gauge.

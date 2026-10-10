@@ -87,4 +87,10 @@ public sealed class FakeSchedulerApiClient : ISchedulerApiClient
 
     public Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default)
         => Task.FromResult(new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null));
+
+    public Task<AgentCountsResponseDto> GetAgentCountsAsync(CancellationToken ct = default)
+        => Task.FromResult(new AgentCountsResponseDto(0, 0));
+
+    public Task<CredentialPoolStatus> GetAgentCredentialPoolAsync(CancellationToken ct = default)
+        => Task.FromResult(new CredentialPoolStatus(0, 0, 0));
 }

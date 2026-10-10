@@ -12,8 +12,9 @@ namespace CodingAgent.Api.IntegrationTests;
 /// to catch regressions that isolated SDK tests cannot:
 ///
 /// - agent.jobs.active and agent.connections.total are ObservableGauges created on
-///   PipelineTelemetry.Meter inside RegisterApiObservableGauges(). If PipelineTelemetry.SourceName
-///   is absent from the MeterProvider's AddMeter() chain those gauges are silently dropped.
+///   PipelineTelemetry.Meter in PipelineTelemetry's static constructor (issue #3555 moved them
+///   from RegisterApiObservableGauges to PipelineTelemetry). PipelineTelemetry.SourceName must
+///   remain in the MeterProvider's AddMeter() chain or those gauges are silently dropped.
 ///
 /// - AgentHub SignalR spans (RegisterAgent, JobAccepted, JobCompleted) are produced by
 ///   "Microsoft.AspNetCore.SignalR.Server". If that source is not registered with the
@@ -92,8 +93,10 @@ public sealed class OtelRegistrationTests
     public void PipelineTelemetry_SourceName_MatchesExpectedMeterName()
     {
         // The meter name registered in Api/Program.cs must match PipelineTelemetry.SourceName.
-        // agent.jobs.active and agent.connections.total are created on PipelineTelemetry.Meter
-        // via RegisterApiObservableGauges(); if the meter name drifts those gauges are lost.
+        // agent.jobs.active and agent.connections.total are now emitted by the Scheduler leader
+        // (issue #3555 moved them from RegisterApiObservableGauges to PipelineTelemetry's static
+        // constructor), but PipelineTelemetry.Meter is still used by the API for loop metrics,
+        // run metrics, and other instruments — the meter must remain registered in both hosts.
         PipelineTelemetry.SourceName.Should().Be("CodingAgent.Pipeline",
             "Api/Program.cs registers .AddMeter(PipelineTelemetry.SourceName); changing the " +
             "constant value without updating the Helm/OTEL collector filter would break metric export");

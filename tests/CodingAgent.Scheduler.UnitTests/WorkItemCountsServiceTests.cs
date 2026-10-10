@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Scheduler.Services;
 using Moq;
 using Xunit;
@@ -28,6 +29,16 @@ public sealed class WorkItemCountsServiceTests
             .Returns(_mockLogger.Object);
         _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
             .Returns(_mockLogger.Object);
+
+        // Default setups for the two new methods added in issue #3555.
+        // WorkItemCountsService.UpdateMeasurementsAsync now calls both on each leader poll;
+        // without these setups Moq loose-mode returns Task.FromResult(null) which is handled
+        // by the null-guards in the service, but configuring explicit returns avoids
+        // unintentional test interactions with shared static telemetry fields.
+        _mockClient.Setup(c => c.GetAgentCountsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentCountsResponseDto(0, 0));
+        _mockClient.Setup(c => c.GetAgentCredentialPoolAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CredentialPoolStatus(0, 0, 0));
     }
 
     private WorkItemCountsService CreatePoller()

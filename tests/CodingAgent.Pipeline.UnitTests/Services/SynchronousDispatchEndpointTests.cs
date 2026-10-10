@@ -899,16 +899,6 @@ public sealed class DispatchPendingWorkItemEndpointTests
         await db.SaveChangesAsync();
     }
 
-    // ── Helpers for reading static telemetry fields ─────────────────────────
-
-    private static int ReadCredentialPoolAvailable()
-    {
-        var field = typeof(WorkDistributionTelemetry)
-            .GetField("_credentialPoolAvailable", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(field); // guard: fails with a clear message if the field is renamed
-        return (int)field!.GetValue(null)!;
-    }
-
     // ── Test 1: Happy path ────────────────────────────────────────────────────
 
     [Fact]
@@ -1135,78 +1125,6 @@ public sealed class DispatchPendingWorkItemEndpointTests
         await using var db = await dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
         item!.Status.Should().Be(WorkItemStatus.Pending, "PVC gate rejection must leave item Pending");
-    }
-
-    // ── Test 8: Credential pool gauge emitted on success ─────────────────────
-
-    [Fact]
-    public async Task DispatchPendingWorkItem_OnSuccess_EmitsCredentialPoolGauge()
-    {
-        var dbFactory = CreateDbFactory();
-        var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
-
-        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        // 2-PVC pool; 0 claimed → available=2
-        var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-a", "pvc-b"]);
-        var resolver = CreateTemplateResolver(templateStore);
-        var lockProvider = CreateNoOpLockProvider();
-
-        // TODO [WARNING]: This test does not reset _credentialPoolAvailable to a distinguishable sentinel before
-        // the Act call. If another test in the Metrics collection happens to leave the field at 2 before this
-        // test runs, the assertion below would pass without UpdateCredentialPoolMetrics ever being called here.
-        // Add a sentinel reset (e.g. -1) before the DispatchPendingWorkItem call, matching the pattern in Test 9.
-
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, resolver, lockProvider, CancellationToken.None);
-
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>();
-
-        // Gauge must have been updated to the available count (2)
-        ReadCredentialPoolAvailable().Should().Be(2,
-            "credential pool gauge must reflect the available PVC count after a successful dispatch");
-    }
-
-    // ── Test 9: Credential pool gauge emitted even on 503 (PVC exhaustion) ───
-
-    [Fact]
-    public async Task DispatchPendingWorkItem_PvcExhaustion_EmitsCredentialPoolGaugeBeforeReturning503()
-    {
-        var dbFactory = CreateDbFactory();
-        // Claim the only PVC → available=0
-        await SeedActiveItemAsync(dbFactory, "kiro,dotnet", claimedPvcName: "pvc-solo");
-        var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
-
-        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
-        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-solo"]);
-        var resolver = CreateTemplateResolver(templateStore);
-        var lockProvider = CreateNoOpLockProvider();
-
-        // Reset the static gauge field to a sentinel before calling, to distinguish "not updated" from "updated to 0".
-        // We seed available=0 and verify the gauge is updated to 0 (not left at any prior value).
-        // Reset to a non-zero sentinel so a "no update" would be detectable.
-        // TODO [WARNING]: The sentinel value (99) is written to the static field with no try/finally to restore
-        // the prior value. If the assertion fails or the endpoint throws before UpdateCredentialPoolMetrics runs,
-        // the field is abandoned at 99, potentially causing subsequent Metrics-collection tests that read
-        // _credentialPoolAvailable without their own sentinel reset to observe leaked state and produce a false
-        // pass or false failure. Wrap the sentinel assignment and assertion in try/finally that restores the
-        // prior value, or add a collection-level fixture teardown that resets the field.
-        typeof(WorkDistributionTelemetry)
-            .GetField("_credentialPoolAvailable", BindingFlags.NonPublic | BindingFlags.Static)!
-            .SetValue(null, 99); // sentinel
-
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, resolver, lockProvider, CancellationToken.None);
-
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
-
-        // Gauge must have been updated to 0 (not left at the 99 sentinel),
-        // proving UpdateCredentialPoolMetrics was called BEFORE the PVC gate returned 503.
-        ReadCredentialPoolAvailable().Should().Be(0,
-            "UpdateCredentialPoolMetrics must be called before the PVC gate so the gauge is updated even on 503");
     }
 
     // ── Test 10: Advisory lock prevents double-dispatch ──────────────────────

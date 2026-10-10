@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Api.Client;
 
@@ -63,5 +64,20 @@ public sealed class HttpSchedulerApiClient : ISchedulerApiClient
         var result = await _http.GetFromJsonAsync<WorkItemCountsResponseDto>(
             "/api/work-items/counts-by-status", PipelineJsonOptions.Default, ct);
         return result ?? new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null);
+    }
+
+    public async Task<AgentCountsResponseDto> GetAgentCountsAsync(CancellationToken ct = default)
+    {
+        var agents = await _http.GetFromJsonAsync<List<AgentEntryDto>>(
+            "/api/agents", PipelineJsonOptions.Default, ct);
+        var list = agents ?? [];
+        return new AgentCountsResponseDto(list.Count, list.Count(a => a.Status == AgentStatus.Busy));
+    }
+
+    public async Task<CredentialPoolStatus> GetAgentCredentialPoolAsync(CancellationToken ct = default)
+    {
+        var status = await _http.GetFromJsonAsync<CredentialPoolStatus>(
+            "/api/agents/credential-pool", PipelineJsonOptions.Default, ct);
+        return status ?? new CredentialPoolStatus(0, 0, 0);
     }
 }

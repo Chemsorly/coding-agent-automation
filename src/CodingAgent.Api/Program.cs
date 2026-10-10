@@ -3,6 +3,7 @@ using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
+using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
@@ -106,7 +107,6 @@ var app = builder.Build();
 await app.RunApiMigrationsAsync(builder.Configuration);
 
 app.MapApiHealthEndpoints();
-app.RegisterApiObservableGauges();
 
 // Log every 4xx/5xx response as a structured Serilog event. This runs under the Serilog
 // category (not Microsoft.AspNetCore), so it is NOT suppressed by the Warning override in
@@ -147,6 +147,12 @@ app.MapApiSchedulerEndpoints();
 // If it is missing, new-schema work items silently receive a degraded identity-only 200
 // response with no provider configs. Resolve eagerly to fail fast on misconfiguration.
 _ = app.Services.GetRequiredService<AssignmentEnricher>();
+
+// IAgentRegistryService is resolved eagerly to enforce the fail-fast check in
+// CreateAgentRegistryService: if Api:FailOnMultiReplicaWithoutRedis=true and no Redis
+// is configured, this throws during startup rather than at the first agent registration.
+// Also warms the cache so hub auth checks and OTel gauges see fresh data immediately.
+_ = app.Services.GetRequiredService<IAgentRegistryService>();
 
 // ── Counter pre-initialization ────────────────────────────────────────────────
 // Seeds every closed-tag counter series with 0 so Prometheus increase() sees the first real

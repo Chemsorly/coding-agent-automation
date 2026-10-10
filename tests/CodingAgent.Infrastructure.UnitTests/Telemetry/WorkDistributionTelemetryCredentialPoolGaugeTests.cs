@@ -15,6 +15,11 @@ namespace CodingAgent.Infrastructure.UnitTests.Telemetry;
 /// emit no measurement until <see cref="WorkDistributionTelemetry.UpdateCredentialPoolMetrics"/>
 /// has been called, matching the pattern used by <c>DispatcherLastPollEpoch</c>.
 ///
+/// Issue #3555 moved ownership from the API to the Scheduler leader. The sentinel mechanism is
+/// unchanged — gauges still emit no measurement until <c>UpdateCredentialPoolMetrics</c> is
+/// called (now by <c>WorkItemCountsService</c> on the Scheduler leader). A new
+/// <c>ResetCredentialPoolMetrics</c> method resets the sentinel on poll failure.
+///
 /// Verifies:
 ///   (A) Gauges emit no measurement before <c>UpdateCredentialPoolMetrics</c> is called.
 ///   (B) Gauges emit correct measurements after <c>UpdateCredentialPoolMetrics</c> is called.

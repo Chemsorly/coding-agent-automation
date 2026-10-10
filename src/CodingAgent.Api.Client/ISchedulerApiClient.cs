@@ -1,3 +1,5 @@
+using CodingAgent.Pipeline.Models;
+
 namespace CodingAgent.Api.Client;
 
 /// <summary>
@@ -30,4 +32,18 @@ public interface ISchedulerApiClient
     /// <summary>GET /api/work-items/counts-by-status on the API — work item counts grouped by status,
     /// plus the oldest Pending item's creation timestamp for the pending-age gauge.</summary>
     Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// GET /api/agents on the API — returns the total and busy agent counts.
+    /// Used by the Scheduler leader to feed the <c>agent.jobs.active</c> and
+    /// <c>agent.connections.total</c> observable gauges.
+    /// </summary>
+    Task<AgentCountsResponseDto> GetAgentCountsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// GET /api/agents/credential-pool on the API — returns the Kiro credential (PVC) pool snapshot.
+    /// Used by the Scheduler leader to feed the <c>workdistribution.credential_pool_available</c>
+    /// and <c>workdistribution.credential_pool_claimed</c> observable gauges.
+    /// </summary>
+    Task<CredentialPoolStatus> GetAgentCredentialPoolAsync(CancellationToken ct = default);
 }

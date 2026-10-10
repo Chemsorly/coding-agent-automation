@@ -1,9 +1,7 @@
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Services;
-using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -117,28 +115,5 @@ internal static class ApiStartupExtensions
             .AllowAnonymous();
 
         return endpoints;
-    }
-
-    /// <summary>
-    /// Registers observable gauges for agent metrics against the <see cref="PipelineTelemetry.Meter"/>.
-    /// Agents register on the API hub, so this is the correct process to own these gauges.
-    /// </summary>
-    public static WebApplication RegisterApiObservableGauges(this WebApplication app)
-    {
-        ArgumentNullException.ThrowIfNull(app);
-
-        var agentRegistry = app.Services.GetRequiredService<IAgentRegistryService>();
-
-        _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
-            () => agentRegistry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
-        // TODO: GetAllAgents() reads from _allAgentsCache which starts empty on process restart and
-        // is only populated after the first write-path or async refresh. On a fresh replica boot,
-        // this gauge will report 0 for all agents until a write path warms the cache — a correctness
-        // regression for the OTel metric. Consider seeding via a background refresh (e.g. WorkItemCountsService)
-        // so the cache is warmed before the first gauge collection.
-        _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
-            () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
-
-        return app;
     }
 }

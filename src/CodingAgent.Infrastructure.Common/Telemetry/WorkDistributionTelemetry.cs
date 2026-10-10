@@ -83,9 +83,9 @@ public static class WorkDistributionTelemetry
     /// Gauge: number of available credential PVCs in the kiro pool.
     /// Emits no measurement until <see cref="UpdateCredentialPoolMetrics"/> has been called
     /// (the same owner-only pattern used by <see cref="DispatcherLastPollEpoch"/>).
-    /// Processes that never call <see cref="UpdateCredentialPoolMetrics"/> — Scheduler,
+    /// Processes that never call <see cref="UpdateCredentialPoolMetrics"/> — API,
     /// Job Controller, and Web — emit nothing, preventing spurious 0 series.
-    /// Only the API process owns this metric (set in <c>WorkItemDispatchEndpoints</c>).
+    /// Only the Scheduler leader emits this metric (set by <c>WorkItemCountsService</c>).
     /// </summary>
     public static readonly ObservableGauge<int> CredentialPoolAvailable =
         Meter.CreateObservableGauge<int>(
@@ -103,6 +103,7 @@ public static class WorkDistributionTelemetry
     /// Gauge: number of claimed credential PVCs in the kiro pool.
     /// Emits no measurement until <see cref="UpdateCredentialPoolMetrics"/> has been called
     /// (the same owner-only pattern used by <see cref="DispatcherLastPollEpoch"/>).
+    /// Only the Scheduler leader emits this metric (set by <c>WorkItemCountsService</c>).
     /// </summary>
     public static readonly ObservableGauge<int> CredentialPoolClaimed =
         Meter.CreateObservableGauge<int>(
@@ -199,8 +200,9 @@ public static class WorkDistributionTelemetry
     private static int _credentialPoolAvailable;
     private static int _credentialPoolClaimed;
     // Sentinel: set to true by UpdateCredentialPoolMetrics on the first call.
-    // Gauges emit no measurement until the owning process (API) calls UpdateCredentialPoolMetrics,
-    // preventing Scheduler, Job Controller, and Web from emitting spurious 0 series.
+    // Gauges emit no measurement until the owning process (Scheduler leader) calls UpdateCredentialPoolMetrics,
+    // preventing API, Job Controller, and Web from emitting spurious 0 series.
+    // Reset to false by ResetCredentialPoolMetrics on poll failure so gauges emit nothing after a failed poll.
     private static volatile bool _credentialPoolUpdated;
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
 
@@ -253,24 +255,42 @@ public static class WorkDistributionTelemetry
 
     /// <summary>
     /// Updates credential pool gauge values.
-    /// Called by the API's <c>WorkItemDispatchEndpoints</c> after computing PVC availability.
-    /// Setting these values activates the owner-only guard — only the API emits measurements
-    /// for these gauges; other processes that never call this method emit nothing.
+    /// Called by the Scheduler leader's <c>WorkItemCountsService</c> after polling PVC availability.
+    /// Setting these values activates the owner-only guard — only the Scheduler leader emits
+    /// measurements for these gauges; other processes that never call this method emit nothing.
     /// </summary>
     public static void UpdateCredentialPoolMetrics(int available, int claimed)
     {
-        // TODO [WARNING]: _credentialPoolAvailable and _credentialPoolClaimed are plain static int
-        // fields (no volatile, no Volatile.Write). The volatile write to _credentialPoolUpdated
-        // provides a release fence, but the two int stores that precede it are not guaranteed to be
-        // visible to the collection thread before it sees the sentinel flip. On a CPU with a
-        // store-buffer (x86 is strongly-ordered, but ARM is not), the collection thread can observe
-        // _credentialPoolUpdated == true while still reading stale 0 values for the ints.
-        // Fix: use Volatile.Write for both int fields (matching the _pollEpochMillis pattern), or
-        // consolidate both values into an Interlocked-exchanged reference type to prevent torn reads.
-        // See review findings for issue #2980.
-        _credentialPoolAvailable = available;
-        _credentialPoolClaimed = claimed;
+        // Volatile.Write provides a release fence, ensuring the two int stores are visible to
+        // the collection thread before it observes the sentinel flip on _credentialPoolUpdated.
+        // On ARM (where the Scheduler runs in production), the OTel collection thread could
+        // otherwise observe _credentialPoolUpdated == true while reading stale 0 values for the
+        // ints. Matches the _pollEpochMillis pattern. Fixes the pre-existing TODO from issue #2980.
+        Volatile.Write(ref _credentialPoolAvailable, available);
+        Volatile.Write(ref _credentialPoolClaimed, claimed);
+        // TODO [WARNING]: The sentinel flip below is a plain write to a volatile field, not
+        // Volatile.Write. C# allows the compiler to reorder a volatile-field store before preceding
+        // non-volatile stores, which would let the collection thread see _credentialPoolUpdated == true
+        // before the Volatile.Write calls for the int fields above complete on ARM. For full ARM safety,
+        // this should be Volatile.Write(ref _credentialPoolUpdated, true) so the release fence is
+        // explicit and ordered after the int stores, matching the stated intent. In practice the JIT
+        // does not reorder this on current runtimes, but it contradicts the ARM-safety comment above.
         _credentialPoolUpdated = true;
+    }
+
+    /// <summary>
+    /// Resets the credential pool metrics sentinel so the gauges emit no measurement
+    /// until <see cref="UpdateCredentialPoolMetrics"/> is called again.
+    /// Called by the Scheduler leader's <c>WorkItemCountsService</c> on the poll-failure path,
+    /// matching the <c>_cachedMeasurements = []</c> reset used by <c>workitems_by_status</c>.
+    /// </summary>
+    public static void ResetCredentialPoolMetrics()
+    {
+        // TODO [WARNING]: This is a plain write to a volatile field. On ARM, the collection thread
+        // may not immediately observe this false flip — it could still read _credentialPoolUpdated == true
+        // from a stale store-buffer entry and emit a measurement. Volatile.Write(ref _credentialPoolUpdated, false)
+        // would make the acquire/release semantics explicit and consistent with the stated ARM-safety goal.
+        _credentialPoolUpdated = false;
     }
 
     /// <summary>
