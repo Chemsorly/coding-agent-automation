@@ -29,7 +29,7 @@ public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
     private static readonly string[] Variables =
     [
         "Auth__Rbac__Bindings__0__User", "Auth__Rbac__Bindings__0__Role",
-        "Auth__Rbac__Bindings__1__Group", "Auth__Rbac__Bindings__1__Role", "Auth__Rbac__Bindings__1__Project",
+        "Auth__Rbac__Bindings__1__Group", "Auth__Rbac__Bindings__1__Role", "Auth__Rbac__Bindings__1__ProjectId",
     ];
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -39,7 +39,7 @@ public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
         Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__0__Role", "readonly");
         Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__1__Group", "team-a");
         Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__1__Role", "operator");
-        Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__1__Project", "payments");
+        Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__1__ProjectId", PaymentsProjectId);
 
         builder.ConfigureTestServices(services =>
         {

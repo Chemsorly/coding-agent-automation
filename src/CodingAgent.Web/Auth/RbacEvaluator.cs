@@ -14,16 +14,15 @@ public interface IRbacEvaluator
 }
 
 /// <summary>
-/// Evaluates the configured bindings against the principal's username and groups. Project names
+/// Evaluates the configured bindings against the principal's username and groups. Project IDs
 /// are resolved through <see cref="IProjectStore"/> (cached by <c>ApiProjectStore</c>), so a
-/// project created in Settings is picked up without a restart. A project binding whose name is
-/// unknown or not unique grants nothing; if the project list cannot be loaded, project bindings
-/// grant nothing and global bindings keep working (fail closed).
+/// project created in Settings is picked up without a restart. A project binding whose ID is
+/// not found grants nothing; if the project list cannot be loaded, project bindings grant nothing
+/// and global bindings keep working (fail closed).
 /// </summary>
 public sealed class RbacEvaluator : IRbacEvaluator
 {
     internal const string UnknownProject = "unknown project";
-    internal const string DuplicateProject = "duplicate project name";
     internal const string ProjectsUnavailable = "project list unavailable";
 
     private readonly IProjectStore _projects;
@@ -57,29 +56,30 @@ public sealed class RbacEvaluator : IRbacEvaluator
         var projectRoles = new Dictionary<string, AccessRole>(StringComparer.Ordinal);
         var matches = new List<MatchedBinding>();
 
-        foreach (var binding in matched.Where(b => b.ProjectName is null))
+        foreach (var binding in matched.Where(b => b.ProjectId is null))
         {
             if (binding.Role > globalRole)
                 globalRole = binding.Role;
             matches.Add(new MatchedBinding(binding.Subject, binding.Role, null, null, null));
         }
 
-        var projectBindings = matched.Where(b => b.ProjectName is not null).ToList();
+        var projectBindings = matched.Where(b => b.ProjectId is not null).ToList();
         if (projectBindings.Count > 0)
         {
             var projects = await TryLoadProjectsAsync(ct);
             foreach (var binding in projectBindings)
             {
-                var (projectId, problem) = Resolve(binding.ProjectName!, projects);
-                matches.Add(new MatchedBinding(binding.Subject, binding.Role, binding.ProjectName, projectId, problem));
+                var (found, problem) = Resolve(binding, projects);
                 if (problem is not null)
                 {
-                    ReportOnce(binding.ProjectName!, problem);
+                    matches.Add(new MatchedBinding(binding.Subject, binding.Role, null, binding.ProjectId, problem));
+                    ReportOnce(binding.ProjectId!, problem);
                     continue;
                 }
 
-                if (!projectRoles.TryGetValue(projectId!, out var existing) || binding.Role > existing)
-                    projectRoles[projectId!] = binding.Role;
+                matches.Add(new MatchedBinding(binding.Subject, binding.Role, found!.Name, binding.ProjectId, null));
+                if (!projectRoles.TryGetValue(binding.ProjectId!, out var existing) || binding.Role > existing)
+                    projectRoles[binding.ProjectId!] = binding.Role;
             }
         }
 
@@ -99,29 +99,24 @@ public sealed class RbacEvaluator : IRbacEvaluator
         }
     }
 
-    private static (string? ProjectId, string? Problem) Resolve(string projectName, IReadOnlyList<PipelineProject>? projects)
+    private static (PipelineProject? Found, string? Problem) Resolve(Binding binding, IReadOnlyList<PipelineProject>? projects)
     {
         if (projects is null)
             return (null, ProjectsUnavailable);
 
-        var found = projects.Where(p => string.Equals(p.Name, projectName, StringComparison.Ordinal)).Take(2).ToList();
-        return found.Count switch
-        {
-            0 => (null, UnknownProject),
-            1 => (ProjectIds.Normalize(found[0].Id), null),
-            _ => (null, DuplicateProject),
-        };
+        var found = projects.FirstOrDefault(p => ProjectIds.Normalize(p.Id) == binding.ProjectId);
+        return found is not null ? (found, null) : (null, UnknownProject);
     }
 
-    private void ReportOnce(string projectName, string problem)
+    private void ReportOnce(string projectId, string problem)
     {
-        if (problem == ProjectsUnavailable || !_reportedProblems.TryAdd($"{problem}\n{projectName}", 0))
+        if (problem == ProjectsUnavailable || !_reportedProblems.TryAdd($"{problem}\n{projectId}", 0))
             return;
-        _logger.LogWarning("RBAC: binding for project '{ProjectName}' grants nothing ({Problem})",
-            LogSanitizer.SanitizeForLog(projectName), problem);
+        _logger.LogWarning("RBAC: binding for project ID '{ProjectId}' grants nothing ({Problem})",
+            LogSanitizer.SanitizeForLog(projectId), problem);
     }
 
-    private sealed record Binding(string? Group, string? User, AccessRole Role, string? ProjectName)
+    private sealed record Binding(string? Group, string? User, AccessRole Role, string? ProjectId)
     {
         public string Subject => Group is not null ? $"group:{Group}" : $"user:{User}";
 
@@ -139,10 +134,10 @@ public sealed class RbacEvaluator : IRbacEvaluator
             var user = string.IsNullOrWhiteSpace(options.User) ? null : options.User.Trim();
             if ((group is null) == (user is null))
                 return null;
-            var project = string.IsNullOrWhiteSpace(options.Project) ? null : options.Project;
-            if (role == AccessRole.Admin && project is not null)
+            var projectId = string.IsNullOrWhiteSpace(options.ProjectId) ? null : ProjectIds.Normalize(options.ProjectId);
+            if (role == AccessRole.Admin && projectId is not null)
                 return null;
-            return new Binding(group, user, role, project);
+            return new Binding(group, user, role, projectId);
         }
     }
 }

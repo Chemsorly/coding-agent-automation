@@ -21,7 +21,7 @@ public class AuthOptionsValidatorTests
             Bindings =
             [
                 new() { Group = "platform-team", Role = "admin" },
-                new() { Group = "team-a", Role = "operator", Project = "payments" },
+                new() { Group = "team-a", Role = "operator", ProjectId = "6f1c2a9e-0000-0000-0000-000000000000" },
                 new() { User = "alice@acme.com", Role = "readonly" },
             ],
         },
@@ -173,11 +173,14 @@ public class AuthOptionsValidatorTests
         Errors(options).Should().ContainSingle(e => e.Contains("Bindings:3") && e.Contains("exactly one"));
     }
 
+    // TODO: AdminBoundToProject_Fails (below) and AdminWithProjectId_IsRefused (in the Requirement 9 block) are duplicate tests:
+    // both add { Group = "g", Role = "admin", ProjectId = "6f1c2a9e-..." } to Valid() and assert "only be bound globally".
+    // One of them should be removed or differentiated to avoid redundant coverage.
     [Fact]
     public void AdminBoundToProject_Fails()
     {
         var options = Valid();
-        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "admin", Project = "payments" });
+        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "admin", ProjectId = "6f1c2a9e-0000-0000-0000-000000000000" });
         Errors(options).Should().ContainSingle(e => e.Contains("Bindings:3") && e.Contains("only be bound globally"));
     }
 
@@ -189,5 +192,40 @@ public class AuthOptionsValidatorTests
         options.Oidc.ClientId = "";
         options.Rbac.Bindings.Add(new RoleBindingOptions { Role = "nope" });
         Errors(options).Should().HaveCount(4);
+    }
+
+    // ── Requirement 9: project binding by ID validation ──────────────────────
+
+    [Fact]
+    public void OldProjectKey_IsRefused_WithMigrationMessage()
+    {
+        var options = Valid();
+        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "operator", Project = "payments" });
+        var errors = Errors(options).ToList();
+        errors.Should().ContainSingle(e => e.Contains("no longer supported") && e.Contains("projectId"));
+    }
+
+    [Fact]
+    public void NonGuidProjectId_IsRefused()
+    {
+        var options = Valid();
+        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "operator", ProjectId = "payments-api" });
+        Errors(options).Should().ContainSingle(e => e.Contains("which is not a project ID"));
+    }
+
+    [Fact]
+    public void AdminWithProjectId_IsRefused()
+    {
+        var options = Valid();
+        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "admin", ProjectId = "6f1c2a9e-0000-0000-0000-000000000000" });
+        Errors(options).Should().ContainSingle(e => e.Contains("only be bound globally"));
+    }
+
+    [Fact]
+    public void OperatorWithGuidProjectId_Succeeds()
+    {
+        var options = Valid();
+        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "operator", ProjectId = "6f1c2a9e-0000-0000-0000-000000000000" });
+        Validator.Validate(null, options).Succeeded.Should().BeTrue();
     }
 }

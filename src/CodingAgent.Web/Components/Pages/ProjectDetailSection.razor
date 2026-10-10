@@ -192,6 +192,11 @@
     {
         <div class="provider-form">
             <div class="form-group">
+                <label>Project ID</label>
+                <span class="monitoring-mono" style="user-select:all">@ProjectId</span>
+                <span class="form-hint">Use this ID for role bindings (auth.rbac.bindings[].projectId). It never changes when the project is renamed.</span>
+            </div>
+            <div class="form-group">
                 <label>Name</label>
                 <input type="text" @bind="_name" maxlength="128" />
             </div>
