@@ -42,6 +42,13 @@ public interface IAgentHubFacade
     AgentEntry? GetByAgentId(AgentId agentId);
 
     /// <summary>
+    /// Looks up an agent by its unique agent identifier, reading from the authoritative store
+    /// (Redis in distributed mode, in-memory in single-replica mode). Used by chat hub methods
+    /// to validate session ownership cross-replica.
+    /// </summary>
+    Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default);
+
+    /// <summary>
     /// Looks up an agent by its current SignalR connection ID.
     /// </summary>
     AgentEntry? GetByConnectionId(string connectionId);
