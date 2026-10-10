@@ -377,9 +377,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 stdout = await stdoutTask;
                 await stderrTask;
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
             {
-                _logger.Warning("kiro-cli --list-sessions did not finish within {Timeout} for {WorkspacePath}",
+                _logger.Warning(ex, "kiro-cli --list-sessions did not finish within {Timeout} for {WorkspacePath}",
                     SessionListTimeout, workspacePath);
                 return null;
             }
