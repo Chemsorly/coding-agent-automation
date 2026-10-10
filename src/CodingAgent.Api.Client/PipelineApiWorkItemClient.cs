@@ -110,12 +110,15 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     }
 
     public async Task<WorkItemStalenessResult?> GetStalenessAsync(
-        string issueIdentifier,
-        string issueProviderConfigId,
+        IssueIdentifier issueIdentifier,
+        ProviderConfigId issueProviderConfigId,
         DateTimeOffset since,
         CancellationToken ct = default)
     {
-        var url = $"/api/work-items/staleness?issueIdentifier={Uri.EscapeDataString(issueIdentifier)}&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId)}&since={Uri.EscapeDataString(since.ToString("O"))}";
+        // TODO: Use issueIdentifier.Value instead of the implicit string conversion for consistency with
+        // issueProviderConfigId.Value below. If the IssueIdentifier → string implicit conversion is removed
+        // in the planned Phase 2 migration, this line will fail to compile while the .Value form would not.
+        var url = $"/api/work-items/staleness?issueIdentifier={Uri.EscapeDataString(issueIdentifier)}&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId.Value)}&since={Uri.EscapeDataString(since.ToString("O"))}";
         var response = await _http.GetAsync(url, ct);
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             return null;
@@ -179,9 +182,12 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result?.Status;
     }
 
-    public async Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct = default)
+    public async Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct = default)
     {
-        var url = $"/api/work-items/is-distributed?issueIdentifier={Uri.EscapeDataString(issueIdentifier)}&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId)}";
+        // TODO: Use issueIdentifier.Value instead of the implicit string conversion for consistency with
+        // issueProviderConfigId.Value below. If the IssueIdentifier → string implicit conversion is removed
+        // in the planned Phase 2 migration, this line will fail to compile while the .Value form would not.
+        var url = $"/api/work-items/is-distributed?issueIdentifier={Uri.EscapeDataString(issueIdentifier)}&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId.Value)}";
         var result = await _http.GetFromJsonAsync<IsDistributedResponse>(url, PipelineJsonOptions.Default, ct);
         return result?.IsDistributed ?? false;
     }

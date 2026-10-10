@@ -39,16 +39,8 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     {
         try
         {
-            var issueConfig = await ProviderConfigResolver.TryResolveAsync(
-                () => _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, ct),
-                run.IssueProviderConfigId, ProviderKind.Issue, _logger);
-            if (issueConfig is null)
-                return null;
-
-            await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
-            // Validate initializes provider state (e.g., GitLab PathWithNamespace) needed for URL construction
-            await issueProvider.ValidateAsync(ct);
-            return await issueProvider.PostCommentAsync(run.IssueIdentifier, body, ct);
+            var (_, commentUrl) = await PostCommentOnIssueAsync(run, body, ct);
+            return commentUrl;
         }
         catch (Exception ex)
         {
@@ -58,29 +50,62 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     }
 
     /// <inheritdoc />
-    public async Task PostIssueFeedbackCommentAsync(PipelineRun run, CancellationToken ct = default)
+    public async Task<bool> PostIssueFeedbackCommentAsync(PipelineRun run, CancellationToken ct = default)
     {
+        string? commentUrl;
         try
         {
             var comment = FeedbackCommentFormatter.FormatComment(run.Feedback?.Issue);
             if (comment is null)
-                return;
+                return true;
 
-            var commentUrl = await PostCommentViaIssueProviderAsync(run, comment, ct);
-            _logger.Information("Posted issue feedback comment for run {RunId} on issue {IssueIdentifier}",
-                run.RunId, run.IssueIdentifier);
-
-            // Append feedback link to PR body if we have both a URL and a PR
-            if (commentUrl is not null && !string.IsNullOrEmpty(run.PullRequestNumber))
-            {
-                await AppendFeedbackLinkToPrBodyAsync(run, commentUrl, ct);
-            }
+            var (posted, url) = await PostCommentOnIssueAsync(run, comment, ct);
+            if (!posted)
+                return false;
+            commentUrl = url;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutdown: the caller must see the cancellation so it leaves the outbox row for the relay.
+            throw;
         }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to post issue feedback comment for run {RunId} on issue {IssueIdentifier}",
                 run.RunId, run.IssueIdentifier);
+            return false;
         }
+
+        _logger.Information("Posted issue feedback comment for run {RunId} on issue {IssueIdentifier}",
+            run.RunId, run.IssueIdentifier);
+
+        // Append feedback link to PR body if we have both a URL and a PR.
+        // Non-fatal: the comment is already posted, so the result stays true whatever happens here.
+        if (commentUrl is not null && !string.IsNullOrEmpty(run.PullRequestNumber))
+        {
+            await AppendFeedbackLinkToPrBodyAsync(run, commentUrl, ct);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Posts <paramref name="body"/> on the run's issue. Returns <c>Posted = false</c> when the issue
+    /// provider config cannot be resolved; provider failures propagate. <c>Url</c> may be null even
+    /// when the comment was posted (the provider could not build one).
+    /// </summary>
+    private async Task<(bool Posted, string? Url)> PostCommentOnIssueAsync(PipelineRun run, string body, CancellationToken ct)
+    {
+        var issueConfig = await ProviderConfigResolver.TryResolveAsync(
+            () => _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, ct),
+            run.IssueProviderConfigId, ProviderKind.Issue, _logger);
+        if (issueConfig is null)
+            return (false, null);
+
+        await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
+        // Validate initializes provider state (e.g., GitLab PathWithNamespace) needed for URL construction
+        await issueProvider.ValidateAsync(ct);
+        return (true, await issueProvider.PostCommentAsync(run.IssueIdentifier, body, ct));
     }
 
     /// <summary>

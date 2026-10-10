@@ -24,7 +24,11 @@ public interface IHubIssueOperations
     /// <summary>
     /// Posts issue-level feedback as a comment on the issue if present.
     /// If a PR exists, appends a link to the feedback comment in the PR body.
-    /// Non-fatal: logs warning on failure and continues.
+    /// Returns <c>true</c> when the comment was posted or there was no feedback to post, and
+    /// <c>false</c> when posting failed (logged as a warning), so the caller can leave the durable
+    /// outbox row for the relay. Throws <see cref="OperationCanceledException"/> when
+    /// <paramref name="ct"/> is cancelled before the comment is posted. A failed PR-body append
+    /// does not change the result.
     /// </summary>
-    Task PostIssueFeedbackCommentAsync(PipelineRun run, CancellationToken ct = default);
+    Task<bool> PostIssueFeedbackCommentAsync(PipelineRun run, CancellationToken ct = default);
 }

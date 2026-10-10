@@ -1484,12 +1484,14 @@ public class AgentCodingPageComponentTests : BunitContext
     {
         var component = Render<AgentCoding>();
 
+        // TODO: Add a complementary test for the active-status branch (where GetIssueWorkItemStatus returns
+        // a non-null WorkItemStatus) to ensure the non-null path is also covered and won't silently regress.
         WorkItemStatus? result = WorkItemStatus.Running; // set to non-null to prove the method returns null
         await component.InvokeAsync(() =>
         {
             var method = typeof(AgentCoding).GetMethod("IsIssueActive",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            result = (WorkItemStatus?)method!.Invoke(component.Instance, ["99", "ip-1"]);
+            result = (WorkItemStatus?)method!.Invoke(component.Instance, [new IssueIdentifier("99"), new ProviderConfigId("ip-1")]);
         });
 
         Assert.Null(result);

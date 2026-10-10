@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Globalization;
 using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline.Models;
@@ -324,71 +323,37 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
         lock (entry.SyncRoot)
         {
-            switch (field)
+            if (!AgentEntryFieldApplier.IsValid(field, value))
             {
-                case AgentFieldNames.ActiveJobId:
-                    entry.ActiveJobId = string.IsNullOrEmpty(value) ? null : value;
-                    break;
-
-                case AgentFieldNames.ActiveChatSessionId:
-                    entry.ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value;
-                    break;
-
-                case AgentFieldNames.OrphanRestoredAt:
-                    if (string.IsNullOrEmpty(value))
-                    {
-                        entry.OrphanRestoredAt = null;
-                    }
-                    else if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ora))
-                    {
-                        entry.OrphanRestoredAt = ora;
-                    }
-                    else
-                    {
-                        _logger.Warning(
-                            "UpdateAgentFieldAsync: malformed orphanRestoredAt value '{Value}' for agent {AgentId} — ignoring",
-                            value, agentId);
-                    }
-                    break;
-
-                case AgentFieldNames.LastJobCompletedAt:
-                    if (string.IsNullOrEmpty(value))
-                    {
-                        entry.LastJobCompletedAt = null;
-                    }
-                    else if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ljc))
-                    {
-                        entry.LastJobCompletedAt = ljc;
-                    }
-                    else
-                    {
-                        _logger.Warning(
-                            "UpdateAgentFieldAsync: malformed lastJobCompletedAt value '{Value}' for agent {AgentId} — ignoring",
-                            value, agentId);
-                    }
-                    break;
-
-                case AgentFieldNames.Disabled:
-                    if (string.IsNullOrEmpty(value))
-                    {
-                        entry.Disabled = false;
-                    }
-                    else if (bool.TryParse(value, out var d))
-                    {
-                        entry.Disabled = d;
-                    }
-                    else
-                    {
-                        _logger.Warning(
-                            "UpdateAgentFieldAsync: malformed disabled value '{Value}' for agent {AgentId} — ignoring",
-                            value, agentId);
-                    }
-                    break;
-
-                default:
-                    _logger.Warning("UpdateAgentFieldAsync: unknown field '{Field}' for agent {AgentId}", field, agentId);
-                    break;
+                _logger.Warning(
+                    "UpdateAgentFieldAsync: malformed value '{Value}' for field '{Field}' on agent {AgentId} — ignoring",
+                    value, field, agentId);
+                return Task.CompletedTask;
             }
+
+            if (field is not (AgentFieldNames.ActiveJobId
+                or AgentFieldNames.ActiveChatSessionId
+                or AgentFieldNames.OrphanRestoredAt
+                or AgentFieldNames.LastJobCompletedAt
+                or AgentFieldNames.Disabled))
+            {
+                _logger.Warning("UpdateAgentFieldAsync: unknown field '{Field}' for agent {AgentId}", field, agentId);
+                return Task.CompletedTask;
+            }
+
+            // TODO (WARNING): Maintenance trap — AgentEntry is a mutable record and the in-memory path
+            // cannot use the returned record directly (callers hold a reference to the live entry object),
+            // so we copy back each field individually. If a new field is added to AgentEntryFieldApplier.Apply
+            // without a corresponding copy-back line here, the in-memory implementation will silently drop
+            // that field's update while the distributed path (which uses the returned record directly) applies
+            // it — reproducing the exact divergence this refactor was created to fix.
+            // When adding a new field to AgentEntryFieldApplier, always add a copy-back line below.
+            var updated = AgentEntryFieldApplier.Apply(entry, field, value);
+            entry.ActiveJobId = updated.ActiveJobId;
+            entry.ActiveChatSessionId = updated.ActiveChatSessionId;
+            entry.OrphanRestoredAt = updated.OrphanRestoredAt;
+            entry.LastJobCompletedAt = updated.LastJobCompletedAt;
+            entry.Disabled = updated.Disabled;
         }
 
         return Task.CompletedTask;
