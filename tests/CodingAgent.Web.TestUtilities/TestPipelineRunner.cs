@@ -203,7 +203,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         PipelineConfiguration config,
         CancellationToken ct)
     {
-        IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
+        IAgentIssueOperations issueOps = new IssueProviderAdapter(issueProvider, _logger);
         PipelineStepContext? ctx = null;
 
         var callbacks = new TestCallbacks(_lifecycle, run, providerManager, _prOrchestrator, _brainSync, () => ctx);
@@ -513,6 +513,37 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             run.BrainKnowledgeFileCount = knowledgeFileCount;
             lifecycle.NotifyChange();
             return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// Test-local adapter that wraps <see cref="IIssueProvider"/> as <see cref="IAgentIssueOperations"/>.
+    /// Mirrors the logic of the deleted production class IssueProviderIssueOperations.
+    /// </summary>
+    private sealed class IssueProviderAdapter(IIssueProvider issueProvider, Serilog.ILogger logger)
+        : IAgentIssueOperations
+    {
+        public Task<string?> PostCommentAsync(IssueIdentifier issueIdentifier, string body, CancellationToken ct)
+            => issueProvider.PostCommentAsync(issueIdentifier, body, ct);
+
+        public async Task SwapLabelAsync(IssueIdentifier issueIdentifier, string newLabel, CancellationToken ct)
+        {
+            try
+            {
+                await AgentLabelOperations.SwapAsync(
+                    (label, c) => issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
+                    (label, c) => issueProvider.AddLabelAsync(issueIdentifier, label, c),
+                    newLabel,
+                    ct,
+                    new LabelSwapOptions
+                    {
+                        Identifier = issueIdentifier.Value
+                    });
+            }
+            catch (Exception ex)
+            {
+                logger.Warning(ex, "Failed to swap agent label to {Label} on issue {Issue}", newLabel, issueIdentifier);
+            }
         }
     }
 
