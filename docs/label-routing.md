@@ -24,7 +24,7 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 
 | System | Label Source | Matching Logic | Purpose |
 |--------|-------------|----------------|---------|
-| **Profile Resolution** | Job's RequiredLabels (from repo) | Profile MatchLabels ⊇ job labels (the profile covers every repo label); the profile with the most labels wins, then Priority, then Id | Pick the agent provider config; the profile's labels become the job's agent selector |
+| **Profile Resolution** | Job's RequiredLabels (from repo) | Profile MatchLabels ⊇ job labels (the profile covers every repo label); the closest fit wins: the covering profile with the fewest labels, then Priority, then Id | Pick the agent provider config; the profile's labels become the job's agent selector |
 | **Job Template Selection** | Matched profile's MatchLabels | Template labels = profile labels | Pick the image, `maxConcurrent` and resources |
 | **QGC Resolution** | Matched profile's MatchLabels | QGC MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which quality gates to run |
 | **Reviewer Resolution** | Matched profile's MatchLabels | Reviewer MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which review agents to run |
@@ -51,7 +51,7 @@ The image does not route jobs. A job's labels pick an agent profile, and the pro
 | `kiro, java, java21` | `coding-agent-kiro-latest` |
 | `kiro, python, python312` | `coding-agent-kiro-latest` |
 
-Each label set keeps its own `maxConcurrent` and resources. Quality gates and reviewers are resolved against the matched profile's labels, so don't give a profile every stack label for convenience: a Java repository matched to `kiro, dotnet, dotnet10, java, java21` would also run the .NET quality gate. For a polyglot repository, add a profile and template with exactly its stacks (for example `kiro, dotnet, dotnet10, python, python312`) on the same image.
+Each label set keeps its own `maxConcurrent` and resources. Quality gates and reviewers are resolved against the matched profile's labels, so don't give a profile every stack label for convenience: a Java repository matched to `kiro, dotnet, dotnet10, java, java21` would also run the .NET quality gate. For a polyglot repository, add a profile and template with exactly its stacks (for example `kiro, dotnet, dotnet10, python, python312`) on the same image. A profile with extra labels only gets the repositories that carry all of its labels, so the polyglot profile does not take over the .NET-only repositories.
 
 The image's default `AGENT_LABELS` lists the agent tool and every stack. Kubernetes Jobs set `AGENT_LABELS` from their job template, so the default applies only to an agent started outside Kubernetes.
 
@@ -69,7 +69,7 @@ Agent Profiles map label sets to agent provider configs (model, effort, CLI path
 | Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model |
 | Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model |
 
-Resolution: the profile must contain every label of the repository; among those, the profile with the most labels wins, then the higher Priority, then the Id. A profile with empty MatchLabels matches only a repository with no required labels; it is a catch-all only for consolidation runs, which match by agent labels. Agent Chat does not offer it: a chat pod needs labels to pick its job template.
+Resolution: the profile must contain every label of the repository; among those, the closest fit wins: the covering profile with the fewest labels, then the higher Priority, then the Id. A profile with empty MatchLabels matches only a repository with no required labels; it is a catch-all only for consolidation runs, which match by agent labels. Agent Chat does not offer it: a chat pod needs labels to pick its job template.
 
 ## Quality Gate Configurations
 
