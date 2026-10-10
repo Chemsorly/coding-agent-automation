@@ -1087,6 +1087,28 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void BuildAcceptanceCriteriaPrompt_IncludesEvaluationRules()
+    {
+        var result = PromptBuilder.BuildAcceptanceCriteriaPrompt("Evaluate compliance");
+        result.Should().Contain("## Evaluation Rules");
+        result.Should().Contain("Cannot be verified in the workspace:");
+        result.Should().Contain("`not_applicable`");
+    }
+
+    [Fact]
+    public void BuildAcceptanceCriteriaPrompt_EvaluationRulesAfterInstructionsBeforeOutputLine()
+    {
+        var result = PromptBuilder.BuildAcceptanceCriteriaPrompt("Evaluate compliance");
+        var instructionsIndex = result.IndexOf("Evaluate compliance", StringComparison.Ordinal);
+        var rulesIndex = result.IndexOf("## Evaluation Rules", StringComparison.Ordinal);
+        var outputLineIndex = result.IndexOf("Write your assessment to", StringComparison.Ordinal);
+        rulesIndex.Should().BeGreaterThan(instructionsIndex,
+            "the evaluation rules should follow the configurable instructions");
+        rulesIndex.Should().BeLessThan(outputLineIndex,
+            "the output-file line should stay last");
+    }
+
+    [Fact]
     public void BuildPrompt_ContainsVerificationClause()
     {
         var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
@@ -1111,6 +1133,16 @@ public class PromptBuilderTests
         var gitIndex = result.IndexOf("Do NOT run git write commands", StringComparison.Ordinal);
         clauseIndex.Should().BeLessThan(gitIndex,
             "VerificationClause should appear before GitRestrictionFull");
+    }
+
+    [Fact]
+    public void BuildPrompt_GateIntegrityRuleAfterGitRestriction()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        var gitIndex = result.IndexOf("Do NOT run git write commands", StringComparison.Ordinal);
+        var ruleIndex = result.IndexOf(PipelineConstants.GateIntegrityRule, StringComparison.Ordinal);
+        ruleIndex.Should().BeGreaterThan(gitIndex,
+            "GateIntegrityRule should appear after GitRestrictionFull");
     }
 
     [Fact]
