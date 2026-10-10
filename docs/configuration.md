@@ -127,6 +127,15 @@ Implementation runs review their changes before the pull request is opened. PR r
 | `hotspotAnalysisLookback` | 90.00:00:00 | 7–365 days | | Window of commits counted by the hotspot analysis of refactoring scans |
 | `refactoringOutcomeLookback` | 90.00:00:00 | 7–365 days | | Window of closed refactoring issues used as feedback |
 
+### Triage
+
+See [Triage](triage.md). Whether the loop picks up `agent:triage` issues is a template switch (`TriageEnabled`), not a setting.
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `triageReviewEnabled` | true | | ✓ | Discriminator review of a triage's root cause analysis and drafts before the result is reported |
+| `triageRetentionDays` | 30 | 1–365 | | Days a triage is kept after its last change; created issues and tracker comments are not affected |
+
 ### Advanced
 
 | Setting | Default | Range | Project | Description |

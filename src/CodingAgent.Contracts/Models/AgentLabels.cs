@@ -19,6 +19,11 @@ public static class AgentLabels
     public const string EpicReview = "agent:epic-review";
     public const string EpicApproved = "agent:epic-approved";
 
+    // Triage labels: agent:triage starts a triage of the issue; agent:triage-review means an attempt
+    // finished and its root cause analysis is posted. The drafts are approved in the app, never by a label.
+    public const string Triage = "agent:triage";
+    public const string TriageReview = "agent:triage-review";
+
     // Consolidation label (applied to auto-generated issues)
     public const string Generated = "agent:generated";
 
@@ -35,7 +40,9 @@ public static class AgentLabels
         (Generated, "bfd4f2"),
         (Epic, "7057ff"),
         (EpicReview, "fbca04"),
-        (EpicApproved, "0e8a16")
+        (EpicApproved, "0e8a16"),
+        (Triage, "0b7285"),
+        (TriageReview, "fbca04")
     };
 
     /// <summary>All agent label names. Membership checks are case-insensitive.</summary>
@@ -60,7 +67,7 @@ public static class AgentLabels
     /// <summary>Labels representing terminal pipeline states — should not be overwritten by recovery services.</summary>
     public static readonly IReadOnlySet<string> TerminalLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview, TriageReview
     };
 
     /// <summary>
@@ -72,6 +79,8 @@ public static class AgentLabels
     /// Includes <c>agent:epic-review</c> — an epic awaiting approval of its plan continues only once a
     /// person sets <c>agent:epic-approved</c> (decisions.md, "Epic decomposition: two-phase with human
     /// gate"), so the drawer rejects its manual dispatch instead of force-requeuing it.
+    /// Includes <c>agent:triage-review</c> for the same reason: a triaged issue waits for a person to
+    /// create its drafts in the app or to request a re-run.
     /// <c>agent:in-progress</c> is intentionally absent: a second WorkItem for an issue that is
     /// already running is blocked by the partial unique index on <c>WorkItems</c>, not this set.
     /// <c>agent:next</c> is also absent: it is the normal pre-dispatch signal and must not block dispatch.
@@ -79,7 +88,7 @@ public static class AgentLabels
     /// </summary>
     public static readonly IReadOnlySet<string> DispatchIneligibleLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview, TriageReview
     };
 
     /// <summary>
@@ -175,7 +184,7 @@ public static class AgentLabels
     /// </summary>
     public static readonly IReadOnlyList<string> DualLabelResolutionPrecedence = new[]
     {
-        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview, EpicApproved,
-        InProgress, Epic, Next
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview, TriageReview, EpicApproved,
+        InProgress, Epic, Triage, Next
     };
 }

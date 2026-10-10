@@ -83,4 +83,12 @@ public sealed record PipelineJobTemplate
     /// </summary>
     [Key(13)]
     public bool HousekeepingBranchCleanupEnabled { get; init; } = false;
+
+    /// <summary>
+    /// When true, the loop picks up <c>agent:triage</c> issues in this template's tracker (and, for the
+    /// project's first such template by name, in the project's epic tracker) and triages them. A triage
+    /// started in the web UI does not need this switch. Default false.
+    /// </summary>
+    [Key(14)]
+    public bool TriageEnabled { get; init; } = false;
 }

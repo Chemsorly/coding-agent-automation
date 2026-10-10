@@ -46,6 +46,11 @@ public static class StepOrder
         [PipelineStep.PostingSummary] = 9,
         [PipelineStep.PostingFindings] = 10,
 
+        // Triage pipeline (after DownloadingOpenIssues = 2)
+        [PipelineStep.Investigating] = 3,
+        [PipelineStep.ReviewingRca] = 4,
+        [PipelineStep.ReportingRca] = 5,
+
         // Shared terminal success state
         [PipelineStep.Completed] = 100,
     };

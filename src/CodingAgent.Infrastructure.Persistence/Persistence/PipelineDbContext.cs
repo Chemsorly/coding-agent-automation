@@ -28,6 +28,7 @@ public class PipelineDbContext : DbContext
     public DbSet<PipelineConfigEntity> PipelineConfig => Set<PipelineConfigEntity>();
     public DbSet<KeyValueEntity> KeyValueStore => Set<KeyValueEntity>();
     public DbSet<FeedbackCommentOutboxEntity> FeedbackCommentOutbox => Set<FeedbackCommentOutboxEntity>();
+    public DbSet<TriageEntity> Triages => Set<TriageEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -146,6 +147,21 @@ public class PipelineDbContext : DbContext
             e.HasIndex(f => f.RunId).IsUnique();
             // Relay query index: Status + AttemptCount + CreatedAt (oldest-first sweep).
             e.HasIndex(f => new { f.Status, f.AttemptCount, f.CreatedAt });
+        });
+
+        modelBuilder.Entity<TriageEntity>(e =>
+        {
+            e.HasKey(t => t.Id);
+            e.Property(t => t.RowVersion).IsRowVersion();
+            e.Property(t => t.Facts).HasColumnType(JsonbColumnType);
+            e.Property(t => t.Data).HasColumnType(JsonbColumnType);
+            // One triage per tracker issue (and per operator triage); also the key of its WorkItems.
+            e.HasIndex(t => new { t.KeyProviderConfigId, t.KeyIdentifier }).IsUnique();
+            // The triage list: one project, newest first.
+            e.HasIndex(t => new { t.ProjectId, t.UpdatedAt });
+            // The retention sweep.
+            e.HasIndex(t => t.UpdatedAt);
+            e.HasIndex(t => t.HasOpenAttempt).HasFilter("\"HasOpenAttempt\"");
         });
     }
 }

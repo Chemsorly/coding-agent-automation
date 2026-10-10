@@ -172,6 +172,22 @@ public static class AgentWorkspacePaths
     public const string DecompositionReviewFilePath = ".agent/decomposition-review.md";
 
     /// <summary>
+    /// The file path (relative to workspace) where the triage agent writes its result (JSON).
+    /// </summary>
+    public const string TriageResultFilePath = ".agent/triage-result.json";
+
+    /// <summary>
+    /// The file path (relative to workspace) of the triage's earlier attempts and the project's other
+    /// triages, written for the triage agent.
+    /// </summary>
+    public const string TriageContextFilePath = ".agent/triage-context.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the triage review agent writes its findings.
+    /// </summary>
+    public const string TriageReviewFilePath = ".agent/triage-review.md";
+
+    /// <summary>
     /// The file path (relative to workspace) where the pipeline writes PR conversation
     /// context (discussion comments, prior review findings, human replies) for review agents.
     /// </summary>

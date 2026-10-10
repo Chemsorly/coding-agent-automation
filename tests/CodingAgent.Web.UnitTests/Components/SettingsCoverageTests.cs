@@ -43,6 +43,7 @@ public class SettingsCoverageTests : BunitContext
         offered.AddRange(SettingsOn(Render<PipelineCiSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
         offered.AddRange(SettingsOn(Render<PipelineCodeReviewSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
         offered.AddRange(SettingsOn(Render<PipelineConsolidationSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
+        offered.AddRange(SettingsOn(Render<PipelineTriageSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
         offered.AddRange(SettingsOn(Render<PipelineAdvancedSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
         offered.AddRange(SettingsOnAgentProviderForm());
 
