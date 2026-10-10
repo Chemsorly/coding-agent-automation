@@ -5,7 +5,7 @@ using KiroCliLib.Core;
 
 namespace CodingAgent.Agent.ClaudeCode;
 
-/// <summary>Usage of one model as a Claude Code <c>result</c> event reports it (cumulative per session).</summary>
+/// <summary>Usage of one model as a Claude Code <c>result</c> event reports it, for that call alone.</summary>
 internal sealed record ClaudeModelTotals
 {
     public long InputTokens { get; init; }
@@ -21,8 +21,8 @@ internal sealed record ClaudeModelTotals
 }
 
 /// <summary>
-/// The usage figures of a Claude Code <c>result</c> event. A resumed session reports the whole
-/// conversation's totals, earlier calls included, so the provider subtracts what it saw before.
+/// The usage figures of a Claude Code <c>result</c> event: this call's alone, also on a resumed
+/// session (<c>claude -p --resume</c> does not carry earlier calls' totals over).
 /// </summary>
 internal sealed record ClaudeUsageTotals
 {
@@ -39,52 +39,6 @@ internal sealed record ClaudeUsageTotals
     public int Turns { get; init; }
     public long ApiDurationMs { get; init; }
     public IReadOnlyDictionary<string, ClaudeModelTotals> Models { get; init; } = new Dictionary<string, ClaudeModelTotals>();
-
-    /// <summary>
-    /// Returns this call's share: <c>this - previous</c> per field. A field smaller than before means
-    /// the CLI reported that field for this call only, so its current value is kept as-is.
-    /// </summary>
-    public ClaudeUsageTotals Minus(ClaudeUsageTotals? previous)
-    {
-        if (previous is null)
-            return this;
-
-        return new ClaudeUsageTotals
-        {
-            InputTokens = Delta(InputTokens, previous.InputTokens),
-            OutputTokens = Delta(OutputTokens, previous.OutputTokens),
-            ThinkingTokens = Delta(ThinkingTokens, previous.ThinkingTokens),
-            CacheReadTokens = Delta(CacheReadTokens, previous.CacheReadTokens),
-            CacheWriteTokens = Delta(CacheWriteTokens, previous.CacheWriteTokens),
-            WebSearchRequests = (int)Delta(WebSearchRequests, previous.WebSearchRequests),
-            CostUsd = Delta(CostUsd, previous.CostUsd),
-            Turns = Turns, // num_turns counts this call's turns only, even on a resumed session
-            ApiDurationMs = Delta(ApiDurationMs, previous.ApiDurationMs),
-            Models = Models.ToDictionary(
-                kvp => kvp.Key,
-                kvp => previous.Models.TryGetValue(kvp.Key, out var before) ? Minus(kvp.Value, before) : kvp.Value)
-        };
-    }
-
-    private static ClaudeModelTotals Minus(ClaudeModelTotals current, ClaudeModelTotals previous) => new()
-    {
-        InputTokens = Delta(current.InputTokens, previous.InputTokens),
-        OutputTokens = Delta(current.OutputTokens, previous.OutputTokens),
-        ThinkingTokens = Delta(current.ThinkingTokens, previous.ThinkingTokens),
-        CacheReadTokens = Delta(current.CacheReadTokens, previous.CacheReadTokens),
-        CacheWriteTokens = Delta(current.CacheWriteTokens, previous.CacheWriteTokens),
-        WebSearchRequests = (int)Delta(current.WebSearchRequests, previous.WebSearchRequests),
-        CostUsd = Delta(current.CostUsd, previous.CostUsd)
-    };
-
-    private static long Delta(long current, long previous) => current >= previous ? current - previous : current;
-
-    private static decimal? Delta(decimal? current, decimal? previous)
-    {
-        if (current is null || previous is null || current < previous)
-            return current;
-        return current - previous;
-    }
 }
 
 /// <summary>
@@ -121,12 +75,6 @@ internal sealed class ClaudeStreamState
     /// <summary>Time since the last <c>result</c> event; meaningful once <see cref="ResultCount"/> is above zero.</summary>
     public TimeSpan SinceLastResult =>
         DateTime.UtcNow - new DateTime(Interlocked.Read(ref _lastResultTicks), DateTimeKind.Utc);
-
-    /// <summary>
-    /// True when the CLI was killed before it could save the session's usage totals, which it does
-    /// at exit. A later resumed call then reports totals that lack this call's usage.
-    /// </summary>
-    public bool StoppedBeforeSaving { get; set; }
 
     /// <summary>Records a result; called before the turn is marked finished, so a reader never sees a stale time.</summary>
     internal void CountResult()

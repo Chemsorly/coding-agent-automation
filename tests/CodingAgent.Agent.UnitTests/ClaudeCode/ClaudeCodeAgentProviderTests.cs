@@ -296,10 +296,12 @@ public class ClaudeCodeAgentProviderTests : IDisposable
 
         _launcher.Started[0].ArgumentList.Should().NotContain("--resume");
         _launcher.Started[1].ArgumentList.Should().ContainInOrder("--resume", "s1");
-        second.Usage!.InputTokens.Should().Be(60);
-        second.Usage.OutputTokens.Should().Be(30);
-        second.Cost.Should().Be(0.15m);
-        second.UsageDetails!.Turns.Should().Be(5); // num_turns is per call, not cumulative
+        // A resumed call's result reports that call alone (checked against the real CLI), so it
+        // is taken as it is: nothing of the earlier call is subtracted.
+        second.Usage!.InputTokens.Should().Be(160);
+        second.Usage.OutputTokens.Should().Be(80);
+        second.Cost.Should().Be(0.25m);
+        second.UsageDetails!.Turns.Should().Be(5);
     }
 
     [Fact]
@@ -324,7 +326,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
 
         _launcher.Started[1].ArgumentList.Should().ContainInOrder("--resume", "other");
         (await provider.GetLatestSessionIdAsync(_workspace, CancellationToken.None)).Should().Be("gen");
-        // Nothing was seen of "other" before, so its totals are reported in full.
+        // The result reports that call alone.
         resumed.Usage!.InputTokens.Should().Be(70);
         resumed.Cost.Should().Be(0.07m);
         resumed.UsageDetails!.Turns.Should().Be(4);
@@ -361,23 +363,6 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         _launcher.Started[2].ArgumentList.Should().ContainInOrder("--resume", "analysis");
     }
 
-    [Fact]
-    public async Task ExecuteAsync_ResumeAfterAnIsolatedCallSaved_CountsTheResumedCallFromZero()
-    {
-        // The CLI restores saved totals only for the session it saved last in the workspace, which
-        // after the reviewer is the reviewer's: codegen's totals are then its own.
-        var provider = CreateProvider();
-        _launcher.Enqueue(Init("analysis"), Result("analysis", input: 100, output: 50, thinking: 0, cost: 1m, turns: 1));
-        _launcher.Enqueue(Init("reviewer"), Result("reviewer", input: 10, output: 5, thinking: 0, cost: 0.1m, turns: 1));
-        _launcher.Enqueue(Init("analysis"), Result("analysis", input: 900, output: 400, thinking: 0, cost: 8m, turns: 1));
-
-        await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
-        await provider.ExecuteAsync(Request(useResume: false), CancellationToken.None);
-        var codegen = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
-
-        codegen.Usage!.InputTokens.Should().Be(900);
-        codegen.Cost.Should().Be(8m);
-    }
 
     [Fact]
     public async Task EnsureSessionAsync_IsANoOp()
@@ -530,42 +515,34 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_CliThatIgnoresSigterm_IsKilled_AndTheNextResumeIsMeasuredAgainstSavedTotals()
+    public async Task ExecuteAsync_CliThatIgnoresSigterm_IsKilled_AndTheResultStands()
     {
-        // Killed before it could save its totals, the CLI restores none on the next resume, so that
-        // call's cumulative totals are all its own.
-        var provider = CreateProvider(timings: FastExit());
         _launcher.Enqueue(new FakeClaudeRun(
             [Init("s1"), Result("s1", input: 100, output: 50, thinking: 0, cost: 0.10m, turns: 1)],
             KeepRunningAfterOutput: true, IgnoresTerminate: true));
-        _launcher.Enqueue(Init("s1"), Result("s1", input: 160, output: 80, thinking: 0, cost: 0.25m, turns: 1));
 
-        var first = await provider.ExecuteAsync(Request(), CancellationToken.None);
-        var second = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+        var result = await CreateProvider(timings: FastExit()).ExecuteAsync(Request(), CancellationToken.None);
 
-        first.ExitCode.Should().Be(ExitCodes.Success);
+        result.ExitCode.Should().Be(ExitCodes.Success);
+        result.Usage!.InputTokens.Should().Be(100);
         _launcher.Processes[0].Terminated.Should().BeTrue();
         _launcher.Processes[0].Killed.Should().BeTrue();
-        second.Usage!.InputTokens.Should().Be(160);
     }
 
     [Fact]
-    public async Task ExecuteAsync_TimeoutWhileLingeringAfterItsResult_KeepsTheResult_AndCountsTheKill()
+    public async Task ExecuteAsync_TimeoutWhileLingeringAfterItsResult_KeepsTheResult()
     {
         // The result came in, then the request timeout ran out within the stop grace.
-        var provider = CreateProvider(timings: FastExit(graceMs: 10_000));
         _launcher.Enqueue(new FakeClaudeRun(
             [Init("s1"), Result("s1", input: 100, output: 50, thinking: 0, cost: 0.10m, turns: 1)],
             KeepRunningAfterOutput: true));
-        _launcher.Enqueue(Init("s1"), Result("s1", input: 160, output: 80, thinking: 0, cost: 0.25m, turns: 1));
         var request = new AgentRequest { Prompt = "p", WorkspacePath = _workspace, Timeout = TimeSpan.FromMilliseconds(200) };
 
-        var first = await provider.ExecuteAsync(request, CancellationToken.None);
-        var second = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+        var result = await CreateProvider(timings: FastExit(graceMs: 10_000)).ExecuteAsync(request, CancellationToken.None);
 
-        first.ExitCode.Should().Be(ExitCodes.Success);
+        result.ExitCode.Should().Be(ExitCodes.Success);
+        result.Usage!.InputTokens.Should().Be(100);
         _launcher.Processes[0].Killed.Should().BeTrue();
-        second.Usage!.InputTokens.Should().Be(160, "the killed CLI saved nothing to restore");
     }
 
     [Fact]
