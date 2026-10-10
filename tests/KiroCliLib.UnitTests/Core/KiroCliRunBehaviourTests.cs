@@ -10,14 +10,15 @@ namespace KiroCliLib.UnitTests.Core;
 /// </summary>
 public class KiroCliRunBehaviourTests
 {
-    private static global::KiroCliLib.Configuration.Configuration Config(string? model = null, string? agent = null) =>
-        new() { Model = model, AgentName = agent };
+    private static global::KiroCliLib.Configuration.Configuration Config(string? model = null, string? agent = null, string? effort = null) =>
+        new() { Model = model, AgentName = agent, Effort = effort };
 
     [Fact]
-    public void BuildArguments_ModelAgentAndResume_InOrder()
+    public void BuildArguments_ModelEffortAgentAndResume_InOrder()
     {
-        ProcessWrapper.BuildArguments(Config("claude-sonnet-4.6", "reviewer"), "--resume-id abc", "@.agent/p.md")
-            .Should().Be("chat --agent-engine v2 --no-interactive --model \"claude-sonnet-4.6\" --agent \"reviewer\" --resume-id abc --trust-all-tools \"@.agent/p.md\"");
+        // --effort works with --resume-id too (checked against kiro-cli 2.29).
+        ProcessWrapper.BuildArguments(Config("claude-sonnet-4.6", "reviewer", "max"), "--resume-id abc", "@.agent/p.md")
+            .Should().Be("chat --agent-engine v2 --no-interactive --model \"claude-sonnet-4.6\" --effort \"max\" --agent \"reviewer\" --resume-id abc --trust-all-tools \"@.agent/p.md\"");
     }
 
     [Theory]

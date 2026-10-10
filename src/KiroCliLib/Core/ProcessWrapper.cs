@@ -183,6 +183,8 @@ public class ProcessWrapper : IProcessWrapper
         var args = new System.Text.StringBuilder($"chat {AgentEngineArgument} --no-interactive");
         if (!string.IsNullOrWhiteSpace(config.Model) && !config.Model.Equals("auto", StringComparison.OrdinalIgnoreCase))
             args.Append(" --model ").Append(Quote(config.Model));
+        if (!string.IsNullOrWhiteSpace(config.Effort))
+            args.Append(" --effort ").Append(Quote(config.Effort));
         if (!string.IsNullOrWhiteSpace(config.AgentName))
             args.Append(" --agent ").Append(Quote(config.AgentName));
         if (resumeFlag is not null)

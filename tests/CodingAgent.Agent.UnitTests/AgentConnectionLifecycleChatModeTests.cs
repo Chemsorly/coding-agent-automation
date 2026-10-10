@@ -6,13 +6,8 @@ using Moq;
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// Tests for chat-mode detection, label extension, SignalChatEnd(), and
-/// KiroCliSettingsWriter integration in <see cref="AgentConnectionLifecycle"/> (Req 5, Req 16).
-///
-/// These tests reference <c>AgentConnectionLifecycle._isChatMode</c>,
-/// <c>AgentConnectionLifecycle.SignalChatEnd()</c>, and <c>KiroCliSettingsWriter</c>,
-/// NONE of which exist yet. They will FAIL TO COMPILE until task 5.2 adds those members.
-/// That compile error IS the expected red state for task 5.1.
+/// Tests for chat-mode detection, label extension and SignalChatEnd() in
+/// <see cref="AgentConnectionLifecycle"/> (Req 5, Req 16).
 /// </summary>
 /// <remarks>
 /// Validates: Requirements 5, 16
@@ -257,124 +252,5 @@ public class AgentConnectionLifecycleChatModeTests : IDisposable
         unexpected.Should().BeNull(
             "pre-cancelled token must not propagate unexpected exception types; " +
             $"got: {unexpected?.GetType().Name}: {unexpected?.Message}");
-    }
-
-    // ── Test 8: AGENT_CHAT_MODEL=claude-opus-4.8 → KiroCliSettingsWriter.ApplyAsync called ──
-
-    [Fact]
-    public async Task ChatModel_Set_KiroCliSettingsWriterApplyAsyncCalled()
-    {
-        // Arrange
-        SetEnv("AGENT_CHAT_MODE", "true");
-        SetEnv("AGENT_CHAT_SESSION_ID", Guid.NewGuid().ToString());
-        SetEnv(AgentDefaults.EnvChatModel, "claude-opus-4.8");
-        UnsetEnv(AgentDefaults.EnvChatEffort);
-
-        var applyCalled = false;
-
-        // KiroCliSettingsWriter.ApplyAsync is the static helper from task 11.3.
-        // We capture calls via a test-injectable delegate on AgentConnectionLifecycle.
-        // The lifecycle exposes an internal hook for tests:
-        //   internal Func<string, string?, CancellationToken, Task> KiroCliSettingsApplyFunc
-        // Default is KiroCliSettingsWriter.ApplyAsync.
-        var lifecycle = CreateLifecycle();
-        lifecycle.KiroCliSettingsApplyFunc = (model, effort, ct) =>
-        {
-            applyCalled = true;
-            model.Should().Be("claude-opus-4.8");
-            effort.Should().BeNull();
-            return Task.CompletedTask;
-        };
-
-        // Act — ConnectAndRunAsync calls ApplyAsync before hub connection
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        try
-        {
-            await lifecycle.ConnectAndRunAsync(cts.Token);
-        }
-        catch { /* expected: OperationCanceledException on cancellation, HttpRequestException if no server */ }
-
-        // Assert
-        applyCalled.Should().BeTrue("KiroCliSettingsWriter.ApplyAsync must be called when AGENT_CHAT_MODEL is set");
-    }
-
-    [Fact]
-    public async Task ChatModel_ClaudeCodePod_KiroCliSettingsWriterNotCalled()
-    {
-        // Arrange — Claude Code takes model and effort as CLI flags, so no Kiro settings file
-        SetEnv("AGENT_CHAT_MODE", "true");
-        SetEnv(AgentDefaults.EnvChatModel, "claude-opus-5-5");
-        SetEnv(AgentDefaults.EnvAgentProviderType, "claude");
-
-        var applyCalled = false;
-        var lifecycle = CreateLifecycle();
-        lifecycle.KiroCliSettingsApplyFunc = (model, effort, ct) =>
-        {
-            applyCalled = true;
-            return Task.CompletedTask;
-        };
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        try
-        {
-            await lifecycle.ConnectAndRunAsync(cts.Token);
-        }
-        catch { /* expected: OperationCanceledException on cancellation, HttpRequestException if no server */ }
-
-        // Assert
-        applyCalled.Should().BeFalse("a Claude Code chat pod must not write the Kiro CLI settings file");
-    }
-
-    [Fact]
-    public async Task ChatModel_AutoValue_KiroCliSettingsWriterNotCalled()
-    {
-        // Arrange — model="auto" → no file write
-        SetEnv("AGENT_CHAT_MODE", "true");
-        SetEnv(AgentDefaults.EnvChatModel, "auto");
-
-        var applyCalled = false;
-        var lifecycle = CreateLifecycle();
-        lifecycle.KiroCliSettingsApplyFunc = (model, effort, ct) =>
-        {
-            applyCalled = true;
-            return Task.CompletedTask;
-        };
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        try
-        {
-            await lifecycle.ConnectAndRunAsync(cts.Token);
-        }
-        catch { /* expected: OperationCanceledException on cancellation, HttpRequestException if no server */ }
-
-        // Assert
-        applyCalled.Should().BeFalse("model='auto' must not trigger KiroCliSettingsWriter");
-    }
-
-    [Fact]
-    public async Task ChatModel_Absent_KiroCliSettingsWriterNotCalled()
-    {
-        // Arrange — AGENT_CHAT_MODEL not set → no file write
-        SetEnv("AGENT_CHAT_MODE", "true");
-        UnsetEnv(AgentDefaults.EnvChatModel);
-        UnsetEnv(AgentDefaults.EnvChatEffort);
-
-        var applyCalled = false;
-        var lifecycle = CreateLifecycle();
-        lifecycle.KiroCliSettingsApplyFunc = (model, effort, ct) =>
-        {
-            applyCalled = true;
-            return Task.CompletedTask;
-        };
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        try
-        {
-            await lifecycle.ConnectAndRunAsync(cts.Token);
-        }
-        catch { /* expected: OperationCanceledException on cancellation, HttpRequestException if no server */ }
-
-        // Assert
-        applyCalled.Should().BeFalse("absent AGENT_CHAT_MODEL must not trigger KiroCliSettingsWriter");
     }
 }

@@ -44,13 +44,21 @@ internal static class AgentHostRegistration
         services.AddSingleton(logger);
 
         // ── KiroCliLib ──
-        var kiroConfig = new Configuration
+        // A chat pod's runs take the chat's model and effort from here (AGENT_CHAT_MODEL, AGENT_CHAT_EFFORT);
+        // pipeline pods have neither and get them per provider from AgentProviderFactory.
+        services.AddSingleton(sp =>
         {
-            KiroCliPath = AgentDefaults.KiroCliPath,
-            UseWsl = false, // Agent runs natively in Linux container
-            WorkspaceDirectory = "/app/workspaces"
-        };
-        services.AddSingleton(kiroConfig);
+            var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
+            return new Configuration
+            {
+                KiroCliPath = AgentDefaults.KiroCliPath,
+                UseWsl = false, // Agent runs natively in Linux container
+                WorkspaceDirectory = "/app/workspaces",
+                Model = runtimeOpts.ChatModel,
+                Effort = CodingAgent.Agent.KiroCli.KiroCliAgentProvider.ToKiroEffort(
+                    AgentEffortLevelExtensions.ParseEffort(runtimeOpts.ChatEffort))
+            };
+        });
         services.AddSingleton<IKiroCliOrchestrator>(sp =>
         {
             var cfg = sp.GetRequiredService<Configuration>();

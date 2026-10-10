@@ -190,6 +190,30 @@ public class AgentProviderFactoryTests
     }
 
     [Fact]
+    public void CreateAgentProvider_KiroCliWithOnlyAnEffort_GetsItsOwnOrchestrator()
+    {
+        // The injected orchestrator runs without flags, so an effort needs an orchestrator that passes it.
+        var injected = new Mock<IKiroCliOrchestrator>(MockBehavior.Strict);
+        var factory = CreateFactory(orchestrator: injected.Object);
+        var config = new ProviderConfig
+        {
+            Id = "agent-kiro-effort",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Kiro with effort",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.Model] = "auto",
+                [ProviderSettingKeys.Effort] = "max"
+            }
+        };
+
+        var provider = factory.CreateAgentProvider(config);
+
+        provider.Invoking(p => p.GetHealthStatus()).Should().NotThrow("the strict injected orchestrator is never used");
+    }
+
+    [Fact]
     public void CreateAgentProvider_ClaudeCode_ReturnsProviderWithSettings()
     {
         var factory = CreateFactory();

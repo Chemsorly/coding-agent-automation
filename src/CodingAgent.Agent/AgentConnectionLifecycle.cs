@@ -45,24 +45,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <summary>Chat session identifier injected via AGENT_CHAT_SESSION_ID env var.</summary>
     internal string _chatSessionId = "";
 
-    /// <summary>Chat model override injected via AGENT_CHAT_MODEL env var.</summary>
-    internal string? _chatModel;
-
-    /// <summary>Chat effort override injected via AGENT_CHAT_EFFORT env var.</summary>
-    internal string? _chatEffort;
-
-    /// <summary>True when the pod runs the Claude Code CLI (AGENT_PROVIDER_TYPE=claude).</summary>
-    internal bool _isClaudeCodeAgent;
-
     /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
     internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>
-    /// Injectable seam for KiroCliSettingsWriter.ApplyAsync. Tests override this to
-    /// capture/verify calls without writing to the real filesystem.
-    /// </summary>
-    internal Func<string, string?, CancellationToken, Task> KiroCliSettingsApplyFunc { get; set; }
-        = (model, effort, ct) => KiroCliSettingsWriter.ApplyAsync(model, effort, ct);
 
     internal TimeSpan ExtendedRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
@@ -117,12 +101,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         _chatSessionId = runtimeOptions?.ChatSessionId
             ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId)
             ?? "";
-        _chatModel = runtimeOptions?.ChatModel ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
-        _chatEffort = runtimeOptions?.ChatEffort ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
-        // Claude Code takes model and effort as flags on every call, not from a settings file.
-        _isClaudeCodeAgent = AgentChatModeRegistration.ResolveChatProviderType(
-            runtimeOptions?.AgentProviderType ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType))
-            == AgentProviderType.ClaudeCode;
 
         // Compose the coordinator. It takes ownership of the initial hub manager.
         // afterSuccessfulReconnect is null — chat pods no longer need a drain step
@@ -167,10 +145,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         var manager = _coordinator.CurrentManager
             ?? throw new ObjectDisposedException(nameof(AgentConnectionLifecycle));
 
-        // Chat mode: apply model/effort settings to ~/.kiro/settings/cli.json before connecting
-        if (_isChatMode && !_isClaudeCodeAgent)
-            await ApplyChatModeKiroSettingsAsync(stoppingToken);
-
         WireEventHandlers(manager);
 
         if (!await ConnectWithRetryAsync(manager, stoppingToken))
@@ -196,14 +170,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
         // Normal mode: heartbeat loop
         await RunHeartbeatLoopAsync(stoppingToken);
-    }
-
-    private async Task ApplyChatModeKiroSettingsAsync(CancellationToken stoppingToken)
-    {
-        var model = _chatModel;
-        var effort = _chatEffort;
-        if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
-            await KiroCliSettingsApplyFunc(model, effort, stoppingToken);
     }
 
     /// <returns><c>false</c> when <paramref name="stoppingToken"/> is cancelled before the connection is established.</returns>

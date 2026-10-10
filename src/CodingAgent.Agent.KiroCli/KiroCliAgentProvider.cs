@@ -34,7 +34,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly ConcurrentDictionary<string, byte> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _mainSessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<IKiroCliOrchestrator, byte> _activeOrchestrators = new();
-    private int _cliSettingsApplied;
     private long _lastRunEndedTicks;
 
     internal const string WarmUpPrompt =
@@ -95,16 +94,27 @@ public partial class KiroCliAgentProvider : IAgentProvider
     }
 
     /// <summary>
-    /// The run settings for this provider's orchestrators: the CLI path, and the model and agent that
-    /// every run passes as flags. A blank or <c>auto</c> model and a blank agent are left out.
+    /// The run settings for this provider's orchestrators: the CLI path, and the model, effort and agent
+    /// that every run passes as flags. A blank or <c>auto</c> model, <c>Auto</c> effort and a blank
+    /// agent are left out.
     /// </summary>
-    public static KiroCliLib.Configuration.Configuration CreateRunConfiguration(string executablePath, string? model, string? agentName) => new()
+    public static KiroCliLib.Configuration.Configuration CreateRunConfiguration(
+        string executablePath, string? model, string? agentName, AgentEffortLevel effort = AgentEffortLevel.Auto) => new()
     {
         KiroCliPath = executablePath,
         UseWsl = OperatingSystem.IsWindows(),
         Model = string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : model.Trim(),
-        AgentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName.Trim()
+        AgentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName.Trim(),
+        Effort = ToKiroEffort(effort)
     };
+
+    /// <summary>
+    /// The <c>--effort</c> value for a level. kiro-cli 2.29 has no <c>xhigh</c> (it accepts low, medium,
+    /// high and max), so <see cref="AgentEffortLevel.XHigh"/> runs at <c>high</c> rather than overspend
+    /// at <c>max</c>.
+    /// </summary>
+    public static string? ToKiroEffort(AgentEffortLevel effort) =>
+        effort == AgentEffortLevel.XHigh ? AgentEffortLevel.High.ToCliValue() : effort.ToCliValue();
 
     /// <inheritdoc />
     public async Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct)
@@ -113,8 +123,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
         if (_establishedSessions.ContainsKey(normalizedPath))
             return;
-
-        await ApplyCliSettingsOnceAsync(ct);
 
         try
         {
@@ -176,7 +184,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        await ApplyCliSettingsOnceAsync(ct);
         var normalizedPath = Path.GetFullPath(request.WorkspacePath);
         var (resumeSessionId, onMainConversation) = ResolveSession(request, normalizedPath);
         var outputLines = new List<string>();
@@ -275,7 +282,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// </summary>
     private IKiroCliOrchestrator CreateEphemeralOrchestrator()
     {
-        var config = CreateRunConfiguration(_executablePath, _model, _agentName);
+        var config = CreateRunConfiguration(_executablePath, _model, _agentName, _effort);
         _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
         return _createEphemeralOrchestrator(config);
     }
@@ -487,39 +494,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
         foreach (var orchestrator in _activeOrchestrators.Keys)
             orchestrator.Kill();
         return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// Writes the CLI settings on first use, for every job type: the warm-up that used to be the only
-    /// writer runs for analysis only, and a fresh pod has no <c>cli.json</c>.
-    /// </summary>
-    private async Task ApplyCliSettingsOnceAsync(CancellationToken ct)
-    {
-        if (Interlocked.Exchange(ref _cliSettingsApplied, 1) == 0)
-            await ApplyCliSettingsAsync(ct);
-    }
-
-    /// <summary>
-    /// Persists model and effort settings to <c>~/.kiro/settings/cli.json</c>.
-    /// Delegates to <see cref="KiroCliSettingsWriter.ApplyAsync"/> which handles
-    /// model-name validation, read-merge-write semantics, and effort gating.
-    /// </summary>
-    internal async Task ApplyCliSettingsAsync(CancellationToken ct, string? settingsPathOverride = null)
-    {
-        var hasModel = !string.IsNullOrEmpty(_model) && !_model.Equals("auto", StringComparison.OrdinalIgnoreCase);
-
-        // Guard against passing null to the non-nullable model parameter.
-        // KiroCliSettingsWriter.ApplyAsync also short-circuits on null/auto, but this
-        // avoids a nullable coercion when _model is null.
-        if (!hasModel)
-            return;
-
-        // TODO: The rejection warning for invalid model names is now emitted via the static
-        // Serilog.Log sink (inside KiroCliSettingsWriter) rather than through the injected
-        // _logger. Consumers that wrap _logger with custom enrichers or sinks will silently
-        // miss these rejection events. If scoped-logger visibility is required, intercept
-        // the result or duplicate the validation check here. See review warning (issue #2346).
-        await KiroCliSettingsWriter.ApplyAsync(_model!, _effort.ToCliValue(), ct, settingsPathOverride);
     }
 
     /// <inheritdoc />
