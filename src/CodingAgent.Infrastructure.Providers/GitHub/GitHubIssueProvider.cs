@@ -1,5 +1,6 @@
 using Octokit;
 using Serilog;
+using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using PipelineIssueComment = CodingAgent.Pipeline.Models.IssueComment;
@@ -48,7 +49,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize,
         IReadOnlyList<string>? labels, CancellationToken ct)
     {
-        ValidatePaginationParameters(page, pageSize);
+        SharedPrOperations.ValidatePaginationArgs(page, pageSize);
 
         var request = new RepositoryIssueRequest { State = ItemStateFilter.Open };
         if (labels is { Count: > 0 })
@@ -64,7 +65,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(int page, int pageSize,
         IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
     {
-        ValidatePaginationParameters(page, pageSize);
+        SharedPrOperations.ValidatePaginationArgs(page, pageSize);
 
         var request = new RepositoryIssueRequest
         {
@@ -298,16 +299,6 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     }
 
     #region Private Helpers
-
-    /// <summary>
-    /// Validates pagination parameters (page >= 1, pageSize 1–100).
-    /// </summary>
-    private static void ValidatePaginationParameters(int page, int pageSize)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
-    }
 
     /// <summary>
     /// Fetches a single page of issues using the overfetch-by-one pattern to determine HasMore,
