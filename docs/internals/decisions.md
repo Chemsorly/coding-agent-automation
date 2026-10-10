@@ -345,17 +345,17 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Refactoring consolidation loop: autonomous up to PR creation, merge is human-gated
 <!-- 2026-07-25 -->
-**Rule:** The refactoring loop runs from proposal through review, issue creation, implementation and PR without human approval, and it may create 30 or more issues in one batch. Merging stays a human action.
+**Rule:** The refactoring loop runs from proposal through review, issue creation, implementation and PR without human approval, and it may create up to `MaxRefactoringProposals` (at most 10) issues per scan. Merging stays a human action.
 **Why:** Adversarial review, wont-do tracking and `agent:needs-refinement` gate quality well enough before the merge review, and the merge is the human checkpoint.
 **Not:** approval at issue creation; auto-merge for small issues.
 **Revisit when:** merged loop PRs keep causing regressions, or more than 30% of proposals end as `agent:needs-refinement` or `agent:wont-do`.
 
-### Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only
-<!-- 2026-07-25 -->
-**Rule:** Agents may create issues that declare `Depends on #N` or `Blocked by #N` to order simple, mechanical refactoring; the adversarial reviewer checks them. Dependencies for architectural work go through the human-approved epic workflow.
-**Why:** Each refactoring issue is small and low-risk, so a mechanical order is safe.
-**Not:** human approval for every dependency; time-based auto-release.
-**Revisit when:** a bad dependency blocks work for more than 24 hours unnoticed, or chains grow deeper than 3.
+### Refactoring scan issues are independent; ordered work goes through epics
+<!-- 2026-10-10 -->
+**Rule:** A refactoring scan creates issues that do not depend on each other and writes no `Depends on` lines. Work that needs an order goes through the human-approved epic workflow.
+**Why:** In the scans from 2026-10-02 to 2026-10-10 the agents never ordered proposals (0 of 70 issues), and proposals of one batch that share a file merged fine in parallel. The unused field made the prompt contradict itself.
+**Not:** title-based ordering between the proposals of a batch; dependencies on the issues of earlier scans.
+**Revisit when:** proposals of one batch keep conflicting with each other, or a finding keeps being dropped because it needs an ordered split.
 
 ### Refactoring proposal quality bar
 <!-- 2026-07-04 -->
@@ -676,3 +676,4 @@ The owner has no preference in these areas. Follow best practice and the surroun
 Decisions that no longer hold. Don't bring one back without asking the owner.
 
 - Target user: single operator/power-user — no RBAC for now (2026-07-04, retired 2026-10-05): superseded by [Web UI sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database) and [admin is global-only](#admin-is-global-only-project-bindings-scope-actions-and-visibility).
+- Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only (2026-07-25, retired 2026-10-10): superseded by [Refactoring scan issues are independent](#refactoring-scan-issues-are-independent-ordered-work-goes-through-epics).
