@@ -742,6 +742,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 
         AppendMetadataLine(sb, proposal);
 
+        AppendBeforeYouStartSection(sb, proposal, commitSha);
+
         sb.AppendLine("## Suggested Approach");
         sb.AppendLine();
         sb.AppendLine(SanitizeMarkdown(proposal.Description));
@@ -805,6 +807,32 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             return;
 
         sb.AppendLine(string.Join(" | ", parts));
+        sb.AppendLine();
+    }
+
+    private static void AppendBeforeYouStartSection(StringBuilder sb, RefactoringProposal proposal, string? commitSha)
+    {
+        var hasScope = !string.IsNullOrWhiteSpace(proposal.ScopeQuery);
+        var hasEvidence = !string.IsNullOrWhiteSpace(proposal.Evidence);
+        if (!hasScope && !hasEvidence)
+            return;
+
+        sb.AppendLine("## Before You Start");
+        sb.AppendLine();
+
+        var intro = commitSha is null
+            ? "This issue was written against an earlier commit. Check that the problem still exists before you change anything:"
+            : $"This issue was written against commit `{commitSha[..Math.Min(12, commitSha.Length)]}`. Check that the problem still exists before you change anything:";
+        sb.AppendLine(intro);
+        sb.AppendLine();
+
+        if (hasScope)
+            sb.AppendLine("- Run the search under **Scope**. If it finds none of the instances this issue describes, the problem is already fixed.");
+        if (hasEvidence)
+            sb.AppendLine("- Look for the code quoted under **Evidence**. If it is gone and the problem it shows no longer exists, the problem is already fixed.");
+
+        sb.AppendLine();
+        sb.AppendLine("If the problem is already fixed, report this issue as `wont_do` and say what you checked. Do not make other changes instead, such as adding tests.");
         sb.AppendLine();
     }
 
