@@ -19,6 +19,8 @@ namespace CodingAgent.Scheduler.Services;
 ///   <item>60-second grace period on startup.</item>
 ///   <item><see cref="PeriodicTimer"/> sweep every 60 seconds.</item>
 ///   <item>Leader-gated to prevent duplicate delivery across Scheduler replicas.</item>
+///   <item>Skips rows younger than <see cref="FastPathReservation"/>, which the inline fast path
+///         may still be delivering.</item>
 ///   <item>At-least-once delivery: if the comment posts but <c>MarkCompleted</c> fails,
 ///         the relay will re-post on the next sweep.</item>
 /// </list>
@@ -27,6 +29,19 @@ public sealed class FeedbackCommentRelayService : BackgroundService
 {
     private static readonly TimeSpan DefaultGracePeriod = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DefaultSweepInterval = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// How long a new row is left to the inline fast path before the relay delivers it.
+    /// </summary>
+    /// <remarks>
+    /// <c>AgentJobLifecycleService</c> enqueues the row before it swaps the label and posts the
+    /// comment itself, and marks the row Completed only afterwards — a few seconds in prod, more when
+    /// the provider is slow (each provider call is capped at 5 minutes). A sweep that takes the row
+    /// in between posts the same comment a second time (issues #3236, #3312, #3452). The relay is
+    /// only for rows the fast path abandoned (the API pod stopped during bookkeeping), so a comment
+    /// is delayed by this much in that rare case.
+    /// </remarks>
+    internal static readonly TimeSpan FastPathReservation = TimeSpan.FromMinutes(15);
 
     private readonly IPipelineApiFeedbackCommentOutboxClient _outboxClient;
     private readonly IProviderFactory _providerFactory;
@@ -133,6 +148,11 @@ public sealed class FeedbackCommentRelayService : BackgroundService
 
         var pending = await _outboxClient.GetPendingAsync(maxAttempts, pageSize, sweepCt);
         if (pending is null || pending.Count == 0) return;
+
+        // Rows younger than the reservation may still be in delivery by the inline fast path.
+        var reservedSince = DateTimeOffset.UtcNow - FastPathReservation;
+        pending = pending.Where(e => e.CreatedAt <= reservedSince).ToList();
+        if (pending.Count == 0) return;
 
         _logger.Information("Feedback comment relay: processing {Count} pending entry/entries", pending.Count);
 
