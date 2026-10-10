@@ -272,4 +272,193 @@ public class FeedbackPromptBuilderContentTests
 
         result.Should().NotContain("Force-resolved rebase");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Characterization snapshot tests — added by issue #3534 as a behaviour-
+    //  preserving guard before section-builder refactoring.
+    //  Any prose change inside these methods will fail these tests.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private const string Snapshot_BuildStandaloneFeedbackPrompt = """
+# Pipeline Success Feedback
+
+The pipeline completed successfully. Please provide structured feedback about this run.
+Output ONLY a JSON block — no prose, no explanation, no markdown outside the JSON fence.
+
+## Run Context
+
+- **Elapsed time:** 7m 15s
+- **Retry count:** 2
+
+**Errors encountered during retries:**
+- Compilation failed
+- Tests failed
+
+## Feedback Instructions
+
+Based on your experience during this run, provide structured feedback.
+Ground your answers in concrete evidence — reference specific file names, error messages, or tool names.
+
+**Distinguish between:**
+- **Harness feedback** — things about the pipeline, tools, or prompts that the pipeline team can fix
+- **Issue feedback** — things about the issue description or repository that the issue author needs to fix
+
+If the issue was well-written and the repo was clean, set the `issue` section to null.
+
+### Previously Used Categories
+
+Reuse an existing label if the root cause matches. Only create a new label if the situation is genuinely novel.
+
+**Harness categories from recent runs:**
+- prompt instruction gap
+
+**Issue categories from recent runs:**
+- missing component
+
+## Response Format
+
+Output ONLY the following JSON block. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.
+
+```json
+{
+  "harness": {
+    "category": "short root-cause label (2-4 words, max 50 chars)",
+    "stuckReason": "what blocked progress (required for failure, max 500 chars)",
+    "missingContext": ["file or data that should have been provided upfront"],
+    "missingCapabilities": ["tool or ability you wished you had"],
+    "promptIssues": ["confusing or contradictory instruction from the pipeline"],
+    "suggestions": ["concrete improvement to the harness"]
+  },
+  "issue": {
+    "category": "short issue-quality label (2-4 words, max 50 chars)",
+    "description": "what is wrong with the issue or repository (max 500 chars)",
+    "affectedFiles": ["specific file paths where problems were found"],
+    "humanActionNeeded": "what the issue author should do (max 500 chars)"
+  }
+}
+```
+
+""";
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_WithCategoriesAndErrors_MatchesSnapshot()
+    {
+        var run = CreateTestRun(retryCount: 2, "Compilation failed", "Tests failed");
+        var elapsed = TimeSpan.FromMinutes(7) + TimeSpan.FromSeconds(15);
+
+        var result = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            run,
+            elapsed,
+            previousHarnessCategories: ["prompt instruction gap"],
+            previousIssueCategories: ["missing component"]);
+
+        result.Should().Be(Snapshot_BuildStandaloneFeedbackPrompt);
+    }
+
+    private const string Snapshot_BuildFailureFeedbackPrompt = """
+# Pipeline Failure Feedback
+
+The pipeline has exhausted its retry budget and quality gates still fail.
+Please provide structured feedback explaining what went wrong and what could be improved.
+
+## Original Issue
+
+**Title:** Fix login bug
+
+**Description:**
+The login form throws a NullReferenceException when the email field is empty.
+
+## Retry Context
+
+- **Retry count:** 2
+
+**Errors encountered during retries:**
+- Compilation failed
+- Tests failed
+
+## Latest Quality Gate Report
+
+- **Compilation:** FAILED
+  - Details: error CS1002: ; expected in LoginService.cs
+- **Tests:** FAILED
+  - Details: 3 tests failed
+  - Passed: 47, Failed: 3, Skipped: 1
+
+## Feedback Instructions
+
+Based on the errors above and your experience during this run, provide structured feedback.
+Ground your answers in concrete evidence — reference specific file names, error messages, or tool names.
+
+**You MUST explain the `stuckReason`:** What pipeline/tool limitation or issue problem blocked progress?
+
+**Distinguish between:**
+- **Harness feedback** — things about the pipeline, tools, or prompts that the pipeline team can fix
+- **Issue feedback** — things about the issue description or repository that the issue author needs to fix
+
+If the issue itself contributed to the failure (e.g., contradictory acceptance criteria, missing component, pre-existing bug), fill the `issue` section. Otherwise, set it to null.
+
+### Previously Used Categories
+
+Reuse an existing label if the root cause matches. Only create a new label if the situation is genuinely novel.
+
+**Harness categories from recent runs:**
+- prompt instruction gap
+
+**Issue categories from recent runs:**
+- missing component
+
+## Response Format
+
+Produce a JSON block with the following structure. The `stuckReason` field is required for failure feedback. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.
+
+```json
+{
+  "harness": {
+    "category": "short root-cause label (2-4 words, max 50 chars)",
+    "stuckReason": "what blocked progress (required for failure, max 500 chars)",
+    "missingContext": ["file or data that should have been provided upfront"],
+    "missingCapabilities": ["tool or ability you wished you had"],
+    "promptIssues": ["confusing or contradictory instruction from the pipeline"],
+    "suggestions": ["concrete improvement to the harness"]
+  },
+  "issue": {
+    "category": "short issue-quality label (2-4 words, max 50 chars)",
+    "description": "what is wrong with the issue or repository (max 500 chars)",
+    "affectedFiles": ["specific file paths where problems were found"],
+    "humanActionNeeded": "what the issue author should do (max 500 chars)"
+  }
+}
+```
+
+""";
+
+    [Fact]
+    public void BuildFailureFeedbackPrompt_WithCategoriesAndErrors_MatchesSnapshot()
+    {
+        var run = CreateTestRun(retryCount: 2, "Compilation failed", "Tests failed");
+        var issue = CreateTestIssue("The login form throws a NullReferenceException when the email field is empty.");
+        var report = CreateTestReport(); // defaults: compilation FAILED details, tests FAILED 47/3/1
+
+        var result = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
+            run,
+            issue,
+            report,
+            previousHarnessCategories: ["prompt instruction gap"],
+            previousIssueCategories: ["missing component"]);
+
+        result.Should().Be(Snapshot_BuildFailureFeedbackPrompt);
+    }
+
+    // TODO [WARNING] BuildStandaloneFeedbackPrompt has no snapshot for the degenerate case where both category
+    // lists are empty and there are no retry errors — the branches that suppress the "### Previously Used
+    // Categories" section and the error list are not covered by any characterization guard. A regression in
+    // those conditional rendering paths would not be caught. Add a snapshot test with empty category lists
+    // and a run with RetryCount == 0 and no retry errors. (Review finding: FeedbackPromptBuilderTests.cs:340)
+
+    // TODO [WARNING] BuildFailureFeedbackPrompt only has a snapshot for the case where both compilation and
+    // tests fail in the quality-gate report. The path where compilation passes (or tests pass) renders
+    // different output via AppendQualityGateReport; no snapshot covers those combinations. A regression in
+    // the conditional rendering inside AppendQualityGateReport would not be caught. Add snapshot tests for
+    // at least one additional report combination (e.g. compilation passed, tests failed).
+    // (Review finding: FeedbackPromptBuilderTests.cs:396)
 }
