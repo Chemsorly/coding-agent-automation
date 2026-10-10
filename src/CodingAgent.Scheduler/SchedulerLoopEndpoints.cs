@@ -26,6 +26,11 @@ public static class SchedulerLoopEndpoints
     /// <summary>
     /// Maps loop control endpoints and wires the OnChange cache update.
     /// Must be called after PipelineLoopService and LoopStatusCache are registered in DI.
+    ///
+    /// When a <see cref="ILoopCommandRelay"/> and both <see cref="ILeaderGate"/> and
+    /// <see cref="IRedisStore"/> are resolvable from DI (multi-replica with Redis), the
+    /// write endpoints use the relay-aware handlers. Otherwise the simple (pre-relay) handlers
+    /// are mapped, which avoids injecting relay infrastructure that is unavailable.
     /// </summary>
     public static void MapSchedulerLoopEndpoints(this IEndpointRouteBuilder app)
     {
@@ -45,9 +50,25 @@ public static class SchedulerLoopEndpoints
             .AddEndpointFilter(new ApiKeyFilter(apiKey ?? ""));
 
         group.MapGet("/status", GetLoopStatus);
-        group.MapPost("/start", StartLoop);
-        group.MapPost("/stop", StopLoop);
-        group.MapPost("/resume", ResumeLoop);
+
+        // Use relay-aware handlers only when both Redis store and leader gate are configured.
+        // When either is absent (single-replica or no-Redis), the simple handlers are used —
+        // they are functionally identical to the pre-relay implementation and avoid injecting
+        // relay infrastructure that is not registered in those environments.
+        var store = app.ServiceProvider.GetService<IRedisStore>();
+        var leaderGate = app.ServiceProvider.GetService<ILeaderGate>();
+        if (store is not null && leaderGate is not null)
+        {
+            group.MapPost("/start", StartLoopWithRelay);
+            group.MapPost("/stop", StopLoopWithRelay);
+            group.MapPost("/resume", ResumeLoopWithRelay);
+        }
+        else
+        {
+            group.MapPost("/start", StartLoop);
+            group.MapPost("/stop", StopLoop);
+            group.MapPost("/resume", ResumeLoop);
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -71,12 +92,47 @@ public static class SchedulerLoopEndpoints
         return Results.Ok(dto);
     }
 
+    // ── Handlers: simple path (single-replica, no Redis) ─────────────────────
+    // These are functionally identical to the pre-relay implementation.
+    // Only invoked when IRedisStore or ILeaderGate is not available in DI.
+
     internal static async Task<IResult> StartLoop(
+        IPipelineLoopService loopService,
+        IPipelineApiConfigClient configClient,
+        CancellationToken ct)
+    {
+        var started = await loopService.StartLoopAsync();
+        if (started)
+            await configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, ct);
+        string? error = started ? null : DescribeStartFailure(loopService);
+        return Results.Ok(new LoopStartResultDto(started, error));
+    }
+
+    internal static async Task<IResult> StopLoop(
+        IPipelineLoopService loopService,
+        IPipelineApiConfigClient configClient,
+        CancellationToken ct)
+    {
+        loopService.StopLoop();
+        await configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, ct);
+        return Results.NoContent();
+    }
+
+    internal static IResult ResumeLoop(IPipelineLoopService loopService)
+    {
+        loopService.ResumeLoop();
+        return Results.NoContent();
+    }
+
+    // ── Handlers: relay path (multi-replica with Redis + leader gate) ─────────
+    // Only invoked when both IRedisStore and ILeaderGate are available in DI.
+
+    internal static async Task<IResult> StartLoopWithRelay(
         ILoopCommandRelay relay,
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
-        ILeaderGate? leaderGate,
-        IRedisStore? store,
+        ILeaderGate leaderGate,
+        IRedisStore store,
         CancellationToken ct)
     {
         if (ShouldRunLocally(leaderGate, store))
@@ -96,12 +152,12 @@ public static class SchedulerLoopEndpoints
         return Results.Ok(new LoopStartResultDto(false, result.Error));
     }
 
-    internal static async Task<IResult> StopLoop(
+    internal static async Task<IResult> StopLoopWithRelay(
         ILoopCommandRelay relay,
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
-        ILeaderGate? leaderGate,
-        IRedisStore? store,
+        ILeaderGate leaderGate,
+        IRedisStore store,
         CancellationToken ct)
     {
         // Always persist locally — durable even if the leader never confirms.
@@ -126,11 +182,11 @@ public static class SchedulerLoopEndpoints
             : Results.Problem(result.Error, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
-    internal static async Task<IResult> ResumeLoop(
+    internal static async Task<IResult> ResumeLoopWithRelay(
         ILoopCommandRelay relay,
         IPipelineLoopService loopService,
-        ILeaderGate? leaderGate,
-        IRedisStore? store,
+        ILeaderGate leaderGate,
+        IRedisStore store,
         CancellationToken ct)
     {
         if (ShouldRunLocally(leaderGate, store))

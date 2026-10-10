@@ -257,9 +257,7 @@ public sealed class SchedulerLoopEndpointsTests
         mockConfig.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var result = await SchedulerLoopEndpoints.StartLoop(
-            new NullLoopCommandRelay(), mockLoop.Object, mockConfig.Object,
-            leaderGate: null, store: null, CancellationToken.None);
+        var result = await SchedulerLoopEndpoints.StartLoop(mockLoop.Object, mockConfig.Object, CancellationToken.None);
 
         var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStartResultDto>>().Subject;
         ok.Value!.Started.Should().BeTrue();
@@ -276,9 +274,7 @@ public sealed class SchedulerLoopEndpointsTests
         mockLoop.Setup(l => l.IsLoopActive).Returns(true);
         mockLoop.Setup(l => l.ValidationErrors).Returns([]);
 
-        var result = await SchedulerLoopEndpoints.StartLoop(
-            new NullLoopCommandRelay(), mockLoop.Object, Mock.Of<IPipelineApiConfigClient>(),
-            leaderGate: null, store: null, CancellationToken.None);
+        var result = await SchedulerLoopEndpoints.StartLoop(mockLoop.Object, Mock.Of<IPipelineApiConfigClient>(), CancellationToken.None);
 
         var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStartResultDto>>().Subject;
         ok.Value!.Started.Should().BeFalse();
@@ -293,9 +289,7 @@ public sealed class SchedulerLoopEndpointsTests
         mockLoop.Setup(l => l.IsLoopActive).Returns(false);
         mockLoop.Setup(l => l.ValidationErrors).Returns(["No templates configured"]);
 
-        var result = await SchedulerLoopEndpoints.StartLoop(
-            new NullLoopCommandRelay(), mockLoop.Object, Mock.Of<IPipelineApiConfigClient>(),
-            leaderGate: null, store: null, CancellationToken.None);
+        var result = await SchedulerLoopEndpoints.StartLoop(mockLoop.Object, Mock.Of<IPipelineApiConfigClient>(), CancellationToken.None);
 
         var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStartResultDto>>().Subject;
         ok.Value!.Error.Should().Contain("validation errors");
@@ -311,9 +305,7 @@ public sealed class SchedulerLoopEndpointsTests
         mockConfig.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var result = await SchedulerLoopEndpoints.StopLoop(
-            new NullLoopCommandRelay(), mockLoop.Object, mockConfig.Object,
-            leaderGate: null, store: null, CancellationToken.None);
+        var result = await SchedulerLoopEndpoints.StopLoop(mockLoop.Object, mockConfig.Object, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NoContent>();
         mockLoop.Verify(l => l.StopLoop(), Times.Once);
@@ -323,13 +315,11 @@ public sealed class SchedulerLoopEndpointsTests
     // ── Handler: ResumeLoop ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task ResumeLoop_CallsResumeLoopAndReturnsNoContent()
+    public void ResumeLoop_CallsResumeLoopAndReturnsNoContent()
     {
         var mockLoop = MockLoopService();
 
-        var result = await SchedulerLoopEndpoints.ResumeLoop(
-            new NullLoopCommandRelay(), mockLoop.Object,
-            leaderGate: null, store: null, CancellationToken.None);
+        var result = SchedulerLoopEndpoints.ResumeLoop(mockLoop.Object);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NoContent>();
         mockLoop.Verify(l => l.ResumeLoop(), Times.Once);
@@ -698,11 +688,9 @@ public sealed class SchedulerLoopEndpointsTests
         // Use a fast-timeout relay so the test doesn't wait 10 s.
         var relay = new LoopCommandRelay(mockStore.Object, timeout: TimeSpan.FromMilliseconds(100));
 
-        var result = await SchedulerLoopEndpoints.StopLoop(
+        var result = await SchedulerLoopEndpoints.StopLoopWithRelay(
             relay, mockLoop.Object, mockConfig.Object,
             mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
-
-        // Config must be persisted even though the relay timed out.
         mockConfig.Verify(c => c.UpdatePipelineConfigAsync(
             It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
             It.IsAny<CancellationToken>()), Times.Once,
@@ -745,7 +733,7 @@ public sealed class SchedulerLoopEndpointsTests
 
         var relay = new LoopCommandRelay(mockStore.Object, timeout: TimeSpan.FromMilliseconds(100));
 
-        await SchedulerLoopEndpoints.StopLoop(
+        await SchedulerLoopEndpoints.StopLoopWithRelay(
             relay, mockLoop.Object, mockConfig.Object,
             mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
 
@@ -771,7 +759,7 @@ public sealed class SchedulerLoopEndpointsTests
             .Callback(() => relaySendCalled = true)
             .ReturnsAsync(new LoopCommandResult(false, Error: "timeout"));
 
-        await SchedulerLoopEndpoints.ResumeLoop(
+        await SchedulerLoopEndpoints.ResumeLoopWithRelay(
             mockRelay.Object, mockLoop.Object,
             mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
 
@@ -797,7 +785,7 @@ public sealed class SchedulerLoopEndpointsTests
 
         var relay = new LoopCommandRelay(mockStore.Object, timeout: TimeSpan.FromMilliseconds(100));
 
-        var result = await SchedulerLoopEndpoints.StartLoop(
+        var result = await SchedulerLoopEndpoints.StartLoopWithRelay(
             relay, mockLoop.Object, mockConfig.Object,
             mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
 
