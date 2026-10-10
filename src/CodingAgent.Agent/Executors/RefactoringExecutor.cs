@@ -20,13 +20,6 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 {
     protected override string ExecutorName => "Refactoring detection";
 
-    /// <summary>
-    /// Sentinel provider ID used by DependencyResolver within CreateIssuesAsync.
-    /// All refactoring proposals go to the same single issue provider, so there are no
-    /// cross-tracker dependencies — every dependency always emits the short #N form.
-    /// </summary>
-    private const string SingleTrackerProviderId = "__refactoring_single_tracker__";
-
     public RefactoringExecutor(Serilog.ILogger logger) : base(logger)
     {
     }
@@ -680,21 +673,11 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
-    /// Proposals are processed sequentially. For each successful creation the proposal title is
-    /// registered with a <see cref="DependencyResolver"/> so that later proposals whose
-    /// <see cref="RefactoringProposal.DependsOn"/> lists reference it receive a resolved
-    /// "Depends on #N" line prepended to their issue body.
+    /// Proposals are processed sequentially in the order they appear in <paramref name="proposals"/>.
     /// Individual issue creation failures are logged but do not stop processing.
     /// The first failure hint (classified HTTP status or exception type) is captured and returned
     /// alongside the list of successfully created issues.
     /// </summary>
-    /// <remarks>
-    /// TODO: If a proposal's issue creation fails (exception swallowed by the catch block), its
-    /// title is never registered with the resolver. Any later proposal that lists the failed title
-    /// in its DependsOn will silently receive no dependency line — the same behaviour as an
-    /// unresolvable title. Document this caveat at the call site or in tests if the contract needs
-    /// to be visible to future maintainers.
-    /// </remarks>
     private async Task<(IReadOnlyList<CreatedIssueInfo> Created, string? FirstFailureHint)> CreateIssuesAsync(
         IReadOnlyList<RefactoringProposal> proposals,
         IIssueProvider issueProvider,
@@ -705,48 +688,22 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     {
         var createdIssues = new List<CreatedIssueInfo>();
         string? firstFailureHint = null;
-        var proposalsToProcess = TopologicalSortProposals(proposals.Take(maxProposals).ToList());
+        var proposalsToProcess = proposals.Take(maxProposals).ToList();
         var labels = autoDispatch
             ? new[] { AgentLabels.Generated, AgentLabels.Next }
             : new[] { AgentLabels.Generated };
-
-        var resolver = new DependencyResolver();
 
         foreach (var proposal in proposalsToProcess)
         {
             try
             {
-                // Build the full body first, then resolve and prepend any dependency lines.
-                // Register() uses proposal.Title (raw, not sanitized) so that DependsOn references
-                // from other proposals — which also use the raw agent-generated title — can resolve.
                 var body = FormatIssueBody(proposal, commitSha);
-                var dependencyLines = resolver.Resolve(proposal.DependsOn ?? [], SingleTrackerProviderId, Logger);
-                if (dependencyLines.Count > 0)
-                {
-                    var depSection = string.Join("\n", dependencyLines);
-                    body = $"{depSection}\n\n{body}";
-                }
-
                 var sanitizedTitle = SanitizeTitle(proposal.Title);
                 var result = await issueProvider.CreateIssueAsync(
                     sanitizedTitle,
                     body,
                     labels,
                     ct);
-
-                // DependsOn entries use the raw titles from the same JSON array; the sanitized
-                // title (the one the tracker shows) is registered too (issue #1450).
-                resolver.Register(proposal.Title, result.Identifier, result.Url, SingleTrackerProviderId);
-                if (!string.Equals(proposal.Title.Trim(), sanitizedTitle, StringComparison.OrdinalIgnoreCase))
-                    resolver.Register(sanitizedTitle, result.Identifier, result.Url, SingleTrackerProviderId);
-
-                // TODO: resolver.Register is placed immediately after the awaited CreateIssueAsync
-                // and before createdIssues.Add/logging. If the try block grows with additional
-                // awaitable calls between Register and the catch, a failure there would leave the
-                // resolver holding a registered title for an issue whose entry was never added to
-                // createdIssues. This is harmless today but is a latent structural fragility — keep
-                // Register as the last substantive statement before createdIssues.Add, or move it
-                // inside a finally-guarded section if the block expands.
 
                 createdIssues.Add(new CreatedIssueInfo
                 {
@@ -951,69 +908,6 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// Truncates to 200 chars and strips newlines.
     /// </summary>
     internal static string SanitizeTitle(string title) => TextSanitizer.SanitizeTitle(title);
-
-    /// <summary>
-    /// Orders proposals so that a proposal comes after the proposals it lists in
-    /// <see cref="RefactoringProposal.DependsOn"/>, keeping the original order otherwise.
-    /// Issues are created in this order, so a dependency's issue number is known when its
-    /// dependent's "Depends on #N" line is resolved. Falls back to the original order on a cycle.
-    /// Kahn's algorithm; the batch is capped at a handful of proposals (issue #1450).
-    /// </summary>
-    internal static IReadOnlyList<RefactoringProposal> TopologicalSortProposals(IReadOnlyList<RefactoringProposal> proposals)
-    {
-        if (proposals.Count <= 1)
-            return proposals;
-
-        var (inDegree, dependents) = BuildDependencyGraph(proposals);
-
-        var ready = new Queue<int>(Enumerable.Range(0, proposals.Count).Where(i => inDegree[i] == 0));
-        var sorted = new List<RefactoringProposal>(proposals.Count);
-        while (ready.Count > 0)
-        {
-            var index = ready.Dequeue();
-            sorted.Add(proposals[index]);
-            foreach (var dependent in dependents[index])
-            {
-                if (--inDegree[dependent] == 0)
-                    ready.Enqueue(dependent);
-            }
-        }
-
-        return sorted.Count == proposals.Count ? sorted : proposals;
-    }
-
-    /// <summary>
-    /// Counts, for each proposal, how many proposals in the batch it depends on, and lists the proposals
-    /// that depend on it. Blank titles, titles outside the batch and self-references are ignored.
-    /// </summary>
-    private static (int[] InDegree, List<int>[] Dependents) BuildDependencyGraph(IReadOnlyList<RefactoringProposal> proposals)
-    {
-        // Title lookup is trimmed and case-insensitive, like DependencyResolver.
-        var titleToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < proposals.Count; i++)
-            titleToIndex.TryAdd(proposals[i].Title.Trim(), i);
-
-        var inDegree = new int[proposals.Count];
-        var dependents = new List<int>[proposals.Count];
-        for (var i = 0; i < proposals.Count; i++)
-            dependents[i] = [];
-
-        for (var i = 0; i < proposals.Count; i++)
-        {
-            foreach (var dependency in proposals[i].DependsOn ?? [])
-            {
-                if (!string.IsNullOrWhiteSpace(dependency)
-                    && titleToIndex.TryGetValue(dependency.Trim(), out var dependencyIndex)
-                    && dependencyIndex != i)
-                {
-                    inDegree[i]++;
-                    dependents[dependencyIndex].Add(i);
-                }
-            }
-        }
-
-        return (inDegree, dependents);
-    }
 
     /// <summary>
     /// Escapes markdown-sensitive characters to prevent injection in GitHub issues.
