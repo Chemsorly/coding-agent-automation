@@ -172,8 +172,11 @@ public sealed partial class AgentHub
         var run = _facade.GetRun(jobId);
         if (run is not null)
         {
+            // Stored through the run service: in Redis mode GetRun returns a copy,
+            // so enqueuing on it directly would be lost. Use AppendQualityGateReport
+            // which writes to the Redis list (distributed) or the live run object (in-memory).
+            _facade.AppendQualityGateReport(jobId, report);
             run.LatestQualityReport = report;
-            run.QualityGateHistory.Enqueue(report);
             _facade.ReplaceRun(run);
             _logger.Information("Job {JobId} quality gate result received", jobId.Value);
 
