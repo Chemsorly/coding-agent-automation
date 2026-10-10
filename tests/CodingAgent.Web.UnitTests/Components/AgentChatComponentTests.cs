@@ -888,3 +888,228 @@ public class AgentChatLaunchErrorTests : BunitContext
         }, timeout: TimeSpan.FromSeconds(5));
     }
 }
+
+/// <summary>
+/// Tests that AgentChat re-joins the active chat session group after a hub reconnect and
+/// that the reconnect handler is removed when the chat ends or the component is disposed.
+/// Issue #3551: hub group membership is lost on reconnect; IAgentHubConnection.Reconnected
+/// must be used to re-invoke SubscribeToChatSession so in-flight responses keep arriving.
+/// </summary>
+public class AgentChatReconnectTests : BunitContext
+{
+    private const string FakeAgentId = "chat-reconnect-agent-1";
+    private const string TemplateLabels = "kiro,dotnet";
+
+    private readonly Mock<IAgentHubConnection> _mockHub;
+    private readonly Mock<IChatJobDispatcher> _mockDispatcher;
+    private readonly Mock<IPipelineApiAgentClient> _mockAgentClient;
+
+    public AgentChatReconnectTests()
+    {
+        Services.AddTestAccess();
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockStore = new Mock<IConfigurationStore>();
+        _mockDispatcher = new Mock<IChatJobDispatcher>();
+        _mockHub = new Mock<IAgentHubConnection>();
+        _mockAgentClient = new Mock<IPipelineApiAgentClient>();
+
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+
+        mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+
+        _mockDispatcher
+            .Setup(d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(FakeAgentId);
+
+        // Hub: State transitions to Connected after StartAsync.
+        var connected = false;
+        _mockHub.Setup(h => h.State)
+            .Returns(() => connected ? HubConnectionState.Connected : HubConnectionState.Disconnected);
+        _mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => connected = true)
+            .Returns(Task.CompletedTask);
+        _mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>()))
+            .Returns(Mock.Of<IDisposable>());
+        _mockHub.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>()))
+            .Returns(Mock.Of<IDisposable>());
+        _mockHub.Setup(h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>()))
+            .Returns(Mock.Of<IDisposable>());
+
+        _mockAgentClient
+            .Setup(c => c.AssignChatPromptAsync(It.IsAny<string>(), It.IsAny<ChatPromptMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
+        var registry = new AgentRegistryService(mockLogger.Object);
+
+        Services.AddSingleton(lifecycle);
+        Services.AddSingleton(registry);
+        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(mockStore.Object);
+        Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
+        Services.AddSingleton(new Mock<IJSRuntime>().Object);
+        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton(_mockDispatcher.Object);
+        Services.AddSingleton(_mockHub.Object);
+        Services.AddSingleton(_mockAgentClient.Object);
+        Services.AddSingleton<IChatPromptBuilder>(new ChatPromptBuilder());
+        Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    /// <summary>Launches the chat pod and returns the rendered component.</summary>
+    private async Task<IRenderedComponent<AgentChat>> LaunchPodAsync()
+    {
+        var cut = Render<AgentChat>();
+        var select = cut.Find("select#template-select");
+        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
+        await cut.InvokeAsync(() => launchBtn.Click());
+        cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
+        return cut;
+    }
+
+    /// <summary>Sends a prompt on the already-launched chat window.</summary>
+    private async Task SendPromptAsync(IRenderedComponent<AgentChat> cut)
+    {
+        var textarea = cut.Find("textarea.chat-input");
+        await cut.InvokeAsync(() => textarea.Input("hello"));
+        var sendBtn = cut.FindAll("button").First(b => b.TextContent.Trim() == "Send");
+        await cut.InvokeAsync(() => sendBtn.Click());
+        // Wait for SubscribeToChatSession to be called (happens inside SubscribeAndSendPromptAsync)
+        cut.WaitForAssertion(
+            () => _mockHub.Verify(
+                h => h.InvokeAsync(HubMethodNames.SubscribeToChatSession, It.IsAny<object?>(), It.IsAny<CancellationToken>()),
+                Times.AtLeastOnce),
+            timeout: TimeSpan.FromSeconds(5));
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// With a prompt in flight (_isWaitingForResponse = true), a Reconnected event must
+    /// cause SubscribeToChatSession to be called again with the active session ID so the
+    /// response continues to arrive after the reconnect.
+    /// </summary>
+    [Fact]
+    public async Task AgentChat_ResubscribesToChatSession_AfterReconnectWithActiveSession()
+    {
+        var cut = await LaunchPodAsync();
+        await SendPromptAsync(cut);
+
+        // Record the call count before raising Reconnected
+        var countBefore = _mockHub.Invocations
+            .Count(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
+                        && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession);
+
+        // Simulate hub reconnect
+        _mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        // SubscribeToChatSession must be called at least once more after the reconnect
+        cut.WaitForAssertion(
+            () =>
+            {
+                var countAfter = _mockHub.Invocations
+                    .Count(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
+                                && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession);
+                Assert.True(countAfter > countBefore,
+                    $"SubscribeToChatSession must be called again after reconnect (was {countBefore}, now {countAfter})");
+            },
+            timeout: TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// When no prompt has been sent (no active session), a Reconnected event must not call
+    /// SubscribeToChatSession — there is no group to rejoin.
+    /// </summary>
+    [Fact]
+    public async Task AgentChat_DoesNotSubscribeOnReconnect_WhenNoActiveSession()
+    {
+        // Launch but do NOT send a prompt (_activeSessionId remains null)
+        var cut = await LaunchPodAsync();
+
+        // Simulate hub reconnect
+        _mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        await Task.Delay(200);
+
+        _mockHub.Verify(
+            h => h.InvokeAsync(HubMethodNames.SubscribeToChatSession, It.IsAny<object?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "SubscribeToChatSession must not be called when no session is active");
+    }
+
+    /// <summary>
+    /// After EndChat, a Reconnected event must not call SubscribeToChatSession — the handler
+    /// must have been detached in EndChat.
+    /// </summary>
+    [Fact]
+    public async Task AgentChat_DoesNotSubscribeOnReconnect_AfterChatEnds()
+    {
+        var cut = await LaunchPodAsync();
+        await SendPromptAsync(cut);
+
+        // End the chat
+        var endBtn = cut.FindAll("button").First(b => b.TextContent.Contains("End Chat"));
+        await cut.InvokeAsync(() => endBtn.Click());
+        cut.WaitForAssertion(() => Assert.DoesNotContain("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        // Count calls at this point
+        var countAfterEnd = _mockHub.Invocations
+            .Count(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
+                        && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession);
+
+        // Raise Reconnected — must not increment the count
+        _mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        await Task.Delay(200);
+
+        var countAfterReconnect = _mockHub.Invocations
+            .Count(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
+                        && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession);
+
+        Assert.Equal(countAfterEnd, countAfterReconnect);
+    }
+
+    /// <summary>
+    /// After DisposeAsync, a Reconnected event must not call SubscribeToChatSession — the
+    /// handler must have been detached in DisposeAsync.
+    /// </summary>
+    [Fact]
+    public async Task AgentChat_RemovesReconnectedHandlerOnDispose()
+    {
+        var cut = await LaunchPodAsync();
+        await SendPromptAsync(cut);
+
+        var countBeforeDispose = _mockHub.Invocations
+            .Count(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
+                        && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession);
+
+        // Dispose the component
+        await cut.Instance.DisposeAsync();
+
+        // Raise Reconnected after disposal — must not increment the count
+        _mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        await Task.Delay(200);
+
+        var countAfterDispose = _mockHub.Invocations
+            .Count(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
+                        && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession);
+
+        Assert.Equal(countBeforeDispose, countAfterDispose);
+    }
+}
