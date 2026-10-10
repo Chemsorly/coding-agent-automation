@@ -138,6 +138,25 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IAgentHubFacade>(),
             sp.GetRequiredService<ITriageStore>(),
             Serilog.Log.Logger));
+        services.AddSingleton(sp => new CodingAgent.Api.Triage.TriageTrackerOperations(
+            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IProviderFactory>(),
+            sp.GetRequiredService<ILabelService>(),
+            Serilog.Log.Logger));
+        services.AddSingleton(sp => new CodingAgent.Api.Triage.TriageService(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<ITriageStore>(),
+            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<CodingAgent.Api.Triage.TriageTrackerOperations>(),
+            Serilog.Log.Logger));
+        services.AddSingleton(sp => new CodingAgent.Api.Triage.TriageIssueCreator(
+            sp.GetRequiredService<ITriageStore>(),
+            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IProviderFactory>(),
+            sp.GetRequiredService<CodingAgent.Infrastructure.Locking.IDistributedLockProvider>(),
+            sp.GetRequiredService<CodingAgent.Api.Triage.TriageTrackerOperations>(),
+            Serilog.Log.Logger));
 
         // ── IDatabaseProbe (no-op — real DB connectivity is handled by DatabaseStartupService) ─
         services.AddSingleton<IDatabaseProbe, NoOpDatabaseProbe>();
@@ -628,7 +647,8 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<DatabaseMaintenanceService>(sp => new DatabaseMaintenanceService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IConfiguration>(),
-            sp.GetRequiredService<IPipelineConfigStore>()));
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<ITriageStore>()));
     }
 
     /// <summary>
@@ -663,7 +683,8 @@ public static class ApiServiceCollectionExtensions
             Log.Logger,
             new ConsolidationRunContextSources(
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>())));
+                sp.GetRequiredService<IHarnessSuggestionStore>()),
+            sp.GetRequiredService<ITriageStore>()));
 
         // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.

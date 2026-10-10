@@ -120,6 +120,8 @@ internal sealed class OrphanedRunCompletionHandler
             PipelineStep.Completed => runRecord.TaskType switch
             {
                 WorkItemTaskType.Review => AgentLabels.Next,
+                // A completed triage waits for a person to review its drafts in the app
+                WorkItemTaskType.Triage => AgentLabels.TriageReview,
                 _ => AgentLabels.Done
             },
             PipelineStep.Failed => AgentLabels.Error,

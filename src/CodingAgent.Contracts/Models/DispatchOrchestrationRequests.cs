@@ -69,3 +69,27 @@ public sealed record DecompositionDispatchOrchestrationRequest
     /// <summary>The project context for this dispatch.</summary>
     public required PipelineProject Project { get; init; }
 }
+
+/// <summary>
+/// The parameters of <see cref="Interfaces.IDispatchOrchestrationService.PrepareTriageDistributionRequestAsync"/>.
+/// </summary>
+public sealed record TriageDispatchOrchestrationRequest
+{
+    /// <summary>The <c>agent:triage</c> issue.</summary>
+    public required IssueIdentifier IssueIdentifier { get; init; }
+
+    /// <summary>The tracker the issue lives in; the run is bound to it.</summary>
+    public required ProviderConfigId IssueProviderId { get; init; }
+
+    /// <summary>Repository provider config ID of the executor template.</summary>
+    public required ProviderConfigId RepoProviderId { get; init; }
+
+    /// <summary>Optional brain provider config ID.</summary>
+    public string? BrainProviderId { get; init; }
+
+    /// <summary>Who initiated the dispatch.</summary>
+    public required string InitiatedBy { get; init; }
+
+    /// <summary>The project the issue belongs to.</summary>
+    public required PipelineProject Project { get; init; }
+}

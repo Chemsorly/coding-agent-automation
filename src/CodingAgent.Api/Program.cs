@@ -1,4 +1,5 @@
 using CodingAgent.Api;
+using CodingAgent.Api.Triage;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
@@ -138,6 +139,7 @@ app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();
 app.MapHarnessSuggestionEndpoints();
 app.MapFeedbackCommentOutboxEndpoints();
+app.MapTriageEndpoints();
 app.MapAgentEndpoints();
 app.MapChatEndpoints();
 app.MapApiSchedulerEndpoints();

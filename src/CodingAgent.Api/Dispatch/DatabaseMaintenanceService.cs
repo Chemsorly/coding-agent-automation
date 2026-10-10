@@ -29,17 +29,22 @@ public class DatabaseMaintenanceService
     private readonly DatabaseMaintenanceOptions _options;
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IPipelineConfigStore _configStore;
+    private readonly ITriageStore? _triageStore;
 
+    /// <param name="triageStore">When set, the sweep also keeps triages: it copies how runs ended before their
+    /// WorkItems are deleted, and deletes triages past <see cref="PipelineConfiguration.TriageRetentionDays"/>.</param>
     public DatabaseMaintenanceService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         IConfiguration configuration,
-        IPipelineConfigStore configStore)
+        IPipelineConfigStore configStore,
+        ITriageStore? triageStore = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         _dbFactory = dbFactory;
         _options = new DatabaseMaintenanceOptions();
         configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
         _configStore = configStore;
+        _triageStore = triageStore;
     }
 
     // ExecuteAsync is intentionally absent.
@@ -61,12 +66,38 @@ public class DatabaseMaintenanceService
         // method also has its own internal try/catch for fine-grained error handling; this outer
         // per-call guard ensures a fault that escapes an individual sweep (e.g. from a subclass
         // override in tests, or a missing catch in future code) cannot prevent later sweeps from running.
+        // Before WorkItems expire: a triage attempt that ended without a result keeps how it ended.
+        var triageBackfilled = await RunSweepAsync(BackfillTriageAttemptsAsync, "BackfillTriageAttempts", ct);
         var staleWi = await RunSweepAsync(CleanupStaleWorkItemsAsync, "CleanupStaleWorkItems", ct);
         var staleRuns = await RunSweepAsync(CleanupStalePipelineRunsAsync, "CleanupStalePipelineRuns", ct);
         var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
         var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
         var reconciled = await RunSweepAsync(ReconcileOrphanedPipelineRunsAsync, "ReconcileOrphanedPipelineRuns", ct);
-        return new RetentionSweepResult(staleWi, staleRuns, retentionRuns, retentionWi, reconciled);
+        var triagesDeleted = await RunSweepAsync(SweepTriageRetentionAsync, "SweepTriageRetention", ct);
+        return new RetentionSweepResult(staleWi, staleRuns, retentionRuns, retentionWi, reconciled, triageBackfilled, triagesDeleted);
+    }
+
+    /// <summary>Copies how triage attempts without a result ended, from their WorkItems.</summary>
+    internal async Task<int> BackfillTriageAttemptsAsync(CancellationToken ct)
+    {
+        if (_triageStore is null)
+            return 0;
+        var changed = await _triageStore.BackfillEndedAttemptsAsync(ct);
+        if (changed > 0)
+            Log.Information("DatabaseMaintenanceService: recorded how runs ended for {Count} triages", changed);
+        return changed;
+    }
+
+    /// <summary>Deletes triages last changed more than <see cref="PipelineConfiguration.TriageRetentionDays"/> ago.</summary>
+    internal async Task<int> SweepTriageRetentionAsync(CancellationToken ct)
+    {
+        if (_triageStore is null)
+            return 0;
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var deleted = await _triageStore.DeleteExpiredAsync(DateTimeOffset.UtcNow.AddDays(-config.TriageRetentionDays), ct);
+        if (deleted > 0)
+            Log.Information("DatabaseMaintenanceService: deleted {Count} triages older than {Days} days", deleted, config.TriageRetentionDays);
+        return deleted;
     }
 
     private static async Task<int> RunSweepAsync(Func<CancellationToken, Task<int>> sweep, string name, CancellationToken ct)
@@ -92,7 +123,9 @@ public class DatabaseMaintenanceService
         int StalePipelineRunsDeleted,
         int RetentionPipelineRunsDeleted,
         int RetentionWorkItemsDeleted,
-        int OrphanedPipelineRunsReconciled = 0);
+        int OrphanedPipelineRunsReconciled = 0,
+        int TriageAttemptsBackfilled = 0,
+        int TriagesDeleted = 0);
 
     /// <summary>
     /// Terminal WorkItems older than retention period → DELETE (server-side).

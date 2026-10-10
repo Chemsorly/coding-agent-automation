@@ -2573,6 +2573,32 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
     }
 
     [Fact]
+    public async Task RevertFailedDistribution_Triage_SwapsLabelBackToTriage_NeverToNext()
+    {
+        // A failed triage dispatch must not turn the bug report into an implementation run
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "431",
+            IssueProviderConfigId = "ipc-1",
+            RepoProviderConfigId = "rpc-1",
+            InitiatedBy = InitiatedByConstants.LoopTriage,
+            TaskType = WorkItemTaskType.Triage,
+            RunType = PipelineRunType.Triage,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync("ipc-1", "431", AgentLabels.Triage, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Next, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task RevertFailedDistribution_RemovesDanglingRun()
     {
         // After Req 1a.1 Option A, the monolith no longer manages in-memory runs.

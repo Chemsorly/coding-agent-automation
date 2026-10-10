@@ -1,3 +1,4 @@
+using CodingAgent.Api.Triage;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
@@ -43,11 +44,16 @@ public class AssignmentEnricher
     private readonly ConsolidationTemplateResolver _consolidationTemplateResolver;
     private readonly IPipelineRunHistoryService? _runHistory;
     private readonly IHarnessSuggestionStore? _harnessSuggestions;
+    private readonly ITriageStore? _triageStore;
     private readonly ILogger _logger;
 
     /// <param name="consolidationContext">
     /// Where consolidation assignments read their run context from (see <see cref="ConsolidationRunContextSources"/>).
     /// When null, consolidation assignments go out without it.
+    /// </param>
+    /// <param name="triageStore">
+    /// Where triage assignments read the operator's report and the triage context from. When null, triage
+    /// assignments cannot be enriched.
     /// </param>
     public AssignmentEnricher(
         DispatchInfrastructure infra,
@@ -56,7 +62,8 @@ public class AssignmentEnricher
         IProjectStore projectStore,
         ConsolidationTemplateResolver consolidationTemplateResolver,
         ILogger logger,
-        ConsolidationRunContextSources? consolidationContext = null)
+        ConsolidationRunContextSources? consolidationContext = null,
+        ITriageStore? triageStore = null)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(agentProfileStore);
@@ -72,6 +79,7 @@ public class AssignmentEnricher
         _consolidationTemplateResolver = consolidationTemplateResolver;
         _runHistory = consolidationContext?.RunHistory;
         _harnessSuggestions = consolidationContext?.HarnessSuggestions;
+        _triageStore = triageStore;
         _logger = logger;
     }
 
@@ -241,6 +249,18 @@ public class AssignmentEnricher
             }
         }
 
+        // ── Step 2a: A triage reads every enabled repository of its project, wherever it was reported ──
+        // An operator triage's report comes from its triage, not from a tracker.
+        IssueDetail? prebuiltSubject = identity.TaskType == WorkItemTaskType.Review ? ReviewedPullRequest(identity) : null;
+        string? triageContextMarkdown = null;
+        if (identity.TaskType == WorkItemTaskType.Triage)
+        {
+            var triage = await PrepareTriageAsync(identity, project, ct);
+            if (triage is null)
+                return null;
+            (projectContext, prebuiltSubject, triageContextMarkdown) = triage.Value;
+        }
+
         // ── Step 2b: The project review: the project's reviewers and its other repositories, which they read ──
         // Like a decomposition's scope, it is taken from the configuration at claim time.
         IReadOnlyList<ReviewAgent> projectReviewers =
@@ -266,7 +286,8 @@ public class AssignmentEnricher
             Logger: _logger,
             AdditionalRepoProviderIds: (projectContext?.Repositories ?? projectReviewRepositories)?
                 .Select(r => r.RepoProviderId).OfType<string>().ToList(),
-            PullRequest: identity.TaskType == WorkItemTaskType.Review ? ReviewedPullRequest(identity) : null);
+            PullRequest: prebuiltSubject,
+            NewestComments: identity.TaskType == WorkItemTaskType.Triage);
 
         var core = await _infra.PrepareDispatchCoreAsync(coreRequest, ct);
         if (core is null)
@@ -306,7 +327,58 @@ public class AssignmentEnricher
             ForceRefreshAnalysis = forceRefresh,
             StalenessSignal = stalenessSignal,
             AnalysisRefreshCount = refreshCount,
+            TriageContextMarkdown = triageContextMarkdown,
         };
+    }
+
+    /// <summary>
+    /// The parts of a triage assignment the enricher adds: the project's repositories, an operator triage's
+    /// report (in place of a tracker issue), and the triage context. Null when the assignment cannot be
+    /// enriched (no repository list, no triage store, or the operator triage no longer exists).
+    /// </summary>
+    private async Task<(DecompositionProjectContext ProjectContext, IssueDetail? Subject, string ContextMarkdown)?> PrepareTriageAsync(
+        JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
+    {
+        var projectContext = await _infra.BuildProjectEpicContextAsync(project, _logger, ct);
+        if (projectContext is null)
+        {
+            _logger.Error(
+                "AssignmentEnricher: triage {IssueIdentifier} has no usable repository list in project {ProjectId}; cannot enrich assignment",
+                identity.IssueIdentifier, project.Id);
+            return null;
+        }
+
+        if (_triageStore is null)
+        {
+            _logger.Error("AssignmentEnricher: triage {IssueIdentifier} cannot be enriched without a triage store", identity.IssueIdentifier);
+            return null;
+        }
+
+        var isOperatorTriage = TriageConstants.IsOperatorTriage(identity.IssueProviderConfigId);
+        TriageRecord? triage;
+        IssueDetail? subject = null;
+        if (isOperatorTriage)
+        {
+            var triageId = TriageConstants.TryParseTriageId(identity.IssueIdentifier);
+            triage = triageId is null ? null : await _triageStore.GetAsync(triageId.Value, ct);
+            if (triage?.Request is null)
+            {
+                _logger.Error("AssignmentEnricher: operator triage {IssueIdentifier} no longer exists; cannot enrich assignment",
+                    identity.IssueIdentifier);
+                return null;
+            }
+            subject = TriageContextRenderer.ToIssueDetail(triage);
+        }
+        else
+        {
+            triage = await _triageStore.GetByIssueAsync(identity.IssueProviderConfigId, identity.IssueIdentifier, ct);
+        }
+
+        var others = await _triageStore.ListRecentAsync(
+            project.Id, DateTimeOffset.UtcNow.AddDays(-PipelineConstants.DefaultTriageRetentionDays),
+            TriageConstants.MaxHistoryContext, triage?.Id, ct);
+        var markdown = TriageContextRenderer.RenderContext(triage, identity.RunId, others, reportToTracker: !isOperatorTriage);
+        return (projectContext, subject, markdown);
     }
 
     /// <summary>
