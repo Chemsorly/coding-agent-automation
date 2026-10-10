@@ -22,9 +22,35 @@ using Microsoft.JSInterop;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
+/// <summary>Job templates, agent profiles and provider configs for the AgentChat test classes.</summary>
+internal static class AgentChatTestData
+{
+    public static JobTemplateStore Templates(params string[] labelSets) =>
+        JobTemplateStore.LoadFromYaml(string.Concat(labelSets.Select(labels =>
+            $"- labels: \"{labels}\"\n  image: \"test/agent:latest\"\n  providerType: \"kiro\"\n")));
+
+    public static AgentProfile Profile(string id, string labels, string providerConfigId, bool enabled = true) => new()
+    {
+        Id = id,
+        DisplayName = $"{id} profile",
+        MatchLabels = labels.Split(',', StringSplitOptions.RemoveEmptyEntries),
+        AgentProviderConfigId = providerConfigId,
+        Enabled = enabled
+    };
+
+    public static ProviderConfig AgentConfig(string id, string providerType = "KiroCli") => new()
+    {
+        Id = id,
+        DisplayName = $"{id} agent",
+        Kind = ProviderKind.Agent,
+        ProviderType = providerType,
+        Settings = new Dictionary<string, string>()
+    };
+}
+
 /// <summary>
 /// bUnit component tests for the AgentChat page.
-/// Covers initial render state, agent selection, and chat setup UI.
+/// Covers initial render state, agent profile selection, and chat setup UI.
 /// </summary>
 public class AgentChatComponentTests : BunitContext
 {
@@ -100,11 +126,11 @@ public class AgentChatComponentTests : BunitContext
         var cut = Render<AgentChat>();
 
         Assert.Contains("Interactive Chat", cut.Markup);
-        Assert.Contains("Select an agent type to launch", cut.Markup);
+        Assert.Contains("Select an agent profile to launch", cut.Markup);
     }
 
     [Fact]
-    public void AgentChat_ShowsLaunchButton_WhenNoTemplateSelected()
+    public void AgentChat_ShowsLaunchButton_WhenNoProfileSelected()
     {
         var cut = Render<AgentChat>();
 
@@ -113,7 +139,7 @@ public class AgentChatComponentTests : BunitContext
     }
 
     [Fact]
-    public void AgentChat_StartChatButton_DisabledWhenNoTemplateSelected()
+    public void AgentChat_StartChatButton_DisabledWhenNoProfileSelected()
     {
         var cut = Render<AgentChat>();
 
@@ -122,13 +148,13 @@ public class AgentChatComponentTests : BunitContext
     }
 
     [Fact]
-    public void AgentChat_ShowsTemplateDropdown()
+    public void AgentChat_ShowsProfileDropdown()
     {
         var cut = Render<AgentChat>();
 
-        var select = cut.Find("select#template-select");
+        var select = cut.Find("select#profile-select");
         Assert.NotNull(select);
-        Assert.Contains("Select agent type", cut.Markup);
+        Assert.Contains("Select agent profile", cut.Markup);
     }
 
     [Fact]
@@ -136,7 +162,41 @@ public class AgentChatComponentTests : BunitContext
     {
         var cut = Render<AgentChat>();
 
-        Assert.Contains("Select an agent type to launch a dedicated chat pod", cut.Markup);
+        Assert.Contains("Select an agent profile to launch a dedicated chat pod", cut.Markup);
+    }
+
+    [Fact]
+    public void AgentChat_OffersOnlyEnabledProfilesWhoseLabelsNameAJobTemplate()
+    {
+        // The empty-labels template exists so the label-less default profile is excluded for
+        // having no labels, not for lacking a template: a chat pod needs a non-empty selector.
+        Services.AddSingleton(AgentChatTestData.Templates("claude,dotnet", "kiro,dotnet", ""));
+        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                AgentChatTestData.Profile("claude", "dotnet,claude", "cfg-claude"),
+                AgentChatTestData.Profile("kiro-disabled", "kiro,dotnet", "cfg-kiro", enabled: false),
+                AgentChatTestData.Profile("no-template", "java", "cfg-kiro"),
+                AgentChatTestData.Profile("default", "", "cfg-kiro"),
+            });
+
+        var cut = Render<AgentChat>();
+
+        cut.FindAll("#profile-select option").Select(o => o.GetAttribute("value"))
+            .Should().Equal("", "claude");
+        cut.Markup.Should().NotContain("No enabled agent profile has a matching job template");
+    }
+
+    [Fact]
+    public void AgentChat_ShowsHint_WhenNoProfileHasAJobTemplate()
+    {
+        // A template alone is not enough: without a profile the chat would run with default settings.
+        Services.AddSingleton(AgentChatTestData.Templates("claude,dotnet"));
+
+        var cut = Render<AgentChat>();
+
+        cut.Markup.Should().Contain("No enabled agent profile has a matching job template");
+        cut.FindAll("#profile-select option").Should().ContainSingle();
     }
 
     [Fact]
@@ -163,18 +223,19 @@ public class AgentChatComponentTests : BunitContext
     [Fact]
     public void AgentChat_ShowsK8sLaunchUI()
     {
-        // K8s mode is now the only mode — shows Job Template dropdown and Launch Chat Pod button.
+        // K8s mode is now the only mode — shows the agent profile dropdown and Launch Chat Pod button.
         var cut = Render<AgentChat>();
 
         Assert.DoesNotContain("not available in Kubernetes mode", cut.Markup);
         Assert.Contains("Interactive Chat", cut.Markup);
         Assert.Contains("Launch Chat Pod", cut.Markup);
-        Assert.Contains("template-select", cut.Markup);
+        Assert.Contains("profile-select", cut.Markup);
     }
 }
 
 /// <summary>
-/// bUnit tests for MCP config path resolution in <see cref="AgentChat"/>.
+/// bUnit tests for launch-profile resolution in <see cref="AgentChat"/>: the selector, model and
+/// effort sent to the dispatcher, and the MCP config path sent with the prompt.
 /// These tests drive ResolvePodLaunchProfileAsync indirectly through LaunchChatPod
 /// and capture the resolved McpConfigPath via AssignChatPromptAsync.
 ///
@@ -185,6 +246,7 @@ public class AgentChatMcpConfigPathTests : BunitContext
 {
     private const string FakeAgentId = "chat-agent-1";
     private const string TemplateLabels = "opencode,dotnet";
+    private const string ProfileId = "chat-profile-1";
     private const string AgentProviderConfigId = "agent-cfg-1";
 
     private readonly Mock<IConfigurationStore> _mockStore;
@@ -206,6 +268,8 @@ public class AgentChatMcpConfigPathTests : BunitContext
 
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
+        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -238,7 +302,7 @@ public class AgentChatMcpConfigPathTests : BunitContext
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
-        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton(AgentChatTestData.Templates(TemplateLabels));
         Services.AddSingleton(_mockDispatcher.Object);
         Services.AddSingleton(_mockHub.Object);
         Services.AddSingleton(_mockAgentClient.Object);
@@ -248,17 +312,30 @@ public class AgentChatMcpConfigPathTests : BunitContext
     }
 
     /// <summary>
-    /// Helper: build an AgentProfile that matches TemplateLabels and points to a ProviderConfig
-    /// with the given ProviderType and optional explicit mcpConfigPath setting.
+    /// Helper: build an AgentProfile whose labels name the TemplateLabels template and which
+    /// points to AgentProviderConfigId.
     /// </summary>
     private static AgentProfile MakeProfile() =>
         new AgentProfile
         {
+            Id = ProfileId,
             DisplayName = "Test Profile",
             AgentProviderConfigId = AgentProviderConfigId,
             MatchLabels = TemplateLabels.Split(',').ToList(),
             Enabled = true
         };
+
+    private async Task<IRenderedComponent<AgentChat>> RenderAndLaunchAsync()
+    {
+        var cut = Render<AgentChat>();
+
+        var select = cut.Find("select#profile-select");
+        await cut.InvokeAsync(() => select.Change(ProfileId));
+
+        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
+        await cut.InvokeAsync(() => launchBtn.Click());
+        return cut;
+    }
 
     private static ProviderConfig MakeProviderConfig(string providerType, string? explicitMcpPath = null)
     {
@@ -288,15 +365,8 @@ public class AgentChatMcpConfigPathTests : BunitContext
         _mockStore.Setup(s => s.GetProviderConfigByIdAsync(AgentProviderConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(agentConfig);
 
-        var cut = Render<AgentChat>();
-
-        // Select template to trigger ResolvePodLaunchProfileAsync
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
-
-        // Click Launch Chat Pod
-        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
-        await cut.InvokeAsync(() => launchBtn.Click());
+        // Select the profile and click Launch Chat Pod, which runs ResolvePodLaunchProfileAsync
+        var cut = await RenderAndLaunchAsync();
 
         // Wait for chat window to appear (launch succeeded)
         cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
@@ -374,82 +444,48 @@ public class AgentChatMcpConfigPathTests : BunitContext
     }
 
     [Fact]
-    public async Task ResolvePodLaunchProfileAsync_NullAgentConfig_FallsBackToKiroPath()
+    public async Task LaunchChatPod_ProfileWithMissingProviderConfig_ShowsErrorAndDoesNotDispatch()
     {
-        // Given: profile resolves but GetProviderConfigByIdAsync returns null
-        var profile = MakeProfile();
-
+        // Given: the profile points to an agent provider config that does not exist. Launching
+        // anyway would run the pod with default model, effort and auth mode.
         _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profile });
+            .ReturnsAsync(new[] { MakeProfile() });
         _mockStore.Setup(s => s.GetProviderConfigByIdAsync(AgentProviderConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
-        var cut = Render<AgentChat>();
+        var cut = await RenderAndLaunchAsync();
 
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
-
-        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
-        await cut.InvokeAsync(() => launchBtn.Click());
-
-        cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        ChatPromptMessage? captured = null;
-        _mockAgentClient
-            .Setup(c => c.AssignChatPromptAsync(It.IsAny<string>(), It.IsAny<ChatPromptMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, ChatPromptMessage, CancellationToken>((_, msg, _) => captured = msg)
-            .Returns(Task.CompletedTask);
-
-        var textarea = cut.Find("textarea.chat-input");
-        await cut.InvokeAsync(() => textarea.Input("hello"));
-
-        var sendBtn = cut.FindAll("button").First(b => b.TextContent.Trim() == "Send");
-        await cut.InvokeAsync(() => sendBtn.Click());
-
-        cut.WaitForAssertion(() => Assert.NotNull(captured), timeout: TimeSpan.FromSeconds(5));
-
-        Assert.Equal("/home/ubuntu/.kiro/settings/mcp.json", captured!.McpConfigPath);
+        cut.WaitForAssertion(() =>
+            cut.Find(".agent-detail-warning").TextContent.Should().Contain(
+                "Agent profile 'Test Profile' points to an agent provider config that does not exist"),
+            timeout: TimeSpan.FromSeconds(5));
+        cut.Markup.Should().NotContain("chat-window");
+        _mockDispatcher.Verify(
+            d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task ResolvePodLaunchProfileAsync_NullProfile_FallsBackToKiroPath()
+    public async Task LaunchChatPod_DispatchesProfileSelectorWithProviderModelAndEffort()
     {
-        // Given: no AgentProfile matches the selected template labels (_resolvedProfile is null)
-        // The unconditional reset at the top of ResolvePodLaunchProfileAsync must fire.
-        // TODO: This test does not actually verify the unconditional-reset behaviour it describes.
-        // With a fresh component instance, _resolvedMcpConfigPath is already initialised to the
-        // Kiro default, so this test passes even if the unconditional-reset line is deleted. The
-        // stale-state-reset regression is covered by SequentialSessions_DoesNotLeakPathAcrossSessions.
-        // Consider replacing this test with one that starts from a prior OpenCode session and
-        // then launches with a null profile, asserting the path reverts to the Kiro default.
+        // Regression: the chat header showed "model: auto" and the pod ran the CLI default model
+        // because the page looked the profile up from template labels and found none.
+        var agentConfig = MakeProviderConfig("ClaudeCode");
+        agentConfig.Settings[CodingAgent.Pipeline.ProviderSettingKeys.Model] = "claude-opus-5-5";
+        agentConfig.Settings[CodingAgent.Pipeline.ProviderSettingKeys.Effort] = "high";
         _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
+            .ReturnsAsync(new[] { MakeProfile() });
+        _mockStore.Setup(s => s.GetProviderConfigByIdAsync(AgentProviderConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(agentConfig);
 
-        var cut = Render<AgentChat>();
+        var cut = await RenderAndLaunchAsync();
 
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
-
-        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
-        await cut.InvokeAsync(() => launchBtn.Click());
-
-        cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
-
-        ChatPromptMessage? captured = null;
-        _mockAgentClient
-            .Setup(c => c.AssignChatPromptAsync(It.IsAny<string>(), It.IsAny<ChatPromptMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, ChatPromptMessage, CancellationToken>((_, msg, _) => captured = msg)
-            .Returns(Task.CompletedTask);
-
-        var textarea = cut.Find("textarea.chat-input");
-        await cut.InvokeAsync(() => textarea.Input("hello"));
-
-        var sendBtn = cut.FindAll("button").First(b => b.TextContent.Trim() == "Send");
-        await cut.InvokeAsync(() => sendBtn.Click());
-
-        cut.WaitForAssertion(() => Assert.NotNull(captured), timeout: TimeSpan.FromSeconds(5));
-
-        Assert.Equal("/home/ubuntu/.kiro/settings/mcp.json", captured!.McpConfigPath);
+        cut.WaitForAssertion(() =>
+            cut.Find(".chat-agent-info").TextContent.Should().Contain("model: claude-opus-5-5"),
+            timeout: TimeSpan.FromSeconds(5));
+        _mockDispatcher.Verify(
+            d => d.DispatchChatPodAsync("dotnet,opencode", "claude-opus-5-5", "high", It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -464,14 +500,8 @@ public class AgentChatMcpConfigPathTests : BunitContext
         _mockStore.Setup(s => s.GetProviderConfigByIdAsync(AgentProviderConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(openCodeConfig);
 
-        var cut = Render<AgentChat>();
-
         // Launch session 1 (OpenCode)
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
-
-        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
-        await cut.InvokeAsync(() => launchBtn.Click());
+        var cut = await RenderAndLaunchAsync();
 
         cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
 
@@ -486,9 +516,9 @@ public class AgentChatMcpConfigPathTests : BunitContext
         _mockStore.Setup(s => s.GetProviderConfigByIdAsync(AgentProviderConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(kiroConfig);
 
-        // Re-select the template to trigger profile resolution again
-        var select2 = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select2.Change(TemplateLabels));
+        // Re-select the profile; launching resolves its provider config again
+        var select2 = cut.Find("select#profile-select");
+        await cut.InvokeAsync(() => select2.Change(ProfileId));
 
         var launchBtn2 = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
         await cut.InvokeAsync(() => launchBtn2.Click());
@@ -531,6 +561,7 @@ public class AgentChatHubStartTimingTests : BunitContext
 
     private const string FakeAgentId = "chat-agent-timing-1";
     private const string TemplateLabels = "kiro,dotnet";
+    private const string ProfileId = "timing-profile";
 
     public AgentChatHubStartTimingTests()
     {
@@ -547,7 +578,9 @@ public class AgentChatHubStartTimingTests : BunitContext
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
+            .ReturnsAsync(new[] { AgentChatTestData.Profile(ProfileId, TemplateLabels, "timing-cfg") });
+        mockStore.Setup(s => s.GetProviderConfigByIdAsync("timing-cfg", ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AgentChatTestData.AgentConfig("timing-cfg"));
         mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -582,7 +615,7 @@ public class AgentChatHubStartTimingTests : BunitContext
         Services.AddSingleton(mockStore.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
-        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton(AgentChatTestData.Templates(TemplateLabels));
         Services.AddSingleton(_mockDispatcher.Object);
         Services.AddSingleton(_mockHub.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiAgentClient>());
@@ -628,13 +661,6 @@ public class AgentChatHubStartTimingTests : BunitContext
     [Fact]
     public async Task AgentChat_StartsHubAfterLaunchChatPod()
     {
-        // TODO [WARNING]: This test uses JobTemplateStore.CreateEmpty(), so the select dropdown has no
-        // real <option> elements. The Change("kiro,dotnet") call works via Blazor @bind regardless of
-        // DOM options, but the setup would silently test a blocked launch path if the component ever
-        // validates that the selected value corresponds to an actual template entry. Consider registering
-        // a JobTemplateStore with a template whose labels match TemplateLabels so DOM state mirrors the
-        // real UI.
-        //
         // TODO [WARNING]: Does not test the re-launch scenario (EndChat followed by a second LaunchChatPod).
         // On re-launch, StartAsync should NOT be called again if the hub is still Connected, but handlers
         // must still be re-registered. Add a test covering this case to verify the
@@ -644,9 +670,9 @@ public class AgentChatHubStartTimingTests : BunitContext
         // Before launch: StartAsync must not have been called
         _mockHub.Verify(h => h.StartAsync(It.IsAny<CancellationToken>()), Times.Never);
 
-        // Select template and click Launch Chat Pod
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+        // Select the profile and click Launch Chat Pod
+        var select = cut.Find("select#profile-select");
+        await cut.InvokeAsync(() => select.Change(ProfileId));
 
         var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
         await cut.InvokeAsync(() => launchBtn.Click());
@@ -664,9 +690,9 @@ public class AgentChatHubStartTimingTests : BunitContext
     {
         var cut = Render<AgentChat>();
 
-        // Select template and click Launch Chat Pod
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+        // Select the profile and click Launch Chat Pod
+        var select = cut.Find("select#profile-select");
+        await cut.InvokeAsync(() => select.Change(ProfileId));
 
         var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
         await cut.InvokeAsync(() => launchBtn.Click());
@@ -753,6 +779,7 @@ public class AgentChatAccessTests : BunitContext
 public class AgentChatLaunchErrorTests : BunitContext
 {
     private const string TemplateLabels = "kiro";
+    private const string ProfileId = "launch-error-profile";
 
     private readonly Mock<IPipelineApiChatClient> _chatClient;
 
@@ -771,7 +798,9 @@ public class AgentChatLaunchErrorTests : BunitContext
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
+            .ReturnsAsync(new[] { AgentChatTestData.Profile(ProfileId, TemplateLabels, "launch-error-cfg") });
+        mockStore.Setup(s => s.GetProviderConfigByIdAsync("launch-error-cfg", ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AgentChatTestData.AgentConfig("launch-error-cfg"));
         mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -786,7 +815,7 @@ public class AgentChatLaunchErrorTests : BunitContext
         Services.AddSingleton(mockStore.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
-        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton(AgentChatTestData.Templates(TemplateLabels));
 
         // Register the real ApiChatJobDispatcher (not a mock) so the status→exception mapping runs.
         Services.AddSingleton<IChatJobDispatcher>(new ApiChatJobDispatcher(_chatClient.Object));
@@ -808,16 +837,9 @@ public class AgentChatLaunchErrorTests : BunitContext
 
     private async Task<IRenderedComponent<AgentChat>> RenderAndLaunchAsync()
     {
-        // TODO [WARNING]: JobTemplateStore.CreateEmpty() contains no templates, so there is no <option value="kiro">
-        // element in the rendered select. The bUnit Change event fires and binds "kiro" to _selectedTemplateLabels,
-        // but any code path in OnTemplateSelected or LaunchChatPod that looks up the selected template by label
-        // will find nothing silently. If AgentChat.razor adds a guard requiring a matching template before dispatch,
-        // the mock dispatcher will never be called and these tests will time out instead of failing with a useful
-        // message. Consider registering a JobTemplateStore containing a "kiro" template, or asserting the dispatcher
-        // is invoked before waiting for the UI warning, to make failure modes explicit.
         var cut = Render<AgentChat>();
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+        var select = cut.Find("select#profile-select");
+        await cut.InvokeAsync(() => select.Change(ProfileId));
         var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
         await cut.InvokeAsync(() => launchBtn.Click());
         return cut;
