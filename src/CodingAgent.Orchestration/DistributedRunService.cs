@@ -310,6 +310,44 @@ return hash
         return lines;
     }
 
+    // ── AppendChatEntry / GetChatHistoryAsync ─────────────────────────
+
+    /// <inheritdoc />
+    /// Distributed path: RPUSH the JSON-serialized entry to run:{id}:chat, bounded via LTRIM to the last 200 entries.
+    public void AppendChatEntry(RunId runId, ChatEntry entry)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        ArgumentNullException.ThrowIfNull(entry);
+
+        // Fire-and-forget Redis write — same delivery guarantee as AppendOutputLines.
+        _ = AppendChatToRedisAsync(runId.Value, entry)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "AppendChatEntry: Redis write failed for run {RunId} — chat entry lost",
+                runId.Value), TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    private async Task AppendChatToRedisAsync(string runId, ChatEntry entry)
+    {
+        // Default JsonSerializer options: RemoveRunAsync reads with EnqueueDeserialized (same options).
+        await _store.ListRightPushAsync(ChatKey(runId), [JsonSerializer.Serialize(entry)]);
+        await _store.ListTrimAsync(ChatKey(runId), -PipelineConstants.DefaultChatHistoryCapacity, -1);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ChatEntry>> GetChatHistoryAsync(RunId runId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value, nameof(runId));
+        ct.ThrowIfCancellationRequested();
+        // TODO: ct is not forwarded to _store.ListRangeAsync because IRedisStore.ListRangeAsync has no
+        // CancellationToken overload. A cancellation that arrives after the Redis round-trip begins cannot
+        // interrupt it. This is the same documented limitation as GetOutputBacklogAsync above. Fix when
+        // IRedisStore gains cancellation support.
+        var entries = await _store.ListRangeAsync(ChatKey(runId.Value), 0, -1);
+        var history = new BoundedConcurrentQueue<ChatEntry>(PipelineConstants.DefaultChatHistoryCapacity);
+        EnqueueDeserialized(entries, history);
+        return history.ToArray();
+    }
+
     // ── IsIssueBeingProcessed ─────────────────────────────────────────
 
     /// <inheritdoc />

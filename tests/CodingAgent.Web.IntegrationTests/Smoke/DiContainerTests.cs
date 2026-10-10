@@ -101,8 +101,7 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     /// <summary>
-    /// The local registry stays registered under its concrete type — <c>ModelFetchService</c>,
-    /// <c>AgentChat.razor</c> and the E2E factories all resolve it directly.
+    /// The local registry stays registered under its concrete type — the E2E factories resolve it directly.
     /// </summary>
     [Fact]
     public void LocalAgentRegistry_RemainsResolvableByConcreteType()

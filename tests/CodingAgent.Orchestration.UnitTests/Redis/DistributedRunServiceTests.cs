@@ -168,6 +168,34 @@ public sealed class DistributedRunServiceTests
         stored.Count.Should().BeLessThanOrEqualTo(500);
     }
 
+    // ── AppendChatEntry ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AppendChatEntry_KeepsLast200Entries()
+    {
+        _sut.AddRun(MakeRun("run-chat-cap"));
+
+        // Call through the production path: AppendChatEntry fires-and-forgets to Redis.
+        // FakeRedisStore completes synchronously, so await Task.Yield() is a sufficient barrier.
+        // TODO: A single Task.Yield() guarantees the current thread yields once but does not
+        // guarantee all 205 fire-and-forget continuations complete before the assertion if the
+        // thread pool schedules them across multiple resumptions. Consider writing directly to
+        // _store (as AppendOutputLines_CapsAt500 does) or documenting precisely why one yield is
+        // sufficient (e.g. that ContinueWith(OnlyOnFaulted) on a successfully completed Task never
+        // schedules a continuation, so the Redis writes complete inline with no yield required).
+        for (var i = 0; i < 205; i++)
+            _sut.AppendChatEntry(new RunId("run-chat-cap"),
+                new ChatEntry { Role = ChatRole.Agent, Content = $"entry-{i}" });
+
+        await Task.Yield(); // all fire-and-forget tasks settle (FakeRedisStore is synchronous)
+
+        var list = _store.GetList("run:run-chat-cap:chat");
+        list.Count.Should().Be(200,
+            "LTRIM(-200,-1) must keep exactly the last 200 entries after 205 appends");
+        JsonSerializer.Deserialize<ChatEntry>(list[0])!.Content.Should().Be("entry-5",
+            "the oldest remaining entry after trimming 5 must be entry-5");
+    }
+
     // ── IsIssueBeingProcessed ─────────────────────────────────────────────────
 
     [Fact]
