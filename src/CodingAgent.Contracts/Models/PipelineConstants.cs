@@ -87,6 +87,18 @@ public static class PipelineConstants
         "Do NOT run git write commands (git add, git commit, git push, etc.). " +
         "The pipeline handles version control automatically.";
 
+    /// <summary>
+    /// Rule appended to every prompt under which an agent writes code: a failing check is fixed in
+    /// the code, never by weakening the check.
+    /// </summary>
+    public const string GateIntegrityRule =
+        "Fix the cause, not the check. Do NOT add or widen exclusions, suppressions or ignore rules in static-analysis, " +
+        "coverage, lint or CI configuration (for example `sonar.*.exclusions`, `NOSONAR`, `#pragma warning disable`, " +
+        "`[SuppressMessage]`, `eslint-disable`, coverage excludes or CI workflow files). Do NOT skip, disable or delete tests. " +
+        "Do NOT change the expected value of an existing test to match new output unless the issue asks for the behaviour change that test covers. " +
+        "These rules do not apply to a change the issue explicitly asks for. " +
+        "If a check cannot pass without breaking one of these rules, leave it failing and say why; the pipeline then keeps the PR as a draft for a person to decide.";
+
     // ── TimeSpan defaults for sub-configurations ────────────────────────
 
     /// <summary>Default agent execution timeout (30 minutes).</summary>
