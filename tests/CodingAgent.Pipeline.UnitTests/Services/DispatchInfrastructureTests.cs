@@ -380,7 +380,7 @@ public class DispatchInfrastructureStalenessTests
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
 
         _mockWorkItemClient.Setup(c => c.GetStalenessAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WorkItemStalenessResult { HasAgentErrorSince = true, LastSuccessfulCompletion = null });
 
         var infra = CreateInfrastructure(includeWorkItemClient: true);
@@ -417,7 +417,7 @@ public class DispatchInfrastructureStalenessTests
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
 
         _mockWorkItemClient.Setup(c => c.GetStalenessAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WorkItemStalenessResult { HasAgentErrorSince = false, LastSuccessfulCompletion = null });
 
         var infra = CreateInfrastructure(includeWorkItemClient: true);

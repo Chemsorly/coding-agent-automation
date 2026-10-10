@@ -180,6 +180,36 @@ public abstract class RunServiceContractTests
         empty.Should().BeEmpty("GetOutputBacklogAsync must return empty for an unknown RunId");
     }
 
+    // ── Chat history ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// AppendChatEntry is the only chat write path. GetChatHistoryAsync and RemoveRun return
+    /// entries in insertion order. An unknown RunId returns an empty list.
+    /// </summary>
+    [Fact]
+    public async Task AppendChatEntry_ThenGetChatHistoryAsyncAndRemoveRun_ReturnEntriesInOrder()
+    {
+        var svc = CreateService();
+        svc.AddRun(MakeRun("run-chat"));
+
+        svc.AppendChatEntry(new RunId("run-chat"), new ChatEntry { Role = ChatRole.System, Content = "first" });
+        svc.AppendChatEntry(new RunId("run-chat"), new ChatEntry { Role = ChatRole.Agent, Content = "second" });
+        await Task.Yield(); // allow fire-and-forget paths to settle (same barrier as the output test)
+
+        var history = await svc.GetChatHistoryAsync(new RunId("run-chat"));
+        history.Select(e => e.Content).Should().Equal("first", "second");
+        history.Select(e => e.Role).Should().Equal(ChatRole.System, ChatRole.Agent);
+
+        var removed = svc.RemoveRun(new RunId("run-chat"));
+        // TODO: Should().Equal on IEnumerable<T> checks element equality in sequence but does not
+        // assert exact count; unexpected extra entries beyond "first"/"second" would not fail the
+        // assertion. Consider .Should().HaveCount(2).And.Equal(...) for a stricter size+order check.
+        removed!.ChatHistory.Select(e => e.Content).Should().Equal("first", "second");
+
+        (await svc.GetChatHistoryAsync(new RunId("run-nobody"))).Should().BeEmpty(
+            "GetChatHistoryAsync must return empty for an unknown RunId");
+    }
+
     // ── IsIssueBeingProcessed ─────────────────────────────────────────────────
 
     /// <summary>

@@ -86,13 +86,6 @@ internal static class EndpointRegistration
         app.UseAntiforgery();
         app.MapAuthEndpoints();
 
-        // Hub reference RETAINED: AgentChat.razor injects IHubContext<AgentHub, IAgentHubClient>
-        // and RegisterJobDispatching wires SignalRAgentCommunication. Both require the Hub library
-        // type reference and AddSignalRServices() to compile.
-        // Note: the monolith IHubContext cannot reach agents on the API hub — it only serves
-        // connections registered in this process.
-        // TODO(Spec 046): re-route AgentChat.razor's send path via a REST endpoint on the API.
-
         // Config import/export endpoints now served by CodingAgent.Api.
 
         // frame-ancestors is part of the policy UseSecurityHeaders sends on every response.

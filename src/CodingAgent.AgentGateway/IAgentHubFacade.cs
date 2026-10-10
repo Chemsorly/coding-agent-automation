@@ -94,6 +94,18 @@ public interface IAgentHubFacade
     Task<IReadOnlyList<string>> GetOutputBacklogAsync(JobId jobId);
 
     /// <summary>
+    /// Appends one chat entry to the run's persistent chat history.
+    /// Delegates to the run service; in distributed mode writes to Redis.
+    /// </summary>
+    void AppendChatEntry(JobId jobId, ChatEntry entry);
+
+    /// <summary>
+    /// Returns the run's chat history, oldest entries first.
+    /// Used by <c>SubscribeToRun</c> to seed <see cref="RunStateSnapshot.ChatHistory"/>.
+    /// </summary>
+    Task<IReadOnlyList<ChatEntry>> GetChatHistoryAsync(JobId jobId);
+
+    /// <summary>
     /// Removes a pipeline run from the active runs collection.
     /// </summary>
     void RemoveRun(JobId jobId);

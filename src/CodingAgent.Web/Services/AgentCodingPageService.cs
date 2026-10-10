@@ -221,8 +221,10 @@ public class AgentCodingPageService
         // A new template is enabled, so it must meet the binding rules the API enforces on save.
         var candidate = new PipelineJobTemplate
         {
-            Id = string.Empty, Name = form.Name.Trim(),
-            IssueProviderId = form.IssueProviderId, RepoProviderId = form.RepoProviderId,
+            Id = string.Empty,
+            Name = form.Name.Trim(),
+            IssueProviderId = form.IssueProviderId,
+            RepoProviderId = form.RepoProviderId,
             Enabled = true
         };
         var projectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;
@@ -235,12 +237,16 @@ public class AgentCodingPageService
         if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
         var newTemplate = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = form.Name.Trim(),
-            IssueProviderId = form.IssueProviderId, RepoProviderId = form.RepoProviderId,
+            Id = Guid.NewGuid().ToString(),
+            Name = form.Name.Trim(),
+            IssueProviderId = form.IssueProviderId,
+            RepoProviderId = form.RepoProviderId,
             BrainProviderId = string.IsNullOrEmpty(form.BrainProviderId) ? null : form.BrainProviderId,
             PipelineProviderId = string.IsNullOrEmpty(form.PipelineProviderId) ? null : form.PipelineProviderId,
-            BrainReadOnly = form.BrainReadOnly, ImplementationEnabled = form.ImplementationEnabled,
-            ReviewEnabled = form.ReviewEnabled, DecompositionEnabled = form.DecompositionEnabled,
+            BrainReadOnly = form.BrainReadOnly,
+            ImplementationEnabled = form.ImplementationEnabled,
+            ReviewEnabled = form.ReviewEnabled,
+            DecompositionEnabled = form.DecompositionEnabled,
             HousekeepingEnabled = form.HousekeepingEnabled,
             HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
             HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
@@ -414,21 +420,21 @@ public class AgentCodingPageService
 
     public Task RefreshActiveIssuesAsync() => _issueDrawerService.RefreshActiveIssuesAsync();
 
-    public bool IsIssueActive(IssueIdentifier issueIdentifier, string issueProviderConfigId)
+    public bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _issueDrawerService.IsIssueActive(issueIdentifier, issueProviderConfigId);
 
     /// <summary>
     /// Returns the WorkItemStatus of the issue's current work item, or null if not active.
     /// <see cref="WorkItemStatus.Pending"/> = Queued; <see cref="WorkItemStatus.Running"/> = Running/Dispatched.
     /// </summary>
-    public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, string issueProviderConfigId)
+    public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _issueDrawerService.GetIssueWorkItemStatus(issueIdentifier, issueProviderConfigId);
 
     /// <summary>
     /// Checks if an issue is currently distributed (Pending, Dispatched, or Running).
     /// Used by drawer components to show processing status.
     /// </summary>
-    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId)
+    public Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _issueDrawerService.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId);
 
     // ── Cross-drawer coordination ──
