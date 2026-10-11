@@ -143,6 +143,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         Environment.SetEnvironmentVariable("Auth__Admin__Password", TestAdminPassword);
         E2ETestSignIn.ApplyBindings();
 
+        // Spec 051: the same key as the API host, so the user tokens this host signs are accepted there.
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", E2ETestDefaults.UserTokenSigningKey);
+
         E2ETestDefaults.ApplyDatabaseEnvironment();
 
         // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.

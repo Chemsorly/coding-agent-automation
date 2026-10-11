@@ -3,6 +3,8 @@
 @using Microsoft.Extensions.Options
 @inject CurrentAccess Access
 @inject IOptions<AuthOptions> AuthOptions
+@inject IUiMeClient Me
+@inject ILogger<UserProfile> Logger
 
 @* Spec 049 Req 9: who am I, which groups does the IdP send, and what do the bindings make of them.
    Reachable by every signed-in principal, including one without any role. *@
@@ -72,15 +74,15 @@
             }
             else
             {
-                @foreach (var problem in Access.Grant.Matches.Where(m => m.Problem is not null))
+                @foreach (var match in Access.Grant.Matches.Where(IsUnknownProject))
                 {
                     <div class="auth-warning" data-testid="profile-binding-warning">
-                        @* TODO: @problem.ProjectId is rendered without a null-guard or visual delimiter. If a future MatchedBinding
-                           carries a non-null Problem but a null ProjectId, this renders "on project  grants nothing:" with an
-                           empty slot and no fallback text. Add a null-coalescing fallback (e.g. @(problem.ProjectId ?? "(unknown)"))
-                           and consider wrapping the ID in <code> tags for readability. *@
-                        Binding @problem.Subject → @AccessRoleNames.ToName(problem.Role) on project @problem.ProjectId grants nothing: @problem.Problem.
+                        Binding @match.Subject → @AccessRoleNames.ToName(match.Role) on project <code>@match.ProjectId</code> opens nothing: no project has this ID.
                     </div>
+                }
+                @if (_projectsUnavailable)
+                {
+                    <p data-testid="profile-projects-unavailable">Project names could not be loaded. The bindings below show project IDs only.</p>
                 }
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table" data-testid="profile-bindings">
@@ -88,10 +90,10 @@
                             <tr><th>Scope</th><th>Role</th><th>Matched by</th></tr>
                         </thead>
                         <tbody>
-                            @foreach (var match in Access.Grant.Matches.Where(m => m.Problem is null))
+                            @foreach (var match in Access.Grant.Matches.Where(m => !IsUnknownProject(m)))
                             {
                                 <tr>
-                                    <td>@(match.ProjectId is null ? "Global" : (match.ProjectName is not null ? $"Project {match.ProjectName} ({match.ProjectId})" : $"Project {match.ProjectId}"))</td>
+                                    <td>@ScopeLabel(match)</td>
                                     <td>@AccessRoleNames.ToName(match.Role)</td>
                                     <td><code>@match.Subject</code></td>
                                 </tr>
@@ -121,5 +123,38 @@
             ? $"; the default role '{AccessRoleNames.ToName(Access.GlobalRole)}' applies"
             : "";
 
-    protected override Task OnInitializedAsync() => Access.InitializeAsync();
+    // Spec 051 D2a: bindings grant on project IDs as configured; the Pipeline API knows which
+    // projects exist, so names and unknown IDs come from /api/ui/me.
+    private IReadOnlyDictionary<string, UiMeProjectRole> _projects = new Dictionary<string, UiMeProjectRole>();
+    private bool _projectsUnavailable;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Access.InitializeAsync();
+        if (Access.Grant.ProjectRoles.Count == 0)
+            return;
+
+        try
+        {
+            var me = await Me.GetAsync();
+            _projects = me.ProjectRoles.ToDictionary(p => p.ProjectId, StringComparer.Ordinal);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            Logger.LogWarning(ex, "Profile: could not load the project names from the Pipeline API");
+            _projectsUnavailable = true;
+        }
+    }
+
+    private bool IsUnknownProject(MatchedBinding match) =>
+        match.ProjectId is not null && _projects.TryGetValue(match.ProjectId, out var project) && !project.Known;
+
+    private string ScopeLabel(MatchedBinding match)
+    {
+        if (match.ProjectId is null)
+            return "Global";
+        return _projects.TryGetValue(match.ProjectId, out var project) && project.ProjectName is not null
+            ? $"Project {project.ProjectName} ({match.ProjectId})"
+            : $"Project {match.ProjectId}";
+    }
 }

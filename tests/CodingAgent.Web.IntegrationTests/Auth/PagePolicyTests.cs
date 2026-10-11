@@ -4,6 +4,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.IntegrationTests.Smoke;
+using CodingAgent.Web.Ui;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Builder;
@@ -49,8 +50,14 @@ public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
             services.RemoveAll<IProjectStore>();
             services.AddSingleton(projects.Object);
             services.AddSingleton<IStartupFilter, TestSignInStartupFilter>();
+
+            // Spec 051: the real UI client and token provider, with the API's /api/ui/me stubbed.
+            services.AddHttpClient<IUiMeClient, UiMeClient>().ConfigurePrimaryHttpMessageHandler(() => MeApi);
         });
     }
+
+    /// <summary>Stands in for the Pipeline API's <c>GET /api/ui/me</c>.</summary>
+    public UiMeApiStub MeApi { get; } = new();
 
     protected override void Dispose(bool disposing)
     {

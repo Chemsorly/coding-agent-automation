@@ -37,6 +37,7 @@
     <ProjectReference Include="..\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
     <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
     <ProjectReference Include="..\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
+    <ProjectReference Include="..\CodingAgent.Web.Client\CodingAgent.Web.Client.csproj" />
   </ItemGroup>
 
 </Project>
