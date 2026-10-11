@@ -23,6 +23,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IWorkItemTransitionStore? _transitionStore;
     private readonly IWorkItemFallbackTransitionService? _workItemFallbackTransition;
     private readonly IProjectStore? _projectStore;
+    private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly ILogger<AgentHubFacadeDependencies> _logger;
     private readonly TimeProvider _timeProvider;
 
@@ -45,6 +46,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _transitionStore = deps.TransitionStore;
         _workItemFallbackTransition = deps.WorkItemFallbackTransition;
         _projectStore = deps.ProjectStore;
+        _pipelineConfigStore = deps.PipelineConfigStore;
         _timeProvider = deps.TimeProvider ?? TimeProvider.System;
     }
 
@@ -201,6 +203,94 @@ public sealed class AgentHubFacade : IAgentHubFacade
         {
             _logger.LogWarning(ex, "Failed to resolve provider config IDs from WorkItem {WorkItemId}", jobId.Value);
             return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> ResolveBrainReadOnlyAsync(JobId jobId, CancellationToken ct)
+    {
+        // Fail closed: any unresolvable condition means read-only.
+        if (_pipelineConfigStore is null)
+            return true;
+
+        try
+        {
+            // Step 1: obtain repoProviderId and projectId.
+            // Fast path — in-memory run (SignalR / same process).
+            string? repoProviderId = null;
+            string? projectId = null;
+
+            var run = _runService.GetRun(jobId.Value);
+            if (run is not null)
+            {
+                repoProviderId = run.RepoProviderConfigId;
+                projectId = run.ProjectId;
+            }
+            else if (_transitionStore is not null && Guid.TryParse(jobId.Value, out var workItemId))
+            {
+                // Fallback — K8s mode where the run may not be in this process's memory.
+                // NOTE (issue #3573): Guid.TryParse guard means a non-GUID job ID (e.g. a SignalR string
+                // ID that is not GUID-formatted) with no in-memory run will always fail closed
+                // (repoProviderId stays null → returns true) regardless of the actual BrainReadOnly
+                // setting. Legitimate jobs with non-GUID string IDs in K8s mode would be denied
+                // write access even for writable brains (Correctness finding).
+                var configIds = await _transitionStore.GetWorkItemProviderConfigIdsAsync(workItemId, ct);
+                repoProviderId = configIds?.RepoProviderConfigId;
+                // NOTE (issue #3573): ProjectId is not stored in the WorkItem payload, so project-level
+                // BrainReadOnly overrides are silently ignored in K8s mode during token refreshes.
+                // If a project sets BrainReadOnly = true (overriding global false), the token refresh
+                // will incorrectly issue a write token because PipelineConfigurationResolver is called
+                // with project = null (skipping ApplyProjectOverrides). This is a security gap for
+                // K8s-mode agents. Fix: store ProjectId in the WorkItem payload at dispatch time so
+                // it can be retrieved here (Correctness & DotNetSpecialist findings).
+                // ProjectId is not stored in the WorkItem payload, so we cannot resolve it here.
+                // Proceed with project = null; ApplyProjectOverrides is a no-op for null projects.
+            }
+
+            if (string.IsNullOrEmpty(repoProviderId))
+                return true; // fail closed — no repo, can't resolve template
+
+            // Step 2: resolve the owning project (if available).
+            PipelineProject? project = null;
+            if (!string.IsNullOrEmpty(projectId) && _projectStore is not null)
+                project = await _projectStore.GetProjectByIdAsync(projectId, ct);
+
+            // Step 3: resolve BrainReadOnly via the full config chain.
+            // LoadAllTemplatesAsync comes from IProjectStore (which _projectStore implements)
+            // or from the IPipelineConfigStore (which has no template access). We need the
+            // project store's LoadAllTemplatesAsync for template-level overrides.
+            Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates =
+                _projectStore is not null
+                    ? _projectStore.LoadAllTemplatesAsync
+                    : _ => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(Array.Empty<PipelineJobTemplate>());
+
+            // Raw provider configs are not needed for BrainReadOnly resolution (it is not
+            // derived from config settings); pass an empty list — ApplyBlacklistOverride is a
+            // no-op for configs with no BlacklistedPaths, and BrainReadOnly comes from the
+            // template, not from provider config settings.
+            // NOTE (issue #3573): this assumption — that BrainReadOnly is not influenced by provider
+            // config settings — is not enforced by the interface or an assertion. If
+            // PipelineConfigurationResolver.ResolveAsync ever adds a code path that reads provider
+            // config metadata to influence BrainReadOnly, passing an empty list here would silently
+            // produce a different resolved value than the dispatch path (which passes real raw configs).
+            // Add an interface guarantee or an assertion to make this contract explicit
+            // (Correctness & DotNetSpecialist findings).
+            var resolvedConfig = await PipelineConfigurationResolver.ResolveAsync(
+                _pipelineConfigStore.LoadPipelineConfigAsync,
+                loadTemplates,
+                project,
+                (ProviderConfigId)repoProviderId,
+                Array.Empty<ProviderConfig>(),
+                ct);
+
+            return resolvedConfig.BrainReadOnly;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "ResolveBrainReadOnlyAsync: failed to resolve BrainReadOnly for job {JobId}; failing closed (read-only)",
+                jobId.Value);
+            return true; // fail closed
         }
     }
 

@@ -84,10 +84,18 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
                 (repoProviderId, brainProviderId) = await ResolveTemplateProviderConfigsAsync(rawConfigs, template, type, ct);
         }
 
-        var vendedConfigs = await VendProviderConfigsAsync(rawConfigs, repoProviderId, type, ct);
-
+        // Resolve the pipeline configuration BEFORE vending tokens so that BrainReadOnly is known
+        // when we choose the token permission scope. ResolvePipelineConfigurationAsync only reads
+        // the repo blacklist from the provider configs; vending (Token/TokenExpiresAt/PrivateKeyBase64)
+        // does not affect that field, so passing raw configs is safe.
         var pipelineConfiguration = await ResolvePipelineConfigurationAsync(
-            templateId, repoProviderId, vendedConfigs, ct);
+            templateId, repoProviderId, rawConfigs, ct);
+
+        // Vend tokens: pass the brain config as read-only when BrainReadOnly is true.
+        IReadOnlySet<string>? readOnlyConfigIds = pipelineConfiguration.BrainReadOnly && !string.IsNullOrEmpty(brainProviderId)
+            ? new HashSet<string>(StringComparer.Ordinal) { brainProviderId }
+            : null;
+        var vendedConfigs = await VendProviderConfigsAsync(rawConfigs, repoProviderId, type, ct, readOnlyConfigIds);
 
         return new ConsolidationJobPreparationResult
         {
@@ -183,14 +191,15 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         List<ProviderConfig> rawConfigs,
         string repoProviderId,
         ConsolidationRunType type,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlySet<string>? readOnlyConfigIds = null)
     {
         if (rawConfigs.Count == 0)
             return rawConfigs.AsReadOnly();
 
         var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
         return await _tokenVending.PrepareAgentConfigsAsync(
-            rawConfigs, repoProviderId, ct, includeIssuePermission);
+            rawConfigs, repoProviderId, ct, includeIssuePermission, readOnlyConfigIds);
     }
 
     /// <summary>

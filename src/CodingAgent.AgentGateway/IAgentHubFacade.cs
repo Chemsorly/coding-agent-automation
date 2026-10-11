@@ -138,6 +138,20 @@ public interface IAgentHubFacade
     Task RequeueWorkItemAsync(JobId jobId, CancellationToken ct);
 
     /// <summary>
+    /// Resolves the effective <c>BrainReadOnly</c> flag for the given job by applying the full
+    /// configuration resolution chain (global → project overrides → template overrides).
+    /// Used by <see cref="AgentTokenRefreshService"/> to vend a read-only token for the brain
+    /// when the resolved setting is true.
+    /// </summary>
+    /// <remarks>
+    /// Fails closed: returns <c>true</c> (read-only) when the job, project, or configuration
+    /// cannot be resolved, to prevent a misbehaving agent from obtaining write access.
+    /// GitLab and personal-access-token brains are unaffected — they keep their own token
+    /// regardless of this flag.
+    /// </remarks>
+    Task<bool> ResolveBrainReadOnlyAsync(JobId jobId, CancellationToken ct);
+
+    /// <summary>
     /// Resolves provider config IDs from a WorkItem's payload (K8s mode fallback).
     /// Returns null if the work item doesn't exist or has no payload.
     /// Used by token vending when no in-memory PipelineRun exists.

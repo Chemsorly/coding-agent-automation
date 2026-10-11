@@ -127,8 +127,8 @@ public class ProviderConfigBuilderTests
         var jobConfigs = new List<ProviderConfig>();
         var cloneConfigs = new List<ProviderConfig>();
         _mockTokenVending
-            .Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _) => { jobConfigs.AddRange(configs); return configs; });
+            .Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _, IReadOnlySet<string>? _) => { jobConfigs.AddRange(configs); return configs; });
         _mockTokenVending
             .Setup(t => t.PrepareReadOnlyCloneConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, CancellationToken _) => { cloneConfigs.AddRange(configs); return configs; });

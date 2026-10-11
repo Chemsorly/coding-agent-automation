@@ -53,8 +53,8 @@ public sealed class ConsolidationJobPreparationServiceTests
         // Default: token vending returns input configs as-is
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _) =>
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _, IReadOnlySet<string>? _) =>
                 configs.ToList().AsReadOnly());
     }
 
@@ -123,9 +123,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         bool capturedIncludeIssue = false;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (_, _, _, includeIssue) => capturedIncludeIssue = includeIssue)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (_, _, _, includeIssue, _) => capturedIncludeIssue = includeIssue)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -143,9 +143,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         bool capturedIncludeIssue = true; // Start true, expect false
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (_, _, _, includeIssue) => capturedIncludeIssue = includeIssue)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (_, _, _, includeIssue, _) => capturedIncludeIssue = includeIssue)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -163,9 +163,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         bool capturedIncludeIssue = true;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (_, _, _, includeIssue) => capturedIncludeIssue = includeIssue)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (_, _, _, includeIssue, _) => capturedIncludeIssue = includeIssue)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -189,9 +189,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => capturedConfigs = configs)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -212,9 +212,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => capturedConfigs = configs)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -254,7 +254,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         // Token vending is skipped when rawConfigs is empty
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()),
             Times.Never);
         result.ProviderConfigs.Should().BeEmpty();
     }
@@ -280,7 +280,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         // No configs → token vending not called
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()),
             Times.Never);
         result.ProviderConfigs.Should().BeEmpty();
     }
@@ -306,7 +306,7 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()),
             Times.Never);
         result.ProviderConfigs.Should().BeEmpty();
     }
@@ -338,9 +338,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => capturedConfigs = configs)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -378,9 +378,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => capturedConfigs = configs)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -401,9 +401,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => capturedConfigs = configs)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -431,9 +431,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => capturedConfigs = configs)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -470,9 +470,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         string? capturedRepoId = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
                 It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (_, repoId, _, _) => capturedRepoId = repoId)
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (_, repoId, _, _, _) => capturedRepoId = repoId)
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
@@ -493,7 +493,7 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()),
             Times.Never);
         result.ProviderConfigs.Should().BeEmpty();
     }
@@ -746,8 +746,8 @@ public sealed class ConsolidationJobPreparationServiceTests
         _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile> { profile } as IReadOnlyList<AgentProfile>);
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
-            It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _) => configs);
+            It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _, IReadOnlySet<string>? _) => configs);
 
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
@@ -1044,7 +1044,97 @@ public sealed class ConsolidationJobPreparationServiceTests
         _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>() as IReadOnlyList<AgentProfile>);
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
-            It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _) => configs);
+            It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _, IReadOnlySet<string>? _) => configs);
     }
+
+    #region BrainReadOnly token narrowing
+
+    /// <summary>
+    /// When BrainReadOnly is true in the resolved pipeline config, the brain provider config ID
+    /// must be passed in readOnlyConfigIds to PrepareAgentConfigsAsync.
+    /// </summary>
+    [Fact]
+    public async Task PrepareAsync_BrainReadOnly_True_PassesBrainIdInReadOnlyConfigIds()
+    {
+        // Arrange: a template with a brain provider; global config has BrainReadOnly = true
+        var repoConfig = new ProviderConfig { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" };
+        var brainConfig = new ProviderConfig { Id = "brain-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain" };
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { repoConfig, brainConfig });
+
+        var template = new PipelineJobTemplate { Id = "t1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", BrainProviderId = "brain-1" };
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template });
+
+        SetupAgentConfig("agent-1");
+        SetupMatchingProfile("agent-1");
+
+        // Global config: BrainReadOnly = true
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { BrainReadOnly = true });
+
+        IReadOnlySet<string>? capturedReadOnlyIds = null;
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
+                It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (_, _, _, _, readOnlyIds) => capturedReadOnlyIds = readOnlyIds)
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        // Act
+        var svc = CreateService();
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", E2ELabels, CancellationToken.None);
+
+        // Assert: brain config ID must be in readOnlyConfigIds
+        capturedReadOnlyIds.Should().NotBeNull("readOnlyConfigIds must be set when BrainReadOnly is true");
+        capturedReadOnlyIds!.Should().Contain("brain-1",
+            "brain provider config ID must be in readOnlyConfigIds when BrainReadOnly is true");
+    }
+
+    /// <summary>
+    /// When BrainReadOnly is false, readOnlyConfigIds must be null (no narrowing).
+    /// </summary>
+    [Fact]
+    public async Task PrepareAsync_BrainReadOnly_False_PassesNullReadOnlyConfigIds()
+    {
+        var repoConfig = new ProviderConfig { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" };
+        var brainConfig = new ProviderConfig { Id = "brain-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain" };
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { repoConfig, brainConfig });
+
+        var template = new PipelineJobTemplate { Id = "t1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", BrainProviderId = "brain-1" };
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template });
+
+        SetupAgentConfig("agent-1");
+        SetupMatchingProfile("agent-1");
+
+        // Global config: BrainReadOnly = false (default)
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { BrainReadOnly = false });
+
+        IReadOnlySet<string>? capturedReadOnlyIds = new HashSet<string> { "sentinel" }; // start non-null
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
+                It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (_, _, _, _, readOnlyIds) => capturedReadOnlyIds = readOnlyIds)
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService();
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", E2ELabels, CancellationToken.None);
+
+        capturedReadOnlyIds.Should().BeNull(
+            "readOnlyConfigIds must be null when BrainReadOnly is false (no token narrowing)");
+    }
+
+    // TODO [WARNING]: missing test for project-level BrainReadOnly override in ConsolidationJobPreparationService.
+    // The two new tests cover only the global-setting source for BrainReadOnly. The service calls
+    // the full ResolvePipelineConfigurationAsync which applies project overrides, but no test verifies
+    // that a PipelineProject with BrainReadOnly = true causes the brain config ID to be passed in
+    // readOnlyConfigIds. A regression in ApplyProjectOverrides for BrainReadOnly would not be caught
+    // (issue #3573, TestQualityReviewer finding).
+
+    #endregion
 }
