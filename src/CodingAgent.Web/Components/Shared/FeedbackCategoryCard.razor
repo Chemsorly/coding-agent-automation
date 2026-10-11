@@ -1,0 +1,50 @@
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Web.Services
+@inject NavigationManager Nav
+
+<div class="cockpit-card" data-testid="@TestId">
+    <div class="cockpit-card-header"><h2>@Title</h2><span style="font-size: 12px; color: var(--text-muted);">@Subtitle</span></div>
+    @if (Groups.Count == 0)
+    {
+        <div class="cockpit-empty" data-testid="@($"{TestId}-empty")" style="padding: 24px;">@EmptyText</div>
+    }
+    else
+    {
+        @foreach (var group in Groups)
+        {
+            <details data-testid="@($"{TestId}-category")">
+                <summary class="cockpit-run-row">
+                    <span style="font-size: 13.5px; font-weight: 600; min-width: 0; flex: 1;">@group.Category</span>
+                    <span style="flex-shrink: 0; font-size: 12.5px; color: var(--text-muted);">
+                        <span style="font-weight: 700; color: var(--text);">@group.Count</span> run@(group.Count == 1 ? "" : "s") · @group.FailureCount failed
+                    </span>
+                </summary>
+                @foreach (var entry in group.Entries)
+                {
+                    <div class="cockpit-run-row" data-testid="@($"{TestId}-run")" @onclick="@(() => OpenRun(entry.RunId))">
+                        <div style="min-width: 0; flex: 1;">
+                            <div style="font-size: 13px;"><span class="mono">#@entry.IssueIdentifier</span> @entry.IssueTitle@(entry.ProjectName is null ? "" : $" · {entry.ProjectName}")</div>
+                            @if (entry.Text.Length > 0)
+                            {
+                                <div style="font-size: 12.5px; color: var(--text-muted);">@entry.Text</div>
+                            }
+                        </div>
+                        <span style="flex-shrink: 0; font-size: 12px; color: var(--text-muted);">@(entry.Outcome == FeedbackOutcome.Failure ? "failed · " : "")@entry.StartedAt.UtcDateTime.ToString("MMM d HH:mm", System.Globalization.CultureInfo.InvariantCulture) UTC</span>
+                    </div>
+                }
+            </details>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter, EditorRequired] public string Subtitle { get; set; } = "";
+    [Parameter, EditorRequired] public string TestId { get; set; } = "";
+    [Parameter, EditorRequired] public string EmptyText { get; set; } = "";
+    [Parameter, EditorRequired] public IReadOnlyList<FeedbackCategoryGroup> Groups { get; set; } = [];
+
+    // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
+    // root), not the current page URL — this is the correct Blazor Server behaviour.
+    private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
+}
