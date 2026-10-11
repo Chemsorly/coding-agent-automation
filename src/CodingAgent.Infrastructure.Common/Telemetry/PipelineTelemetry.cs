@@ -712,4 +712,54 @@ public static class PipelineTelemetry
             static (c, key, value) => c[key] = value);
         return carrier.GetValueOrDefault("traceparent");
     }
+
+    // ── Agent observable gauges (Scheduler-leader-emitted) ───────────────────────────────────
+
+    // Callbacks registered once by WorkItemCountsService.
+    // null = no callback registered yet → gauge emits nothing.
+    private static Func<IEnumerable<Measurement<long>>>? _activeJobsCallback;
+    private static Func<IEnumerable<Measurement<long>>>? _totalConnectionsCallback;
+
+    static PipelineTelemetry()
+    {
+        // ObservableGauge instruments must be created on the Meter; creating them in the static
+        // constructor avoids duplicate-instrument warnings if the type is loaded by multiple hosts.
+        Meter.CreateObservableGauge(
+            "agent.jobs.active",
+            observeValues: () => _activeJobsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            unit: "{job}",
+            description: "Currently executing agent jobs");
+
+        Meter.CreateObservableGauge(
+            "agent.connections.total",
+            observeValues: () => _totalConnectionsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            unit: "{connection}",
+            description: "Total registered agents");
+    }
+
+    /// <summary>
+    /// Registers callbacks that supply <c>agent.jobs.active</c> and <c>agent.connections.total</c>
+    /// gauge measurements.
+    /// Called once at startup by <c>WorkItemCountsService</c> on the Scheduler leader.
+    /// The callbacks are invoked on every OTel collection cycle; they should return an empty
+    /// enumerable when the leader has no data yet (before first poll) or is not the leader.
+    /// </summary>
+    public static void RegisterAgentGaugeCallbacks(
+        Func<IEnumerable<Measurement<long>>> activeJobsCallback,
+        Func<IEnumerable<Measurement<long>>> totalConnectionsCallback)
+    {
+        ArgumentNullException.ThrowIfNull(activeJobsCallback);
+        ArgumentNullException.ThrowIfNull(totalConnectionsCallback);
+
+        // TODO [WARNING]: Unlike RegisterWorkItemsByStatusCallback (which uses Interlocked.CompareExchange
+        // and logs a warning on double-registration), this method unconditionally overwrites the callbacks.
+        // A second call from a misconfigured DI container or a test running in the same process silently
+        // replaces the active callbacks without any diagnostic. Consider using Interlocked.CompareExchange
+        // and emitting a Serilog.Log.Warning on double-registration, matching the pattern in
+        // WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback.
+
+        // Use volatile writes so the collection thread sees the callbacks immediately.
+        Volatile.Write(ref _activeJobsCallback, activeJobsCallback);
+        Volatile.Write(ref _totalConnectionsCallback, totalConnectionsCallback);
+    }
 }
