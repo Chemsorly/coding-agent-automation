@@ -72,8 +72,8 @@ spec:
 
         # Alert when credential pool is exhausted.
         # Metrics: workdistribution_credential_pool_available / workdistribution_credential_pool_claimed.
-        # Source: API (WorkItemDispatchEndpoints — UpdateCredentialPoolMetrics called on each dispatch attempt).
-        # These gauges use an owner-only guard: non-API processes emit no measurement (issue #2980).
+        # Source: Scheduler leader (WorkItemCountsService polls GET /api/agents/credential-pool; issue #3555).
+        # These gauges emit only on the Scheduler leader, and only after a successful poll.
         - alert: CredentialPoolExhausted
           expr: |
             workdistribution_credential_pool_available == 0

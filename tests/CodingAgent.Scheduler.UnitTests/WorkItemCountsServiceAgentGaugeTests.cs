@@ -184,6 +184,16 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
         // captures only the scalar value). A regression that drops or renames the "pool" tag in the
         // production callback in WorkItemCountsService would not be caught. Fix: extend ReadGaugeValues<T>
         // (or add an overload) to capture tags, and assert both ("pool", "kiro") for available and claimed.
+        // The instrument unit ({job}, {connection}, {pvc}) and description are not asserted either, although
+        // "names, units and meters unchanged" is an acceptance criterion; `instrument` is already available
+        // in the MeterListener callback. A fixture with a Disconnected agent (e.g. total=4, active=2) would
+        // also catch a `Status != Idle` mutation of the busy count.
+        // TODO [WARNING]: There are no zero/empty boundary tests. CredentialPoolExhausted fires on
+        // `workdistribution_credential_pool_available == 0`, so the leader must emit an explicit 0 for
+        // Available=0 (and 0 for an empty agent list); a regression that omits zero-valued measurements or
+        // treats 0 as "no data" would silence that alert without failing anything here. A null API body is
+        // untested too (see the TODO in WorkItemCountsService.UpdateMeasurementsAsync). Fix: add cases for
+        // Available=0, an empty agent list and a null body.
 
         poolClaimed.Should().ContainSingle("leader must emit credential_pool_claimed after poll")
             .Which.Should().Be(2, "2 PVCs are claimed");
@@ -228,6 +238,74 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
         totalConnections.Should().BeEmpty("non-leader must emit nothing for agent.connections.total");
         poolAvailable.Should().BeEmpty("non-leader must emit nothing for credential_pool_available");
         poolClaimed.Should().BeEmpty("non-leader must emit nothing for credential_pool_claimed");
+
+        // TODO [WARNING]: This test does not verify that the two new API calls are skipped on a
+        // non-leader. WorkItemCountsServiceTests.WhenNotLeader_DoesNotCallApi only verifies
+        // GetWorkItemCountsAsync, so nothing pins GetAgentsAsync / GetCredentialPoolAsync as never
+        // called. Fix: add _mockClient.Verify(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()),
+        // Times.Never) and the same for GetCredentialPoolAsync.
+    }
+
+    /// <summary>
+    /// The leader-gate check inside each of the four gauge callbacks must silence the gauges the
+    /// moment leadership is lost, even though the caches still hold the last successful poll.
+    /// A replica that polled as leader and then lost the lease must not keep exporting its cached
+    /// values, or it would double-count against the new leader. Regaining leadership makes the
+    /// cached values visible again, which shows the gate alone — not an empty cache — is what
+    /// silences the gauges in between.
+    /// </summary>
+    [Fact]
+    public async Task Leader_ThenLosesLeadership_GaugesGoSilentDespiteCachedValues()
+    {
+        var isLeader = true;
+        _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(() => Volatile.Read(ref isLeader));
+
+        _mockClient
+            .Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakeAgent(AgentStatus.Busy), MakeAgent(AgentStatus.Idle) });
+        _mockClient
+            .Setup(c => c.GetCredentialPoolAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CredentialPoolStatus(5, 3, 2));
+
+        var polled = new CallSignal();
+        _mockClient
+            .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => polled.Hit())
+            .ReturnsAsync(new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null));
+
+        // RunUntilAsync awaits StopAsync before returning, so the poll (and its cache writes) has
+        // completed and no further poll can run while the gate is flipped below.
+        var svc = CreateService();
+        await BackgroundServiceRunner.RunUntilAsync(svc, polled.Reached,
+            "the leader must poll at least once");
+
+        ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active")
+            .Should().ContainSingle("the leader emits after a successful poll").Which.Should().Be(1L);
+
+        // Lose leadership: the caches are untouched, only the gate changes.
+        Volatile.Write(ref isLeader, false);
+
+        ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active")
+            .Should().BeEmpty("agent.jobs.active must go silent once leadership is lost");
+        ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.connections.total")
+            .Should().BeEmpty("agent.connections.total must go silent once leadership is lost");
+        ReadGaugeValues<int>(WorkDistributionTelemetry.MeterName, "workdistribution.credential_pool_available")
+            .Should().BeEmpty("credential_pool_available must go silent once leadership is lost");
+        ReadGaugeValues<int>(WorkDistributionTelemetry.MeterName, "workdistribution.credential_pool_claimed")
+            .Should().BeEmpty("credential_pool_claimed must go silent once leadership is lost");
+
+        // Regain leadership: the cached values are visible again, so the gate was the only thing
+        // silencing the gauges.
+        Volatile.Write(ref isLeader, true);
+
+        ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active")
+            .Should().ContainSingle().Which.Should().Be(1L);
+        ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.connections.total")
+            .Should().ContainSingle().Which.Should().Be(2L);
+        ReadGaugeValues<int>(WorkDistributionTelemetry.MeterName, "workdistribution.credential_pool_available")
+            .Should().ContainSingle().Which.Should().Be(3);
+        ReadGaugeValues<int>(WorkDistributionTelemetry.MeterName, "workdistribution.credential_pool_claimed")
+            .Should().ContainSingle().Which.Should().Be(2);
     }
 
     // ── No poll, no value ─────────────────────────────────────────────────
@@ -271,6 +349,14 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
     [Fact]
     public async Task AfterFailedPoll_EmitsNothing()
     {
+        // TODO [WARNING]: Only GetWorkItemCountsAsync is made to fail; a faulting GetAgentsAsync or
+        // GetCredentialPoolAsync is not covered. The test also does not assert that the gauges held values
+        // after the first successful poll, so it cannot distinguish "reset after failure" from "never
+        // populated", has no recovery case (fail, then succeed, then emit again), and `firstPoll` below is
+        // created and hit but never awaited (dead code). Fix: fail each of the three endpoints in turn,
+        // assert emission after the first poll, and add a fail-then-recover case. Because the three calls
+        // share one catch block, a failure of the agents or pool endpoint alone also blanks
+        // workitems_by_status and the oldest-pending-age gauge; no test pins that partial-failure behaviour.
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
 
         // First poll succeeds with data

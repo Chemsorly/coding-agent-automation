@@ -205,7 +205,7 @@ public sealed class AgentRegistryStartupWarningTests
     {
         using var factory = new AgentRegistryFailFastFactory();
 
-        // CreateClient triggers host startup → RegisterApiObservableGauges →
+        // CreateClient triggers host startup → Program.cs eager
         // GetRequiredService<IAgentRegistryService>() → factory lambda → throw
         var ex = Record.Exception(() => factory.CreateClient());
 

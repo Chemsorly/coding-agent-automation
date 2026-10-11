@@ -91,6 +91,12 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 
 ### Agent connections (Scheduler leader)
 
+<!-- TODO [WARNING]: This heading attributes the whole table to the Scheduler leader, but only the two
+     gauge rows (`agent.jobs.active`, `agent.connections.total`) are emitted there. `agent.hub.auth_rejections`
+     and `token_vending.failures` are counters recorded by API-hosted code. An operator switching
+     `service_name` after the deploy could query the wrong service for those counters. Fix: use a neutral
+     heading (or split into two subsections) and name the Scheduler leader only on the two gauge rows. -->
+
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|
 | `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, polled from the agent registry by the Scheduler leader |

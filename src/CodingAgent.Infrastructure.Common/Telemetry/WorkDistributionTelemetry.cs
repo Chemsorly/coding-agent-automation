@@ -263,7 +263,7 @@ public static class WorkDistributionTelemetry
         ArgumentNullException.ThrowIfNull(availableCallback);
         ArgumentNullException.ThrowIfNull(claimedCallback);
 
-        // TODO [WARNING]: Unlike RegisterWorkItemsByStatusCallback (which uses Interlocked.CompareExchange
+        // NOTE (issue #3555): Unlike RegisterWorkItemsByStatusCallback (which uses Interlocked.CompareExchange
         // and logs a warning on double-registration), this method unconditionally overwrites the callbacks.
         // A second call from a misconfigured DI container or a test running in the same process silently
         // replaces the active callbacks without any diagnostic. Consider using Interlocked.CompareExchange

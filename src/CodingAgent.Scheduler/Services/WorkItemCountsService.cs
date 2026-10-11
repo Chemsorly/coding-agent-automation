@@ -118,6 +118,12 @@ public sealed class WorkItemCountsService : BackgroundService
     private async Task UpdateMeasurementsAsync(CancellationToken ct)
     {
         // Only the leader polls — one source of metrics truth
+        // NOTE (issue #3555): This early return does not clear _cachedAgentCounts / _cachedCredentialPoolCounts
+        // (nor _cachedMeasurements). The gauge callbacks check IsLeader only at read time, so a replica that
+        // polled as leader, lost the lease and later regains it exports its old cached values until the first
+        // successful poll after regaining leadership (up to one interval plus API latency). That contradicts
+        // "no stale values / nothing before the first successful poll". workitems_by_status has the same gap.
+        // Fix: clear the caches in this non-leader branch.
         if (_leaderGate is { IsLeader: false }) return;
 
         try
@@ -126,16 +132,19 @@ public sealed class WorkItemCountsService : BackgroundService
             var agentsTask = _apiClient.GetAgentsAsync(ct);
             var poolTask = _apiClient.GetCredentialPoolAsync(ct);
 
-            // NOTE (issue #3555): Task.WhenAll throws on the first faulted task and the other two tasks
-            // may still be in flight (unobserved faults). More importantly, if GetAgentsAsync or
-            // GetCredentialPoolAsync faults while GetWorkItemCountsAsync succeeds, Task.WhenAll
-            // propagates only the first exception, the catch block resets all caches, and the
-            // successfully-fetched work-item counts are discarded — causing a brief false "no pending
-            // items" in Prometheus when an unrelated agent-hub endpoint is temporarily unhealthy.
-            // Consider catching per-task so a partial failure resets only the affected gauge caches.
+            // NOTE (issue #3555): The three calls share one Task.WhenAll and one catch block, so a failure of
+            // GET /api/agents or GET /api/agents/credential-pool also discards the successfully fetched
+            // work-item counts: workitems_by_status and the oldest-pending-age gauge reset to empty although
+            // counts-by-status succeeded (and a credential-pool failure blanks the agent gauges). Before
+            // #3555 those two gauges depended only on counts-by-status. No test covers a partial failure.
+            // Fix: await and cache each source in its own try/catch so a failure resets only its own gauges.
             await Task.WhenAll(countsTask, agentsTask, poolTask);
 
             var response = await countsTask;
+            // NOTE (issue #3555): A null response body falls back to an empty agent list / a zeroed pool here
+            // (and in HttpSchedulerApiClient), so it is cached as a successful poll and exported as 0
+            // instead of emitting nothing. No test pins null or empty API responses. Fix: treat a null body
+            // as a failed poll, and add boundary tests for empty agent list, empty pool and null body.
             var agents = await agentsTask ?? [];
             var pool = await poolTask ?? new CredentialPoolStatus(0, 0, 0);
 
