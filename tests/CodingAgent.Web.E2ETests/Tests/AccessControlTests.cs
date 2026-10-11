@@ -105,6 +105,19 @@ public sealed class AccessControlTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ScopedOperator_ProfileNamesItsProject_ThroughTheApiAsThatUser()
+    {
+        // Spec 051: the web host signs a user token, the real API checks it on /api/ui/me and
+        // resolves the bound project ID to its name. A rejected token would leave IDs only.
+        await _page.GotoAsync(E2ETestSignIn.SignInUrl(BaseUrl, "alice", E2ETestSignIn.TeamGroup));
+        await _page.WaitForURLAsync(url => url.EndsWith("/user"));
+
+        await Assertions.Expect(_page.Locator("[data-testid=profile-bindings]"))
+            .ToContainTextAsync($"Project Default ({WellKnownIds.DefaultProjectId})");
+        await Assertions.Expect(_page.Locator("[data-testid=profile-projects-unavailable]")).ToHaveCountAsync(0);
+    }
+
+    [Fact]
     public async Task NoAccessUser_SeesItsGroupsOnTheProfile()
     {
         await _page.GotoAsync(E2ETestSignIn.SignInUrl(BaseUrl, "carol", "unbound-group"));

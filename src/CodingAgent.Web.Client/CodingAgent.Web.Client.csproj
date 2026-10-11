@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!--
+    Spec 051 D9: the browser-safe part of the web UI. It references Contracts only, never a server
+    project or Api.Client, so the same code can later run as WebAssembly. RootNamespace keeps the
+    CodingAgent.Web namespaces of the code that moves here.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CodingAgent.Web</RootNamespace>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The platform analyzer flags APIs that do not work in the browser. -->
+    <SupportedPlatform Include="browser" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CodingAgent.Contracts\CodingAgent.Contracts.csproj" />
+  </ItemGroup>
+</Project>
