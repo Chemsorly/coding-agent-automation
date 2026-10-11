@@ -28,6 +28,16 @@ echo "AGENT_API_KEY=$(openssl rand -hex 32)" > .env
 
 The dispatcher derives each agent Job's own key, `HMAC-SHA256(master key, job name)`, and hands it to the pod through a per-Job Secret (`caa-key-{job name}`); the job name is the agent's `AGENT_ID`, and agent pods never receive the master key. This enables per-agent revocation without rotating the master key.
 
+### User Token Secret
+
+The web host signs short-lived user tokens that the Pipeline API checks on its UI surface (`/api/ui/**`, see [Authentication](authentication.md)). The key comes from the `<release>-coding-agent-automation-web-user-token` Secret, key `signing-key`, mounted as `UserToken__SigningKey` into the web and API pods only. The Secret also holds `data-protection-key`, mounted as `DataProtection__Key` into the web pods only: the one key that encrypts the login cookie and antiforgery tokens on every web replica. The web host keeps no key ring in Redis or on disk.
+
+- The secret-init hook creates the Secret once, with random keys, and keeps it across upgrades.
+- To bring your own, set `userToken.existingSecret` to a Secret with both keys (each at least 32 characters).
+- To rotate, delete the Secret and run `helm upgrade`; restart the web and API pods if they are not restarted by the upgrade. Users sign in again.
+- The web and API hosts refuse to start when `UserToken__SigningKey` is missing or shorter than 32 characters; the web host also refuses without a `DataProtection__Key` of at least 32 characters. For local `dotnet run`, set `UserToken__SigningKey` to the same value for both hosts, and `DataProtection__Key` for the web host.
+- Upgrading to this version signs every user out once: sessions encrypted with the former Redis key ring are no longer accepted.
+
 ### Token Vending
 
 The orchestrator generates short-lived GitHub installation tokens for agents on demand. Private keys never leave the orchestrator container — agents receive time-limited tokens for API calls.
@@ -65,7 +75,7 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set scheduler.image.tag=coding-agent-scheduler-<version>
 ```
 
-The Pipeline API and the web UI default to two replicas each, which need Redis. For a single-replica install without Redis, set `api.replicas=1` and `web.replicas=1` instead of `signalr.redis.connectionString`.
+The Pipeline API and the web UI default to two replicas each. Several API replicas need Redis; the web UI does not. For an install without Redis, set `api.replicas=1` instead of `signalr.redis.connectionString`.
 
 > **Docker build args:** All service images (`api.Dockerfile`, `web.Dockerfile`, `jobcontroller.Dockerfile`, `scheduler.Dockerfile`) accept a `BUILD_COMMIT_SHA` build arg at image build time. This arg is exposed as the `SERVICE_VERSION` runtime environment variable and is reported in `build-info.json` inside the container for version identification. Pass it via `--build-arg BUILD_COMMIT_SHA=$(git rev-parse HEAD)` in CI. Omitting it defaults to `"local"` (safe for dev builds).
 
@@ -99,12 +109,13 @@ The chart deploys:
 | Path | Description |
 |------|-------------|
 | `web.image.repository/tag` | Web container image |
-| `web.replicas` | Number of web replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` — the chart fails at render time otherwise, because login sessions and Data Protection keys are shared through Redis — and sticky sessions at the ingress (see `web.service.annotations`). |
+| `web.replicas` | Number of web replicas (default: `2`). Values > 1 require sticky sessions at the ingress (see `web.service.annotations`). Login sessions work on every replica through the shared `data-protection-key`; the web host needs no Redis. |
 | `web.service.annotations` | Annotations on the web Service. With Traefik and more than one web replica, enable sticky sessions here (`traefik.ingress.kubernetes.io/service.sticky.cookie: "true"`): a Blazor Server circuit lives in one pod, and its connection and reconnects must reach that pod. See [Authentication](authentication.md#exposing-the-ui). |
 | `web.ingress.httpsRedirect` | With a `tls` section on the Ingress, redirect clients that reached it over plain HTTP to HTTPS (default: `true`). Set `false` when TLS ends in front of the ingress. See [Authentication](authentication.md#exposing-the-ui). |
 | `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
+| `userToken.existingSecret` | Existing Secret with `signing-key` and `data-protection-key` (default: empty — the secret-init hook creates `<release>-coding-agent-automation-web-user-token`). See [User Token Secret](#user-token-secret). |
 | `secrets.otelHeaders` | OTLP auth headers |
 | `secrets.opencodeConfigContent` | OpenCode config JSON for opencode agents (Secret key `opencode-config-content`; passed to the pod as `OPENCODE_CONFIG_CONTENT`, which the image's entrypoint writes to `opencode.json`) |
 | `secrets.claudeApiKey` | Anthropic API key for claude agents (Secret key `claude-api-key`; optional) |
@@ -180,7 +191,7 @@ When the Kubernetes client is unavailable (e.g., local `dotnet run`), `ILeaderEl
 >
 > **Note:** Redis does **not** eliminate the PVC dispatch race. The Scheduler's dispatch of queued work takes a per-selector Postgres advisory lock; the Run page's synchronous `POST /api/work-items/dispatch` takes none. Occasional `503` responses in multi-replica deployments are expected and transient. See [Concurrency Model — PVC Dispatch Race in Multi-Replica Deployments](architecture/concurrency-model.md#pvc-dispatch-race-in-multi-replica-deployments) for details.
 
-> **Note on Data Protection and Redis:** The web host (Blazor Server) uses ASP.NET Core Data Protection to encrypt the login cookie and antiforgery tokens. In a multi-replica web deployment each pod generates its own ephemeral key ring by default, so a cookie issued by one replica is rejected by another. When `signalr.redis.connectionString` is set, the web host persists Data Protection keys to Redis under `caa:data-protection-keys` so all replicas share one ring. The web host uses Redis for nothing else: it maps no SignalR hub and has no backplane. Several web replicas also need sticky sessions (`web.service.annotations`), because each open page keeps its circuit on one replica.
+> **Note on Data Protection:** The web host (Blazor Server) uses ASP.NET Core Data Protection to encrypt the login cookie and antiforgery tokens. Its key ring is read-only and holds one key, built from `DataProtection__Key` (the `data-protection-key` of the [User Token Secret](#user-token-secret)). Every replica builds the same key, so a cookie issued by one replica is accepted by the others and after restarts. Nothing can add a key to the ring. The web host has no Redis connection. Several web replicas need sticky sessions (`web.service.annotations`), because each open page keeps its circuit on one replica. The sidebar's database and Redis indicators show the Pipeline API's view (`GET /api/ui/health`).
 
 ### Graceful Shutdown
 

@@ -168,11 +168,12 @@ tests:
           path: spec.template.spec.containers[0].command[2]
           pattern: "RELEASE-NAME-coding-agent-automation-admin"
 
-  - it: skips the hook when both secrets are supplied
+  - it: skips the hook when every secret is supplied
     template: templates/secret-init-job.yaml
     set:
       secrets.agentApiKey: explicit
       auth.admin.existingSecret: my-admin
+      userToken.existingSecret: my-user-token
     asserts:
       - hasDocuments:
           count: 0
@@ -181,6 +182,7 @@ tests:
     template: templates/secret-init-job.yaml
     set:
       secrets.agentApiKey: explicit
+      userToken.existingSecret: my-user-token
       auth.admin.enabled: false
       # OIDC as the remaining login method; the chart refuses to render without one.
       auth.oidc.enabled: true

@@ -1,0 +1,159 @@
+# helm unittest suite for the user-token Secret (spec 051).
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Covers:
+#   1. The secret-init hook creates <fullname>-web-user-token with signing-key and data-protection-key
+#   2. userToken.existingSecret skips that and is used instead
+#   3. UserToken__SigningKey reaches the web and API pods only
+#   4. The hook Role may read the user-token Secret it manages
+#   5. DataProtection__Key reaches the web pod only, and the web pod has no Redis env (D10)
+
+suite: user token
+
+templates:
+  - templates/secret-init-job.yaml
+  - templates/secret-init-rbac.yaml
+  - templates/api-deployment.yaml
+  - templates/web-deployment.yaml
+  - templates/scheduler-deployment.yaml
+  - templates/jobcontroller-deployment.yaml
+
+# Required values to avoid render failures in dependent templates
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  signalr.redis.connectionString: "redis:6379"
+  # The scheduler image has no default tag; the chart refuses to render without one.
+  scheduler.image.tag: "test"
+
+tests:
+
+  - it: the hook creates the user-token Secret with both keys
+    template: templates/secret-init-job.yaml
+    release:
+      name: rel
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: 'kubectl create secret generic rel-coding-agent-automation-web-user-token'
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: '--from-literal=signing-key='
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: '--from-literal=data-protection-key='
+
+  - it: the hook skips the user-token Secret when userToken.existingSecret is set
+    template: templates/secret-init-job.yaml
+    set:
+      userToken.existingSecret: my-user-token
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: 'signing-key'
+
+  - it: the hook Role may read the user-token Secret
+    template: templates/secret-init-rbac.yaml
+    release:
+      name: rel
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules[0].resourceNames
+          content: rel-coding-agent-automation-web-user-token
+
+  - it: the API pod gets the signing key
+    template: templates/api-deployment.yaml
+    release:
+      name: rel
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UserToken__SigningKey
+            valueFrom:
+              secretKeyRef:
+                name: rel-coding-agent-automation-web-user-token
+                key: signing-key
+
+  - it: the web pod gets the signing key from an existing Secret when one is set
+    template: templates/web-deployment.yaml
+    set:
+      userToken.existingSecret: my-user-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UserToken__SigningKey
+            valueFrom:
+              secretKeyRef:
+                name: my-user-token
+                key: signing-key
+
+  - it: the web pod gets the Data Protection key (spec 051 D10)
+    template: templates/web-deployment.yaml
+    release:
+      name: rel
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+            valueFrom:
+              secretKeyRef:
+                name: rel-coding-agent-automation-web-user-token
+                key: data-protection-key
+
+  - it: the web pod has no Redis connection, even when Redis is configured
+    template: templates/web-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SignalR__Redis__ConnectionString
+          any: true
+
+  - it: the API pod does not get the Data Protection key
+    template: templates/api-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+          any: true
+
+  - it: the scheduler pod gets neither key
+    template: templates/scheduler-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+          any: true
+
+  - it: the job controller pod gets neither key
+    template: templates/jobcontroller-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+          any: true
+
+  - it: the scheduler pod does not get the signing key
+    template: templates/scheduler-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UserToken__SigningKey
+          any: true
+
+  - it: the job controller pod does not get the signing key
+    template: templates/jobcontroller-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UserToken__SigningKey
+          any: true

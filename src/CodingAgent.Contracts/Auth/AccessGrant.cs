@@ -1,14 +1,16 @@
-namespace CodingAgent.Web.Auth;
+namespace CodingAgent.Contracts.Auth;
 
 /// <summary>
-/// One binding that matched the principal. <see cref="ProjectId"/> is null for a global binding
-/// and for a project binding whose name could not be resolved; <see cref="Problem"/> then says why.
+/// One binding that matched the principal. <see cref="ProjectId"/> is the bound project ID as
+/// configured (normalised), or null for a global binding. Whether a project carries that ID is not
+/// checked here; <c>GET /api/ui/me</c> answers that.
 /// </summary>
-public sealed record MatchedBinding(string Subject, AccessRole Role, string? ProjectName, string? ProjectId, string? Problem);
+public sealed record MatchedBinding(string Subject, AccessRole Role, string? ProjectId);
 
 /// <summary>
-/// The roles a principal holds: a global role plus per-project roles. Evaluated by
-/// <see cref="IRbacEvaluator"/> from the principal's claims and the configured bindings.
+/// The roles a principal holds: a global role plus per-project roles. The web host evaluates it
+/// (<c>RbacEvaluator</c>) from the principal's claims and the configured bindings; the Pipeline API
+/// reads it back from the user token (<see cref="AccessGrantClaims"/>).
 /// Project IDs are normalised with <see cref="ProjectIds.Normalize(string?)"/>.
 /// </summary>
 public sealed record AccessGrant(

@@ -18,9 +18,7 @@ internal static class OpenTelemetryRegistration
     /// <c>SERVICE_VERSION</c> is not set (previously fell back to the assembly version string).
     /// This is an intentional behaviour change to align with the other hosts (issue #3446).
     /// </remarks>
-    internal static IServiceCollection AddApplicationTelemetry(
-        this IServiceCollection services,
-        string? redisConnectionString)
+    internal static IServiceCollection AddApplicationTelemetry(this IServiceCollection services)
     {
         services.AddHostOpenTelemetry(
             "coding-agent-web",
@@ -28,10 +26,6 @@ internal static class OpenTelemetryRegistration
             {
                 // AgentHub spans (RegisterAgent, JobAccepted, etc.) from the SignalR server.
                 t.AddSource("Microsoft.AspNetCore.SignalR.Server");
-
-                // Redis backplane: trace Redis commands when a connection string is present.
-                if (!string.IsNullOrEmpty(redisConnectionString))
-                    t.AddSource("StackExchange.Redis");
             },
             configureMetrics: m => m
                 // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).

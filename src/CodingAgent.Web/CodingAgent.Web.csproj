@@ -20,7 +20,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
-    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
     <PackageReference Include="Microsoft.Extensions.Resilience" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
@@ -37,6 +36,7 @@
     <ProjectReference Include="..\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
     <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
     <ProjectReference Include="..\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
+    <ProjectReference Include="..\CodingAgent.Web.Client\CodingAgent.Web.Client.csproj" />
   </ItemGroup>
 
 </Project>

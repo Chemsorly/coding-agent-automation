@@ -73,13 +73,13 @@ tests:
       - failedTemplate:
           errorPattern: "which is not a project ID"
 
-  - it: fails for several web replicas without Redis
+  - it: accepts several web replicas without Redis (spec 051 D10, the key ring comes from a Secret)
     set:
       signalr.redis.connectionString: ""
       web.replicas: 2
     asserts:
-      - failedTemplate:
-          errorPattern: "web.replicas is greater than 1"
+      - hasDocuments:
+          count: 1
 
   - it: accepts several web replicas with Redis
     set:

@@ -62,10 +62,7 @@ public class CockpitLayoutComponentTests : BunitContext
             sp.GetRequiredService<IFaroService>()));
 
         // SidebarHealthIndicators dependencies.
-        var emptyConfig = new ConfigurationBuilder().Build();
-        var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
-        Services.AddSingleton(new InfrastructureHealthService(
-            emptyServiceProvider, emptyConfig, Mock.Of<IPipelineApiHealthClient>()));
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new FakeUiHealthClient());
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
 
         // JS runtime — shared mock; configure per-test for specific return values.

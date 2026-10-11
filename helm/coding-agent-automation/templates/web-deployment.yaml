@@ -110,6 +110,8 @@ spec:
                 name: {{ include "coding-agent-automation.fullname" . }}-web-env
           env:
             {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
+            {{- include "coding-agent-automation.userTokenEnv" . | nindent 12 }}
+            {{- include "coding-agent-automation.dataProtectionKeyEnv" . | nindent 12 }}
             # Spec 049: secrets of the user login (the rest of the auth config is in auth.json).
             {{- if include "coding-agent-automation.adminEnabled" . }}
             - name: Auth__Admin__Password
@@ -127,12 +129,8 @@ spec:
                   key: {{ .clientSecret.key | default "client-secret" }}
             {{- end }}
             {{- end }}
-            # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
-            # IPipelineApiWorkItemClient. IPipelineRunHistoryService, IConsolidationRunStore,
-            # IHarnessSuggestionStore, and IWorkItemFallbackTransitionService are all API-backed
-            # as of arch-audit 2026-08-22 (T8 complete). The web no longer holds a
-            # Postgres connection. Database env vars removed.
-            {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
+            # The web host holds no Postgres and (spec 051 D10) no Redis connection: its Data
+            # Protection ring comes from DataProtection__Key above, infrastructure health from the API.
             # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
             # Spec 045 Req 6.4: web must know API base URL and hub URL.
             - name: PipelineApi__BaseUrl

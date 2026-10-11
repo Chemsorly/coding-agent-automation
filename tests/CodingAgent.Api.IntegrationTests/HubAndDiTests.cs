@@ -368,6 +368,22 @@ public sealed class HubAndDiTests
         console.Should().Contain("AGENT_API_KEY");
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("shorter-than-32-characters")]
+    public void Startup_MissingOrShortUserTokenKey_FailsFastWithNamedSetting(string? signingKey)
+    {
+        // Spec 051: the UI surface must never run with a guessable signing key.
+        using var factory = new MissingUserTokenKeyFactory(signingKey);
+
+        Exception? ex = null;
+        var console = CaptureConsole(() => ex = Record.Exception(() => factory.CreateClient()));
+
+        ex.Should().NotBeNull("startup must fail without a usable user-token signing key");
+        FlattenMessages(ex!).Should().Contain("without ever building an IHost");
+        console.Should().Contain("UserToken:SigningKey");
+    }
+
     /// <summary>
     /// Host startup failures surface wrapped — the useful text is usually on an inner exception,
     /// so match against the whole chain rather than the outermost message.
@@ -405,6 +421,7 @@ internal sealed class ApiKestrelFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", ApiWebApplicationFactory.ApiKey);
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", ApiWebApplicationFactory.UserTokenSigningKey);
 
         // Silence the logger to avoid frozen-logger errors across multiple factory instances
         Serilog.Log.Logger = new Serilog.LoggerConfiguration()
@@ -542,6 +559,40 @@ internal sealed class MissingDbHostFactory : WebApplicationFactory<Program>
             Environment.SetEnvironmentVariable("Database__Host", null);
             Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
             Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+        }
+        base.Dispose(disposing);
+    }
+}
+
+/// <summary>Factory with a missing or too short UserToken__SigningKey to test fast-fail behavior.</summary>
+internal sealed class MissingUserTokenKeyFactory : WebApplicationFactory<Program>
+{
+    public MissingUserTokenKeyFactory(string? signingKey)
+    {
+        // Must set env vars before host build — WebApplication.CreateBuilder reads them
+        // during construction, before ConfigureWebHost callbacks run.
+        Environment.SetEnvironmentVariable("Database__Host", "localhost");
+        Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
+        Environment.SetEnvironmentVariable("AGENT_API_KEY", "any-key");
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", signingKey);
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .CreateBootstrapLogger();
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseEnvironment("Development");
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            Environment.SetEnvironmentVariable("Database__Host", null);
+            Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
+            Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable("UserToken__SigningKey", null);
         }
         base.Dispose(disposing);
     }

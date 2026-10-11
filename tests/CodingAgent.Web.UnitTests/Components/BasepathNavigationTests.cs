@@ -309,10 +309,7 @@ public class BasepathNavigationTests : BunitContext
             sp.GetRequiredService<NotificationService>(),
             sp.GetRequiredService<IFaroService>()));
 
-        var emptyConfig = new ConfigurationBuilder().Build();
-        var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
-        Services.AddSingleton(new InfrastructureHealthService(
-            emptyServiceProvider, emptyConfig, Mock.Of<IPipelineApiHealthClient>()));
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new FakeUiHealthClient());
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 

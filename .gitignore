@@ -92,3 +92,6 @@ local-values.yaml
 postgres-local.yaml
 redis-local.yaml
 build-info.json
+
+# Endpoint-inventory snapshot mismatches written by the API security tests (spec 051)
+*.snapshot.received.txt

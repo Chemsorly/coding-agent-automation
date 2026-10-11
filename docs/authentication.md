@@ -2,7 +2,14 @@
 
 The web UI requires a signed-in user. Users sign in through one OpenID Connect identity provider (Keycloak, Microsoft Entra ID or any other OIDC provider) or with the local `admin` account. The UI has no user database: identity comes from the provider, and roles come from bindings in the Helm values, in the style of ArgoCD.
 
-Only the web UI is affected. The Pipeline API, the Job Controller, the Scheduler and agent pods keep using the agent API keys described in [Deployment](deployment.md#agent-api-keys).
+The Job Controller, the Scheduler and agent pods use the agent API keys described in [Deployment](deployment.md#agent-api-keys).
+
+The Pipeline API has two surfaces:
+
+- **Service surface** (`/api/**` except `/api/ui/**`, and `/hubs/agent`): API keys only.
+- **UI surface** (`/api/ui/**`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints one token per browser session (circuit) and page request, and only for users with a role; it never calls the UI surface with the master API key.
+
+An API endpoint that declares no policy is denied. A credential of one surface is never accepted on the other.
 
 ## Roles
 
@@ -71,7 +78,7 @@ auth:
 
 - A `group` binding matches one value of the groups claim exactly (case-sensitive). A `user` binding matches the username claim (case-insensitive).
 - A user's role is the highest of `defaultRole` and every matching binding; on a project it is the highest of the global role and the project's bindings.
-- A project binding names the project by its ID, shown on the project's Overview tab (Settings → Projects → project → Overview). Renaming a project does not change who can access it. A binding to an ID that does not exist grants nothing (warning in the log, shown on the profile page).
+- A project binding names the project by its ID, shown on the project's Overview tab (Settings → Projects → project → Overview). Renaming a project does not change who can access it. Bindings are not checked against the project list: a binding to an ID that no project has opens nothing, and the profile page flags it.
 - Binding changes take effect when the web pods restart. The chart annotates the pods with a checksum of the auth configuration, so `helm upgrade` restarts them.
 - Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, `admin` bound to a project, or `project` used instead of `projectId`. The web host also stops on an unknown role or a `projectId` that is not a valid GUID.
 - **Upgrade note:** Bindings that still use `project:` stop `helm template` and the web host at startup; replace them with `projectId: <id>` (the ID is shown on the project's Overview tab).
@@ -105,7 +112,7 @@ With a `tls` section on the Ingress, the web host also sends clients that reache
 
 Every response also carries `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and a Content Security Policy with `base-uri`, `form-action`, `frame-ancestors` and `object-src`. The policy does not restrict scripts or styles, because the page shell has inline scripts. `Cross-Origin-Resource-Policy` is `same-origin` everywhere except `/favicon.svg`, which is `cross-origin` so dashboards on other hosts can show it as the service icon.
 
-Running several web replicas requires `signalr.redis.connectionString`: sessions are encrypted with a key ring shared through Redis. The chart refuses `web.replicas > 1` without it.
+Sessions are encrypted with one key from the `data-protection-key` of the `<release>-coding-agent-automation-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)). Every web replica reads the same key, so a session works on all replicas and survives restarts; the web host needs no Redis.
 
 Several web replicas also need sticky sessions at the ingress. Each open page is a Blazor Server circuit that lives in one pod's memory; its connection and every reconnect must reach that pod. Without stickiness the browser's connection is routed to a pod that does not know it, and the page stays unresponsive. With Traefik, set the annotations on the web Service:
 
@@ -152,8 +159,8 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 | Symptom | Check |
 |---|---|
 | "You have no access yet" after sign-in | Open the profile page (`/user`). If no groups are listed, the provider does not put groups into the ID token (Keycloak mapper, Entra groups claim or overage). If groups are listed, add a binding with one of them. |
-| A binding shows "unknown project" | The `projectId` value must equal the ID shown on the project's Overview tab (Settings → Projects → project → Overview). |
+| The profile page says a binding "opens nothing: no project has this ID" | The `projectId` value must equal the ID shown on the project's Overview tab (Settings → Projects → project → Overview). |
 | "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client ID, client secret or issuer, a provider it cannot reach, or a clock skew. |
 | Redirect URI uses `http://` behind TLS | The ingress must send `X-Forwarded-Proto: https`. |
-| Signed out on every request with several web replicas | Configure `signalr.redis.connectionString`. |
+| Signed out on every request with several web replicas | All web pods must read the same `data-protection-key`; restart them after replacing the Secret. Check the sticky-session annotations. |
 | Pages load but stay unresponsive with several web replicas; the browser console shows "No Connection with that ID" | Enable sticky sessions at the ingress (see [Exposing the UI](#exposing-the-ui)). |

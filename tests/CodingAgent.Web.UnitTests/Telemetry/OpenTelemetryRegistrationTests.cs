@@ -45,7 +45,7 @@ public sealed class OpenTelemetryRegistrationTests
     private static ServiceProvider BuildProvider()
     {
         var services = new ServiceCollection();
-        services.AddApplicationTelemetry(redisConnectionString: null);
+        services.AddApplicationTelemetry();
         return services.BuildServiceProvider();
     }
 }

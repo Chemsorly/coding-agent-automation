@@ -4,3 +4,4 @@
 // 'Kubernetes' conflicts with the k8s.Kubernetes concrete type used in this project.
 // Add 'using CodingAgent.Kubernetes' explicitly in files that need those types.
 global using CodingAgent.Pipeline.LeaderElection;
+global using CodingAgent.Contracts.Auth;

@@ -155,6 +155,17 @@ secrets:
 # (e.g. synced by external-secrets next to opencode-config-content).
 existingSecret: ""
 
+# ── User token (spec 051) ─────────────────────────────────────────────────────
+# The web host signs short-lived user tokens with `signing-key`; the Pipeline API checks them on
+# its UI surface (/api/ui). `data-protection-key` is the one key of the web host's Data Protection
+# ring (login cookie, antiforgery), so sessions work on every web replica and survive restarts.
+# Only the web pods receive `data-protection-key`; only the web and API pods receive `signing-key`.
+# Empty (default): the secret-init hook creates <fullname>-web-user-token with two random keys
+# once and keeps it across upgrades. To rotate, delete that Secret and upgrade (everyone signs in
+# again). Set existingSecret to bring your own Secret with both keys, each 32+ characters.
+userToken:
+  existingSecret: ""
+
 # ── Authentication and roles (Spec 049) ──────────────────────────────────────
 # The web UI requires a signed-in user. Sign-in is through one OIDC identity provider
 # (Keycloak, Entra ID, ...) and/or the local "admin" account. Roles are bound to OIDC groups or
