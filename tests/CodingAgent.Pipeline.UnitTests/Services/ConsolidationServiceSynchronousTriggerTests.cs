@@ -2,8 +2,12 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
@@ -16,7 +20,13 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// (A) A valid trigger creates exactly one <c>Pending</c> WorkItem via <c>IWorkDistributor</c>.
 /// (B) A config-error trigger (permanent failure) creates no WorkItem and returns null.
 /// </para>
+/// <para>
+/// Issue #3642: a permanent failure (no job template for the agent selector) also logs the selector at
+/// Error and increments <c>consolidation.dispatch.permanent_failures</c>. The counter lives on the
+/// process-global <see cref="PipelineTelemetry.Meter"/>, so the class is in the <c>Metrics</c> collection.
+/// </para>
 /// </summary>
+[Collection("Metrics")]
 public sealed class ConsolidationServiceSynchronousTriggerTests
 {
     private static readonly string[] SelectorLabels = ["dotnet", "kiro", "dotnet10"];
@@ -65,7 +75,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             .ReturnsAsync((IReadOnlyList<string>)SelectorLabels);
     }
 
-    private ConsolidationService CreateSut(PipelineConfiguration? config = null)
+    private ConsolidationService CreateSut(PipelineConfiguration? config = null, ILogger? logger = null)
     {
         var cfg = config ?? new PipelineConfiguration
         {
@@ -74,7 +84,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
         };
 
         return new ConsolidationService(new ConsolidationServiceDependencies(
-            new LoggerConfiguration().CreateLogger(),
+            logger ?? new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
@@ -345,5 +355,85 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
 
         result.Should().BeNull(
             "when DistributeAsync throws, TriggerAsync must return null (not a ConsolidationRun)");
+    }
+
+    // ── Issue #3642: a run whose agent selector has no job template ──────────
+
+    /// <summary>
+    /// <c>POST /api/work-items</c> answers 422 for a consolidation run whose selector has no job template, and
+    /// <c>KubernetesWorkDistributor</c> maps that to a permanent failure naming the selector. TriggerAsync must
+    /// return null, log the failure at Error with the selector, and count it.
+    /// </summary>
+    [Fact]
+    public async Task TriggerAsync_NoJobTemplateForSelector_ReturnsNull_LogsSelectorAtError_AndCountsPermanentFailure()
+    {
+        // The selector the service builds from SelectorLabels (AgentSelectorKey.From normalizes and joins them).
+        var expectedSelector = AgentSelectorKey.From(SelectorLabels);
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(
+                Success: false,
+                WorkItemId: null,
+                ErrorMessage: $"No job template for agent selector '{expectedSelector}'",
+                IsPermanentFailure: true));
+
+        var sink = new CapturingSink();
+        var logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        var sut = CreateSut(logger: logger);
+        using var collector = new MetricCollector<long>(PipelineTelemetry.ConsolidationDispatchPermanentFailures);
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation,
+            new TemplateId(Template.Id),
+            CancellationToken.None);
+
+        run.Should().BeNull("a run that can never be dispatched must not be reported as queued");
+
+        var failureLog = sink.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Error).Subject;
+        failureLog.Properties.Should().ContainKey("AgentSelector");
+        failureLog.Properties["AgentSelector"].ToString().Should().Contain(expectedSelector,
+            "the operator needs to know which selector has no template");
+        failureLog.RenderMessage().Should().Contain("permanent dispatch failure");
+
+        var measurements = collector.GetMeasurementSnapshot();
+        measurements.Should().HaveCount(1);
+        measurements[0].Value.Should().Be(1);
+        measurements[0].Tags.Should().ContainKey("run.type")
+            .WhoseValue.Should().Be(ConsolidationRunType.BrainConsolidation.ToString());
+    }
+
+    /// <summary>
+    /// A transient failure is not a permanent one: it logs at Warning and leaves the permanent-failure counter alone.
+    /// </summary>
+    [Fact]
+    public async Task TriggerAsync_TransientFailure_LogsWarning_AndDoesNotCountPermanentFailure()
+    {
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: false, WorkItemId: null, ErrorMessage: "capacity limit reached"));
+
+        var sink = new CapturingSink();
+        var logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        var sut = CreateSut(logger: logger);
+        using var collector = new MetricCollector<long>(PipelineTelemetry.ConsolidationDispatchPermanentFailures);
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation,
+            new TemplateId(Template.Id),
+            CancellationToken.None);
+
+        run.Should().BeNull();
+        sink.Events.Should().NotContain(e => e.Level == LogEventLevel.Error);
+        sink.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Warning
+            && e.RenderMessage().Contains("transient dispatch failure"));
+        collector.GetMeasurementSnapshot().Should().BeEmpty("only permanent failures are counted");
+    }
+
+    /// <summary>Serilog sink that captures log events for assertion.</summary>
+    private sealed class CapturingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+        public IReadOnlyList<LogEvent> Events => _events;
+        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
     }
 }

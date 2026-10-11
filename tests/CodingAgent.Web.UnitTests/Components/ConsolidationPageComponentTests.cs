@@ -542,6 +542,29 @@ public class ConsolidationPageComponentTests : BunitContext
         Assert.Contains("rejected", statusMessage.TextContent.ToLowerInvariant());
     }
 
+    // A refused run gives the operator no reason beyond the message, so each rejection message must name every
+    // cause the service can give: a selector with no job template is one of them (issue #3642).
+    [Theory]
+    [InlineData("Brain Consolidation", false, "Brain consolidation rejected")]
+    [InlineData("Refactoring Scan", true, "Refactoring scan rejected")]
+    [InlineData("Generate Suggestions", false, "Harness suggestions rejected")]
+    public void TriggerRejection_NamesMissingJobTemplateAsPossibleCause(string buttonText, bool confirmInModal, string expectedStart)
+    {
+        RegisterServices(templates: [CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")]);
+        _mockConsolidationService.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync((ConsolidationTriggerResult?)null);
+
+        var cut = Render<Consolidation>();
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains(buttonText)).Click();
+        if (confirmInModal)
+            cut.Find(".modal-card .btn-save").Click();
+
+        var message = cut.Find(".consolidation-status-message").TextContent;
+        Assert.StartsWith(expectedStart, message);
+        Assert.Contains("no job template matches the agent profile", message);
+    }
+
     // ═══ Refactoring Scan Pre-Flight Modal (Issue #1435) ═══
 
     [Fact]
