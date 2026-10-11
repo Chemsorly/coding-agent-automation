@@ -25,4 +25,7 @@ public sealed record AgentHubFacadeDependencies(
     IWorkItemFallbackTransitionService? WorkItemFallbackTransition = null,
     // TimeProvider is always provided by production via GetRequiredService<TimeProvider>().
     // Optional only for test paths that construct the record positionally without specifying it.
-    TimeProvider? TimeProvider = null);
+    TimeProvider? TimeProvider = null,
+    // Required by ResolveBrainReadOnlyAsync to load the global pipeline config and all templates.
+    // Optional to preserve backward compatibility with existing test constructors.
+    IPipelineConfigStore? PipelineConfigStore = null);

@@ -1008,4 +1008,234 @@ public class TokenVendingServiceTests
     }
 
     #endregion
+
+    #region PrepareAgentConfigsAsync — readOnlyConfigIds
+
+    /// <summary>
+    /// A GitHub App config whose ID is in readOnlyConfigIds must receive a contents:read token.
+    /// The config must NOT be marked clone-only — secrets and setup steps are preserved.
+    /// </summary>
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_WithReadOnlyConfigId_GitHubApp_VendsReadOnlyToken()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var brainConfig = new ProviderConfig
+        {
+            Id = "brain-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain Repo",
+            Secrets = new Dictionary<string, string> { ["MY_SECRET"] = "secret-value" },
+            SetupSteps = new List<SetupStep> { new SetupStep { Name = "echo", Command = "echo hi" } },
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                [ProviderSettingKeys.ClientId] = "Iv1.brain123",
+                [ProviderSettingKeys.InstallationId] = "99999",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Repo] = "brain-repo"
+            }
+        };
+
+        HttpRequestMessage? capturedRequest = null;
+        string? capturedRequestBody = null;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>(async (req, ct) =>
+            {
+                capturedRequest = req;
+                capturedRequestBody = await req.Content!.ReadAsStringAsync(ct);
+                return new HttpResponseMessage(System.Net.HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = "ghs_read_token", expires_at = "2026-12-01T00:00:00Z" }),
+                        System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient(mockHandler.Object));
+        var readOnlySet = new HashSet<string> { "brain-1" };
+
+        var result = await service.PrepareAgentConfigsAsync(
+            new[] { brainConfig }, "repo-1", CancellationToken.None,
+            readOnlyConfigIds: readOnlySet);
+
+        // Token was vended
+        result.Should().HaveCount(1);
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Token);
+        result[0].Settings[ProviderSettingKeys.Token].Should().Be("ghs_read_token");
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
+
+        // The request body must include contents:read
+        capturedRequest.Should().NotBeNull();
+        capturedRequestBody.Should().NotBeNull();
+        capturedRequestBody!.Should().Contain("\"read\"", "read-only brain token must request contents:read");
+        capturedRequestBody.Should().NotContain("\"write\"", "read-only brain token must NOT request contents:write");
+
+        // Config must NOT be clone-only — secrets and setup steps must survive
+        result[0].Secrets.Should().NotBeNull("brain config must not be marked clone-only");
+        result[0].SetupSteps.Should().NotBeNull("brain config must not be marked clone-only");
+    }
+
+    /// <summary>
+    /// A config NOT in readOnlyConfigIds must still receive a write token (unchanged behavior).
+    /// </summary>
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_WithReadOnlyConfigId_OtherConfigsGetWriteToken()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Work Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                [ProviderSettingKeys.ClientId] = "Iv1.abc",
+                [ProviderSettingKeys.InstallationId] = "11111",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Repo] = "work-repo"
+            }
+        };
+        var brainConfig = new ProviderConfig
+        {
+            Id = "brain-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                [ProviderSettingKeys.ClientId] = "Iv1.abc",
+                [ProviderSettingKeys.InstallationId] = "22222",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Repo] = "brain-repo"
+            }
+        };
+
+        var capturedRequestBodies = new List<string>();
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>(async (req, _) =>
+            {
+                capturedRequestBodies.Add(await req.Content!.ReadAsStringAsync());
+                return new HttpResponseMessage(System.Net.HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = "ghs_token", expires_at = "2026-12-01T00:00:00Z" }),
+                        System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient(mockHandler.Object));
+        // Only brain-1 is read-only; repo-1 should still get a write token
+        var readOnlySet = new HashSet<string> { "brain-1" };
+
+        await service.PrepareAgentConfigsAsync(
+            new[] { repoConfig, brainConfig }, "repo-1", CancellationToken.None,
+            readOnlyConfigIds: readOnlySet);
+
+        capturedRequestBodies.Should().HaveCount(2);
+        // repo-1 (work repo, NOT in readOnlyConfigIds) → write token
+        capturedRequestBodies[0].Should().Contain("\"write\"",
+            "work repo config not in readOnlyConfigIds must get a write token");
+        // brain-1 (in readOnlyConfigIds) → read-only token
+        capturedRequestBodies[1].Should().Contain("\"read\"",
+            "brain config in readOnlyConfigIds must get a read-only token");
+        capturedRequestBodies[1].Should().NotContain("\"write\"");
+    }
+
+    /// <summary>
+    /// Passing null readOnlyConfigIds (the default) is backward-compatible:
+    /// all GitHub App configs get write tokens as before.
+    /// </summary>
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_NullReadOnlyConfigIds_AllGetWriteToken()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Work Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                [ProviderSettingKeys.ClientId] = "Iv1.abc",
+                [ProviderSettingKeys.InstallationId] = "11111",
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Repo] = "work-repo"
+            }
+        };
+
+        string? capturedRequestBody = null;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>(async (req, _) =>
+            {
+                capturedRequestBody = await req.Content!.ReadAsStringAsync();
+                return new HttpResponseMessage(System.Net.HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = "ghs_token", expires_at = "2026-12-01T00:00:00Z" }),
+                        System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient(mockHandler.Object));
+
+        // No readOnlyConfigIds — defaults to null
+        await service.PrepareAgentConfigsAsync(
+            new[] { repoConfig }, "repo-1", CancellationToken.None);
+
+        capturedRequestBody.Should().Contain("\"write\"",
+            "default call (null readOnlyConfigIds) must produce a write token");
+    }
+
+    /// <summary>
+    /// A GitLab/PAT config listed in readOnlyConfigIds is handled by the non-GitHub-App branch
+    /// and is not affected by the flag (no crash, AccessToken is passed through unchanged).
+    /// </summary>
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_ReadOnlyConfigId_NonGitHubApp_UnchangedPath()
+    {
+        var gitlabConfig = new ProviderConfig
+        {
+            Id = "gitlab-brain",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "GitLab Brain",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "glpat-secret-token",
+                [ProviderSettingKeys.Repo] = "org/brain-repo"
+            }
+        };
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        var readOnlySet = new HashSet<string> { "gitlab-brain" };
+
+        // Should not throw — GitLab/PAT configs are copied through unchanged
+        var result = await service.PrepareAgentConfigsAsync(
+            new[] { gitlabConfig }, "repo-1", CancellationToken.None,
+            readOnlyConfigIds: readOnlySet);
+
+        result.Should().HaveCount(1);
+        // The AccessToken is moved to Token key (standard PAT passthrough)
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Token);
+        result[0].Settings[ProviderSettingKeys.Token].Should().Be("glpat-secret-token");
+        result[0].Settings.Should().NotContainKey(ProviderSettingKeys.AccessToken,
+            "AccessToken must be moved to Token key in the non-GitHub-App path");
+    }
+
+    #endregion
 }
