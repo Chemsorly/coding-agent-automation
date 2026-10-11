@@ -16,27 +16,10 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// This verifies: requiredLabels ⊆ profile.MatchLabels (profile must COVER all required labels).
 /// The OLD (wrong) logic was: profile.MatchLabels ⊆ requiredLabels.
 ///
-/// These tests exercise the exact LINQ expression used in production.
+/// These tests call <see cref="ProfileResolver.ResolveByRequiredLabels"/> directly.
 /// </summary>
 public sealed class DbModeProfileMatchingRegressionTests
 {
-    /// <summary>
-    /// Simulates the exact logic from ResolveProfileByLabelsAsync.
-    /// </summary>
-    private static AgentProfile? ResolveProfileByLabels(
-        IReadOnlyList<AgentProfile> profiles,
-        IReadOnlyList<string> requiredLabels)
-    {
-        return profiles
-            .Where(p => p.Enabled)
-            .Where(p => requiredLabels.All(rl =>
-                p.MatchLabels.Contains(rl, StringComparer.OrdinalIgnoreCase)))
-            .OrderByDescending(p => p.MatchLabels.Count)
-            .ThenByDescending(p => p.Priority)
-            .ThenBy(p => p.Id, StringComparer.Ordinal)
-            .FirstOrDefault();
-    }
-
     /// <summary>
     /// THE EXACT PRODUCTION BUG: Profile [uac, dotnet, dotnet10] must match required [dotnet, dotnet10].
     /// Old logic failed because uac ∉ [dotnet, dotnet10].
@@ -55,7 +38,7 @@ public sealed class DbModeProfileMatchingRegressionTests
             }
         };
 
-        var result = ResolveProfileByLabels(profiles, ["dotnet", "dotnet10"]);
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["dotnet", "dotnet10"]);
 
         result.Should().NotBeNull();
         result!.Id.Should().Be("profile-1");
@@ -77,7 +60,7 @@ public sealed class DbModeProfileMatchingRegressionTests
             }
         };
 
-        var result = ResolveProfileByLabels(profiles, ["dotnet", "dotnet10"]);
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["dotnet", "dotnet10"]);
 
         result.Should().NotBeNull();
     }
@@ -98,7 +81,7 @@ public sealed class DbModeProfileMatchingRegressionTests
             }
         };
 
-        var result = ResolveProfileByLabels(profiles, ["dotnet", "dotnet10"]);
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["dotnet", "dotnet10"]);
 
         result.Should().BeNull();
     }
@@ -119,7 +102,7 @@ public sealed class DbModeProfileMatchingRegressionTests
             }
         };
 
-        var result = ResolveProfileByLabels(profiles, ["dotnet", "dotnet10"]);
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["dotnet", "dotnet10"]);
 
         result.Should().BeNull();
     }
@@ -140,16 +123,17 @@ public sealed class DbModeProfileMatchingRegressionTests
             }
         };
 
-        var result = ResolveProfileByLabels(profiles, ["dotnet", "dotnet10"]);
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["dotnet", "dotnet10"]);
 
         result.Should().NotBeNull();
     }
 
     /// <summary>
-    /// When multiple profiles match, most specific (most labels) wins.
+    /// When multiple profiles match, the closest fit (fewest labels) wins over a profile with extra labels.
+    /// The "generic" profile (2 labels, exact match) beats the "specific" profile (4 labels, superset).
     /// </summary>
     [Fact]
-    public void MostSpecificProfile_WinsOverGeneric()
+    public void ClosestFitProfile_WinsOverProfileWithExtraLabels()
     {
         var profiles = new[]
         {
@@ -167,10 +151,10 @@ public sealed class DbModeProfileMatchingRegressionTests
             }
         };
 
-        var result = ResolveProfileByLabels(profiles, ["dotnet", "dotnet10"]);
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["dotnet", "dotnet10"]);
 
         result.Should().NotBeNull();
-        result!.Id.Should().Be("specific");
+        result!.Id.Should().Be("generic");
     }
 
     /// <summary>
@@ -189,7 +173,7 @@ public sealed class DbModeProfileMatchingRegressionTests
             }
         };
 
-        var result = ResolveProfileByLabels(profiles, []);
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, []);
 
         result.Should().NotBeNull();
     }
