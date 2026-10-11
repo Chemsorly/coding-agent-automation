@@ -583,4 +583,23 @@ public sealed record PipelineConfiguration
     [Range(1, 100)]
     public int FeedbackCommentOutboxMaxAttempts { get; init; } = PipelineConstants.DefaultFeedbackCommentOutboxMaxAttempts;
 
+    // Keys 86–88 are left for the automatic consolidation settings planned in #3591.
+
+    // ── Triage ─────────────────────────────────────────────────────────────
+    /// <summary>
+    /// When true, a triage's root cause analysis and drafts are reviewed by an isolated discriminator
+    /// agent, and refined when it finds problems, before the result is reported. Default: true.
+    /// </summary>
+    [Key(89)]
+    [ProjectOverridable(Order = 33)]
+    public bool TriageReviewEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Days a triage is kept after its last change (attempt, edit, issue creation). Created issues and
+    /// tracker comments are not affected. The retention sweep runs for the whole system, so projects
+    /// cannot override it. Default: 30. Valid range: 1–365.
+    /// </summary>
+    [Key(90)]
+    [Range(1, 365)]
+    public int TriageRetentionDays { get; init; } = PipelineConstants.DefaultTriageRetentionDays;
 }

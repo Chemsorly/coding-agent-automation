@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Serilog;
 
 namespace CodingAgent.Agent.ClaudeCode;
@@ -18,6 +19,13 @@ internal interface IClaudeProcess : IDisposable
 
     /// <summary>Waits until the process has exited and all output lines were delivered.</summary>
     Task<int> WaitForExitAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Asks the process to exit (SIGTERM), so the CLI can save the session and stop its background
+    /// commands. Kills it where no such signal exists (Windows).
+    /// </summary>
+    /// <returns><see langword="false"/> when the process was killed instead of asked.</returns>
+    bool Terminate();
 
     /// <summary>Kills the process and its children. No-op once it has exited.</summary>
     void Kill();
@@ -64,6 +72,7 @@ internal sealed class SystemClaudeProcessLauncher : IClaudeProcessLauncher
 internal sealed class SystemClaudeProcess : IClaudeProcess
 {
     private const int KillTimeoutMs = 5000;
+    private const int SigTerm = 15;
 
     private readonly Process _process;
     private readonly Action<string> _onStdoutLine;
@@ -130,6 +139,14 @@ internal sealed class SystemClaudeProcess : IClaudeProcess
         return _process.ExitCode;
     }
 
+    public bool Terminate()
+    {
+        if (!OperatingSystem.IsWindows() && IsRunning && ProcessId is { } pid && SendSignal(pid, SigTerm) == 0)
+            return true;
+        Kill();
+        return false;
+    }
+
     public void Kill()
     {
         try
@@ -168,6 +185,13 @@ internal sealed class SystemClaudeProcess : IClaudeProcess
             Log.Warning(ex, "Failed to handle a Claude Code CLI output line");
         }
     }
+
+    /// <summary>POSIX <c>kill(2)</c>; .NET has no managed way to send SIGTERM to another process.</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Interoperability", "SYSLIB1054",
+        Justification = "LibraryImport needs AllowUnsafeBlocks for the project; two ints need no generated marshalling.")]
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static extern int SendSignal(int pid, int signal);
 
     public void Dispose()
     {

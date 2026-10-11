@@ -325,3 +325,69 @@ isolation rule.
 Redis. With Redis configured, both switch to distributed implementations automatically:
 `AgentRegistryService` → `DistributedAgentRegistryService`;
 `OrchestratorRunService` uses Redis-backed state.
+
+
+---
+
+## Scheduler Loop Command Relay
+
+The Scheduler runs as multiple replicas behind a Kubernetes Service. Only the pod that holds the
+`caa-scheduler-lock` lease (the **leader**) executes the pipeline loop. When the Kubernetes Service
+sends a `POST /loop/start`, `/loop/stop`, or `/loop/resume` request to a **non-leader** pod, the
+request must be forwarded to the leader.
+
+### Relay mechanism
+
+**Non-leader side (`LoopCommandRelay.SendAsync`):**
+
+1. Writes `scheduler:loop-command` = JSON `{ "id": "<guid>", "command": "start|stop|resume" }` to
+   Redis with a 60 s expiry (`When.Always` — the last writer wins for concurrent commands).
+2. Polls `scheduler:loop-command-result:{id}` every 250 ms for up to 10 s.
+3. On success: deserializes the result and returns it to the caller.
+4. On timeout (10 s): returns `Started=false` for start; returns a 503 with error text
+   `"The scheduler leader did not confirm the command within 10 s."` for stop and resume.
+
+**Leader side (`LoopCommandHandlerService`):**
+
+1. A leader-gated `BackgroundService` polls `scheduler:loop-command` every 1 s.
+2. When the key is present and its `id` differs from the last handled id (`_lastHandledId`), it
+   executes the command via `ILoopCommandExecutor`.
+3. Writes `scheduler:loop-command-result:{id}` to Redis (60 s expiry) so the non-leader relay can
+   pick it up.
+4. Stores `_lastHandledId` so the same command id is never executed twice (idempotency guard).
+
+**Shared executor (`ILoopCommandExecutor` / `LoopCommandExecutor`):**
+
+Both the local path (leader or single-replica) and the relay path (leader handler) use the same
+`ILoopCommandExecutor` implementation, satisfying the "one shared implementation" acceptance criterion.
+
+### Stop durability guarantee
+
+The `/loop/stop` endpoint persists `ClosedLoopAutoStart=false` **locally** (on the receiving pod,
+via `ILoopCommandExecutor.ExecuteStopPersistAsync`) **before** writing the relay command to Redis.
+The `StopLoop()` call is then relayed to the leader via `ILoopCommandExecutor.ExecuteStopLoopOnlyAsync`.
+
+This split ensures the config flag is durable even when the leader does not confirm within 10 s:
+`LoopWatchdogService` reads `ClosedLoopAutoStart` and will not restart the loop after the timeout.
+
+### Single-replica and no-Redis behaviour
+
+When Redis is not configured, `ILoopCommandRelay` resolves to `NullLoopCommandRelay` (which throws
+`InvalidOperationException` if ever called) and `LoopCommandHandlerService` is not registered.
+The endpoint guard — `leaderGate is null || leaderGate.IsLeader || store is null` — routes all
+commands through the local path, preserving exactly-as-today behaviour for single-replica deployments.
+
+When `ILeaderGate` is null (no leader election configured), the local path also runs unconditionally,
+matching the pattern used by `WorkItemCountsService` and `LoopWatchdogService`.
+
+### Note on the cross-process communication table
+
+The Cross-Process Communication table entry `Orchestrator → Scheduler | REST — GET /loop/status,
+POST /loop/start, /loop/stop, /loop/resume` is unchanged. The relay is entirely internal to the
+Scheduler process and is transparent to Orchestrator callers.
+
+### Worst-case latency
+
+Command written at T=0 → leader handler misses on T<1 s poll → picks up at T≈1 s → result written
+→ relay reads at T≈1.25 s (5th 250 ms poll). Worst case (command written just after a handler tick):
+≈2 s. Well within the 10 s timeout.

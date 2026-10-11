@@ -39,6 +39,8 @@ public static class ApiSchedulerEndpoints
             result.StalePipelineRunsDeleted,
             result.RetentionPipelineRunsDeleted,
             result.RetentionWorkItemsDeleted,
-            result.OrphanedPipelineRunsReconciled));
+            result.OrphanedPipelineRunsReconciled,
+            result.TriageAttemptsBackfilled,
+            result.TriagesDeleted));
     }
 }

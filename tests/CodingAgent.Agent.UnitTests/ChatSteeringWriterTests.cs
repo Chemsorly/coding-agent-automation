@@ -45,7 +45,7 @@ public class ChatSteeringWriterTests : IDisposable
     [Fact]
     public void Write_KiroProvider_WritesFileAtExpectedPath()
     {
-        ChatSteeringWriter.Write("Use TDD.", _tempDir, isOpenCodeProvider: false);
+        ChatSteeringWriter.Write("Use TDD.", _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.KiroCli);
 
         var expectedPath = Path.Combine(_tempDir, AgentWorkspacePaths.KiroSteeringProjectFilePath);
         File.Exists(expectedPath).Should().BeTrue(
@@ -58,7 +58,7 @@ public class ChatSteeringWriterTests : IDisposable
         var workspace = Path.Combine(_tempDir, "kiro-workspace");
         Directory.CreateDirectory(workspace);
 
-        ChatSteeringWriter.Write("Always write tests first.", workspace, isOpenCodeProvider: false);
+        ChatSteeringWriter.Write("Always write tests first.", workspace, CodingAgent.Pipeline.Interfaces.AgentProviderType.KiroCli);
 
         var steeringDir = Path.Combine(workspace, ".kiro", "steering");
         Directory.Exists(steeringDir).Should().BeTrue(
@@ -69,7 +69,7 @@ public class ChatSteeringWriterTests : IDisposable
     public void Write_KiroProvider_FileContainsInclusionFrontmatter()
     {
         var content = "Use semantic versioning.";
-        ChatSteeringWriter.Write(content, _tempDir, isOpenCodeProvider: false);
+        ChatSteeringWriter.Write(content, _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.KiroCli);
 
         var path = Path.Combine(_tempDir, AgentWorkspacePaths.KiroSteeringProjectFilePath);
         var written = File.ReadAllText(path);
@@ -84,7 +84,7 @@ public class ChatSteeringWriterTests : IDisposable
     public void Write_KiroProvider_FileBodyContainsSteeeringContent()
     {
         var steeringContent = "Follow conventional commits.\nUse feature branches.";
-        ChatSteeringWriter.Write(steeringContent, _tempDir, isOpenCodeProvider: false);
+        ChatSteeringWriter.Write(steeringContent, _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.KiroCli);
 
         var path = Path.Combine(_tempDir, AgentWorkspacePaths.KiroSteeringProjectFilePath);
         var written = File.ReadAllText(path);
@@ -96,8 +96,8 @@ public class ChatSteeringWriterTests : IDisposable
     [Fact]
     public void Write_KiroProvider_OverwritesPreviousFile()
     {
-        ChatSteeringWriter.Write("First steering content.", _tempDir, isOpenCodeProvider: false);
-        ChatSteeringWriter.Write("Updated steering content.", _tempDir, isOpenCodeProvider: false);
+        ChatSteeringWriter.Write("First steering content.", _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.KiroCli);
+        ChatSteeringWriter.Write("Updated steering content.", _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.KiroCli);
 
         var path = Path.Combine(_tempDir, AgentWorkspacePaths.KiroSteeringProjectFilePath);
         var written = File.ReadAllText(path);
@@ -108,144 +108,46 @@ public class ChatSteeringWriterTests : IDisposable
 
     // ── OpenCode provider ─────────────────────────────────────────────────────
 
-    [Fact]
-    public void Write_OpenCodeProvider_WritesAgentsMdAtExpectedPath()
-    {
-        ChatSteeringWriter.Write("Use TDD.", _tempDir, isOpenCodeProvider: true);
+    private string OpenCodeDir => Path.Combine(_tempDir, "opencode-home");
 
-        var expectedPath = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        File.Exists(expectedPath).Should().BeTrue(
-            "OpenCode provider must write AGENTS.md");
+    [Fact]
+    public void Write_OpenCodeProvider_WritesAnInstructionFileOutsideTheWorkspace_AndLeavesAgentsMdAlone()
+    {
+        var workspace = Path.Combine(_tempDir, "workspace");
+        Directory.CreateDirectory(workspace);
+        File.WriteAllText(Path.Combine(workspace, "AGENTS.md"), "# The repository's own AGENTS.md");
+
+        ChatSteeringWriter.Write("Use TDD.", workspace, CodingAgent.Pipeline.Interfaces.AgentProviderType.OpenCode,
+            openCodeDirectory: OpenCodeDir);
+
+        File.ReadAllText(Path.Combine(OpenCodeDir, "pipeline-project.md"))
+            .Should().Contain("# Project Instructions").And.Contain("Use TDD.").And.NotContain("# Repository Instructions");
+        File.ReadAllText(Path.Combine(workspace, "AGENTS.md")).Should().Be("# The repository's own AGENTS.md");
+        Directory.GetFileSystemEntries(workspace).Should().ContainSingle();
     }
 
     [Fact]
-    public void Write_OpenCodeProvider_AgentsMdContainsProjectInstructionsSection()
+    public void Write_OpenCodeProvider_ListsTheFilesUnderInstructions_KeepingTheConfigsOtherSections()
     {
-        var content = "Always write tests before implementation.";
-        ChatSteeringWriter.Write(content, _tempDir, isOpenCodeProvider: true);
+        Directory.CreateDirectory(OpenCodeDir);
+        File.WriteAllText(Path.Combine(OpenCodeDir, "opencode.json"), """{"mcp":{"docs":{"type":"remote","url":"https://x"}}}""");
 
-        var path = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        var written = File.ReadAllText(path);
+        ChatSteeringWriter.Write("Use TDD.", _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.OpenCode, openCodeDirectory: OpenCodeDir);
+        ChatSteeringWriter.Write("Again.", _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.OpenCode, openCodeDirectory: OpenCodeDir);
 
-        written.Should().Contain("# Project Instructions",
-            "OpenCode pipeline block must include # Project Instructions section");
-        written.Should().Contain(content,
-            "OpenCode pipeline block must include the steering content");
+        using var config = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(OpenCodeDir, "opencode.json")));
+        config.RootElement.GetProperty("instructions").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal(Path.Combine(OpenCodeDir, "pipeline-*.md"));
+        config.RootElement.GetProperty("mcp").GetProperty("docs").GetProperty("url").GetString().Should().Be("https://x");
     }
 
     [Fact]
-    public void Write_OpenCodeProvider_AgentsMdContainsPipelineMarkers()
+    public void Write_OpenCodeProvider_EmptyContent_RemovesTheLastConversationsSteering()
     {
-        ChatSteeringWriter.Write("Some instructions.", _tempDir, isOpenCodeProvider: true);
+        ChatSteeringWriter.Write("First project.", _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.OpenCode, openCodeDirectory: OpenCodeDir);
 
-        var path = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        var written = File.ReadAllText(path);
+        ChatSteeringWriter.Write(string.Empty, _tempDir, CodingAgent.Pipeline.Interfaces.AgentProviderType.OpenCode, openCodeDirectory: OpenCodeDir);
 
-        written.Should().Contain("<!-- BEGIN PIPELINE STEERING",
-            "OpenCode pipeline block must start with BEGIN marker");
-        written.Should().Contain("<!-- END PIPELINE STEERING -->",
-            "OpenCode pipeline block must end with END marker");
-    }
-
-    [Fact]
-    public void Write_OpenCodeProvider_ReplacesExistingPipelineBlock()
-    {
-        // Write first block
-        ChatSteeringWriter.Write("First steering content.", _tempDir, isOpenCodeProvider: true);
-
-        // Write second block — should replace the first, not append
-        ChatSteeringWriter.Write("Second steering content.", _tempDir, isOpenCodeProvider: true);
-
-        var path = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        var written = File.ReadAllText(path);
-
-        written.Should().Contain("Second steering content.");
-        written.Should().NotContain("First steering content.",
-            "Re-writing must replace the existing pipeline block, not duplicate it");
-    }
-
-    [Fact]
-    public void Write_OpenCodeProvider_PreservesExistingUserContentBelowBlock()
-    {
-        var agentsPath = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        var userContent = "# My own AGENTS.md\nDo not use tabs.";
-        File.WriteAllText(agentsPath, userContent);
-
-        ChatSteeringWriter.Write("Pipeline instructions.", _tempDir, isOpenCodeProvider: true);
-
-        var written = File.ReadAllText(agentsPath);
-
-        written.Should().Contain(userContent,
-            "Existing user content must be preserved below the pipeline block");
-        written.Should().Contain("Pipeline instructions.",
-            "New pipeline block must be present");
-    }
-
-    [Fact]
-    public void Write_OpenCodeProvider_PipelineBlockIsPrependedBeforeUserContent()
-    {
-        var agentsPath = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        File.WriteAllText(agentsPath, "# User Content");
-
-        ChatSteeringWriter.Write("Pipeline first.", _tempDir, isOpenCodeProvider: true);
-
-        var written = File.ReadAllText(agentsPath);
-
-        // BEGIN marker must appear before user content
-        var beginIndex = written.IndexOf("BEGIN PIPELINE STEERING", StringComparison.Ordinal);
-        var userIndex = written.IndexOf("# User Content", StringComparison.Ordinal);
-
-        beginIndex.Should().BeLessThan(userIndex,
-            "Pipeline block must be prepended before existing user content");
-    }
-
-    [Fact]
-    public void Write_OpenCodeProvider_OnlyProjectInstructionsSection_NoRepositorySection()
-    {
-        // The chat path has no RepoSteeringContent — must not emit a # Repository Instructions section
-        ChatSteeringWriter.Write("Project content only.", _tempDir, isOpenCodeProvider: true);
-
-        var path = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        var written = File.ReadAllText(path);
-
-        written.Should().NotContain("# Repository Instructions",
-            "Chat path has no RepoSteeringContent — must not emit a Repository Instructions section");
-    }
-
-    // ── BuildChatBlock (internal, tested directly) ────────────────────────────
-
-    [Fact]
-    public void BuildChatBlock_ContainsBeginAndEndMarkers()
-    {
-        var block = ChatSteeringWriter.BuildChatBlock("Some content.");
-
-        block.Should().StartWith("<!-- BEGIN PIPELINE STEERING");
-        block.Should().Contain("<!-- END PIPELINE STEERING -->");
-    }
-
-    [Fact]
-    public void BuildChatBlock_ContainsProjectInstructionsHeader()
-    {
-        var block = ChatSteeringWriter.BuildChatBlock("content");
-
-        block.Should().Contain("# Project Instructions");
-    }
-
-    [Fact]
-    public void BuildChatBlock_ContainsProvidedContent()
-    {
-        var content = "Always prefer composition over inheritance.";
-        var block = ChatSteeringWriter.BuildChatBlock(content);
-
-        block.Should().Contain(content);
-    }
-
-    [Fact]
-    public void BuildChatBlock_DoesNotContainRepositoryInstructionsHeader()
-    {
-        var block = ChatSteeringWriter.BuildChatBlock("proj content");
-
-        block.Should().NotContain("# Repository Instructions",
-            "Chat block is single-source (project only) — no repo section");
+        File.Exists(Path.Combine(OpenCodeDir, "pipeline-project.md")).Should().BeFalse();
     }
 }

@@ -97,6 +97,18 @@ public static class PipelineApiClientServiceCollectionExtensions
                 new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
+        // Triage client — authenticated (operator tier; master key required).
+        // No resilience handler: its POSTs are not idempotent (a retried re-run would start a second attempt;
+        // issue creation is guarded on the server, but a retry would only queue behind the first). Creating
+        // several issues on a slow tracker can take longer than the default 30 s.
+        services.AddHttpClient<IPipelineApiTriageClient, PipelineApiTriageClient>(client =>
+        {
+            client.BaseAddress = new Uri(options.BaseUrl);
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
+            client.Timeout = TimeSpan.FromMinutes(2);
+        });
+
         // Chat client — authenticated (operator tier; master key required).
         // Chat pod dispatch blocks until the pod connects (up to ChatPodConnectTimeoutSeconds),
         // so the default 30 s HttpClient timeout is too short — set it generously above the

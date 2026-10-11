@@ -280,6 +280,13 @@ public sealed record JobAssignmentMessage
     /// <summary>For harness suggestions: the run feedback collected since the last successful run, as JSON.</summary>
     [Key(42)]
     public string? ConsolidationFeedbackDataJson { get; init; }
+
+    /// <summary>
+    /// For triage runs: the triage's earlier attempts and the project's other triages, as Markdown for
+    /// <see cref="AgentWorkspacePaths.TriageContextFilePath"/>. Rendered by the API at claim time.
+    /// </summary>
+    [Key(43)]
+    public string? TriageContextMarkdown { get; init; }
 }
 
 /// <summary>

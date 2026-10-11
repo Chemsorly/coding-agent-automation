@@ -15,5 +15,8 @@ public enum WorkItemTaskType
     Decomposition,
 
     /// <summary>Consolidation of multiple results.</summary>
-    Consolidation
+    Consolidation,
+
+    /// <summary>Triage: investigate a reported problem and propose a root cause and fix issues.</summary>
+    Triage
 }

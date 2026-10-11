@@ -17,6 +17,7 @@ namespace CodingAgent.Pipeline.Services;
 ///   <item><description><c>DispatchScheduler.Issues.cs</c> — issue dispatch round methods</description></item>
 ///   <item><description><c>DispatchScheduler.Reviews.cs</c> — PR review dispatch round methods</description></item>
 ///   <item><description><c>DispatchScheduler.Decomposition.cs</c> — decomposition dispatch round methods</description></item>
+///   <item><description><c>DispatchScheduler.Triage.cs</c> — triage dispatch round methods</description></item>
 ///   <item><description><c>DispatchScheduler.Helpers.cs</c> — shared dispatch helpers used by all round methods</description></item>
 /// </list>
 /// </remarks>
@@ -44,9 +45,9 @@ internal sealed partial class DispatchScheduler
     }
 
     /// <summary>
-    /// Represents the queue type to process, in priority order (PullRequests &gt; Decomposition &gt; Issues).
+    /// Represents the queue type to process, in priority order (PullRequests &gt; Decomposition &gt; Triage &gt; Issues).
     /// </summary>
-    internal enum DispatchTurn { Issues = 0, PullRequests = 1, Decomposition = 2 }
+    internal enum DispatchTurn { Issues = 0, PullRequests = 1, Decomposition = 2, Triage = 3 }
 
     /// <summary>
     /// Outcome of a single dispatch attempt via <see cref="DispatchViaOrchestrationAsync"/>.
@@ -113,6 +114,12 @@ internal sealed partial class DispatchScheduler
         /// </summary>
         public required Dictionary<string, List<EpicCandidate>> DecompositionQueues { get; init; }
 
+        /// <summary>
+        /// Per-template queues of <c>agent:triage</c> issues to dispatch, each with the tracker the issue lives in.
+        /// A project's triage executor also holds the triage issues of the project's epic tracker.
+        /// </summary>
+        public Dictionary<string, List<TriageCandidate>> TriageQueues { get; init; } = new(StringComparer.Ordinal);
+
         /// <summary>Callback to report current dispatch status string.</summary>
         public required Action<string> ReportStatus { get; init; }
 
@@ -178,8 +185,8 @@ internal sealed partial class DispatchScheduler
 
         while (remaining > 0 && !ct.IsCancellationRequested)
         {
-            var (hasIssues, hasPrs, hasDecomp) = ComputeQueueAvailability(request, activeDecompositionCount);
-            var (foundTurn, selectedTurn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp);
+            var (hasIssues, hasPrs, hasDecomp, hasTriage) = ComputeQueueAvailability(request, activeDecompositionCount);
+            var (foundTurn, selectedTurn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp, hasTriage);
             if (!foundTurn) break;
 
             var roundCtx = new RoundDispatchContext
@@ -196,7 +203,7 @@ internal sealed partial class DispatchScheduler
 
             var turnResult = await ExecuteTurnAsync(
                 selectedTurn, request, roundCtx, cycleStateCaches,
-                new TurnEligibility(hasIssues, hasPrs, hasDecomp, activeDecompositionCount),
+                new TurnEligibility(hasIssues, hasPrs, hasDecomp, hasTriage, activeDecompositionCount),
                 stoppingToken, ct);
 
             remaining -= turnResult.Consumed;
@@ -346,7 +353,7 @@ internal sealed partial class DispatchScheduler
         if (!floorEnabled || issueDispatchedThisCycle || ct.IsCancellationRequested)
             return (0, 0, 0);
 
-        var (hasIssues, _, _) = ComputeQueueAvailability(request, activeDecompositionCount);
+        var (hasIssues, _, _, _) = ComputeQueueAvailability(request, activeDecompositionCount);
         if (!hasIssues) return (0, 0, 0);
 
         // Floor budget = reserved slots, capped to the actual remaining cycle budget.
@@ -389,10 +396,10 @@ internal sealed partial class DispatchScheduler
     }
 
     private readonly record struct TurnResult(
-        bool IssueMadeProgress, bool PrMadeProgress, bool DecompMadeProgress,
+        bool IssueMadeProgress, bool PrMadeProgress, bool DecompMadeProgress, bool TriageMadeProgress,
         int Consumed, int Processed, int Failed, int AdditionalDecomp)
     {
-        public bool AnyProgress => IssueMadeProgress || PrMadeProgress || DecompMadeProgress;
+        public bool AnyProgress => IssueMadeProgress || PrMadeProgress || DecompMadeProgress || TriageMadeProgress;
     }
 
     /// <summary>
@@ -403,10 +410,11 @@ internal sealed partial class DispatchScheduler
         bool HasIssues,
         bool HasPrs,
         bool HasDecomp,
+        bool HasTriage,
         int ActiveDecompositionCount);
 
     /// <summary>
-    /// Executes the dispatch logic for the selected turn (Issues, PullRequests, or Decomposition).
+    /// Executes the dispatch logic for the selected turn (Issues, PullRequests, Decomposition or Triage).
     /// Decomposition covers both repo epics and project epics, which share their executor template's queue.
     /// </summary>
     private async Task<TurnResult> ExecuteTurnAsync(
@@ -418,7 +426,7 @@ internal sealed partial class DispatchScheduler
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
-        bool issueMadeProgress = false, prMadeProgress = false, decompMadeProgress = false;
+        bool issueMadeProgress = false, prMadeProgress = false, decompMadeProgress = false, triageMadeProgress = false;
         int consumed = 0, processed = 0, failed = 0, additionalDecomp = 0;
 
         if (currentTurn == DispatchTurn.Issues && eligibility.HasIssues)
@@ -442,7 +450,14 @@ internal sealed partial class DispatchScheduler
             decompMadeProgress = progress; consumed += count; processed += p; failed += f; additionalDecomp += addl;
         }
 
-        return new TurnResult(issueMadeProgress, prMadeProgress, decompMadeProgress,
+        if (currentTurn == DispatchTurn.Triage && eligibility.HasTriage)
+        {
+            var (progress, count, p, f) = await DispatchTriageRoundAsync(
+                roundCtx, request.TriageQueues, stoppingToken, ct);
+            triageMadeProgress = progress; consumed += count; processed += p; failed += f;
+        }
+
+        return new TurnResult(issueMadeProgress, prMadeProgress, decompMadeProgress, triageMadeProgress,
             consumed, processed, failed, additionalDecomp);
     }
 
@@ -451,7 +466,8 @@ internal sealed partial class DispatchScheduler
         if (remaining > 0) return;
         var remainingItems = request.IssueQueues.Values.Sum(q => q.Count)
             + request.PrQueues.Values.Sum(q => q.Count)
-            + request.DecompositionQueues.Values.Sum(q => q.Count);
+            + request.DecompositionQueues.Values.Sum(q => q.Count)
+            + request.TriageQueues.Values.Sum(q => q.Count);
         if (remainingItems > 0)
             PipelineTelemetry.LoopDispatchDecisions.Add(remainingItems,
                 new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedMaxRuns));
@@ -459,8 +475,9 @@ internal sealed partial class DispatchScheduler
 
     /// <summary>
     /// Computes whether each queue type has eligible work, respecting decomposition concurrency limits.
+    /// Triage has no concurrency cap.
     /// </summary>
-    private static (bool hasIssues, bool hasPrs, bool hasDecomp) ComputeQueueAvailability(
+    private static (bool hasIssues, bool hasPrs, bool hasDecomp, bool hasTriage) ComputeQueueAvailability(
         DispatchRoundRobinRequest request, int activeDecompositionCount)
     {
         var hasIssues = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
@@ -470,29 +487,31 @@ internal sealed partial class DispatchScheduler
             activeCount: activeDecompositionCount,
             maxAllowed: request.Config.MaxConcurrentDecompositions);
         var hasDecomp = hasDecompItems && concurrencyResult.IsEligible;
-        return (hasIssues, hasPrs, hasDecomp);
+        var hasTriage = HasEligible(request.PollableTemplates, request.TriageQueues, t => t.TriageEnabled);
+        return (hasIssues, hasPrs, hasDecomp, hasTriage);
     }
 
     /// <summary>
     /// Priority order for turn selection. Review (PRs) is dispatched first, then Decomposition,
-    /// then Issues (Implementation). Within each type, FIFO order is preserved by the per-queue
-    /// dequeue logic.
+    /// then Triage (the same tier: both are planning work), then Issues (Implementation). Within each type,
+    /// FIFO order is preserved by the per-queue dequeue logic.
     /// </summary>
     private static readonly DispatchTurn[] PriorityOrder =
-        [DispatchTurn.PullRequests, DispatchTurn.Decomposition, DispatchTurn.Issues];
+        [DispatchTurn.PullRequests, DispatchTurn.Decomposition, DispatchTurn.Triage, DispatchTurn.Issues];
 
     /// <summary>
     /// Selects the next eligible queue type using priority ordering: PullRequests first,
-    /// then Decomposition, then Issues. Returns (found=false, default) when all queues are exhausted.
+    /// then Decomposition, then Triage, then Issues. Returns (found=false, default) when all queues are exhausted.
     /// </summary>
     internal static (bool found, DispatchTurn selectedTurn) TrySelectHighestPriorityQueue(
-        bool hasIssues, bool hasPrs, bool hasDecomp)
+        bool hasIssues, bool hasPrs, bool hasDecomp, bool hasTriage = false)
     {
         foreach (var turn in PriorityOrder)
         {
             if ((turn == DispatchTurn.Issues && hasIssues)
                 || (turn == DispatchTurn.PullRequests && hasPrs)
-                || (turn == DispatchTurn.Decomposition && hasDecomp))
+                || (turn == DispatchTurn.Decomposition && hasDecomp)
+                || (turn == DispatchTurn.Triage && hasTriage))
                 return (true, turn);
         }
         return (false, default);

@@ -192,6 +192,11 @@
     {
         <div class="provider-form">
             <div class="form-group">
+                <label>Project ID</label>
+                <span class="monitoring-mono" style="user-select:all">@ProjectId</span>
+                <span class="form-hint">Use this ID for role bindings (auth.rbac.bindings[].projectId). It never changes when the project is renamed.</span>
+            </div>
+            <div class="form-group">
                 <label>Name</label>
                 <input type="text" @bind="_name" maxlength="128" />
             </div>
@@ -404,6 +409,9 @@
             @RenderBoolOverride("Refactoring Review Enabled", nameof(PipelineConfiguration.RefactoringReviewEnabled), () => _draft.RefactoringReviewEnabled, v => _draft = _draft with { RefactoringReviewEnabled = v }, _globalConfig.RefactoringReviewEnabled)
             @RenderBoolOverride("Brain Consolidation Review Enabled", nameof(PipelineConfiguration.BrainConsolidationReviewEnabled), () => _draft.BrainConsolidationReviewEnabled, v => _draft = _draft with { BrainConsolidationReviewEnabled = v }, _globalConfig.BrainConsolidationReviewEnabled)
             @RenderBoolOverride("Brain Read-Only", nameof(PipelineConfiguration.BrainReadOnly), () => _draft.BrainReadOnly, v => _draft = _draft with { BrainReadOnly = v }, _globalConfig.BrainReadOnly)
+
+            <h3>Triage</h3>
+            @RenderBoolOverride("Triage Review Enabled", nameof(PipelineConfiguration.TriageReviewEnabled), () => _draft.TriageReviewEnabled, v => _draft = _draft with { TriageReviewEnabled = v }, _globalConfig.TriageReviewEnabled)
 
             <h3>Prompts</h3>
             @RenderStringOverride("Analysis Prompt", nameof(PipelineConfiguration.AnalysisPrompt), () => _draft.AnalysisPrompt, v => _draft = _draft with { AnalysisPrompt = v }, _globalConfig.AnalysisPrompt)

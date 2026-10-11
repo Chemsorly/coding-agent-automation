@@ -169,6 +169,12 @@ public record JobDistributionRequest
     public string? ConsolidationFeedbackDataJson { get; init; }
 
     /// <summary>
+    /// For triage runs: the triage's earlier attempts and the project's other triages, as Markdown. Set at
+    /// delivery time by the assignment enricher; never part of the stored payload.
+    /// </summary>
+    public string? TriageContextMarkdown { get; init; }
+
+    /// <summary>
     /// When true, created refactoring issues will receive both <c>agent:generated</c> and
     /// <c>agent:next</c> labels. Propagated through the queue/drain/K8s path to ensure
     /// the flag reaches the executor even when the job is enqueued and dispatched later.

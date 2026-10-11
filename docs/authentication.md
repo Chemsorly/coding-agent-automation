@@ -64,16 +64,17 @@ auth:
         role: admin
       - group: team-payments
         role: operator
-        project: payments-api   # project name, exact match
+        projectId: 6f1c2a9e-0000-0000-0000-000000000000   # payments-api
       - user: alice@example.com
         role: readonly
 ```
 
 - A `group` binding matches one value of the groups claim exactly (case-sensitive). A `user` binding matches the username claim (case-insensitive).
 - A user's role is the highest of `defaultRole` and every matching binding; on a project it is the highest of the global role and the project's bindings.
-- A binding to a project name that does not exist, or that two projects share, grants nothing. The web host logs a warning and the user's profile page shows the binding.
+- A project binding names the project by its ID, shown on the project's Overview tab (Settings → Projects → project → Overview). Renaming a project does not change who can access it. A binding to an ID that does not exist grants nothing (warning in the log, shown on the profile page).
 - Binding changes take effect when the web pods restart. The chart annotates the pods with a checksum of the auth configuration, so `helm upgrade` restarts them.
-- Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, or `admin` bound to a project. The web host also stops on an unknown role.
+- Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, `admin` bound to a project, or `project` used instead of `projectId`. The web host also stops on an unknown role or a `projectId` that is not a valid GUID.
+- **Upgrade note:** Bindings that still use `project:` stop `helm template` and the web host at startup; replace them with `projectId: <id>` (the ID is shown on the project's Overview tab).
 
 ### Local admin password
 
@@ -151,8 +152,7 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 | Symptom | Check |
 |---|---|
 | "You have no access yet" after sign-in | Open the profile page (`/user`). If no groups are listed, the provider does not put groups into the ID token (Keycloak mapper, Entra groups claim or overage). If groups are listed, add a binding with one of them. |
-| A binding shows "unknown project" | The `project` value must equal the project name in Settings exactly. |
-| A binding shows "duplicate project name" | Two projects have that name; rename one. |
+| A binding shows "unknown project" | The `projectId` value must equal the ID shown on the project's Overview tab (Settings → Projects → project → Overview). |
 | "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client ID, client secret or issuer, a provider it cannot reach, or a clock skew. |
 | Redirect URI uses `http://` behind TLS | The ingress must send `X-Forwarded-Proto: https`. |
 | Signed out on every request with several web replicas | Configure `signalr.redis.connectionString`. |

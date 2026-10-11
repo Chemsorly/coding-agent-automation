@@ -27,6 +27,7 @@ internal sealed class WriteMcpConfigStep : IPipelineStep
         if (_job.McpServers.Count == 0)
         {
             _logger.Debug("Pipeline {RunId} no MCP servers configured, skipping", context.Run.RunId);
+            McpConfigWriter.RemoveStaleConfig(context.AgentProvider.McpConfigPath, context.AgentProvider.ProviderType, _logger);
             return Task.FromResult(StepResult.Continue);
         }
 
