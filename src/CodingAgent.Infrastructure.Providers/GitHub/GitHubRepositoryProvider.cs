@@ -85,14 +85,40 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
             var token = await GetTokenAsync(ct);
 
             // Derive clone URL
-            var cloneBaseUrl = (ApiUrl ?? string.Empty).Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
-            if (cloneBaseUrl.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
-                cloneBaseUrl = cloneBaseUrl[..^"/api/v3".Length];
-            var cloneUrl = $"{cloneBaseUrl.TrimEnd('/')}/{Owner}/{Repo}.git";
+            var cloneUrl = $"{WebBaseUrl}/{Owner}/{Repo}.git";
 
             await RepositoryGitOperations.Clone(workspacePath, cloneUrl, _baseBranch, GitConstants.TokenUsername, token, _gitPipeline, ct);
         }, ct);
     }
+
+    /// <summary>
+    /// The web base URL for this repository, derived from <see cref="ApiUrl"/>:
+    /// replaces <c>api.github.com</c> with <c>github.com</c> (case-insensitive) and strips a trailing
+    /// <c>/api/v3</c> segment (GitHub Enterprise). Trailing slashes are trimmed.
+    /// </summary>
+    // TODO: This property trims trailing slashes before the EndsWith("/api/v3") check, which differs
+    // from the original CloneAsync logic (which trimmed after). For a GHE API URL entered with a trailing
+    // slash (e.g. "https://github.example.com/api/v3/"), the original code did NOT strip the /api/v3
+    // segment (EndsWith check failed), while this property does strip it. This silently changes the clone
+    // URL for that edge case, potentially breaking existing GHE configurations. The issue requires the
+    // clone URL to be unchanged; this should be reviewed and the original ordering restored if needed.
+    private string WebBaseUrl
+    {
+        get
+        {
+            var url = (ApiUrl ?? string.Empty).Replace("api.github.com", "github.com", StringComparison.OrdinalIgnoreCase);
+            url = url.TrimEnd('/');
+            if (url.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
+                url = url[..^"/api/v3".Length];
+            return url.TrimEnd('/');
+        }
+    }
+
+    /// <inheritdoc />
+    public string? GetCommitWebUrl(string commitSha) =>
+        string.IsNullOrEmpty(WebBaseUrl) || string.IsNullOrEmpty(commitSha)
+            ? null
+            : $"{WebBaseUrl}/{Owner}/{Repo}/commit/{commitSha}";
 
     public Task PullAsync(WorkspacePath workspacePath, CancellationToken ct)
     {

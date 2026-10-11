@@ -40,6 +40,17 @@ public interface IDispatchOrchestrationService
         CancellationToken ct = default);
 
     /// <summary>
+    /// Performs full orchestration for the triage of an <c>agent:triage</c> tracker issue and returns a
+    /// ready-to-distribute <see cref="JobDistributionRequest"/>. A triage reads every enabled repository of
+    /// the project, so the request carries the project's repository list.
+    /// </summary>
+    /// <returns>The distribution request, or null if orchestration failed.</returns>
+    Task<JobDistributionRequest?> PrepareTriageDistributionRequestAsync(
+        TriageDispatchOrchestrationRequest request,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("PrepareTriageDistributionRequestAsync is not implemented by this service");
+
+    /// <summary>
     /// Distributes a pre-prepared request via <see cref="IWorkDistributor.DistributeAsync"/> and
     /// handles the confirm/revert lifecycle:
     /// <list type="bullet">

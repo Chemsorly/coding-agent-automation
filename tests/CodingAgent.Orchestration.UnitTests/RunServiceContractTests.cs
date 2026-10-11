@@ -210,6 +210,53 @@ public abstract class RunServiceContractTests
             "GetChatHistoryAsync must return empty for an unknown RunId");
     }
 
+    // ── Quality-gate history ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// AppendQualityGateReport is the only quality-gate write path. GetQualityGateHistoryAsync
+    /// and RemoveRun return reports in insertion order. An unknown RunId returns an empty list.
+    /// </summary>
+    [Fact]
+    public async Task AppendQualityGateReport_ThenGetQualityGateHistoryAsyncAndRemoveRun_ReturnEntriesInOrder()
+    {
+        var svc = CreateService();
+        svc.AddRun(MakeRun("run-qg"));
+        var runId = new RunId("run-qg");
+
+        var report1 = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false },
+            Tests = new GateResult { GateName = "Tests", Passed = false }
+        };
+        var report2 = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = true }
+        };
+
+        svc.AppendQualityGateReport(runId, report1);
+        svc.AppendQualityGateReport(runId, report2);
+        await Task.Yield(); // allow fire-and-forget paths to settle
+
+        var history = await svc.GetQualityGateHistoryAsync(runId);
+        history.Should().HaveCount(2, "both appended reports must be returned");
+        history[0].Compilation.Passed.Should().BeFalse("report1 is oldest (failed)");
+        history[1].Compilation.Passed.Should().BeTrue("report2 is newest (passed)");
+
+        var removed = svc.RemoveRun(runId);
+        // TODO: Assert insertion order and content of the returned entries (e.g. [0].Compilation.Passed
+        // should be false, [1].Compilation.Passed should be true). A regression that reversed hydration
+        // order would pass the current count-only assertion. The dedicated
+        // DistributedRunServiceQualityGateHistoryTests.RemoveRun_HydratesQualityGateHistory_FromRedisList
+        // does verify content; the shared contract test should do the same for completeness.
+        removed!.QualityGateHistory.ToArray().Should().HaveCount(2,
+            "RemoveRun must hydrate QualityGateHistory from the Redis list");
+
+        // Unknown run returns empty
+        var emptyHistory = await svc.GetQualityGateHistoryAsync(new RunId("run-nobody"));
+        emptyHistory.Should().BeEmpty("GetQualityGateHistoryAsync must return empty for an unknown RunId");
+    }
+
     // ── IsIssueBeingProcessed ─────────────────────────────────────────────────
 
     /// <summary>

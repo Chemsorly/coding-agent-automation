@@ -67,6 +67,16 @@
         window.localStorageSet = function (key, value) {
             localStorage.setItem(key, value);
         };
+        // The triage form's times are the browser's local time; the agent gets UTC
+        window.localToUtcIso = function (value) {
+            var d = new Date(value);
+            return isNaN(d.getTime()) ? null : d.toISOString();
+        };
+        window.startOfTodayUtcIso = function () {
+            var d = new Date();
+            d.setHours(0, 0, 0, 0);
+            return d.toISOString();
+        };
         window.getTheme = function () {
             return localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
         };

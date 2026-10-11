@@ -116,7 +116,7 @@ ARG STACK_LABELS
 # channel: DISABLE_UPDATES blocks the background updater and `claude update` alike. It is set
 # after the install because it would also block the `claude install` step.
 # ~/.claude/rules holds the pipeline steering the agent writes before each run.
-ARG CLAUDE_CODE_VERSION=2.1.286
+ARG CLAUDE_CODE_VERSION=2.1.296
 ARG CLAUDE_CODE_SIGNER_FINGERPRINT=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 RUN mkdir -p /home/ubuntu/.claude/rules && \
     CLAUDE_PLATFORM="linux-$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64")" && \
@@ -174,7 +174,7 @@ ARG STACK_LABELS
 # The installer and the settings call create the CLI database, which holds anonymous telemetry
 # session credentials and a telemetry client ID. It is deleted in the same layer so no image
 # ships it; the CLI recreates it on first use. The setting itself lives in ~/.kiro/settings.
-ARG KIRO_CLI_VERSION=2.10.0
+ARG KIRO_CLI_VERSION=2.29.0
 RUN mkdir -p /home/ubuntu/.kiro && \
     KIRO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
     curl --proto '=https' --tlsv1.2 -sSf \
@@ -210,7 +210,7 @@ ARG TARGETARCH
 ARG STACK_LABELS
 
 # Download and install the OpenCode binary as root (pinned version, architecture-aware)
-ARG OPENCODE_VERSION=1.18.21
+ARG OPENCODE_VERSION=1.18.35
 USER root
 RUN OC_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 --retry-all-errors \

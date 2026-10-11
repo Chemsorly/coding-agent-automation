@@ -11,6 +11,7 @@
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IPipelineApiAgentClient AgentClient
 @inject IPipelineApiWorkItemClient WorkItems
+@inject IPipelineApiTriageClient Triages
 @inject CockpitState State
 @inject NavigationManager Nav
 @inject CurrentAccess Access
@@ -64,7 +65,7 @@
         }
     </div>
 
-    @if (_attnNeedsRefinement + _attnFailed + _attnPlans > 0)
+    @if (_attnNeedsRefinement + _attnFailed + _attnPlans + _attnTriages > 0)
     {
         <div class="cockpit-card">
             <div class="cockpit-card-header"><h2>Needs attention</h2><a href="attention" style="font-size: 12.5px; font-weight: 600;">View all →</a></div>
@@ -82,6 +83,16 @@
                     <div><div data-testid="overview-attn-plans" style="font-size: 18px; font-weight: 800;">@_attnPlans</div><div style="font-size: 12px; color: var(--text-muted);">Plans to approve</div></div>
                 </a>
             </div>
+            @if (_attnTriages > 0)
+            {
+                <a href="triage" class="cockpit-run-row" style="text-decoration: none; color: inherit; border-top: 1px solid var(--hairline);">
+                    <span style="display: inline-flex; align-items: center; gap: 11px;">
+                        <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--bg-info); color: #0B5566; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="stethoscope" Size="17" /></span>
+                        <span><span data-testid="overview-attn-triages" style="font-size: 18px; font-weight: 800;">@_attnTriages</span> <span style="font-size: 12px; color: var(--text-muted);">@(_attnTriages == 1 ? "triage needs" : "triages need") you</span></span>
+                    </span>
+                    <Icon Name="chevron-right" Size="16" Class="cockpit-row-chevron" />
+                </a>
+            }
         </div>
     }
 
@@ -155,7 +166,7 @@
     private int? _successRate;
     private long _tokensRecent;
     private bool _anyRunHasTokens;
-    private int _attnNeedsRefinement, _attnFailed, _attnPlans;
+    private int _attnNeedsRefinement, _attnFailed, _attnPlans, _attnTriages;
     private List<PipelineRunSummary> _activeRuns = new();
     private List<PipelineRunSummary> _recentRuns = new();
 
@@ -224,10 +235,12 @@
             _tokensRecent = items.Sum(r => r.TotalTokens);
             _anyRunHasTokens = items.Any(r => r.TotalTokens > 0);
 
-            var attn = AttentionAggregator.Aggregate(_recentRuns);
+            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, _cts.Token);
+            var attn = AttentionAggregator.Aggregate(_recentRuns, triages);
             _attnNeedsRefinement = attn.NeedsRefinement.Count;
             _attnFailed = attn.FailedRuns.Count;
             _attnPlans = attn.PlansToApprove.Count;
+            _attnTriages = attn.TriagesNeedingYou.Count;
         }
         catch (OperationCanceledException) { /* Component disposed while loading; nothing to update. */ }
         catch { /* Card keeps its last value; the next refresh retries. */ }

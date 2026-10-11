@@ -25,13 +25,14 @@ internal sealed class TemplatePoller
     }
 
     /// <summary>
-    /// Polls once per pollable template for issues, PRs, decomposition candidates, and agent:done PRs.
+    /// Polls once per pollable template for issues, PRs, decomposition and triage candidates, and agent:done PRs.
     /// </summary>
     internal async Task<(Dictionary<string, List<IssueSummary>> IssueQueues,
                           Dictionary<string, List<PullRequestSummary>> PrQueues,
                           Dictionary<string, List<EpicCandidate>> DecompositionQueues,
                           Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues,
-                          Dictionary<string, bool> AgentDonePrTruncated)>
+                          Dictionary<string, bool> AgentDonePrTruncated,
+                          Dictionary<string, List<TriageCandidate>> TriageQueues)>
         PollTemplateQueuesAsync(
             IReadOnlyList<PipelineJobTemplate> pollableTemplates,
             int maxPagesToFetch,
@@ -78,7 +79,8 @@ internal sealed class TemplatePoller
             }
         }
 
-        return (queues.IssueQueues, queues.PrQueues, queues.DecompositionQueues, queues.AgentDonePrQueues, queues.AgentDonePrTruncated);
+        return (queues.IssueQueues, queues.PrQueues, queues.DecompositionQueues, queues.AgentDonePrQueues, queues.AgentDonePrTruncated,
+            queues.TriageQueues);
     }
 
     /// <summary>
@@ -91,10 +93,14 @@ internal sealed class TemplatePoller
         public Dictionary<string, List<EpicCandidate>> DecompositionQueues { get; } = new();
         public Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues { get; } = new();
         public Dictionary<string, bool> AgentDonePrTruncated { get; } = new();
+        public Dictionary<string, List<TriageCandidate>> TriageQueues { get; } = new();
 
         /// <summary>Clears every queue entry for <paramref name="templateId"/>.</summary>
-        public void ClearForTemplate(string templateId) =>
+        public void ClearForTemplate(string templateId)
+        {
             ClearQueuesForTemplate(templateId, IssueQueues, PrQueues, DecompositionQueues, AgentDonePrQueues, AgentDonePrTruncated);
+            TriageQueues[templateId] = new List<TriageCandidate>();
+        }
     }
 
     /// <summary>
@@ -111,6 +117,7 @@ internal sealed class TemplatePoller
         await PollIssueQueueAsync(template, maxPagesToFetch, templateStatuses, queues.IssueQueues, ct);
         await PollPrQueueAsync(template, maxPagesToFetch, queues.PrQueues, ct);
         await PollDecompositionQueueAsync(template, maxPagesToFetch, queues.DecompositionQueues, ct);
+        await PollTriageQueueAsync(template, maxPagesToFetch, queues.TriageQueues, ct);
         await PollAgentDonePrQueueAsync(template, maxPagesToFetch, queues.AgentDonePrQueues, queues.AgentDonePrTruncated, ct);
 
         // Success — update status (agentDonePrQueues not counted as dispatchable work)
@@ -119,10 +126,11 @@ internal sealed class TemplatePoller
         // and intentionally omitted the key (fail-open for BuildPrEligibilityMap). Use 0 in those cases.
         var prCount = queues.PrQueues.TryGetValue(template.Id, out var prList) ? prList.Count : 0;
         var decompCount = queues.DecompositionQueues[template.Id].Count;
+        var triageCount = queues.TriageQueues[template.Id].Count;
         templateStatuses[template.Id] = new ConfigStatusSnapshot
         {
             LastPollTime = DateTimeOffset.UtcNow,
-            LastPollIssueCount = issueCount + prCount + decompCount,
+            LastPollIssueCount = issueCount + prCount + decompCount + triageCount,
             LastError = null,
             ConsecutiveFailures = 0,
             RateLimitResetAt = null,
@@ -323,6 +331,135 @@ internal sealed class TemplatePoller
             _logger.Warning(ex, "Template '{TemplateName}' decomposition polling failed, issue/PR polling unaffected: {Error}",
                 template.Name, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Polls the template's tracker for <c>agent:triage</c> issues (only when <see cref="PipelineJobTemplate.TriageEnabled"/>).
+    /// Wrapped in its own try-catch so that a triage polling failure does not discard the other queues.
+    /// </summary>
+    private async Task PollTriageQueueAsync(
+        PipelineJobTemplate template,
+        int maxPagesToFetch,
+        Dictionary<string, List<TriageCandidate>> triageQueues,
+        CancellationToken ct)
+    {
+        triageQueues[template.Id] = new List<TriageCandidate>();
+        if (!template.TriageEnabled) return;
+
+        try
+        {
+            if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
+            {
+                _logger.Warning("Template '{TemplateName}': issue provider '{IssueProviderId}' not found in cache, skipping triage polling",
+                    template.Name, template.IssueProviderId);
+                return;
+            }
+
+            foreach (var issue in await FetchTriageIssuesAsync(provider, maxPagesToFetch, ct))
+                triageQueues[template.Id].Add(new TriageCandidate(issue, template.IssueProviderId));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Template '{TemplateName}' triage polling failed, other polling unaffected: {Error}",
+                template.Name, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Adds the <c>agent:triage</c> issues of every enabled project's epic tracker to the triage queue of the project's
+    /// first enabled <see cref="PipelineJobTemplate.TriageEnabled"/> template (by name), which runs them. A tracker
+    /// that is both a template's tracker and the epic tracker is handled here only. Must run after
+    /// <see cref="PollTemplateQueuesAsync"/>, which creates the queues. When two projects share an epic tracker, the
+    /// first by name owns it.
+    /// </summary>
+    internal async Task AddProjectTriagesAsync(
+        IReadOnlyList<PipelineProject> projects,
+        IReadOnlyDictionary<string, PipelineJobTemplate> templateLookup,
+        int maxPagesToFetch,
+        Dictionary<string, List<TriageCandidate>> triageQueues,
+        CancellationToken ct)
+    {
+        var claimed = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var project in projects
+                     .Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId))
+                     .OrderBy(p => p.Name, StringComparer.Ordinal)
+                     .ThenBy(p => p.Id, StringComparer.Ordinal))
+        {
+            if (ct.IsCancellationRequested) break;
+
+            var tracker = project.EpicIssueProviderId!;
+            if (!claimed.Add(tracker))
+                continue;
+
+            var executor = SelectTriageTemplate(project, templateLookup);
+            if (executor is null)
+                continue; // no template of the project triages: the epic tracker is not polled for triage
+
+            if (!_cacheManager.IssueProviders.TryGetValue(tracker, out var provider))
+            {
+                _logger.Warning("Project '{ProjectName}': epic tracker '{EpicProviderId}' not found in provider cache, skipping triage polling",
+                    project.Name, tracker);
+                continue;
+            }
+
+            // The epic tracker may also be a template's own tracker: its issues are triaged once, by the executor
+            foreach (var queue in triageQueues.Values)
+                queue.RemoveAll(c => c.IssueProviderId == tracker);
+
+            if (!triageQueues.TryGetValue(executor.Id, out var executorQueue))
+            {
+                _logger.Information("Project '{ProjectName}': triage executor '{TemplateName}' was not polled this cycle, project triages wait",
+                    project.Name, executor.Name);
+                continue;
+            }
+
+            try
+            {
+                foreach (var issue in await FetchTriageIssuesAsync(provider, maxPagesToFetch, ct))
+                    executorQueue.Add(new TriageCandidate(issue, tracker));
+                executorQueue.SortByCreatedAtFifo();
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Project '{ProjectName}' triage polling of the epic tracker failed: {Error}", project.Name, ex.Message);
+            }
+        }
+    }
+
+    /// <summary>The project's first enabled template (in TemplateOrder, by name) with triage on, or null.</summary>
+    internal static PipelineJobTemplate? SelectTriageTemplate(
+        PipelineProject project,
+        IReadOnlyDictionary<string, PipelineJobTemplate> templateLookup)
+    {
+        foreach (var templateId in project.TemplateIds)
+        {
+            if (templateLookup.TryGetValue(templateId, out var template) && template.Enabled && template.TriageEnabled)
+                return template;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Fetches <c>agent:triage</c> issues, oldest first, skipping issues that also carry
+    /// <c>agent:in-progress</c>, <c>agent:triage-review</c>, <c>agent:error</c> or <c>agent:done</c>.
+    /// </summary>
+    private static async Task<List<IssueSummary>> FetchTriageIssuesAsync(IIssueProvider provider, int maxPages, CancellationToken ct)
+    {
+        var result = await FetchAllPagesAsync<IssueSummary>(
+            (page, pageSize, token) => provider.ListOpenIssuesAsync(page, pageSize, new[] { AgentLabels.Triage }, token),
+            maxPages, ct);
+
+        result.RemoveAll(issue =>
+            issue.Labels.Contains(AgentLabels.InProgress) ||
+            issue.Labels.Contains(AgentLabels.TriageReview) ||
+            issue.Labels.Contains(AgentLabels.Error) ||
+            issue.Labels.Contains(AgentLabels.Done));
+
+        result.SortByCreatedAtFifo();
+        return result;
     }
 
     /// <summary>Handles a rate-limit exception: updates status, clears queues.</summary>
