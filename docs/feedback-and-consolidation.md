@@ -21,6 +21,7 @@ Each run produces a `RunFeedback` record with two sections:
 ### Where Feedback Appears
 
 - **Run page** — Collapsible "Feedback (n)" section at the bottom of the run's page (`/runs/{id}`), showing all fields. The Runs list has a "Feedback only" filter
+- **Insights page** — the "Harness feedback" and "Issue feedback" cards rank the feedback categories of the selected project and time window by the number of runs that reported them. Each category opens to its runs, with one line of text each and a link to the run page.
 - **GitHub issue** — If issue feedback has a description, a comment is posted with the `<!-- agent:issue-feedback -->` marker
 - **Harness suggestions** — Accumulated feedback feeds into the consolidation loops (see below)
 
