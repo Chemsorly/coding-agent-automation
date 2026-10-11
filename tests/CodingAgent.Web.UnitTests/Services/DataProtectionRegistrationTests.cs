@@ -146,6 +146,31 @@ public class DataProtectionRegistrationTests
         callCount.Should().Be(1, "the multiplexer factory should be called exactly once during registration");
     }
 
+    [Fact]
+    public void WhenFactoryProvided_MultiplexerIsRegisteredForTheHealthIndicator()
+    {
+        // InfrastructureHealthService reads Redis health from the IConnectionMultiplexer in DI. Since
+        // the web host has no SignalR backplane, the key-ring connection is the one it must get.
+        var mux = CreateMockMultiplexer();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDataProtectionServices(() => mux);
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IConnectionMultiplexer>().Should().BeSameAs(mux);
+    }
+
+    [Fact]
+    public void WhenNullFactory_NoMultiplexerIsRegistered()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDataProtectionServices(connectionMultiplexerFactory: null);
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetService<IConnectionMultiplexer>().Should().BeNull();
+    }
+
     // ── constants ─────────────────────────────────────────────────────────────
 
     [Fact]

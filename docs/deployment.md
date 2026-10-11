@@ -180,13 +180,12 @@ When the Kubernetes client is unavailable (e.g., local `dotnet run`), `ILeaderEl
 >
 > **Note:** Redis does **not** eliminate the PVC dispatch race. The Scheduler's dispatch of queued work takes a per-selector Postgres advisory lock; the Run page's synchronous `POST /api/work-items/dispatch` takes none. Occasional `503` responses in multi-replica deployments are expected and transient. See [Concurrency Model — PVC Dispatch Race in Multi-Replica Deployments](architecture/concurrency-model.md#pvc-dispatch-race-in-multi-replica-deployments) for details.
 
-> **Note on Data Protection and Redis:** The Orchestrator (Blazor Server) uses ASP.NET Core Data Protection to encrypt antiforgery tokens for Blazor circuits. In a multi-replica Orchestrator deployment each pod generates its own ephemeral key ring by default. If the load balancer routes the initial page request to replica A (token encrypted with A's key) but the Blazor WebSocket to replica B, circuit initialization fails with a `CryptographicException`. When `signalr.redis.connectionString` is set, the Orchestrator persists Data Protection keys to Redis under `caa:data-protection-keys` so all replicas share one ring. This is the same connection string used for the SignalR backplane — no additional config key is needed.
+> **Note on Data Protection and Redis:** The web host (Blazor Server) uses ASP.NET Core Data Protection to encrypt the login cookie and antiforgery tokens. In a multi-replica web deployment each pod generates its own ephemeral key ring by default, so a cookie issued by one replica is rejected by another. When `signalr.redis.connectionString` is set, the web host persists Data Protection keys to Redis under `caa:data-protection-keys` so all replicas share one ring. The web host uses Redis for nothing else: it maps no SignalR hub and has no backplane. Several web replicas also need sticky sessions (`web.service.annotations`), because each open page keeps its circuit on one replica.
 
 ### Graceful Shutdown
 
 The chart supports zero-downtime rolling updates:
-- Orchestrator uses `readinessDrainDelaySeconds` (default: 15s) to stop accepting traffic before terminating
-- `pipelineLoopStartupDelaySeconds` (default: **0**, range: 0–300) delays `PipelineLoopService` startup after the process is ready. The Helm default is 0 — the API now owns `IOrchestratorRunService` and rehydrates on its own startup, so the Orchestrator no longer needs a startup delay before dispatching (Spec 044)
+- The web host uses `web.env.readinessDrainDelaySeconds` (default: 15s, range: 0–120) to stop accepting traffic before terminating
 - Let in-flight agent Jobs finish before upgrading — no drain hook exists
 
 ### Leader Election
@@ -202,7 +201,7 @@ Dispatch and reconciliation are leader-elected across the system. Each process h
 
 #### Leader-Dependent Services
 
-Three independent leases are used — one per relevant process (the Pipeline API has no leader election):
+Two independent leases are used — one per relevant process (the Pipeline API and the web host have no leader election):
 
 **Job Controller** (`caa-{release}-dispatch-lock` lease):
 
@@ -212,7 +211,7 @@ Three independent leases are used — one per relevant process (the Pipeline API
 
 **Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` dispatches without a per-selector guard — each API replica may dispatch independently. Set `signalr.redis.connectionString` when running more than one API replica.
 
-**Orchestrator** (`caa-{release}-pipeline-loop-lock` lease) — Deprecated: `PipelineLoopService` moved to the Scheduler in Spec 047. The Orchestrator now only polls `/loop/status` and dispatches individual runs via HTTP. The lease still exists in the Helm chart but governs no background services in the Orchestrator process. It can be ignored for operational purposes.
+**Web host** — No leader election and no Kubernetes API access. It polls `/loop/status` on the Scheduler and sends dispatches to the Pipeline API over HTTP. Its pod mounts no service account token.
 
 **Scheduler** (`caa-{release}-scheduler-lock` lease):
 
@@ -239,22 +238,13 @@ Bound from the `LeaderElection` configuration section:
 | `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
 | `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
 
-Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `web.leaderElection.pipelineLoopLeaseName` (web, defaults to `caa-{release}-pipeline-loop-lock`), and `scheduler.leaderElection.leaseName` (Scheduler, defaults to `caa-{release}-scheduler-lock`). The Pipeline API has no leader election lease.
+Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`) and `scheduler.leaderElection.leaseName` (Scheduler, defaults to `caa-{release}-scheduler-lock`). The Pipeline API and the web host have no leader election lease. Earlier releases also created a `caa-{release}-pipeline-loop-lock` lease for the web host; nothing uses it any more, and it can be deleted.
 
 #### RBAC Requirements
 
 The Helm chart creates ServiceAccounts and ClusterRoleBindings (or RoleBindings) automatically for each process.
 
-**Orchestrator** (`CodingAgent.Web`) ServiceAccount:
-
-```yaml
-rules:
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["create", "get", "update"]
-```
-
-The Orchestrator only needs leader-election Lease access. It has no direct K8s Job dispatch — `ChatJobDispatcher` and work-item Job creation both run in the Pipeline API.
+**Web host** (`CodingAgent.Web`): no Role, and `automountServiceAccountToken: false`. The internet-facing pod makes no Kubernetes API calls — `ChatJobDispatcher` and work-item Job creation both run in the Pipeline API.
 
 **Pipeline API** (`CodingAgent.Api`) ServiceAccount:
 

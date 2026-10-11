@@ -13,15 +13,13 @@ data:
   # using Kubernetes $(VAR_NAME) substitution to compose k8s.namespace.name and k8s.pod.name from
   # the Downward API (fieldRef). ConfigMap data cannot use fieldRef, so the composed value lives in
   # the pod spec where valueFrom entries are available.
-  PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ $web.env.pipelineLoopStartupDelaySeconds | quote }}
   READINESS_DRAIN_DELAY_SECONDS: {{ $web.env.readinessDrainDelaySeconds | quote }}
   LOG_LEVEL: {{ $web.env.logLevel | quote }}
   Faro__CollectorUrl: {{ $web.env.faroCollectorUrl | quote }}
   WebUI__BasePath: {{ $web.env.basePath | default "./" | quote }}
   # Only an ingress with a tls section has an HTTPS URL to redirect to.
   WebUI__HttpsRedirect: {{ if and $web.ingress.enabled $web.ingress.tls $web.ingress.httpsRedirect }}"true"{{ else }}"false"{{ end }}
-  # LeaderElection__Namespace is injected as a direct env var (fieldRef) in the deployment —
-  # it cannot be set here in a ConfigMap as fieldRef is not available in ConfigMap data.
-  # WorkDistribution env vars — used by ChatJobDispatcher and KubernetesJobCleanup.
-  # Namespace is a literal release namespace (fieldRef is not available in ConfigMaps).
-  {{- include "coding-agent-automation.workDistributionConfigMapData" . | nindent 2 }}
+  # The only work-distribution setting the web host reads: Agent Chat waits this long for the
+  # chat pod to connect. The other WorkDistribution__* keys belong to the API, Scheduler and
+  # Job Controller, which build and reconcile the Jobs.
+  WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}

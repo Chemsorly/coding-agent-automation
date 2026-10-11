@@ -16,7 +16,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  ─────────────                                                              │
 │  Blazor Server UI                                                           │
 │  Polls /loop/status on Scheduler for UI state                               │
-│  LeaderElection (Lease: caa-{release}-pipeline-loop-lock) — no loop svcs   │
+│  No leader election, no Kubernetes API access, no SignalR hub of its own   │
 │                                                                             │
 │  No EF Core. No AgentHub. Connects to API via IPipelineApiConfigClient,    │
 │  IPipelineApiRunHistoryClient, IAgentHubConnection (from Api.Client,       │

@@ -1068,12 +1068,13 @@ public partial class LayerBoundaryTests
     }
 
     // ── Issue #2862: SignalR + MessagePack registration must not be duplicated ─────
-    // After consolidation into CodingAgent.AgentGateway (AddAgentSignalRServices), neither
-    // host registration file may contain the MessagePack protocol setup or the
+    // After consolidation into CodingAgent.AgentGateway (AddAgentSignalRServices), the host
+    // registration file may not contain the MessagePack protocol setup or the
     // AgentAuthorizationFilter singleton registration. This source-scan guard prevents
     // the duplication from creeping back in.
     //
-    // Scans the two host-specific registration files only (not the shared extension itself).
+    // Scans the API's registration file only (not the shared extension itself). The API is the
+    // only host that maps AgentHub; the web host registers no SignalR hub of its own.
     //
     // TODO: This test only verifies that forbidden patterns are ABSENT from host files. It does
     // not assert that the shared extension (AgentSignalRServiceCollectionExtensions.cs) actually
@@ -1100,7 +1101,6 @@ public partial class LayerBoundaryTests
         var filesToCheck = new[]
         {
             Path.Combine(RepoRoot, "src", "CodingAgent.Api",  "ApiSignalRRegistration.cs"),
-            Path.Combine(RepoRoot, "src", "CodingAgent.Web",  "SignalRRegistration.cs"),
         };
 
         // Patterns that must only appear in the shared AgentGateway extension,

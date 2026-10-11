@@ -1,4 +1,3 @@
-using k8s;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
@@ -94,12 +93,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             RemoveDbContextRegistrations(services);
             services.AddSingleton<IDbContextFactory<PipelineDbContext>>(
                 new InMemoryDbContextFactory(_dbName));
-            // IKubernetes is built from in-cluster config or ~/.kube/config and throws "No usable
-            // Kubernetes configuration" when neither resolves. LeaderElectionService is a hosted service
-            // that takes it, so without this stub these tests only pass on a machine that happens to have
-            // a kubeconfig — they fail in every CI container.
-            services.RemoveAll<IKubernetes>();
-            services.AddSingleton(new Mock<IKubernetes>().Object);
 
             // Replace the distributed lock provider with InProcess (real one uses Postgres advisory locks)
             services.RemoveAll<IDistributedLockProvider>();
@@ -187,8 +180,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 .ReturnsAsync((PipelineRunSummary?)null);
             services.RemoveAll<IPipelineApiRunHistoryClient>();
             services.AddSingleton(runHistoryMock.Object);
+
+            RegisteredServices = services.ToList();
         });
     }
+
+    /// <summary>The host's final service registrations, for the DI resolution test.</summary>
+    public IReadOnlyList<ServiceDescriptor> RegisteredServices { get; private set; } = [];
 
     private static IConfigurationStore CreateConfigurationStoreMock()
     {

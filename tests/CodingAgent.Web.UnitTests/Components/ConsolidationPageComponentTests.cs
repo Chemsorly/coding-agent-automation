@@ -27,7 +27,6 @@ public class ConsolidationPageComponentTests : BunitContext
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
     private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
-    private readonly ConsolidationBadgeService _badgeService = new();
 
     public ConsolidationPageComponentTests()
     {
@@ -70,7 +69,6 @@ public class ConsolidationPageComponentTests : BunitContext
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
         Services.AddSingleton<IAgentHubConnection>(_mockHubConnection.Object);
-        Services.AddSingleton(_badgeService);
         Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
 
         var mockConfigClientForProjects = _mockConfigClient;
@@ -522,20 +520,6 @@ public class ConsolidationPageComponentTests : BunitContext
 
         var markup = cut.Markup;
         Assert.Contains("No consolidation runs yet", markup);
-    }
-
-    // ═══ Requirement 10.2: Badge resets on page load ═══
-
-    [Fact]
-    public void BadgeResetsToZero_OnPageLoad()
-    {
-        _badgeService.IncrementBy(5);
-        Assert.Equal(5, _badgeService.BadgeCount);
-
-        RegisterServices();
-        Render<Consolidation>();
-
-        Assert.Equal(0, _badgeService.BadgeCount);
     }
 
     // ═══ Trigger tests ═══

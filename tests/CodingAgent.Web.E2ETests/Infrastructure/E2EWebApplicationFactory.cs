@@ -81,7 +81,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 
     // Resettable services — created during ConfigureServices, used in ResetAll
     private AgentRegistryService? _registry;
-    private OrchestratorRunService? _runService;
 
     /// <summary>Exposes the agent registry for test assertions and wait helpers.</summary>
     public AgentRegistryService AgentRegistry => _registry ?? throw new InvalidOperationException("Not initialized");
@@ -210,10 +209,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             ReplaceService<CodingAgent.Infrastructure.GitLab.GitLabValidationService>(
                 services, new Fakes.FakeGitLabValidationService());
 
-            // LeaderElectionService is a hosted service taking IKubernetes; without a stub the host
-            // dies at startup wherever no kubeconfig exists.
-            E2ETestDefaults.InstallKubernetesStub(services);
-
             // Same template set as the API host — see E2ETestDefaults.InstallJobTemplates.
             E2ETestDefaults.InstallJobTemplates(services);
 
@@ -264,13 +259,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         _registry = new AgentRegistryService(Serilog.Log.Logger);
         RemoveService<AgentRegistryService>(services);
         services.AddSingleton(_registry);
-
-        // OrchestratorRunService — sealed, uses internal Reset()
-        _runService = new OrchestratorRunService(Serilog.Log.Logger);
-        RemoveService<OrchestratorRunService>(services);
-        RemoveService<IOrchestratorRunService>(services);
-        services.AddSingleton(_runService);
-        services.AddSingleton<IOrchestratorRunService>(_runService);
     }
 
     /// <summary>
@@ -309,11 +297,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 
         // Reset resettable service subclasses
         _registry?.Reset();
-        _runService?.Reset();
-
-        // Reset consolidation badge service
-        var badgeService = Services.GetRequiredService<ConsolidationBadgeService>();
-        badgeService.Reset();
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class
