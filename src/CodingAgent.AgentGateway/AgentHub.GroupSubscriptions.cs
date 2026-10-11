@@ -35,7 +35,7 @@ public sealed partial class AgentHub
             throw new HubException($"Invalid jobId format: must be a valid GUID (e.g. '3fa85f64-5717-4562-b3fc-2c963f66afa6').");
 
         // Agent connections carry an agentId query parameter. UI/operator connections do not.
-        var callerAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+        var callerAgentId = Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
         if (!string.IsNullOrEmpty(callerAgentId))
         {
             // Caller is an agent connection — enforce per-run ownership (Req 5.3a).
