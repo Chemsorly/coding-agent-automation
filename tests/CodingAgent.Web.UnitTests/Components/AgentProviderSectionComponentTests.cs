@@ -249,7 +249,9 @@ public class AgentProviderSectionComponentTests : BunitContext
         _mockConfigClient.Verify(s => s.SaveProviderConfigAsync(
             It.Is<ProviderConfig>(c =>
                 c.Kind == ProviderKind.Agent &&
-                c.ProviderType == "KiroCli"),
+                c.ProviderType == "KiroCli" &&
+                // kiro-cli 2.29 refuses every run for --agent "default", the field's old pre-fill
+                c.Settings[ProviderSettingKeys.AgentName] == ""),
             It.IsAny<CancellationToken>()), Times.Once);
 
         Assert.True(onSavedCalled);

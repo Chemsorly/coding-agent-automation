@@ -257,8 +257,7 @@ public partial class AgentPhaseExecutor
             run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
 
         if (!analysisResult.Success && ProviderUnavailableException.IsProviderFailure(analysisResult.ErrorCategory))
-            throw new ProviderUnavailableException(analysisResult.ErrorCategory,
-                $"Agent provider unavailable ({analysisResult.ErrorCategory}), exit code {analysisResult.ExitCode}");
+            throw new ProviderUnavailableException(analysisResult.ErrorCategory, ProviderUnavailableException.Describe(analysisResult));
 
         ValidateAnalysisFile(run, analysisFilePath, analysisResult);
 
@@ -278,15 +277,15 @@ public partial class AgentPhaseExecutor
     }
 
     /// <summary>
-    /// Ends a run whose model provider is unavailable (rate limit, overload, rejected credentials) as an
-    /// infrastructure failure at once: retrying against the same outage cannot help. The run ends with
-    /// <c>agent:error</c> like other infrastructure failures, not <c>agent:needs-refinement</c>, which
-    /// would ask the author to rewrite an issue that is not at fault.
+    /// Ends a run whose model provider is unavailable (rate limit, overload, rejected credentials, a CLI
+    /// that refused its configuration) as an infrastructure failure at once: retrying against the same
+    /// outage cannot help. The run ends with <c>agent:error</c> like other infrastructure failures, not
+    /// <c>agent:needs-refinement</c>, which would ask the author to rewrite an issue that is not at fault.
     /// </summary>
     private async Task FailForUnavailableProviderAsync(AgentPhaseContext context, ProviderUnavailableException ex)
     {
         var run = context.Run;
-        _logger.Error("Pipeline {RunId} analysis stopped: {Message}", run.RunId, ex.Message);
+        _logger.Error("Pipeline {RunId} stopped: {Message}", run.RunId, ex.Message);
         context.Callbacks.EmitOutputLine($"❌ {ex.Message} — an infrastructure failure, not a problem with the issue");
         run.FailureReason = ex.Message;
         run.FailureCategory = FailureReason.InfrastructureFailure;

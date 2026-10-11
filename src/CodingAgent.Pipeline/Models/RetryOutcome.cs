@@ -18,7 +18,8 @@ public enum RetryOutcome
     TransientWait,
 
     /// <summary>
-    /// Permanent authentication failure — break the retry loop immediately.
+    /// Permanent provider failure (rejected credentials, or a CLI that refused its configuration) —
+    /// break the retry loop immediately.
     /// </summary>
     AbortAuth,
 
