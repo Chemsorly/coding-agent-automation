@@ -374,7 +374,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Refactoring proposal quality bar
 <!-- 2026-07-04 -->
-**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
+**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity, not counting commits of the scan's own issues), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
 **Why:** The bar must be high enough to avoid noise and low enough to catch real debt; outcome data (done vs. wont-do) should move it over time.
 **Not:** fixed complexity or duplication thresholds; filtering by scope only; leaving calibration entirely to the operator.
 **Revisit when:** more than 50% of proposals are wont-do over 90 days; the system is then too aggressive.
@@ -507,9 +507,9 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** agents still make conflicting changes, or recently closed context proves valuable.
 
 ### Brain: runs append, consolidation curates
-<!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29 -->
-**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental.
-**Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it.
+<!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29; token scope 2026-10-11 -->
+**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental. A read-only brain gets a read-only token where the provider allows it.
+**Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it. A GitLab or personal-access-token brain keeps its own token, so for those the pipeline's behaviour is the only guard; use a token without write access for a brain that should stay read-only.
 **Not:** a database store (loses git history and inspectability); expiry by age (drops rare but useful entries); periodic full resets; brain access per provider or per run.
 **Revisit when:** the feature becomes stable, brain size measurably slows runs, or consolidation keeps finding nothing to change.
 
