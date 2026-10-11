@@ -161,6 +161,20 @@ public sealed class ConsolidationServiceScopeResolutionTests
             "global runs (null templateId) must not call GetProviderConfigByIdAsync — no template to resolve from");
     }
 
+    [Fact]
+    public async Task TriggerAsync_GlobalHarnessRun_SendsNoTemplateName()
+    {
+        // Verifies: global harness suggestion runs (no template) must not propagate a template
+        // name — ConsolidationTemplateName must be null, not "Global" or any other string.
+        var sut = CreateSut();
+
+        await sut.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+
+        _requests.Should().ContainSingle()
+            .Which.ConsolidationTemplateName.Should().BeNull(
+                "global harness suggestion runs have no template; ConsolidationTemplateName must be null");
+    }
+
     // ── 3. BuildConsolidationDistributionRequest forwards all required fields ─
 
     [Fact]

@@ -156,6 +156,9 @@ public record JobDistributionRequest
     /// <summary>Template ID for template-scoped consolidation runs (null for global).</summary>
     public string? ConsolidationTemplateId { get; init; }
 
+    /// <summary>Display name of the template for template-scoped consolidation runs (null for global).</summary>
+    public string? ConsolidationTemplateName { get; init; }
+
     /// <summary>
     /// When the last consolidation of the same type and scope succeeded; null when there is none in the run
     /// history. Set at delivery time; brain consolidation focuses on what changed since.

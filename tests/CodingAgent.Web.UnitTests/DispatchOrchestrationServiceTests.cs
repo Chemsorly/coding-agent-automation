@@ -189,9 +189,10 @@ public class DispatchOrchestrationServiceTests
                 It.IsAny<IReadOnlyList<ProviderConfig>>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<bool>()))
-            .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => Task.FromResult(configs));
+                It.IsAny<bool>(),
+                It.IsAny<IReadOnlySet<string>?>()))
+            .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => Task.FromResult(configs));
     }
 
     [Fact]
@@ -1821,16 +1822,16 @@ public class DispatchOrchestrationServiceTests
 
     private static DecompositionDispatchOrchestrationRequest EpicRequest(
         string epicId, string issueProviderId, PipelineProject project) => new()
-    {
-        EpicIdentifier = epicId,
-        EpicTitle = "Epic",
-        PhaseType = PipelineRunType.Decomposition,
-        IssueProviderId = issueProviderId,
-        RepoProviderId = "repo-1",
-        BrainProviderId = null,
-        InitiatedBy = "decomp-loop",
-        Project = project
-    };
+        {
+            EpicIdentifier = epicId,
+            EpicTitle = "Epic",
+            PhaseType = PipelineRunType.Decomposition,
+            IssueProviderId = issueProviderId,
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "decomp-loop",
+            Project = project
+        };
 
     private void SetupEpicInTracker(string epicId)
     {

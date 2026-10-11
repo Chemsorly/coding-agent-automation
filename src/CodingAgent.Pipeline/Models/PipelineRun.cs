@@ -420,6 +420,9 @@ public sealed partial class PipelineRun
     /// <summary>Human-readable result summary from the consolidation agent. Null until the run completes.</summary>
     public string? ConsolidationResultSummary { get; set; }
 
+    /// <summary>Display name of the consolidation template, or null for global scope (harness suggestions).</summary>
+    public string? ConsolidationTemplateName { get; set; }
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     /// <param name="finalStepOverride">If non-null, used as <see cref="PipelineRunSummary.FinalStep"/> instead of <see cref="CurrentStep"/>.</param>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
@@ -479,6 +482,7 @@ public sealed partial class PipelineRun
         ConsolidationType = ConsolidationType,
         ConsolidationTemplateId = ConsolidationTemplateId,
         ConsolidationResultSummary = ConsolidationResultSummary,
+        ConsolidationTemplateName = ConsolidationTemplateName,
         // For new runs, RunId == WorkItemId (same GUID by contract in CreateFromWorkItem).
         // For consolidation runs the WorkItemId may differ from RunId (backfilled rows from the
         // ConsolidationRuns table may have a separate WorkItemId in the JSONB blob), so we expose

@@ -26,7 +26,8 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetService<IWorkItemTransitionStore>(),
             sp.GetService<IProjectStore>(),
             sp.GetService<IWorkItemFallbackTransitionService>(),
-            sp.GetRequiredService<TimeProvider>()));
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetService<IPipelineConfigStore>()));
 
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
             sp.GetRequiredService<AgentHubFacadeDependencies>()));

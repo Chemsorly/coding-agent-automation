@@ -348,20 +348,13 @@ public sealed partial class TokenVendingService : ITokenVendingService
         }
     }
 
-    /// <summary>
-    /// Clones the provided <see cref="ProviderConfig"/> list, replacing <c>privateKeyBase64</c>
-    /// with a short-lived <c>token</c> in the Settings dictionary. This ensures agents never
-    /// receive the GitHub App private key.
-    /// </summary>
-    /// <param name="configs">Original provider configs from the configuration store.</param>
-    /// <param name="repoConfigId">The repository provider config ID to generate a token for.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Cloned configs with the repo config's private key replaced by a short-lived token.</returns>
+    /// <inheritdoc cref="ITokenVendingService.PrepareAgentConfigsAsync"/>
     public async Task<IReadOnlyList<ProviderConfig>> PrepareAgentConfigsAsync(
         IReadOnlyList<ProviderConfig> configs,
         string repoConfigId,
         CancellationToken ct,
-        bool includeIssuePermission = false)
+        bool includeIssuePermission = false,
+        IReadOnlySet<string>? readOnlyConfigIds = null)
     {
         ArgumentNullException.ThrowIfNull(configs);
         ArgumentNullException.ThrowIfNull(repoConfigId);
@@ -376,7 +369,13 @@ public sealed partial class TokenVendingService : ITokenVendingService
             {
                 try
                 {
-                    var (token, expiresAt) = await GenerateAgentTokenAsync(config, ct, includeIssuePermission);
+                    // A config listed in readOnlyConfigIds gets a contents:read token (e.g. a
+                    // read-only brain). Everything else about the config is unchanged — it is NOT
+                    // marked clone-only; secrets and setup steps are preserved.
+                    var isReadOnly = readOnlyConfigIds is not null && readOnlyConfigIds.Contains(config.Id);
+                    var (token, expiresAt) = isReadOnly
+                        ? await GenerateTokenAsync(config, readOnly: true, includeIssuePermission: false, ct)
+                        : await GenerateAgentTokenAsync(config, ct, includeIssuePermission);
 
                     var clonedSettings = new Dictionary<string, string>(config.Settings);
                     clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);

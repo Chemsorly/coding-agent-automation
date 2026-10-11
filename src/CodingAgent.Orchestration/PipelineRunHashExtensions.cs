@@ -144,6 +144,7 @@ public static class PipelineRunHashExtensions
             JEnum("consolidationType",          run.ConsolidationType),
             F("consolidationTemplateId",        run.ConsolidationTemplateId ?? ""),
             F("consolidationResultSummary",     run.ConsolidationResultSummary ?? ""),
+            F("consolidationTemplateName",      run.ConsolidationTemplateName ?? ""),
         ];
     }
 
@@ -199,6 +200,7 @@ public static class PipelineRunHashExtensions
         run.ConsolidationType = r.EnumOrNull<ConsolidationRunType>("consolidationType");
         run.ConsolidationTemplateId = r.OptionalString("consolidationTemplateId");
         run.ConsolidationResultSummary = r.OptionalString("consolidationResultSummary");
+        run.ConsolidationTemplateName = r.OptionalString("consolidationTemplateName");
 
         return run;
     }
