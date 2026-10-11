@@ -34,11 +34,11 @@ public class RbacEvaluatorTests
     private static ClaimsPrincipal Oidc(string username, params string[] groups) =>
         AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{username}", username, email: null, displayName: null, groups, Expires);
 
-    private static RoleBindingOptions Group(string group, string role, string? project = null) =>
-        new() { Group = group, Role = role, Project = project };
+    private static RoleBindingOptions Group(string group, string role, string? projectId = null) =>
+        new() { Group = group, Role = role, ProjectId = projectId };
 
-    private static RoleBindingOptions User(string user, string role, string? project = null) =>
-        new() { User = user, Role = role, Project = project };
+    private static RoleBindingOptions User(string user, string role, string? projectId = null) =>
+        new() { User = user, Role = role, ProjectId = projectId };
 
     [Fact]
     public async Task Unauthenticated_GetsNothing()
@@ -100,7 +100,7 @@ public class RbacEvaluatorTests
     [Fact]
     public async Task ProjectBinding_GrantsRoleOnThatProjectOnly()
     {
-        var grant = await Evaluator("", Group("team-a", "operator", "payments")).EvaluateAsync(Oidc("alice", "team-a"));
+        var grant = await Evaluator("", Group("team-a", "operator", PaymentsId)).EvaluateAsync(Oidc("alice", "team-a"));
 
         grant.GlobalRole.Should().Be(AccessRole.None);
         grant.IsScoped.Should().BeTrue();
@@ -114,9 +114,9 @@ public class RbacEvaluatorTests
     public async Task SeveralProjectBindings_TakeHighestPerProject()
     {
         var evaluator = Evaluator("",
-            Group("team-a", "readonly", "payments"),
-            User("alice", "operator", "payments"),
-            Group("team-a", "readonly", "billing"));
+            Group("team-a", "readonly", PaymentsId),
+            User("alice", "operator", PaymentsId),
+            Group("team-a", "readonly", BillingId));
         var grant = await evaluator.EvaluateAsync(Oidc("alice", "team-a"));
 
         grant.RoleFor(PaymentsId).Should().Be(AccessRole.Operator);
@@ -126,44 +126,35 @@ public class RbacEvaluatorTests
     [Fact]
     public async Task ProjectBinding_NeverLowersGlobalRole()
     {
-        var evaluator = Evaluator("", Group("ops", "operator"), Group("ops", "readonly", "payments"));
+        var evaluator = Evaluator("", Group("ops", "operator"), Group("ops", "readonly", PaymentsId));
         var grant = await evaluator.EvaluateAsync(Oidc("erin", "ops"));
 
         grant.RoleFor(PaymentsId).Should().Be(AccessRole.Operator);
         grant.IsScoped.Should().BeFalse();
     }
 
+    // TODO: UnknownProjectId_GrantsNothing_IsReported_AndLoggedOnce (below) and UnknownProjectId_GrantsNothing_AndReportsUnknownProject
+    // (in the Requirement 8 block) use the same binding ID and assert identical outcomes. The only difference is the log
+    // de-duplication check in this test. Consider merging them or giving the requirement-8 test a distinct assertion to
+    // avoid fully redundant coverage.
     [Fact]
-    public async Task UnknownProjectName_GrantsNothing_IsReported_AndLoggedOnce()
+    public async Task UnknownProjectId_GrantsNothing_IsReported_AndLoggedOnce()
     {
-        var evaluator = Evaluator("", Group("team-a", "operator", "Payments"));
+        var evaluator = Evaluator("", Group("team-a", "operator", "ffffffff-0000-0000-0000-000000000000"));
 
         var grant = await evaluator.EvaluateAsync(Oidc("alice", "team-a"));
         await evaluator.EvaluateAsync(Oidc("alice", "team-a"));
 
         grant.HasAnyAccess.Should().BeFalse();
         grant.Matches.Should().ContainSingle().Which.Problem.Should().Be(RbacEvaluator.UnknownProject);
-        _logger.Collector.GetSnapshot().Should().ContainSingle(r => r.Message.Contains("Payments"));
-    }
-
-    [Fact]
-    public async Task DuplicateProjectName_GrantsNothing_AndIsReported()
-    {
-        SetProjects(("payments", PaymentsId), ("payments", BillingId));
-
-        var grant = await Evaluator("", Group("team-a", "operator", "payments")).EvaluateAsync(Oidc("alice", "team-a"));
-
-        grant.HasAnyAccess.Should().BeFalse();
-        grant.RoleFor(PaymentsId).Should().Be(AccessRole.None);
-        grant.RoleFor(BillingId).Should().Be(AccessRole.None);
-        grant.Matches.Should().ContainSingle().Which.Problem.Should().Be(RbacEvaluator.DuplicateProject);
+        _logger.Collector.GetSnapshot().Should().ContainSingle(r => r.Message.Contains("ffffffff-0000-0000-0000-000000000000"));
     }
 
     [Fact]
     public async Task ProjectListUnavailable_KeepsGlobalBindings_DropsProjectBindings()
     {
         _projects.Setup(p => p.LoadProjectsAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("api down"));
-        var evaluator = Evaluator("", Group("team-a", "readonly"), Group("team-a", "operator", "payments"));
+        var evaluator = Evaluator("", Group("team-a", "readonly"), Group("team-a", "operator", PaymentsId));
 
         var grant = await evaluator.EvaluateAsync(Oidc("alice", "team-a"));
 
@@ -181,10 +172,59 @@ public class RbacEvaluatorTests
     }
 
     [Fact]
-    public async Task ProjectIdFromStore_IsNormalised()
+    public async Task StoreProjectId_IsNormalised()
     {
+        // The binding uses a canonical lower-case project ID; the store returns the project with
+        // an upper-case ID. Resolve() normalizes the store ID before comparing, so it still matches.
         SetProjects(("payments", PaymentsId.ToUpperInvariant()));
-        var grant = await Evaluator("", Group("team-a", "operator", "payments")).EvaluateAsync(Oidc("alice", "team-a"));
+        var grant = await Evaluator("", Group("team-a", "operator", PaymentsId)).EvaluateAsync(Oidc("alice", "team-a"));
         grant.ProjectRoles.Keys.Should().ContainSingle().Which.Should().Be(PaymentsId);
+    }
+
+    // ── Requirement 8: new tests ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task ProjectBinding_AfterRename_StillGrantsRole()
+    {
+        // Rename the project: same ID, new name.
+        SetProjects(("new-name", PaymentsId));
+        var grant = await Evaluator("", Group("team-a", "operator", PaymentsId)).EvaluateAsync(Oidc("alice", "team-a"));
+
+        grant.RoleFor(PaymentsId).Should().Be(AccessRole.Operator);
+        grant.Matches.Should().ContainSingle().Which.ProjectName.Should().Be("new-name");
+    }
+
+    [Fact]
+    public async Task TwoProjectsSameName_BindingToOneId_GrantsOnlyThatProject()
+    {
+        SetProjects(("payments", PaymentsId), ("payments", BillingId));
+        var grant = await Evaluator("", Group("team-a", "operator", PaymentsId)).EvaluateAsync(Oidc("alice", "team-a"));
+
+        grant.RoleFor(PaymentsId).Should().Be(AccessRole.Operator);
+        grant.RoleFor(BillingId).Should().Be(AccessRole.None);
+    }
+
+    [Fact]
+    public async Task UnknownProjectId_GrantsNothing_AndReportsUnknownProject()
+    {
+        var grant = await Evaluator("", Group("team-a", "operator", "ffffffff-0000-0000-0000-000000000000"))
+            .EvaluateAsync(Oidc("alice", "team-a"));
+
+        grant.HasAnyAccess.Should().BeFalse();
+        grant.Matches.Should().ContainSingle().Which.Problem.Should().Be(RbacEvaluator.UnknownProject);
+    }
+
+    [Fact]
+    public async Task NormalizedProjectId_Matches()
+    {
+        // TODO: This test covers the upper-case GUID form (ToUpperInvariant()) but not the brace-wrapped form
+        // (e.g. "{6f1c2a9e-0000-0000-0000-000000000000}"). Guid.TryParse accepts the {D} format and ProjectIds.Normalize
+        // handles it, but there is no test for that code path. Add a brace-wrapped variant to fully cover Requirement 8.
+        // Binding is configured with an upper-case GUID; From() normalizes it at construction.
+        // The store returns the project with a lower-case ID. The lookup must match.
+        var grant = await Evaluator("", Group("team-a", "operator", PaymentsId.ToUpperInvariant()))
+            .EvaluateAsync(Oidc("alice", "team-a"));
+
+        grant.RoleFor(PaymentsId).Should().Be(AccessRole.Operator);
     }
 }

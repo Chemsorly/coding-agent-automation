@@ -312,7 +312,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         if (!string.IsNullOrEmpty(effort) && !effort.Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
-            if (KiroCliSettingsWriter.ValidEffortValues.Contains(effort))
+            if (AgentEffortLevelExtensions.ParseEffort(effort) != AgentEffortLevel.Auto)
                 container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatEffort, Value = effort });
             else
                 _logger.Warning("ChatJobDispatcher: invalid effort value rejected: {Effort}", LogSanitizer.SanitizeForLog(effort));
