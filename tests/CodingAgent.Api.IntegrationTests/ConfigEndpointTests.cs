@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgent.Api.Client;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
@@ -96,6 +97,19 @@ public sealed class ConfigEndpointTests
         get2.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await get2.Content.ReadAsStringAsync();
         body.Should().Be($"\"{value}\"");
+    }
+
+    [Fact]
+    public async Task KeyValue_TypedClientSetThenGet_RoundTrips()
+    {
+        // The typed client must send the body the endpoint binds (KeyValueSetRequest). A bare
+        // JSON string fails binding with 400, which crashed the first-run banner's Dismiss.
+        var configClient = new PipelineApiConfigClient(_client);
+        var key = $"test-key-{Guid.NewGuid():N}";
+
+        await configClient.SetKeyValueAsync(key, "true");
+
+        (await configClient.GetKeyValueAsync(key)).Should().Be("true");
     }
 
     // ── ProviderConfigs ───────────────────────────────────────────────────────────

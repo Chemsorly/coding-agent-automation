@@ -190,6 +190,26 @@ public class FirstRunBannerComponentTests : BunitContext
             Times.Once);
     }
 
+    [Fact]
+    public async Task DismissButton_Click_WhenSaveFails_ShowsInlineErrorInsteadOfThrowing()
+    {
+        // An exception escaping the click handler terminates the Blazor circuit.
+        _configClient
+            .Setup(s => s.SetKeyValueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Response status code does not indicate success: 400 (Bad Request)."));
+        SetCurrentUrl("http://localhost/");
+        var cut = Render<FirstRunBanner>();
+
+        await cut.InvokeAsync(() => cut.Find(".first-run-banner-dismiss").Click());
+
+        cut.Find(".inline-status-error").TextContent.Should().Contain("400 (Bad Request)");
+        Assert.Contains("No job templates configured", cut.Markup);
+
+        await cut.InvokeAsync(() => cut.Find(".inline-status-dismiss").Click());
+
+        cut.FindAll(".inline-status-error").Should().BeEmpty();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void SetCurrentUrl(string url)
