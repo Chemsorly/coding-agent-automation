@@ -108,6 +108,7 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     {
         E2ETestDefaults.ApplyDatabaseEnvironment();
         Environment.SetEnvironmentVariable("AGENT_API_KEY", _apiKey);
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", E2ETestDefaults.UserTokenSigningKey);
 
         // Chat dispatch reads its namespace, PVC credential pool and pod timeouts from
         // configuration through DispatchServiceOptionsFactory. The Blazor factory also applies
