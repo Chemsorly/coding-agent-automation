@@ -48,6 +48,11 @@ public interface IGitWorkspaceProvider : IAsyncDisposable
     /// <summary>Returns the SHA of the HEAD commit in the given workspace repository.</summary>
     Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct);
 
+    /// <summary>
+    /// The web address of a commit of this repository, or null when the provider cannot build one.
+    /// </summary>
+    string? GetCommitWebUrl(string commitSha) => null;
+
     /// <summary>Checks whether the current branch has any commits ahead of the base branch.</summary>
     Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct);
 

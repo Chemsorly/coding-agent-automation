@@ -66,10 +66,16 @@ public sealed class AuthOptionsValidator : IValidateOptions<AuthOptions>
             if (hasGroup == hasUser)
                 errors.Add($"{prefix} must set exactly one of 'group' and 'user'.");
 
+            if (!string.IsNullOrWhiteSpace(binding.Project))
+                errors.Add($"{prefix} uses 'project', which is no longer supported. Bind the project by its ID with 'projectId'; the ID is shown on Settings → Projects → (project) → Overview.");
+
+            if (!string.IsNullOrWhiteSpace(binding.ProjectId) && !Guid.TryParse(binding.ProjectId, out _))
+                errors.Add($"{prefix} has projectId '{binding.ProjectId}', which is not a project ID.");
+
             if (!AccessRoleNames.TryParse(binding.Role, out var role))
                 errors.Add($"{prefix} has unknown role '{binding.Role}'. Use '{AccessRoleNames.ReadOnly}', '{AccessRoleNames.Operator}' or '{AccessRoleNames.Admin}'.");
-            else if (role == AccessRole.Admin && !string.IsNullOrWhiteSpace(binding.Project))
-                errors.Add($"{prefix} binds '{AccessRoleNames.Admin}' to project '{binding.Project}'. The admin role can only be bound globally.");
+            else if (role == AccessRole.Admin && !string.IsNullOrWhiteSpace(binding.ProjectId))
+                errors.Add($"{prefix} binds '{AccessRoleNames.Admin}' to project '{binding.ProjectId}'. The admin role can only be bound globally.");
         }
     }
 }

@@ -31,4 +31,10 @@ public interface IKiroCliOrchestrator : IDisposable
     /// No-op if no process is running.
     /// </summary>
     void Kill();
+
+    /// <summary>
+    /// True when the last <see cref="ExecutePromptAsync"/> could not load its <c>resumeSessionId</c>
+    /// and ran the prompt in a fresh session instead.
+    /// </summary>
+    bool LastRunStartedFreshSession { get; }
 }

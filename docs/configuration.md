@@ -344,8 +344,8 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `AGENT_PROVIDER_TYPE` | Agent backend of a chat pod: the job template's `providerType` (`kiro`, `opencode`, `claude`); `KiroCli`, `OpenCode` and `ClaudeCode` are accepted too. When absent or empty, defaults to Kiro CLI. |
 | `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/home/ubuntu/.local/bin/kiro-cli`) |
 | `CLAUDE_CLI_PATH` | Override path for the Claude Code CLI executable (default: `/home/ubuntu/.local/bin/claude`) |
-| `AGENT_CLAUDE_API_KEY` | Anthropic API key for Claude Code agents, injected from the agent Secret key `claude-api-key`. Handed to the `claude` process only, as `ANTHROPIC_API_KEY`; stripped from every other child process. |
-| `AGENT_CLAUDE_OAUTH_TOKEN` | Subscription token (`claude setup-token`) for Claude Code agents, injected from the agent Secret key `claude-oauth-token`. Handed to the `claude` process only, as `CLAUDE_CODE_OAUTH_TOKEN`. |
+| `AGENT_CLAUDE_API_KEY` | Anthropic API key for Claude Code agents, injected from the agent Secret key `claude-api-key`. Handed to the `claude` process only, as `ANTHROPIC_API_KEY`; the agent's other child processes (quality gates, setup steps, git) do not get it. The CLI's own Bash tool, hooks and MCP servers inherit it from the CLI, an accepted risk: see [decisions](internals/decisions.md#repository-and-project-content-runs-next-to-the-agents-credentials). |
+| `AGENT_CLAUDE_OAUTH_TOKEN` | Subscription token (`claude setup-token`) for Claude Code agents, injected from the agent Secret key `claude-oauth-token`. Handed to the `claude` process only, as `CLAUDE_CODE_OAUTH_TOKEN`; as with the API key, the CLI's own tools inherit it. |
 | `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
 | `OPENCODE_SERVER_PASSWORD` | Password for OpenCode server authentication (required for OpenCode agents) |
@@ -402,10 +402,10 @@ Repository providers can include custom markdown steering content that is writte
 
 Configure via Settings → Providers → Repository → Steering Content field. The content is written to:
 - `.kiro/steering/pipeline-repo.md` for Kiro agents (repository-level steering)
-- `AGENTS.md` for OpenCode agents
+- `~/.opencode/pipeline-repo.md` for OpenCode agents — listed under `instructions` in `~/.opencode/opencode.json`, outside the workspace, so the repository's own `AGENTS.md` is never touched
 - `~/.claude/rules/pipeline-repo.md` for Claude Code agents — a user-level rule the CLI loads in every session, outside the workspace, so it is never committed and does not touch the repository's own `CLAUDE.md` or `.claude/rules/`
 
-Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents and `~/.claude/rules/pipeline-project.md` for Claude Code agents.
+Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents, `~/.opencode/pipeline-project.md` for OpenCode agents and `~/.claude/rules/pipeline-project.md` for Claude Code agents.
 
 Claude Code also loads what the repository itself provides — `CLAUDE.md`, `.claude/rules/`, `.claude/settings.json` (including hooks) and `.mcp.json` — because the workspace is its working directory.
 
