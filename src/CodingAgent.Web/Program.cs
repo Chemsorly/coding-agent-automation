@@ -3,7 +3,6 @@ using CodingAgent.Api.Client;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Common.Auth;
-using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Web.Auth;

@@ -6,7 +6,6 @@ using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
-using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
