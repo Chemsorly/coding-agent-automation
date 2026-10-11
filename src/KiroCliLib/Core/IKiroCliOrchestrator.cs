@@ -37,4 +37,11 @@ public interface IKiroCliOrchestrator : IDisposable
     /// and ran the prompt in a fresh session instead.
     /// </summary>
     bool LastRunStartedFreshSession { get; }
+
+    /// <summary>
+    /// True when the last <see cref="ExecutePromptAsync"/> failed because kiro-cli refused its own
+    /// configuration before running the prompt, for example an <c>--agent</c> it does not know. Every
+    /// later run with the same settings fails the same way.
+    /// </summary>
+    bool LastRunRejectedConfiguration { get; }
 }

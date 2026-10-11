@@ -386,6 +386,40 @@ public class KiroCliAgentProviderTests
             .Effort.Should().Be(expected);
     }
 
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("default", null)] // the provider form's old pre-fill: kiro-cli 2.29 knows no such agent
+    [InlineData(" Default ", null)]
+    [InlineData(" reviewer ", "reviewer")]
+    public void CreateRunConfiguration_PassesOnlyAnAgentTheOperatorChose(string? agentName, string? expected)
+    {
+        KiroCliAgentProvider.CreateRunConfiguration("/usr/bin/fake-kiro-cli", null, agentName)
+            .AgentName.Should().Be(expected);
+    }
+
+    // --- ExecuteAsync: configuration the CLI refuses ---
+
+    [Theory]
+    [InlineData(true, AgentErrorCategory.ProviderMisconfigured)]
+    [InlineData(false, AgentErrorCategory.None)]
+    public async Task ExecuteAsync_ReportsAConfigurationTheCliRefused(bool rejected, AgentErrorCategory expected)
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(4);
+        _mockOrchestrator.Setup(o => o.LastRunRejectedConfiguration).Returns(rejected);
+
+        var result = await _provider.ExecuteAsync(
+            new AgentRequest { Prompt = "analyse", WorkspacePath = "/ws", Timeout = TimeSpan.FromMinutes(1), UseResume = true },
+            CancellationToken.None);
+
+        result.ExitCode.Should().Be(4);
+        result.ErrorCategory.Should().Be(expected);
+    }
+
     // --- ExecuteAsync timeout tests ---
 
     [Fact]

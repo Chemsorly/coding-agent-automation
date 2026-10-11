@@ -78,7 +78,7 @@
                 {
                     <div class="form-group">
                         <label>Agent Name</label>
-                        <input type="text" @bind="_form.AgentName" placeholder="default" />
+                        <input type="text" @bind="_form.AgentName" placeholder="Blank: the CLI's own agent" />
                     </div>
                 }
                 <div class="form-group">
@@ -505,7 +505,7 @@
         public string DisplayName { get; set; } = "";
         public string ExecutablePath { get; set; } = AgentDefaults.KiroCliPath;
         public string BaseUrl { get; set; } = AgentDefaults.OpenCodeBaseUrl;
-        public string AgentName { get; set; } = "default";
+        public string AgentName { get; set; } = "";
         public string Model { get; set; } = "auto";
         public string Effort { get; set; } = "auto";
         public string AuthMode { get; set; } = ClaudeCodeAuthModes.Auto;
