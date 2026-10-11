@@ -221,6 +221,12 @@
                 }
             }
         </div>
+        <FeedbackCategoryCard Title="Harness feedback" Subtitle="pipeline, tools and prompts · by category"
+                              TestId="insights-harness-feedback" EmptyText="No harness feedback in this window."
+                              Groups="_harnessFeedback" />
+        <FeedbackCategoryCard Title="Issue feedback" Subtitle="issue and repository quality · by category"
+                              TestId="insights-issue-feedback" EmptyText="No issue feedback in this window."
+                              Groups="_issueFeedback" />
     }
 </div>
 
@@ -252,6 +258,8 @@
     private List<GateStat> _gateRanking = new();
     private int _runsWithGateData;
     private bool _isTruncated;
+    private IReadOnlyList<FeedbackCategoryGroup> _harnessFeedback = [];
+    private IReadOnlyList<FeedbackCategoryGroup> _issueFeedback = [];
 
     // Time window for insights. 0 = all runs (no cutoff). Default 24h.
     private int _recentWindowHours = 24;
@@ -329,6 +337,7 @@
         _avgCycle = "—"; _avgTokens = 0; _anyRunHasTokens = false; _totalCost = 0;
         _byType = new(); _days = new(); _maxBucket = 1; _gateRanking = new();
         _runsWithGateData = 0; _isTruncated = false;
+        _harnessFeedback = []; _issueFeedback = [];
     }
 
     /// <summary>
@@ -371,6 +380,8 @@
 
         _runsWithGateData = items.Count(r => r.QualityGateOutcomes is { Count: > 0 });
         _gateRanking = RankGateFailures(items);
+        _harnessFeedback = FeedbackCategoryRanking.Rank(items, FeedbackKind.Harness);
+        _issueFeedback = FeedbackCategoryRanking.Rank(items, FeedbackKind.Issue);
     }
 
     private void CountOutcomes(IEnumerable<PipelineRunSummary> items)

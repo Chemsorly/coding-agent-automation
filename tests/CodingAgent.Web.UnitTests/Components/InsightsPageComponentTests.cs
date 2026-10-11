@@ -4,6 +4,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
@@ -30,7 +31,7 @@ public class InsightsPageComponentTests : BunitContext
         _history.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runs.ToList(), Page = 1, PageSize = 500, HasMore = false });
 
-    private static PipelineRunSummary Run(PipelineStep finalStep, IReadOnlyList<GateOutcome>? gates = null, long tokens = 0, DateTimeOffset? startedAt = null) => new()
+    private static PipelineRunSummary Run(PipelineStep finalStep, IReadOnlyList<GateOutcome>? gates = null, long tokens = 0, DateTimeOffset? startedAt = null, RunFeedback? feedback = null) => new()
     {
         RunId = Guid.NewGuid().ToString(),
         IssueIdentifier = "1",
@@ -41,6 +42,7 @@ public class InsightsPageComponentTests : BunitContext
         TotalTokens = tokens,
         QualityGateOutcomes = gates?.ToList() ?? [],
         InitiatedBy = "manual",
+        Feedback = feedback,
     };
 
     private static string? StatValue(IRenderedComponent<Insights> cut, string labelPrefix) =>
@@ -256,5 +258,88 @@ public class InsightsPageComponentTests : BunitContext
         cut.Find("[data-testid='insights-total']").ParentElement!.TextContent
             .Should().NotContain("results may be partial",
                 "when HasMore=false the truncation note must not appear");
+    }
+
+    // ── Feedback cards ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void FeedbackCards_RankHarnessCategories()
+    {
+        var mcpFeedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Success,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback { Category = "mcp tool timeout" },
+        };
+        var missingFeedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Success,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback { Category = "missing file context" },
+        };
+
+        Returns(
+            Run(PipelineStep.Completed, feedback: mcpFeedback),
+            Run(PipelineStep.Completed, feedback: mcpFeedback),
+            Run(PipelineStep.Completed, feedback: missingFeedback));
+
+        var cut = Render<Insights>();
+
+        // The first category element should be "mcp tool timeout" (2 runs)
+        var firstCategory = cut.FindAll("[data-testid='insights-harness-feedback-category']").First();
+        firstCategory.TextContent.Should().Contain("mcp tool timeout");
+        firstCategory.TextContent.Should().Contain("2 runs");
+    }
+
+    [Fact]
+    public void FeedbackCards_ShowEmptyText_WhenNoFeedback()
+    {
+        Returns(Run(PipelineStep.Completed));
+
+        var cut = Render<Insights>();
+
+        cut.FindAll("[data-testid='insights-harness-feedback-empty']").Should().ContainSingle();
+        cut.FindAll("[data-testid='insights-issue-feedback-empty']").Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task FeedbackCard_RunRow_OpensRunPage()
+    {
+        const string runId = "run-1";
+        var harnessFeedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Success,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback { Category = "mcp tool timeout" },
+        };
+
+        _history.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary>
+            {
+                Items =
+                [
+                    new PipelineRunSummary
+                    {
+                        RunId = runId,
+                        IssueIdentifier = "42",
+                        IssueTitle = "Test issue",
+                        FinalStep = PipelineStep.Completed,
+                        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+                        InitiatedBy = "manual",
+                        Feedback = harnessFeedback,
+                    },
+                ],
+                Page = 1,
+                PageSize = 500,
+                HasMore = false,
+            });
+
+        var cut = Render<Insights>();
+
+        var runRow = cut.Find("[data-testid='insights-harness-feedback-run']");
+        await cut.InvokeAsync(() => runRow.Click());
+
+        // bUnit's NavigationManager records navigations via its Uri property
+        Services.GetRequiredService<NavigationManager>().Uri.Should().EndWith($"runs/{runId}");
     }
 }
