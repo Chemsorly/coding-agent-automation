@@ -28,11 +28,11 @@ When multiple WorkItems are pending and an agent becomes available, the Schedule
 | Dispatch Order | Run Type | Notes |
 |----------------|----------|-------|
 | 1st (highest) | Review | PR review runs |
-| 2nd | Decomposition / DecompositionAnalysis | Both epic decomposition phases |
+| 2nd | Decomposition / DecompositionAnalysis, Triage | Both epic decomposition phases and [triage](triage.md) runs |
 | 3rd | Implementation | Standard issue implementation |
 | 4th (lowest) | Consolidation | Brain / refactoring / harness runs |
 
-The tier order is an explicit mapping (Review 0, Decomposition 1, Implementation 2, Consolidation 3); it does not follow the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3`). Within a tier, items with a higher `PriorityWeight` go first (manual dispatches get 100, closed-loop dispatches 0, and operators can change it on the Work page), then the oldest enqueue time.
+The tier order is an explicit mapping (Review 0, Decomposition and Triage 1, Implementation 2, Consolidation 3); it does not follow the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3, Triage=4`). Within a tier, items with a higher `PriorityWeight` go first (manual dispatches get 100, closed-loop dispatches 0, and operators can change it on the Work page), then the oldest enqueue time.
 
 > **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Consolidation`. The Consolidation page lists them through `IPipelineApiRunHistoryClient.GetRunHistoryAsync` with `RunType = PipelineRunType.Consolidation`.
 
@@ -468,7 +468,8 @@ When multiple work types are queued in the same poll cycle, the loop uses a fixe
 |----------|-----------|-------|
 | 1 (highest) | Pull Requests (Review) | Dispatched first each cycle |
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
-| 3 | Issues (Implementation) | Dispatched last |
+| 3 | Triage | `agent:triage` issues; no concurrency cap of its own |
+| 4 | Issues (Implementation) | Dispatched last |
 
 The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (4th, after Review, Decomposition, and Implementation) by the Scheduler's `WorkItemDispatchLoop`. They do not participate in the closed-loop scheduler.
 
@@ -708,3 +709,31 @@ To re-run Phase 1 after providing feedback:
 | Phase 2 failed (`agent:error`) | Remove `agent:error`, add `agent:epic-approved` → re-runs Phase 2 |
 | Phase 2 failed (`agent:error`) | Remove `agent:error`, add `agent:epic` → re-runs from Phase 1 |
 
+
+## Triage Pipeline
+
+A `Triage` run investigates a problem report and reports a root cause analysis with issue drafts; people create the issues in the app. See [Triage](triage.md) for the user-facing flow.
+
+### Step Sequence
+
+```
+Created → CloningRepository (executor + read-only project repositories) → RunningEnvironmentSetup → SyncingBrainRepoPreRun
+  → DownloadingOpenIssues (issue-context.md, triage-context.md, open issues of every project tracker)
+  → Investigating → ReviewingRca (when TriageReviewEnabled) → ReportingRca → Completed
+```
+
+- `Investigating` runs the agent (phase `triage`), reads `.agent/triage-result.json` and fails the run on a missing or unknown verdict or a file over 100 KB.
+- `ReviewingRca` runs the adversarial review (phase `triage_review`) and, on CRITICAL or WARNING findings, a refinement pass (phase `triage_refinement`); a broken refined result keeps the first one. Deterministic validation runs after it.
+- `ReportingRca` sends the result to the API with the `ReportTriageResult` hub method (critical). For a label triage it then posts or updates the RCA comment (critical) and sets `agent:triage-review` (best effort). An operator triage (identifier `triage:{id}`, tracker `triage`) has no issue: every tracker operation is skipped.
+
+### Labels and Errors
+
+| Situation | Label |
+|---|---|
+| Result reported (any verdict) | `agent:triage-review` |
+| Run failed | `agent:error` — re-run by setting `agent:triage`, or from the app |
+| Dispatch failed | back to `agent:triage` (never `agent:next`) |
+| Issues created in the app | `agent:done` |
+| Dismissed in the app | `agent:wont-do` |
+
+A triage run cannot create issues through the hub (`RequestCreateIssue`, `RequestCreateIssueForProvider`); it may list the open issues of every enabled tracker of its project.

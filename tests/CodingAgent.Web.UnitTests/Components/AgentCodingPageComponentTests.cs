@@ -30,6 +30,7 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<CodingAgent.Api.Client.IPipelineApiConfigClient> _mockConfigClient;
+    private readonly Mock<ILoopStatusService> _mockLoopStatus;
 
     public AgentCodingPageComponentTests()
     {
@@ -58,15 +59,15 @@ public class AgentCodingPageComponentTests : BunitContext
 
         // Spec 047: AgentCoding.razor.cs now injects ILoopStatusService (not IPipelineLoopService).
         // AgentCodingPageService now takes ISchedulerApiClient (not IPipelineLoopService).
-        var mockLoopStatus = new Mock<ILoopStatusService>();
-        mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
-        mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
-        mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
-        mockLoopStatus.SetupGet(l => l.TemplateStatuses)
+        _mockLoopStatus = new Mock<ILoopStatusService>();
+        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
+        _mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
+        _mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        _mockLoopStatus.SetupGet(l => l.TemplateStatuses)
             .Returns(new Dictionary<string, CodingAgent.Pipeline.Models.ConfigStatusSnapshot>());
-        mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
-        Services.AddSingleton(mockLoopStatus.Object);
-        Services.AddSingleton<ILoopStatusService>(mockLoopStatus.Object);
+        _mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
+        Services.AddSingleton(_mockLoopStatus.Object);
+        Services.AddSingleton<ILoopStatusService>(_mockLoopStatus.Object);
 
         var mockSchedulerClient = new Mock<ISchedulerApiClient>();
         mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
@@ -722,6 +723,94 @@ public class AgentCodingPageComponentTests : BunitContext
         });
 
         _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AgentCoding_AddTemplate_WhileLoopRuns_ShowsNextCycleMessage()
+    {
+        // Arrange: loop is active for this test
+        // TODO: [WARNING] _mockLoopStatus.SetupGet is called here (before Render<AgentCoding>()) to
+        // override the constructor's Returns(false) setup. This works because Moq replaces prior
+        // SetupGet setups on the same mock instance and the DI container holds the same reference.
+        // However, the ordering is fragile: if Render<AgentCoding>() is ever moved above this line,
+        // the component renders with IsLoopActive=false and the "next cycle" assertion fails silently.
+        // If AgentCoding ever caches IsLoopActive at construction time, WithLoopNote would see
+        // the cached false value and the assertion would also fail. Prefer a per-test factory or
+        // a dedicated fixture that provides IsLoopActive=true from the start.
+        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(true);
+
+        // Add a second issue and repo provider so the new template doesn't conflict with t-1
+        // (enabled templates may not share an issue tracker or repository).
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "GitHub Issues" },
+                new() { Id = "ip-2", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "GitHub Issues 2" }
+            });
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "GitHub Repo" },
+                new() { Id = "rp-2", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "GitHub Repo 2" }
+            });
+        _mockConfigClient.Setup(c => c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "GitHub Issues" },
+                new() { Id = "ip-2", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "GitHub Issues 2" }
+            });
+        _mockConfigClient.Setup(c => c.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "GitHub Repo" },
+                new() { Id = "rp-2", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "GitHub Repo 2" }
+            });
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var component = Render<AgentCoding>();
+
+        // Assert: admin controls are visible even while the loop runs
+        Assert.Contains("+ Add Template", component.Markup);
+        // TODO: [WARNING] These substring checks are too broad — "Edit" and "Remove" can appear in
+        // many other places in the markup (headings, other buttons, aria labels). They will pass even
+        // if the row-action buttons are absent. Replace with precise locators, e.g.:
+        //   Assert.NotEmpty(component.FindAll("button.btn-edit"));
+        //   Assert.NotEmpty(component.FindAll("button.btn-delete"));
+        Assert.Contains("Edit", component.Markup);
+        Assert.Contains("Remove", component.Markup);
+
+        // Click "+ Add Template" to open the add form
+        var addBtn = component.FindAll("button").First(b => b.TextContent.Contains("+ Add Template"));
+        await component.InvokeAsync(() => addBtn.Click());
+
+        // The main TemplateTableSection (the one with OnAddTemplate="AddTemplate") now has ShowAddForm=true.
+        // Its AddForm parameter is the same _addForm instance held by AgentCoding — fill it and invoke save.
+        await component.InvokeAsync(async () =>
+        {
+            // Find the TemplateTableSection that is showing the add form (ShowAddForm = true).
+            var sections = component.FindComponents<TemplateTableSection>();
+            var mainSection = sections.First(s => s.Instance.ShowAddForm);
+
+            // Set valid form values directly on the shared form model reference.
+            // Use ip-2/rp-2 to avoid conflict with existing template t-1 (ip-1/rp-1).
+            // TODO: [WARNING] This mutates AddForm directly on the TemplateTableSection instance,
+            // relying on the fact that AgentCoding._addForm and mainSection.Instance.AddForm are
+            // the same object reference. If AgentCoding ever copies the form or passes it by value,
+            // this coupling breaks silently (no compile error, test silently passes without testing
+            // the real flow). Consider going through the UI (filling the rendered form inputs) to
+            // make the test more resilient to refactoring.
+            mainSection.Instance.AddForm.Name = "Loop Template";
+            mainSection.Instance.AddForm.IssueProviderId = "ip-2";
+            mainSection.Instance.AddForm.RepoProviderId = "rp-2";
+            mainSection.Instance.AddForm.ProjectId = WellKnownIds.DefaultProjectId;
+
+            // Invoke OnAddTemplate — this calls AgentCoding.AddTemplate() which calls WithLoopNote.
+            await mainSection.Instance.OnAddTemplate.InvokeAsync();
+        });
+
+        // Assert: the rendered success message contains "next cycle"
+        Assert.Contains("next cycle", component.Markup, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -38,11 +38,13 @@ public static class LabelStateMachine
                 AgentLabels.Cancelled,
                 AgentLabels.NeedsRefinement,
                 AgentLabels.WontDo,
-                AgentLabels.EpicReview
+                AgentLabels.EpicReview,
+                AgentLabels.TriageReview,
+                AgentLabels.Triage  // a failed triage dispatch reverts to agent:triage
             },
 
             // Recovery transitions (human re-labels for retry)
-            [AgentLabels.Error] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress },
+            [AgentLabels.Error] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress, AgentLabels.Triage },
             [AgentLabels.NeedsRefinement] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress },
             [AgentLabels.Cancelled] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress },
             // agent:done is a terminal state that can be force-requeued by manual dispatch.
@@ -54,6 +56,11 @@ public static class LabelStateMachine
             [AgentLabels.Epic] = new HashSet<string> { AgentLabels.InProgress },
             [AgentLabels.EpicReview] = new HashSet<string> { AgentLabels.EpicApproved, AgentLabels.Cancelled },
             [AgentLabels.EpicApproved] = new HashSet<string> { AgentLabels.InProgress },
+
+            // Triage flow: drafts are created or dismissed in the app, which ends the issue's triage;
+            // a re-run (from the app or by a person) sets agent:triage again
+            [AgentLabels.Triage] = new HashSet<string> { AgentLabels.InProgress },
+            [AgentLabels.TriageReview] = new HashSet<string> { AgentLabels.Triage, AgentLabels.Done, AgentLabels.WontDo },
         };
 
     /// <summary>

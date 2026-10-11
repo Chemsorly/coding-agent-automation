@@ -57,14 +57,10 @@ public class OpenCodeCancellationDiscriminationTests
         // is now overwriting OutputLines. (review finding: TestQualityReviewer@52)
         Assert.Contains(result.OutputLines, line => line.Contains("Operation cancelled unexpectedly"));
 
-        // TODO [WARNING]: AbortCalled is asserted false here, but the background poll loop
-        // (PollAllSessionStatusesAsync) started unconditionally inside ExecuteAsync also makes HTTP
-        // requests with an internal linked CTS. Its exceptions are all swallowed by its own catch
-        // block, so they do not affect this assertion — but if that catch block is ever narrowed,
-        // an internal-cancellation OCE from the poll loop could interact with the AbortCalled flag.
-        // (review finding: TestQualityReviewer@56)
-        Assert.False(handler.AbortCalled,
-            "AbortBestEffortAsync must not be called for an internal (non-caller) cancellation");
+        // The server keeps running the turn after the client gives up, so an internal cancellation
+        // aborts the session too: otherwise the agent goes on editing the workspace.
+        Assert.True(handler.AbortCalled,
+            "AbortBestEffortAsync must be called for an internal (non-caller) cancellation");
     }
 
     /// <summary>

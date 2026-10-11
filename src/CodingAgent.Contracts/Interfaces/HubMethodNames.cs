@@ -62,6 +62,9 @@ public static class HubMethodNames
     public const string RequestListComments = nameof(IAgentHub.RequestListComments);
     public const string RequestUpdateComment = nameof(IAgentHub.RequestUpdateComment);
 
+    // Triage
+    public const string ReportTriageResult = nameof(IAgentHub.ReportTriageResult);
+
     // Token refresh
     public const string RequestTokenRefresh = nameof(IAgentHub.RequestTokenRefresh);
 

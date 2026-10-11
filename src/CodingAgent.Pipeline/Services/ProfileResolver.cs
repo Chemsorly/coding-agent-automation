@@ -4,8 +4,15 @@ namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
 /// Stateless service responsible for matching an agent's labels to the best Agent Profile.
-/// Resolution uses subset matching with case-insensitive label comparison, then sorts by
-/// specificity (descending), priority (descending), and Id (ascending) to break ties.
+/// <para>
+/// <see cref="Resolve"/> uses subset matching with case-insensitive label comparison, then sorts
+/// by specificity (descending), priority (descending), and Id (ascending) to break ties.
+/// </para>
+/// <para>
+/// <see cref="ResolveByRequiredLabels"/> uses superset (coverage) matching: the profile must
+/// cover every required label. Among covering profiles the closest fit wins — fewest labels first
+/// (ascending), then priority (descending), then Id (ascending).
+/// </para>
 /// </summary>
 public sealed class ProfileResolver
 {
@@ -37,14 +44,16 @@ public sealed class ProfileResolver
     /// <summary>
     /// Resolves the best profile whose MatchLabels COVER all required labels.
     /// Used for dispatch: given a set of required labels (from repo config or pipeline defaults),
-    /// find the profile whose MatchLabels are a superset — that profile's labels form the
-    /// template key in K8s mode. Picks the most specific match (highest MatchLabels count),
-    /// then by priority, then by Id for determinism.
+    /// find the profile whose MatchLabels are a superset of the required labels — that profile's
+    /// labels form the template key in K8s mode. Picks the closest fit (fewest MatchLabels),
+    /// then higher Priority, then lower Id for determinism.
+    /// A profile with more labels than required only wins repositories that carry those extra
+    /// labels too, so polyglot and variant profiles do not take over simpler repositories.
     /// Returns <c>null</c> if no enabled profile covers all required labels.
     /// </summary>
     /// <param name="profiles">All available profiles to evaluate.</param>
     /// <param name="requiredLabels">Labels that must ALL be present in the profile's MatchLabels.</param>
-    /// <returns>The best matching profile, or <c>null</c> if none cover all required labels.</returns>
+    /// <returns>The closest-fit covering profile, or <c>null</c> if none cover all required labels.</returns>
     public static AgentProfile? ResolveByRequiredLabels(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> requiredLabels)
     {
         ArgumentNullException.ThrowIfNull(profiles);
@@ -57,7 +66,7 @@ public sealed class ProfileResolver
             labelSelector: p => p.MatchLabels,
             matchStrategy: LabelMatchStrategies.Superset,
             orderBy: items => items
-                .OrderByDescending(p => p.MatchLabels.Count)
+                .OrderBy(p => p.MatchLabels.Count)
                 .ThenByDescending(p => p.Priority)
                 .ThenBy(p => p.Id, StringComparer.Ordinal))
             .FirstOrDefault();
