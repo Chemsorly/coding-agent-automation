@@ -214,6 +214,7 @@ public sealed class ConsolidationService : IConsolidationService
             TimeoutSeconds = (int)scope.Config.AgentTimeout.TotalSeconds,
             ConsolidationRunType = type,
             ConsolidationTemplateId = scope.TemplateIdValue,
+            ConsolidationTemplateName = scope.TemplateIdValue is null ? null : scope.TemplateName,
             AutoDispatch = autoDispatch,
             ProjectId = !string.IsNullOrEmpty(scope.ProjectId) && Guid.TryParse(scope.ProjectId, out var pid)
                 ? pid
