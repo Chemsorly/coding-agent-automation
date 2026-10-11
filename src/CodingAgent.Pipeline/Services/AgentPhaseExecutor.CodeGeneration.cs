@@ -77,6 +77,15 @@ public partial class AgentPhaseExecutor
 
             await context.Callbacks.UpdateFileChangeStats(run);
 
+            // Rejected credentials or a CLI that refused its configuration fail every later call as
+            // well, so the quality gate fix loop could only spend its retries without an agent.
+            if (!agentResult.Success && ProviderUnavailableException.IsPermanentProviderFailure(agentResult.ErrorCategory))
+            {
+                await FailForUnavailableProviderAsync(context,
+                    new ProviderUnavailableException(agentResult.ErrorCategory, ProviderUnavailableException.Describe(agentResult)));
+                return false;
+            }
+
             if (agentResult.ExitCode != ExitCodes.Success)
             {
                 _logger.Warning("Pipeline {RunId} agent exited with non-zero code {ExitCode}, continuing to quality gates",

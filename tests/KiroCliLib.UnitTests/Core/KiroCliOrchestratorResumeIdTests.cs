@@ -158,6 +158,42 @@ public class KiroCliOrchestratorResumeIdTests
             It.IsAny<IReadOnlyDictionary<string, string>?>()), Times.Never);
     }
 
+    // ─── Configuration the CLI refuses (kiro-cli 2.29: exit 4, "Error: failed to set agent ...") ───
+
+    private const string UnknownAgentError =
+        "Error: failed to set agent 'default': Internal error (code -32603): Mode 'default' not found";
+
+    [Fact]
+    public async Task ExecutePromptAsync_UnknownAgent_FlagsTheRunAndReportsTheCliError()
+    {
+        var orchestrator = Orchestrator(Process(4, UnknownAgentError), Process(ExitCodes.Success));
+        var lines = new List<string>();
+
+        var exitCode = await orchestrator.ExecutePromptAsync(
+            "prompt", "/ws", useResume: false, CancellationToken.None,
+            onOutputLine: line => { lines.Add(line); return Task.CompletedTask; });
+
+        exitCode.Should().Be(4);
+        orchestrator.LastRunRejectedConfiguration.Should().BeTrue();
+        lines.Should().ContainSingle().Which.Should().Be(UnknownAgentError);
+
+        await orchestrator.ExecutePromptAsync("prompt", "/ws", useResume: false, CancellationToken.None);
+        orchestrator.LastRunRejectedConfiguration.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(ExitCodes.GeneralFailure, "src/Agent.cs:3: error: failed to set agent 'x'")] // a tool's output quoting it
+    [InlineData(ExitCodes.GeneralFailure, "error: model refused the request")]
+    [InlineData(ExitCodes.Success, UnknownAgentError)]
+    public async Task ExecutePromptAsync_OtherFailureOrASuccess_DoesNotFlagTheConfiguration(int exitCode, string stderr)
+    {
+        var orchestrator = Orchestrator(Process(exitCode, stderr));
+
+        await orchestrator.ExecutePromptAsync("prompt", "/ws", useResume: false, CancellationToken.None);
+
+        orchestrator.LastRunRejectedConfiguration.Should().BeFalse();
+    }
+
     [Fact]
     public async Task ExecutePromptAsync_LoadFailureWithoutAResumeId_IsNotRetried()
     {

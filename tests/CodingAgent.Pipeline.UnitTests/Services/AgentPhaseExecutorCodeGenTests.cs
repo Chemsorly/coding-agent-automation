@@ -78,6 +78,39 @@ public class AgentPhaseExecutorCodeGenTests
         result.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData(AgentErrorCategory.PermanentAuthFailure)]
+    [InlineData(AgentErrorCategory.ProviderMisconfigured)]
+    public async Task CodeGen_PermanentProviderFailure_FailsAsInfrastructureInsteadOfRunningQualityGates(AgentErrorCategory category)
+    {
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 4,
+                OutputLines = ["Error: failed to set agent 'default': Mode 'default' not found"],
+                ErrorCategory = category
+            });
+
+        var result = await _executor.ExecuteCodeGenerationAsync(BuildContext(), CancellationToken.None);
+
+        result.Should().BeFalse("every fix attempt would fail the same way");
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        _run.FailureReason.Should().Contain("Mode 'default' not found");
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
+    }
+
+    [Fact]
+    public async Task CodeGen_TransientProviderFailure_ContinuesToQualityGates()
+    {
+        // The quality gate loop waits out a rate limit without spending its retries.
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit });
+
+        var result = await _executor.ExecuteCodeGenerationAsync(BuildContext(), CancellationToken.None);
+
+        result.Should().BeTrue();
+    }
+
     [Fact]
     public async Task CodeGen_TimeoutExitCode_FailsPhase()
     {

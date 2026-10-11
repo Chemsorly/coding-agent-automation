@@ -90,8 +90,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
     /// <summary>
     /// The run settings for this provider's orchestrators: the CLI path, and the model, effort and agent
-    /// that every run passes as flags. A blank or <c>auto</c> model, <c>Auto</c> effort and a blank
-    /// agent are left out.
+    /// that every run passes as flags. A blank or <c>auto</c> model, <c>Auto</c> effort and a blank or
+    /// <c>default</c> agent are left out.
     /// </summary>
     public static KiroCliLib.Configuration.Configuration CreateRunConfiguration(
         string executablePath, string? model, string? agentName, AgentEffortLevel effort = AgentEffortLevel.Auto) => new()
@@ -99,9 +99,18 @@ public partial class KiroCliAgentProvider : IAgentProvider
         KiroCliPath = executablePath,
         UseWsl = OperatingSystem.IsWindows(),
         Model = string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : model.Trim(),
-        AgentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName.Trim(),
+        AgentName = IsNoAgentChosen(agentName) ? null : agentName!.Trim(),
         Effort = ToKiroEffort(effort)
     };
+
+    /// <summary>
+    /// Whether an agent name setting means "the CLI's own agent". The provider form pre-filled
+    /// <c>default</c>, which was not passed to the CLI until kiro-cli 2.29 support; that CLI knows no
+    /// agent of that name and refuses every run (<c>Mode 'default' not found</c>), so a stored
+    /// <c>default</c> is treated as no choice.
+    /// </summary>
+    internal static bool IsNoAgentChosen(string? agentName) =>
+        string.IsNullOrWhiteSpace(agentName) || agentName.Trim().Equals("default", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The <c>--effort</c> value for a level. kiro-cli 2.29 has no <c>xhigh</c> (it accepts low, medium,
@@ -215,7 +224,14 @@ public partial class KiroCliAgentProvider : IAgentProvider
                             resumeSessionId: resumeSessionId,
                             environmentVariables: request.EnvironmentVariables);
 
-                        return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+                        return new AgentResult
+                        {
+                            ExitCode = exitCode,
+                            OutputLines = outputLines.AsReadOnly(),
+                            ErrorCategory = orchestrator.LastRunRejectedConfiguration
+                                ? AgentErrorCategory.ProviderMisconfigured
+                                : AgentErrorCategory.None
+                        };
                     }
                     finally
                     {

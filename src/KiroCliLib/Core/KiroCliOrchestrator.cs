@@ -16,6 +16,13 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// </summary>
     internal const string SessionLoadFailedError = "load_session failed";
 
+    /// <summary>
+    /// What kiro-cli 2.29 prints to stderr (<c>Error: failed to set agent 'default': Internal error
+    /// (code -32603): Mode 'default' not found</c>, exit 4) when <c>--agent</c> names an agent it does
+    /// not know. Matched as the CLI's own error line, like <see cref="SessionLoadFailedError"/>.
+    /// </summary>
+    internal const string AgentRejectedError = "failed to set agent";
+
     private const string ErrorLinePrefix = "error:";
 
     private readonly ILogger _logger;
@@ -23,12 +30,16 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     private readonly Func<IOutputParser> _outputParserFactory;
     private volatile IProcessWrapper? _activeProcess;
     private volatile bool _lastRunStartedFreshSession;
+    private volatile bool _lastRunRejectedConfiguration;
     private bool _disposed;
 
     public bool IsExecuting => _activeProcess != null;
 
     /// <inheritdoc />
     public bool LastRunStartedFreshSession => _lastRunStartedFreshSession;
+
+    /// <inheritdoc />
+    public bool LastRunRejectedConfiguration => _lastRunRejectedConfiguration;
     public int? ActiveProcessId
     {
         get
@@ -128,6 +139,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             }
 
             _lastRunStartedFreshSession = false;
+            _lastRunRejectedConfiguration = false;
             var (exitCode, sessionNotLoaded) = await RunProcessAsync(
                 prompt, workspaceDirectory, useResume, resumeSessionId, environmentVariables, channel?.Writer, cancellationToken);
 
@@ -165,7 +177,9 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 
     /// <summary>
     /// Runs one kiro-cli process. <c>SessionNotLoaded</c> is true when it failed because the
-    /// session named by <paramref name="resumeSessionId"/> could not be loaded.
+    /// session named by <paramref name="resumeSessionId"/> could not be loaded. A failure because the
+    /// CLI refused its configuration sets <see cref="LastRunRejectedConfiguration"/> and sends the CLI's
+    /// error line to <paramref name="output"/>, the only place a caller sees why the run did nothing.
     /// </summary>
     private async Task<(int ExitCode, bool SessionNotLoaded)> RunProcessAsync(
         string prompt,
@@ -182,6 +196,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             _activeProcess = processWrapper;
             var outputParser = _outputParserFactory();
             var sessionLoadFailed = false;
+            var configurationRejected = false;
 
             processWrapper.OutputReceived += (_, line) =>
             {
@@ -195,9 +210,16 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 _logger.Debug("Kiro (stderr): {Line}", clean);
                 outputParser.ProcessLine(line);
                 var trimmed = clean.TrimStart();
-                if (trimmed.StartsWith(ErrorLinePrefix, StringComparison.OrdinalIgnoreCase)
-                    && trimmed.Contains(SessionLoadFailedError, StringComparison.OrdinalIgnoreCase))
+                if (!trimmed.StartsWith(ErrorLinePrefix, StringComparison.OrdinalIgnoreCase))
+                    return;
+                if (trimmed.Contains(SessionLoadFailedError, StringComparison.OrdinalIgnoreCase))
                     sessionLoadFailed = true;
+                if (trimmed.Contains(AgentRejectedError, StringComparison.OrdinalIgnoreCase))
+                {
+                    configurationRejected = true;
+                    _logger.Error("kiro-cli refused its configuration: {Line}", trimmed);
+                    output?.TryWrite(trimmed);
+                }
             };
             outputParser.StateChanged += (_, newState) =>
             {
@@ -205,6 +227,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             };
 
             var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId, environmentVariables);
+            _lastRunRejectedConfiguration = exitCode != ExitCodes.Success && configurationRejected;
             return (exitCode, resumeSessionId is not null && exitCode != ExitCodes.Success && sessionLoadFailed);
         }
     }

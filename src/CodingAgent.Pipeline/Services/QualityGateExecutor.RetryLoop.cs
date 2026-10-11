@@ -583,7 +583,7 @@ public partial class QualityGateExecutor
     private Task<RetryDecision> HandleAuthAbortAsync(PipelineRun run, int consecutiveTransientRetries)
     {
         _logger.Error(
-            "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
+            "Pipeline {RunId} retry {RetryCount}: permanent provider failure (rejected credentials or configuration), aborting retry loop",
             run.RunId, run.RetryCount);
         return Task.FromResult(new RetryDecision(
             ShouldBreak: true,
@@ -660,7 +660,7 @@ public partial class QualityGateExecutor
             or AgentErrorCategory.ProviderOverload)
             return RetryOutcome.TransientWait;
 
-        if (agentResult.ErrorCategory == AgentErrorCategory.PermanentAuthFailure)
+        if (ProviderUnavailableException.IsPermanentProviderFailure(agentResult.ErrorCategory))
             return RetryOutcome.AbortAuth;
 
         // Dead/exhausted session: agent returned successfully but produced nothing.
