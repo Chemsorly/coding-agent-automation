@@ -29,9 +29,15 @@ public interface ITokenVendingService
     /// <param name="repoConfigId">The repository provider config ID to generate a token for.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="includeIssuePermission">Whether to include issues:write permission in vended tokens (default: false).</param>
+    /// <param name="readOnlyConfigIds">
+    /// Optional set of provider config IDs whose GitHub App tokens should be minted with
+    /// <c>contents: read</c> instead of <c>contents: write</c>. Configs without GitHub App
+    /// credentials are unaffected. Pass the brain config's ID when <c>BrainReadOnly</c> is true.
+    /// </param>
     /// <returns>Cloned configs with the repo config's private key replaced by a short-lived token.</returns>
     Task<IReadOnlyList<ProviderConfig>> PrepareAgentConfigsAsync(
-        IReadOnlyList<ProviderConfig> configs, string repoConfigId, CancellationToken ct, bool includeIssuePermission = false);
+        IReadOnlyList<ProviderConfig> configs, string repoConfigId, CancellationToken ct,
+        bool includeIssuePermission = false, IReadOnlySet<string>? readOnlyConfigIds = null);
 
     /// <summary>
     /// Prepares the configs of repositories the agent only clones (a project epic's or a project review's other
