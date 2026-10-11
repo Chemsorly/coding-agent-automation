@@ -218,6 +218,26 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     }
 
     /// <inheritdoc />
+    public void AppendQualityGateReport(RunId runId, QualityGateReport report)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        ArgumentNullException.ThrowIfNull(report);
+        if (_activeRuns.TryGetValue(runId.Value, out var run))
+            run.QualityGateHistory.Enqueue(report);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<QualityGateReport>> GetQualityGateHistoryAsync(RunId runId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        ct.ThrowIfCancellationRequested();
+        IReadOnlyList<QualityGateReport> history = _activeRuns.TryGetValue(runId.Value, out var run)
+            ? run.QualityGateHistory.ToArray()
+            : Array.Empty<QualityGateReport>();
+        return Task.FromResult(history);
+    }
+
+    /// <inheritdoc />
     public Task<HashSet<string>> GetActiveRunBranchesAsync(CancellationToken ct = default)
     {
         var branches = GetActiveRuns()
