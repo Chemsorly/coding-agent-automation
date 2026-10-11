@@ -316,7 +316,7 @@ public sealed class AgentHubPipelineReportingTests
     }
 
     [Fact]
-    public async Task ReportQualityGateResult_WithRun_EnqueuesInHistory()
+    public async Task ReportQualityGateResult_WithRun_CallsAppendQualityGateReport_OnFacade()
     {
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
@@ -325,8 +325,11 @@ public sealed class AgentHubPipelineReportingTests
         var hub = CreateHub();
         await hub.ReportQualityGateResult("job-1", report);
 
-        run.QualityGateHistory.Count.Should().Be(1);
-        run.QualityGateHistory.First().Should().Be(report);
+        // After the fix, the hub routes through AppendQualityGateReport (not a direct enqueue on run).
+        // run.QualityGateHistory is NOT mutated by the hub; the run service owns the history.
+        _mockFacade.Verify(f => f.AppendQualityGateReport(
+            It.Is<JobId>(j => j.Value == "job-1"),
+            report), Times.Once);
     }
 
     [Fact]
@@ -339,7 +342,7 @@ public sealed class AgentHubPipelineReportingTests
     }
 
     [Fact]
-    public async Task ReportQualityGateResult_MultipleReports_AllEnqueued()
+    public async Task ReportQualityGateResult_MultipleReports_CallsAppendQualityGateReport_ForEach()
     {
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "job-1"))).Returns(run);
@@ -359,11 +362,27 @@ public sealed class AgentHubPipelineReportingTests
         await hub.ReportQualityGateResult(new JobId { Value = "job-1" }, report1);
         await hub.ReportQualityGateResult(new JobId { Value = "job-1" }, report2);
 
-        run.QualityGateHistory.Count.Should().Be(2);
+        // LatestQualityReport is still set via ReplaceRun (hash-backed scalar field)
         run.LatestQualityReport.Should().Be(report2, "LatestQualityReport is overwritten each time");
+
+        // Both reports are routed through AppendQualityGateReport, not directly enqueued on run
+        _mockFacade.Verify(f => f.AppendQualityGateReport(
+            It.Is<JobId>(j => j.Value == "job-1"),
+            report1), Times.Once);
+        _mockFacade.Verify(f => f.AppendQualityGateReport(
+            It.Is<JobId>(j => j.Value == "job-1"),
+            report2), Times.Once);
     }
 
     // ── ReportStepTransition — OrphanRestoredAt clearing ─────────────────
+
+    // TODO: Add a hub-level test that verifies SubscribeToRun populates the RunStateSnapshot with the
+    // quality-gate history returned by _facade.GetQualityGateHistoryAsync. A regression that passed an
+    // empty list instead of qgHistory to BuildRunStateSnapshot would not be caught by the current suite
+    // at the hub unit-test layer. The test should: (1) set up _mockFacade.GetQualityGateHistoryAsync to
+    // return a non-empty list, (2) call hub.SubscribeToRun, and (3) verify the snapshot sent to the
+    // client contains that history. See issue #3553 spec ("the SubscribeToRun snapshot contains the
+    // history returned by GetQualityGateHistoryAsync").
 
     [Fact]
     public async Task ReportStepTransition_AgentWithOrphanRestoredAt_ClearsIt()
