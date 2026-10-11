@@ -208,6 +208,9 @@ $"""
             s.AppendLine("- Every finding MUST have `crossReference` — a second location proving the issue isn't isolated.");
             s.AppendLine("  For duplication: the other copy. For drift: the layer rule violated + the import. For complexity: the callers affected.");
             s.AppendLine("- For duplication, find EVERY copy, not just two: put the search that lists them in `scopeQuery`.");
+            s.AppendLine("- For duplication, compare the copies with each other and list every behavioral difference in `evidence`:");
+            s.AppendLine("  a guard, call, side effect, error path or order of steps that one copy has and another does not.");
+            s.AppendLine("  Write \"no differences\" when the copies behave the same. A difference you do not list is lost in the shared code.");
             s.AppendLine("- Findings about over-engineering require proof the abstraction is never extended: check all implementations");
             s.AppendLine("  of the interface, check test mocks, check DI registrations, check git history for attempts to add implementations.");
             s.AppendLine("- **Do NOT flag patterns listed in `intentionalPatterns`.** If unsure, skip it.");
@@ -594,6 +597,8 @@ $"""
         sb.AppendLine("- **rationale** (required) — the problem. State what goes wrong, or what it costs, and commit to it: \"X causes Y because Z.\"");
         sb.AppendLine($"  For `{RefactoringCategories.Bug}`, state the failure scenario: the input or state, and the wrong outcome.");
         sb.AppendLine("- **description** (required) — the change. Propose ONE approach; do not offer alternatives (\"X or Y\").");
+        sb.AppendLine("  For `duplication`, list each behavioral difference between the copies and say whether the shared code keeps it");
+        sb.AppendLine("  (for example as a parameter) or removes it, and why removing it is safe. Write \"The copies behave the same\" when they do.");
         sb.AppendLine("- **evidence** (required) — the decisive code or tool output, quoted verbatim, starting with the file and line range.");
         sb.AppendLine("  Copy it from the sub-agent finding; do not paraphrase.");
         sb.AppendLine("- **evidenceSources** (required) — list of evidence that supports this proposal. Prefix with type:");
@@ -621,13 +626,14 @@ $"""
         sb.AppendLine("  - Prefer negative assertions (\"no references remain\", \"no callers exist\") — they catch incomplete implementations.");
         sb.AppendLine("  - When `scopeQuery` is set, one criterion MUST state that no match of the pattern remains (apart from the exclusions in `description`).");
         sb.AppendLine($"  - For `{RefactoringCategories.Bug}`, one criterion MUST require a test that reproduces the failure scenario and passes after the fix.");
+        sb.AppendLine($"  - For `{RefactoringCategories.Duplication}` with behavioral differences, one criterion MUST state that each listed difference is kept or removed as `description` says.");
         sb.AppendLine("  - Do NOT use #N notation — GitHub autolinks to wrong issues.");
         sb.AppendLine();
         sb.AppendLine("  Examples by category:");
         sb.AppendLine("  - dead-code: \"No remaining callers or references to deleted methods in .cs files\"");
         sb.AppendLine("  - rename: \"Zero occurrences of old name in source, test, and configuration files\"");
         sb.AppendLine("  - extract-class: \"Original class no longer contains the extracted methods\", \"New class is registered in DI\"");
-        sb.AppendLine("  - duplication: \"Duplicated logic consolidated to single call site\"");
+        sb.AppendLine("  - duplication: \"Duplicated logic consolidated to single call site\", \"The guard only the retry copy had is kept on the retry path\"");
         sb.AppendLine("  - bug: \"A test that sets X to null before calling Y fails before the fix and passes after it\"");
         sb.AppendLine();
         sb.AppendLine("## Writing for the Implementer");
@@ -636,6 +642,7 @@ $"""
         sb.AppendLine("- Do NOT mention the analysis agents (A, B, C), phases, scores, rankings, or this scan in any text field.");
         sb.AppendLine("- Keep the issue self-contained: name the files, symbols and line ranges the engineer needs.");
         sb.AppendLine("- Keep it short. A shorter, well-scoped issue is more likely to be implemented correctly.");
+        sb.AppendLine("- Every number you state (occurrences, lines, files, counts) must come from a command you ran on this commit. Give the command in `scopeQuery` or `evidence`.");
         sb.AppendLine();
         sb.AppendLine("## Scope Constraints");
         sb.AppendLine();

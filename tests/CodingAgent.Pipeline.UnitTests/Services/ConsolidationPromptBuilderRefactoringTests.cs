@@ -581,4 +581,48 @@ public class ConsolidationPromptBuilderRefactoringTests
 
         result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
     }
+
+    [Fact]
+    public void BuildRefactoringStructuralDebtPrompt_RequiresBehavioralDifferenceList()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt();
+
+        // TODO: These substring assertions were written alongside the implementation (tautological risk).
+        // Consider asserting on a longer representative phrase that cannot survive partial removal, or verify
+        // that the full three-line block appears directly after the "find EVERY copy" line as the issue requires.
+        result.Should().Contain("list every behavioral difference in `evidence`");
+        result.Should().Contain("Write \"no differences\" when the copies behave the same");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_DuplicationDescriptionAndAcRulesPresent()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        // description rule
+        // TODO: The AC-rule assertion does not verify the trailing clause ("that each listed difference is kept
+        // or removed as `description` says"), so a truncated rule would still pass. Consider asserting the full sentence.
+        // The description rule's second line ("(for example as a parameter) or removes it, and why removing it is safe")
+        // is also not asserted; add it to avoid silent truncation.
+        result.Should().Contain("For `duplication`, list each behavioral difference between the copies");
+        result.Should().Contain("Write \"The copies behave the same\" when they do");
+        // AC rule
+        result.Should().Contain("For `duplication` with behavioral differences, one criterion MUST state");
+        // numbers-from-command rule
+        result.Should().Contain("Every number you state (occurrences, lines, files, counts) must come from a command");
+    }
+
+    [Fact]
+    public void BuildRefactoringReviewPrompt_ChecksDuplicationWithoutDifferences()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        // TODO: The acceptance criterion requires the bullet to be "flagged [WARNING]", but the assertion on
+        // "Flag [WARNING] and list the differences it missed" covers only the trailing call-to-action, not the
+        // [WARNING] label on the bullet title itself. Add an assertion that the heading text
+        // "**Duplication without its differences**" appears together with "[WARNING]" in the rendered output,
+        // e.g. by asserting on the EvaluationBullets rendering that includes "[WARNING]" in the bullet prefix.
+        result.Should().Contain("**Duplication without its differences**");
+        result.Should().Contain("Flag [WARNING] and list the differences it missed");
+    }
 }

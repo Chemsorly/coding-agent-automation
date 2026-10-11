@@ -564,7 +564,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             => Task.CompletedTask;
         public Task<BrainSyncResult> CommitAndPushAsync(string brainPath, RunId runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(new BrainSyncResult());
-        public Task PushConsolidationAsync(string brainPath, string commitMessage, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
-            => Task.CompletedTask;
+        public Task<int> PushConsolidationAsync(string brainPath, string commitMessage, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
+            => Task.FromResult(1);
     }
 }

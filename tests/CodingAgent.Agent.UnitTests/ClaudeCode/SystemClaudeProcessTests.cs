@@ -49,6 +49,37 @@ public class SystemClaudeProcessTests
     }
 
     [Fact]
+    public async Task Terminate_SendsSigterm_WhichTheProcessCanHandle()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var stdout = new List<string>();
+        using var process = SystemClaudeProcessLauncher.Instance.Start(
+            Shell("trap 'echo saved; exit 0' TERM; echo ready; while :; do sleep 0.1; done"),
+            line => { lock (stdout) stdout.Add(line); }, _ => { });
+        await WaitForAsync(() => { lock (stdout) return stdout.Contains("ready"); });
+
+        process.Terminate().Should().BeTrue();
+        var exitCode = await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        exitCode.Should().Be(0, "the process exits through its own TERM handler, not a kill");
+        lock (stdout)
+            stdout.Should().Contain("saved");
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+                throw new TimeoutException("Condition not met within 10 s.");
+            await Task.Delay(20);
+        }
+    }
+
+    [Fact]
     public async Task Kill_EndsARunningProcess()
     {
         if (OperatingSystem.IsWindows())
