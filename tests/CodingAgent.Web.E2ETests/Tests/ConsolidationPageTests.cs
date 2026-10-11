@@ -199,32 +199,10 @@ public sealed class ConsolidationPageTests : E2ETestBase
         Assert.True(await page.IsStatusMessageErrorAsync());
     }
 
-    [Fact]
-    public async Task ConsolidationPage_BadgeResetsOnPageLoad()
-    {
-        // Arrange: manually increment the badge service
-        var badgeService = Fixture.Factory.Services.GetRequiredService<ConsolidationBadgeService>();
-        badgeService.IncrementBy(5);
-
-        // Verify badge was incremented (relative check)
-        var beforeCount = badgeService.BadgeCount;
-        Assert.True(beforeCount >= 5, $"Badge should be at least 5 after increment, was {beforeCount}");
-
-        // Act: navigate to the consolidation page (should reset badge)
-        var page = new ConsolidationPage(Page, BaseUrl);
-        await page.NavigateAsync();
-
-        // Wait for Blazor OnInitializedAsync to reset the badge
-        await WaitUntilAsync(() => badgeService.BadgeCount == 0);
-
-        // Assert: badge was reset to zero
-        Assert.Equal(0, badgeService.BadgeCount);
-    }
-
     // ── Run-to-completion scenarios (issue #3088) ─────────────────────────────
     //
     // Architecture note: The Blazor host's ConsolidationService.OnChange is never triggered
-    // by API-host operations (the Blazor host registers NullChangeNotifier). After
+    // by API-host operations (they run in another process). After
     // ReportConsolidationCompleteAsync succeeds, the page will NOT auto-update. The pattern
     // used by all run-to-completion tests is:
     //   1. WaitUntilAsync on Blazor-host's IConsolidationService (calls API over HTTP).

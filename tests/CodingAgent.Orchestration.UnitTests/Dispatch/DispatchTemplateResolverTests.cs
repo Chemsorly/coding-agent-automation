@@ -1,7 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.Api.Dispatch;
 using DispatchLifecycleService = CodingAgent.Api.Dispatch.DispatchLifecycleService;
-using DispatchStateBuilder = CodingAgent.Api.Dispatch.DispatchStateBuilder;
 using DispatchTemplateResolver = CodingAgent.Api.Dispatch.DispatchTemplateResolver;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;

@@ -130,16 +130,16 @@ Key metrics (OpenTelemetry):
 {{- if gt (int $web.replicas) 1 }}
 Multi-replica mode active ({{ $web.replicas }} replicas).
 PodDisruptionBudget: minAvailable=1
-{{- if or .Values.signalr.redis.enabled .Values.signalr.redis.connectionString }}
-Redis backplane enabled for SignalR cross-replica delivery.
-{{- else }}
-⚠️  WARNING: Multi-replica without Redis backplane. SignalR messages
-   (logs, token vending) will only reach clients connected to the same replica.
-   Set signalr.redis.enabled=true for production multi-replica deployments.
-{{- end }}
+Web replicas share the login-cookie key ring through Redis and need sticky sessions
+(web.service.annotations): each open page keeps its connection to one replica.
 {{- else }}
 Single-replica mode. Scale to multiple replicas with:
-  web.replicas: N  (requires signalr.redis.enabled: true)
+  web.replicas: N  (requires signalr.redis.connectionString and sticky sessions)
+{{- end }}
+{{- if or (($web.env).pipelineLoopStartupDelaySeconds) (($web.leaderElection).pipelineLoopLeaseName) }}
+
+Note: web.env.pipelineLoopStartupDelaySeconds and web.leaderElection.pipelineLoopLeaseName are
+no longer used (the web host runs no pipeline loop and holds no lease). Remove them from your values.
 {{- end }}
 
 {{- if .Values.api.enabled }}

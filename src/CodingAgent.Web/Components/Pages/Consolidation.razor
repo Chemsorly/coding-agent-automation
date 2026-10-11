@@ -10,7 +10,6 @@
 @using CodingAgent.Web.Services
 @using Serilog
 @inject IConsolidationService ConsolidationService
-@inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
 @inject IPipelineApiWorkItemClient WorkItems
 @inject IPipelineApiRunHistoryClient RunHistoryClient
@@ -341,8 +340,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-        BadgeService.Reset();
-
         // Subscribe to hub JobCompleted events for real-time page refresh.
         // This replaces ConsolidationService.OnChange which will no longer fire after
         // UpdateRunAsync writes are removed (issue #3028).

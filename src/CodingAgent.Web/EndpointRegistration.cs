@@ -1,9 +1,5 @@
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components;
-using CodingAgent.AgentGateway;
-using CodingAgent.Pipeline;
-using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web;
 
@@ -13,8 +9,8 @@ namespace CodingAgent.Web;
 internal static class EndpointRegistration
 {
     /// <summary>
-    /// Maps all application endpoints: health probes, API routes, static files, auth middleware,
-    /// SignalR hub, work item endpoints (DB mode), and Razor components.
+    /// Maps all application endpoints: health probes, static files, auth middleware and endpoints,
+    /// and Razor components.
     /// </summary>
     public static WebApplication MapApplicationEndpoints(this WebApplication app)
     {
@@ -37,43 +33,8 @@ internal static class EndpointRegistration
         app.MapGet("/", () => Results.Redirect("overview"))
             .AllowAnonymous();
 
-        // Export run history as JSON download
-        // TODO: Accept CancellationToken parameter and pass to GetRunHistoryAsync(ct) so the DB query cancels on client disconnect
-        app.MapGet("/api/export/runs.json", async (IPipelineRunHistoryService history, bool? feedbackOnly, int? page, int? pageSize) =>
-        {
-            IEnumerable<PipelineRunSummary> runs;
-            var filterFeedback = feedbackOnly == true;
-            if (page.HasValue || pageSize.HasValue)
-            {
-                var p = page ?? 1;
-                var ps = pageSize ?? 50;
-                // Apply feedbackOnly filter DB-side before paging so the filter
-                // does not silently drop rows from paginated responses.
-                var pagedResult = filterFeedback
-                    ? await history.GetRunHistoryAsync(p, ps, feedbackOnly: true)
-                    : await history.GetRunHistoryAsync(p, ps);
-                runs = pagedResult.Items;
-            }
-            else
-            {
-                // Use DB-side filter for feedbackOnly even without explicit pagination
-                // so older feedback entries are not silently missed by an API response cap.
-                if (filterFeedback)
-                {
-                    var pagedResult = await history.GetRunHistoryAsync(1, 10_000, feedbackOnly: true);
-                    runs = pagedResult.Items;
-                }
-                else
-                {
-                    runs = await history.GetRunHistoryAsync();
-                }
-            }
-
-            var json = System.Text.Json.JsonSerializer.Serialize(runs.ToList(), PipelineJsonOptions.Default);
-            var bytes = System.Text.Encoding.UTF8.GetBytes(json);
-            var fileName = $"pipeline-runs-{DateTime.UtcNow:yyyy-MM-dd}.json";
-            return Results.File(bytes, "application/json", fileName);
-        }).RequireAuthorization("AgentApiKey");
+        // The run-history JSON export lives in the Pipeline API (/api/export/runs.json); the web
+        // host maps no /api endpoints of its own.
 
         app.UseStaticFiles();
         app.MapStaticAssets().AllowAnonymous();

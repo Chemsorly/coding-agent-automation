@@ -63,6 +63,7 @@ The pipeline loop polls for `agent:next` issues, PRs and epics and dispatches th
 | `closedLoopPollInterval` | 00:01:00 | 10 s–10 min | | How often the loop checks for new work when idle |
 | `closedLoopMaxRunsPerCycle` | 0 | 0–1000 | | Max dispatches per cycle; 0 = unlimited |
 | `minIssueSlots` | 1 | 0–100 | | Slots per cycle held back for implementation issues when PRs and other higher-priority work would take them all. Applies when `closedLoopMaxRunsPerCycle` is 0 or at least 2; 0 = strict priority |
+| `dispatchOrder` | Triage, Review, Decomposition, Implementation, Consolidation | | | Order in which work goes to agents, first type first, for all projects. Within a type, higher priority weight goes first, then the oldest. A stored list missing a type gets it appended in default order |
 | `closedLoopMaxPagesToFetch` | 10 | 1–100 | | Max pages of issues fetched per poll (100 issues per page) |
 | `closedLoopMaxConsecutivePollFailures` | 5 | 1–50 | | Consecutive poll failures before the circuit breaker pauses the loop |
 | `closedLoopCircuitBreakerCooldown` | 00:05:00 | 30 s–1 h | | Pause before the circuit breaker resumes polling |
@@ -291,7 +292,6 @@ For full request/response examples, authentication details, and query parameters
 |----------|-------------|
 | `AGENT_API_KEY` | Master key for authenticating agent connections. Each agent Job receives its own key, HMAC(master_key, agent_id), from a per-Job Secret; agents never see the master key. |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
-| `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 0, range: 0–300). The API now owns `IOrchestratorRunService` and rehydrates independently, so the Orchestrator no longer needs a startup delay. Increase only when a rolling-restart race condition is observed. **Note:** `CodingAgent.Web` reads this via the IConfiguration keys `Orchestrator:PipelineLoopStartupDelaySeconds` or `Env:PipelineLoopStartupDelaySeconds`; the Helm-injected flat env var `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` does not map to either of those paths and is effectively ignored at present (the value is always 0 in Kubernetes). |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
 | `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
@@ -318,7 +318,7 @@ Every other `Auth__*` variable overrides the same setting in the file, for examp
 
 | Variable | Description |
 |----------|-------------|
-| `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (required when running multiple orchestrator replicas). Format: `host:port,password=xxx` |
+| `SignalR__Redis__ConnectionString` | Redis connection string. The Pipeline API uses it for the SignalR backplane and shared state (required with more than one API replica); the web host uses it only to share the Data Protection key ring (required with more than one web replica). Format: `host:port,password=xxx` |
 
 ### Database Maintenance
 

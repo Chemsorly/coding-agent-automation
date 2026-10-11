@@ -20,7 +20,7 @@ When polling for decomposition candidates:
 
 ## Loop Integration
 
-Fixed priority order: Triage first, then PRs, then Decomposition, then Issues (Implementation):
+Priority order follows the `dispatchOrder` setting. The default is Triage first, then PRs, then Decomposition, then Issues (Implementation):
 ```
 Priority 1 (highest): Triage queue → dispatched first each cycle
 Priority 2:           PR queue

@@ -35,17 +35,11 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers WebUI-specific pipeline services: lifecycle, facades, shutdown, and background services.
+    /// Registers WebUI-specific pipeline services: shutdown and background services.
     /// Config stores are registered by <see cref="AddWorkDistribution"/> and <c>RegisterPipelineBackgroundServices</c>.
     /// </summary>
     public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services)
     {
-        // ── Lifecycle ──────────────────────────────────────────────────────
-        RegisterPipelineLifecycle(services);
-
-        // ── Facades ────────────────────────────────────────────────────────
-        RegisterPipelineFacades(services);
-
         // ── Shutdown ───────────────────────────────────────────────────────
         RegisterPipelineShutdown(services);
 
@@ -112,8 +106,6 @@ public static partial class ServiceCollectionExtensions
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
                 SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
                 PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
-
-        services.AddSingleton<ConsolidationBadgeService>();
 
         return services;
     }

@@ -2,8 +2,10 @@ using System.Net;
 using AwesomeAssertions;
 using CodingAgent.Web.IntegrationTests.Helpers;
 using CodingAgent.Web.IntegrationTests.Smoke;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.IntegrationTests.Auth;
 
@@ -238,15 +240,32 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    /// <summary>
+    /// The web host is the internet-facing pod and accepts no API keys. The run export lives in
+    /// the Pipeline API only; the copy this host used to map behind the master-key scheme is gone.
+    /// </summary>
     [Fact]
-    public async Task ExportEndpoint_KeepsAgentApiKeyPolicy()
+    public async Task ApiPaths_AcceptNoApiKey_AndMapNothing()
     {
         var anonymous = await NoRedirectClient().GetAsync("/api/export/runs.json");
-        anonymous.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the agent key scheme challenges with 401, not a login redirect");
+        anonymous.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the cookie scheme challenges /api paths with 401");
 
         var withKey = NoRedirectClient();
         withKey.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "test-api-key");
-        (await withKey.GetAsync("/api/export/runs.json")).StatusCode.Should().NotBe(HttpStatusCode.Unauthorized);
+        withKey.DefaultRequestHeaders.Add("X-Api-Key", "test-api-key");
+        (await withKey.GetAsync("/api/export/runs.json")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "the master key is not a credential the web host accepts");
+
+        var signedIn = await AuthTestEnvironment.CreateSignedInClientAsync(_factory, allowAutoRedirect: false);
+        (await signedIn.GetAsync("/api/export/runs.json")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task WebHost_RegistersNoApiKeyScheme()
+    {
+        var schemes = await _factory.Services.GetRequiredService<IAuthenticationSchemeProvider>().GetAllSchemesAsync();
+
+        schemes.Select(s => s.Name).Should().NotContain(CodingAgent.AgentGateway.AgentApiKeyDefaults.AuthenticationScheme);
     }
 
     [Fact]

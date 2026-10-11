@@ -8,7 +8,7 @@ namespace CodingAgent.Web;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers token vending, orchestrator run service, and label service.
+    /// Registers token vending and the label service.
     /// </summary>
     private static void RegisterTokenAndRunServices(IServiceCollection services)
     {
@@ -18,9 +18,6 @@ public static partial class ServiceCollectionExtensions
             new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
         services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
         services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
-
-        services.AddSingleton(sp => new OrchestratorRunService(Log.Logger));
-        services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
 
         services.AddSingleton<ILabelService>(sp => new LabelService(
             sp.GetRequiredService<IConfigurationStore>(),

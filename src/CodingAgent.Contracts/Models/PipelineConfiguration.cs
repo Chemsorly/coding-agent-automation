@@ -573,6 +573,20 @@ public sealed record PipelineConfiguration
     [Range(0, 100)]
     public int MinIssueSlots { get; init; } = 1;
 
+    /// <summary>
+    /// The order in which pending work dispatches, by task type: the loop takes new work in this order, and the pending
+    /// queue goes to agents in this order. Within a type, higher priority weight goes first, then the oldest. One queue
+    /// serves all projects, so projects cannot override it. Default: Triage, Review, Decomposition, Implementation,
+    /// Consolidation. A stored order loads complete (see <see cref="WorkItemDispatchOrder.Normalize"/>).
+    /// </summary>
+    [Key(91)]
+    public IReadOnlyList<WorkItemTaskType> DispatchOrder
+    {
+        get => _dispatchOrder;
+        init => _dispatchOrder = WorkItemDispatchOrder.Normalize(value);
+    }
+    private readonly IReadOnlyList<WorkItemTaskType> _dispatchOrder = WorkItemDispatchOrder.Default;
+
     // ── Feedback comment outbox ────────────────────────────────────────────
     /// <summary>
     /// Maximum number of delivery attempts for a durable feedback comment before it is
