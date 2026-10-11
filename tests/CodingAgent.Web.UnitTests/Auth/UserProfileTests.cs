@@ -50,7 +50,7 @@ public class UserProfileTests : BunitContext
             .Equal("readers", "team-a", "6f1c2a9e-1111-0000-0000-000000000000");
         var rows = cut.FindAll("[data-testid=profile-bindings] tbody tr").Select(r => r.TextContent).ToList();
         rows.Should().HaveCount(2);
-        rows[1].Should().Contain("Project payments").And.Contain("operator").And.Contain("group:team-a");
+        rows[1].Should().Contain("Project payments").And.Contain(PaymentsId).And.Contain("operator").And.Contain("group:team-a");
     }
 
     [Fact]
@@ -58,17 +58,15 @@ public class UserProfileTests : BunitContext
     {
         var grant = new AccessGrant(AccessRole.None, new Dictionary<string, AccessRole>(),
         [
-            new MatchedBinding("group:team-a", AccessRole.Operator, "paymnts", null, RbacEvaluator.UnknownProject),
-            new MatchedBinding("group:team-a", AccessRole.ReadOnly, "shared", null, RbacEvaluator.DuplicateProject),
+            new MatchedBinding("group:team-a", AccessRole.Operator, null, "aaaaaaaa-0000-0000-0000-000000000000", RbacEvaluator.UnknownProject),
         ]);
         Services.AddTestAccess(grant, TestAccess.User("alice", "team-a"));
 
         var cut = Render<UserProfile>();
 
         var warnings = cut.FindAll("[data-testid=profile-binding-warning]").Select(w => w.TextContent).ToList();
-        warnings.Should().HaveCount(2);
-        warnings[0].Should().Contain("paymnts").And.Contain("unknown project");
-        warnings[1].Should().Contain("shared").And.Contain("duplicate project name");
+        warnings.Should().ContainSingle();
+        warnings[0].Should().Contain("aaaaaaaa-0000-0000-0000-000000000000").And.Contain("unknown project");
     }
 
     [Fact]

@@ -138,6 +138,10 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
                     // history row's Summary column. FailureReason is also set by FailRunCoreAsync,
                     // but that field is not rendered in the Consolidation history row markup.
                     inMemoryRun.ConsolidationResultSummary = result.ErrorMessage;
+
+                // Write the change back: with Redis, GetRun returns a copy, and RemoveRun inside
+                // CompleteRunAsync/FailRunAsync reads the stored run again.
+                _runService.ReplaceRun(inMemoryRun);
             }
             else
             {
