@@ -478,7 +478,7 @@ public class DispatchStateBuilderTests : IDisposable
     /// even when it was created later.
     ///
     /// Note: Both items are Implementation (same tier), so this test covers the within-tier ordering
-    /// only. For the tier-primary sort invariant (Review &gt; Decomp &gt; Impl &gt; Consolidation), see
+    /// only. For the tier-primary sort invariant (Triage &gt; Review &gt; Decomp &gt; Impl &gt; Consolidation), see
     /// DispatchStateBuilderBranchTests in CodingAgent.Orchestration.UnitTests.
     /// </summary>
     [Fact]
@@ -705,19 +705,21 @@ public class DispatchStateBuilderTests : IDisposable
 
     /// <summary>
     /// AC 1: Mixed task types are ordered by tier then PriorityWeight then CreatedAt.
-    /// Review (tier 0) &gt; Decomposition (tier 1) &gt; Implementation (tier 2) &gt; Consolidation (tier 3).
+    /// Triage (tier 0) &gt; Review (tier 1) &gt; Decomposition (tier 2) &gt; Implementation (tier 3) &gt; Consolidation (tier 4).
     /// All items have equal PriorityWeight and different CreatedAt to make tier the sole differentiator.
     /// </summary>
     [Fact]
     public async Task BuildStateAsync_MixedTaskTypes_OrdersByTierThenPriorityThenCreatedAt()
     {
         var baseTime = DateTimeOffset.UtcNow;
+        var triageId = Guid.NewGuid();
         var reviewId = Guid.NewGuid();
         var decompId = Guid.NewGuid();
         var implId = Guid.NewGuid();
         var consId = Guid.NewGuid();
 
         // Seed newest → oldest so that CreatedAt alone would produce the wrong order.
+        await InsertWorkItemFull(triageId, WorkItemTaskType.Triage, priorityWeight: 0, createdAt: baseTime.AddMinutes(4));
         await InsertWorkItemFull(reviewId, WorkItemTaskType.Review, priorityWeight: 0, createdAt: baseTime.AddMinutes(3));
         await InsertWorkItemFull(decompId, WorkItemTaskType.Decomposition, priorityWeight: 0, createdAt: baseTime.AddMinutes(2));
         await InsertWorkItemFull(implId, WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime.AddMinutes(1));
@@ -731,8 +733,8 @@ public class DispatchStateBuilderTests : IDisposable
 
         state.Should().NotBeNull();
         var ids = state!.PendingItems.Select(i => i.Id).ToList();
-        ids.Should().ContainInConsecutiveOrder(new[] { reviewId, decompId, implId, consId },
-            "tier ordering must place Review→Decomp→Impl→Consolidation regardless of CreatedAt");
+        ids.Should().ContainInConsecutiveOrder(new[] { triageId, reviewId, decompId, implId, consId },
+            "tier ordering must place Triage→Review→Decomp→Impl→Consolidation regardless of CreatedAt");
     }
 
     /// <summary>
@@ -790,7 +792,7 @@ public class DispatchStateBuilderTests : IDisposable
     }
 
     /// <summary>
-    /// AC 4: Consolidation (tier 3) is last even if it was created first (oldest CreatedAt).
+    /// AC 4: Consolidation (tier 4) is last even if it was created first (oldest CreatedAt).
     /// A Review item created later still dispatches before consolidation.
     /// </summary>
     [Fact]
@@ -812,7 +814,7 @@ public class DispatchStateBuilderTests : IDisposable
         state.Should().NotBeNull();
         var items = state!.PendingItems;
         items[0].Id.Should().Be(reviewId,
-            "Review (tier 0) must come before Consolidation (tier 3) regardless of CreatedAt");
+            "Review (tier 1) must come before Consolidation (tier 4) regardless of CreatedAt");
         items[1].Id.Should().Be(consId,
             "Consolidation must be last even though it was created first");
     }
@@ -840,7 +842,7 @@ public class DispatchStateBuilderTests : IDisposable
         state.Should().NotBeNull();
         var items = state!.PendingItems;
         items[0].Id.Should().Be(reviewAutoId,
-            "Review (tier 0) must come before a manual Implementation (tier 2) — tier beats PriorityWeight");
+            "Review (tier 1) must come before a manual Implementation (tier 3) — tier beats PriorityWeight");
         items[1].Id.Should().Be(implManualId,
             "manual Implementation item must be second, not first");
     }
