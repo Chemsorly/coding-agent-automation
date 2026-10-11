@@ -26,7 +26,7 @@ public static class E2ETestSignIn
         ("Auth__Rbac__Bindings__0__Role", "readonly"),
         ("Auth__Rbac__Bindings__1__Group", TeamGroup),
         ("Auth__Rbac__Bindings__1__Role", "operator"),
-        ("Auth__Rbac__Bindings__1__Project", "Default"),
+        ("Auth__Rbac__Bindings__1__ProjectId", "00000000-0000-0000-0000-000000000000"),
     ];
 
     public static void ApplyBindings()

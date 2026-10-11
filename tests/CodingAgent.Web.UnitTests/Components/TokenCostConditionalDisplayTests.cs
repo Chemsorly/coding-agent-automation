@@ -50,6 +50,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     private void RegisterInsightsServices(Mock<IPipelineApiRunHistoryClient> mockHistory)
     {
         Services.AddSingleton(mockHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
@@ -105,6 +106,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         mockWorkItems ??= BuildEmptyWorkItemsMock();
 
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());
@@ -178,6 +180,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
             .Returns(Mock.Of<IDisposable>());
 
         Services.AddSingleton(mockHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());

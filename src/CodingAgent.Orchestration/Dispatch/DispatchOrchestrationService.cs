@@ -471,6 +471,33 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         };
     }
 
+    /// <inheritdoc />
+    public async Task<JobDistributionRequest?> PrepareTriageDistributionRequestAsync(
+        TriageDispatchOrchestrationRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Project);
+
+        var requiredLabels = await ResolveRequiredLabelsInternalAsync(request.RepoProviderId, ct);
+
+        var result = await PrepareAsync(
+            new OrchestratorPreparationRequest(
+                request.IssueIdentifier, request.IssueProviderId, request.RepoProviderId,
+                request.BrainProviderId, null, request.InitiatedBy,
+                requiredLabels, request.Project, PipelineRunType.Triage),
+            ct);
+
+        if (result is null) return null;
+
+        // A triage reads every enabled repository of its project, wherever the issue was reported
+        // (decisions.md: triage scope); the assignment enricher rebuilds the list at claim time.
+        return MapToRequest(result, WorkItemTaskType.Triage, PipelineRunType.Triage, _logger) with
+        {
+            ProjectContext = await _infra.BuildProjectEpicContextAsync(request.Project, _logger, ct)
+        };
+    }
+
     /// <summary>
     /// Resolves required labels from the repo provider config, falling back to global config defaults.
     /// </summary>
@@ -607,6 +634,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // The correct label depends on the run type:
         //   DecompositionAnalysis → agent:epic  (Phase 1 epic queue label)
         //   Decomposition         → agent:epic-approved  (Phase 2 epic queue label)
+        //   Triage                → agent:triage  (never agent:next: that would implement a raw bug report)
         //   everything else       → agent:next
         // Note: OCE propagates (swallowCancellation defaults false) — if the dispatch token is
         // cancelled the revert should stop, not silently succeed.
@@ -614,6 +642,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         {
             PipelineRunType.DecompositionAnalysis => AgentLabels.Epic,
             PipelineRunType.Decomposition => AgentLabels.EpicApproved,
+            PipelineRunType.Triage => AgentLabels.Triage,
             _ => AgentLabels.Next
         };
         _logger.Warning(

@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Pipeline.Services.Steps;
 
@@ -25,9 +26,12 @@ public sealed class WriteProjectContextStep : IPipelineStep
         sb.AppendLine();
         sb.AppendLine($"**Project:** {context.ProjectContext.ProjectName}");
         sb.AppendLine();
+        var isTriage = context.Run.RunType == PipelineRunType.Triage;
         sb.AppendLine("## Available Repositories");
         sb.AppendLine();
-        sb.AppendLine("When proposing decomposed issues, assign each to the most appropriate repository using the `targetRepository` field. Values must EXACTLY match a repository name below (case-sensitive).");
+        sb.AppendLine(isTriage
+            ? "Investigate any of these repositories: the workspace root is one of them, the others are read-only clones. Assign each draft to the repository that must change using the `targetRepository` field. Values must EXACTLY match a repository name below (case-sensitive)."
+            : "When proposing decomposed issues, assign each to the most appropriate repository using the `targetRepository` field. Values must EXACTLY match a repository name below (case-sensitive).");
         sb.AppendLine();
 
         foreach (var repo in context.ProjectContext.Repositories)
@@ -48,15 +52,24 @@ public sealed class WriteProjectContextStep : IPipelineStep
 
         sb.AppendLine("## Routing Instructions");
         sb.AppendLine();
-        sb.AppendLine("- Set `targetRepository` in each sub-issue JSON file to the exact template name above");
-        sb.AppendLine("- If an issue spans multiple repositories, assign to the PRIMARY repository and note cross-cutting dependencies in the issue body");
-        sb.AppendLine("- Issues without `targetRepository` will be created in the default repository");
+        if (isTriage)
+        {
+            sb.AppendLine("- Set each draft's `targetRepository` to the exact name above of the repository that must change");
+            sb.AppendLine("- If a fix spans repositories, propose one draft per repository");
+            sb.AppendLine("- Never change, commit or push the read-only clones");
+        }
+        else
+        {
+            sb.AppendLine("- Set `targetRepository` in each sub-issue JSON file to the exact template name above");
+            sb.AppendLine("- If an issue spans multiple repositories, assign to the PRIMARY repository and note cross-cutting dependencies in the issue body");
+            sb.AppendLine("- Issues without `targetRepository` will be created in the default repository");
+        }
 
         try
         {
             Directory.CreateDirectory(agentDir);
-            await File.WriteAllTextAsync(Path.Combine(agentDir, "project-context.md"), sb.ToString(), ct);
-            context.Callbacks.EmitOutputLine("📋 Wrote .agent/project-context.md with project repository context");
+            await File.WriteAllTextAsync(Path.Combine(workspacePath, AgentWorkspacePaths.ProjectContextFilePath), sb.ToString(), ct);
+            context.Callbacks.EmitOutputLine($"📋 Wrote {AgentWorkspacePaths.ProjectContextFilePath} with project repository context");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

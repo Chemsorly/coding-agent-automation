@@ -62,7 +62,10 @@
                             <col style="width: 160px;" />  @* Features *@
                             <col style="width: 80px;" />   @* Enabled *@
                             <col style="width: 100px;" />  @* Status *@
-                            <col style="width: 120px;" />  @* Actions *@
+                            @if (CanEdit)
+                            {
+                                <col style="width: 120px;" />  @* Actions *@
+                            }
                         </colgroup>
                         <thead>
                             <tr>
@@ -74,7 +77,7 @@
                                 <th title="Active features — click to configure">Features</th>
                                 <th>Enabled</th>
                                 <th>Status</th>
-                                @if (!IsLoopActive)
+                                @if (CanEdit)
                                 {
                                     <th>Actions</th>
                                 }
@@ -115,6 +118,7 @@
                                             <span class="feature-badge @(template.ImplementationEnabled ? "feature-on" : "feature-off")" title="Implementation">Impl</span>
                                             <span class="feature-badge @(template.ReviewEnabled ? "feature-on" : "feature-off")" title="PR Review">Rev</span>
                                             <span class="feature-badge @(template.DecompositionEnabled ? "feature-on" : "feature-off")" title="Epic Decomposition">Decomp</span>
+                                            <span class="feature-badge @(template.TriageEnabled ? "feature-on" : "feature-off")" title="Triage (agent:triage label)">Triage</span>
                                             <span class="feature-badge @(template.HousekeepingEnabled ? "feature-on" : "feature-off")" title="Housekeeping (branch auto-update)">Hskp</span>
                                             <span class="feature-expand-chevron"><Icon Name="@(isExpanded ? "chevron-up" : "chevron-down")" Size="12" /></span>
                                         </button>
@@ -167,11 +171,7 @@
                                             <span class="monitoring-muted">—</span>
                                         }
                                     </td>
-                                    @if (!IsLoopActive && !CanEdit)
-                                    {
-                                    <td></td>
-                                    }
-                                    else if (!IsLoopActive)
+                                    @if (CanEdit)
                                     {
                                     <td>
                                         <div style="display: flex; gap: 4px; align-items: center;">
@@ -243,6 +243,15 @@
                                                     </label>
                                                     <label class="feature-config-toggle">
                                                         <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.TriageEnabled"
+                                                                   aria-label="@($"Enable Triage for {template.Name}")"
+                                                                   @onchange="e => OnToggleTriage.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                        <span title="Triages agent:triage labeled issues of this template's tracker">Triage</span>
+                                                    </label>
+                                                    <label class="feature-config-toggle">
+                                                        <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.HousekeepingEnabled"
                                                                    aria-label="@($"Enable Housekeeping for {template.Name}")"
                                                                    @onchange="e => OnToggleHousekeeping.InvokeAsync((template, (bool)(e.Value ?? false)))" />
@@ -290,7 +299,7 @@
             LabelPreview="@(!string.IsNullOrEmpty(AddForm.RepoProviderId) ? GetLabelPreview(AddForm.RepoProviderId) : new LabelPreviewResult())"
             OnSave="OnAddTemplate" OnCancel="OnCancelAdd" />
     }
-    else if (CanEdit && !IsLoopActive)
+    else if (CanEdit)
     {
         <button class="btn-add" style="margin-top: 12px;" @onclick="() => OnShowAddForm.InvokeAsync()">+ Add Template</button>
     }

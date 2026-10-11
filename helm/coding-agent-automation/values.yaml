@@ -206,14 +206,15 @@ auth:
   rbac:
     # Role of every signed-in user without a matching binding: "" (no access), readonly or operator.
     defaultRole: ""
-    # Roles: readonly < operator < admin. A binding names a group or a user; with "project" (the
-    # project name) it applies to that project only. admin can only be bound globally.
+    # Roles: readonly < operator < admin. A binding names a group or a user; with "projectId" (the
+    # project's ID, shown on Settings → Projects → project → Overview) it applies to that project
+    # only. admin can only be bound globally.
     bindings: []
     # - group: platform-team
     #   role: admin
     # - group: 6f1c2a9e-0000-0000-0000-000000000000   # Entra ID group object ID
     #   role: operator
-    #   project: payments-api
+    #   projectId: 6f1c2a9e-0000-0000-0000-000000000000   # payments-api
     # - user: alice@example.com
     #   role: readonly
 

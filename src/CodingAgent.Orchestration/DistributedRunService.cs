@@ -21,7 +21,7 @@ namespace CodingAgent.Orchestration;
 ///   <item><c>runs:active</c> — Set of active runId strings.</item>
 ///   <item><c>run:{runId}:output</c> — List (output ring buffer, capped at 500).</item>
 ///   <item><c>run:{runId}:chat</c> — List (chat history, capped at 200).</item>
-///   <item><c>run:{runId}:qg</c> — List (quality gate reports as JSON, capped at 20).</item>
+///   <item><c>run:{runId}:qg</c> — List (quality gate reports as JSON, capped at <see cref="PipelineConstants.DefaultQualityGateHistoryCapacity"/> (50)).</item>
 ///   <item><c>run:{runId}:retryerrors</c> — List (retry error messages, capped at 50).</item>
 ///   <item><c>recently-completed:{configId}:{issueId}</c> — String with 120s TTL.</item>
 /// </list>
@@ -344,6 +344,49 @@ return hash
         // IRedisStore gains cancellation support.
         var entries = await _store.ListRangeAsync(ChatKey(runId.Value), 0, -1);
         var history = new BoundedConcurrentQueue<ChatEntry>(PipelineConstants.DefaultChatHistoryCapacity);
+        EnqueueDeserialized(entries, history);
+        return history.ToArray();
+    }
+
+    // ── AppendQualityGateReport / GetQualityGateHistoryAsync ──────────────
+
+    /// <inheritdoc />
+    /// Distributed path: RPUSH the JSON-serialized report to run:{id}:qg, bounded via LTRIM to the last
+    /// <see cref="PipelineConstants.DefaultQualityGateHistoryCapacity"/> entries.
+    public void AppendQualityGateReport(RunId runId, QualityGateReport report)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        ArgumentNullException.ThrowIfNull(report);
+
+        // Fire-and-forget Redis write — same delivery guarantee as AppendChatEntry.
+        // TODO: Pass TaskScheduler.Default as the fourth ContinueWith argument to guarantee the
+        // error-logging continuation runs on a thread-pool thread regardless of the ambient
+        // TaskScheduler (e.g. an ASP.NET synchronization context). The same omission exists in
+        // AppendOutputLines and AppendChatEntry. Fix all three together when refactoring the
+        // fire-and-forget pattern.
+        _ = AppendQgReportToRedisAsync(runId.Value, report)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "AppendQualityGateReport: Redis write failed for run {RunId} — quality gate report lost",
+                runId.Value), TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    private async Task AppendQgReportToRedisAsync(string runId, QualityGateReport report)
+    {
+        // Default JsonSerializer options: RemoveRunAsync reads with EnqueueDeserialized (same options).
+        await _store.ListRightPushAsync(QgKey(runId), [JsonSerializer.Serialize(report)]);
+        await _store.ListTrimAsync(QgKey(runId), -PipelineConstants.DefaultQualityGateHistoryCapacity, -1);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<QualityGateReport>> GetQualityGateHistoryAsync(RunId runId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value, nameof(runId));
+        ct.ThrowIfCancellationRequested();
+        // TODO: ct is not forwarded to _store.ListRangeAsync because IRedisStore.ListRangeAsync has no
+        // CancellationToken overload. Same documented limitation as GetChatHistoryAsync above. Fix when
+        // IRedisStore gains cancellation support.
+        var entries = await _store.ListRangeAsync(QgKey(runId.Value), 0, -1);
+        var history = new BoundedConcurrentQueue<QualityGateReport>(PipelineConstants.DefaultQualityGateHistoryCapacity);
         EnqueueDeserialized(entries, history);
         return history.ToArray();
     }

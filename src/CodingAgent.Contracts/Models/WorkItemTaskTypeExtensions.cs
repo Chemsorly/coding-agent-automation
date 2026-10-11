@@ -23,6 +23,7 @@ public static class WorkItemTaskTypeExtensions
         WorkItemTaskType.Review => PipelineRunType.Review,
         WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
         WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+        WorkItemTaskType.Triage => PipelineRunType.Triage,
         _ => throw new UnreachableException($"Unhandled WorkItemTaskType: {taskType}")
     };
 
@@ -38,6 +39,7 @@ public static class WorkItemTaskTypeExtensions
         WorkItemTaskType.Review => PipelineRunType.Review,
         WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
         WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+        WorkItemTaskType.Triage => PipelineRunType.Triage,
         _ => null
     };
 }

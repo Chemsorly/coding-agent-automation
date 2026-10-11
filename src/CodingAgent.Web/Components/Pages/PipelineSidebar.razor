@@ -9,6 +9,11 @@
                 <span class="run-type-badge run-type-review" style="font-size: 0.75rem;"><Icon Name="search" /> Review</span>
                 <text> PR #@Run.IssueIdentifier</text>
             }
+            else if (TriageConstants.TryParseTriageId(Run.IssueIdentifier.Value) is not null)
+            {
+                @* An operator triage has no issue *@
+                <span class="run-type-badge run-type-triage" style="font-size: 0.75rem;"><Icon Name="stethoscope" /> Triage</span>
+            }
             else
             {
                 <text>Issue #@Run.IssueIdentifier</text>
@@ -174,7 +179,14 @@
             PipelineStep.RunningEnvironmentSetup,
             PipelineStep.SyncingBrainRepoPreRun,
             PipelineStep.CreatingBranch,
-            PipelineStep.VerifyingBaseline
+            PipelineStep.VerifyingBaseline,
+            PipelineStep.DownloadingOpenIssues   // triage runs only: issues and triage history
+        }),
+        new("Investigation", "investigation", new[] {
+            PipelineStep.Investigating
+        }),
+        new("RCA Review", "rca-review", new[] {
+            PipelineStep.ReviewingRca
         }),
         new("Analysis", "analysis", new[] {
             PipelineStep.AnalyzingCode,
@@ -205,6 +217,7 @@
             PipelineStep.PostingSummary
         }),
         new("Finalization", "finalization", new[] {
+            PipelineStep.ReportingRca,
             PipelineStep.PreparingForPullRequest,
             PipelineStep.FinalizingPullRequest,
             PipelineStep.ReflectingOnRun,
@@ -249,12 +262,54 @@
             && Run.BrainProviderConfigId == null)
             return true;
 
+        if (IsHiddenForTriageRun(step, allSteps, out var hidden)) return hidden;
         if (IsHiddenForReviewRun(step, allSteps)) return true;
         if (IsHiddenForImplementationRun(step, allSteps)) return true;
         if (IsHiddenForDecompositionRun(step)) return true;
 
         return false;
     }
+
+    /// <summary>
+    /// The triage steps: shown only for Triage runs, which show nothing else but the shared preparation and
+    /// "Downloading issues and triage history" in Preparation. Returns false when the rule does not decide.
+    /// </summary>
+    private bool IsHiddenForTriageRun(PipelineStep step, PipelineStep[] steps, out bool hidden)
+    {
+        var isTriageStep = step is PipelineStep.Investigating or PipelineStep.ReviewingRca or PipelineStep.ReportingRca;
+        // DownloadingOpenIssues sits in Preparation for triage runs and in Decomposition Analysis for epics
+        var inPreparation = steps.Contains(PipelineStep.Created);
+
+        if (Run.RunType != PipelineRunType.Triage)
+        {
+            hidden = true;
+            return isTriageStep || (step == PipelineStep.DownloadingOpenIssues && inPreparation);
+        }
+
+        if (step is PipelineStep.Created or PipelineStep.CloningRepository or PipelineStep.RunningEnvironmentSetup
+                or PipelineStep.SyncingBrainRepoPreRun or PipelineStep.Investigating or PipelineStep.ReportingRca
+            || (step == PipelineStep.DownloadingOpenIssues && inPreparation))
+        {
+            // Brain sync is still hidden by the rule above when no brain is configured
+            hidden = false;
+            return true;
+        }
+
+        hidden = step != PipelineStep.ReviewingRca || IsRcaReviewSkipped();
+        return true;
+    }
+
+    /// <summary>
+    /// The RCA review was skipped (TriageReviewEnabled off): the run is past it, the investigation reported
+    /// its tokens, and no review tokens exist. Without token data the step stays visible.
+    /// </summary>
+    private bool IsRcaReviewSkipped() =>
+        LogicalOrder(Run.HighWaterMark) > LogicalOrder(PipelineStep.ReviewingRca)
+        && Run.Metrics.PhaseBreakdown.ContainsKey(TriageInvestigationPhase)
+        && !Run.Metrics.PhaseBreakdown.ContainsKey(TriageReviewPhase);
+
+    private const string TriageInvestigationPhase = "triage";
+    private const string TriageReviewPhase = "triage_review";
 
     private bool IsHiddenForReviewRun(PipelineStep step, PipelineStep[] steps)
     {
@@ -473,6 +528,9 @@
         [PipelineStep.GeneratingSubIssues] = 24,
         [PipelineStep.CreatingIssues] = 25,
         [PipelineStep.PostingSummary] = 26,
+        [PipelineStep.Investigating] = 27,
+        [PipelineStep.ReviewingRca] = 28,
+        [PipelineStep.ReportingRca] = 29,
         [PipelineStep.Completed] = 100,
         [PipelineStep.Failed] = 101,
         [PipelineStep.Cancelled] = 102,

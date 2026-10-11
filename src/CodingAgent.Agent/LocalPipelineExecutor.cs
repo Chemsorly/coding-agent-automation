@@ -178,8 +178,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             // (they exit at PostingFindings/PostPlan), so the absence of a brain provider is expected there.
             WarnIfNoBrainProvider(job);
 
-            // Merge provider-specific paths into configurable blacklist AND store for hardcoded enforcement
-            config = PipelineConfigurationResolver.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
+            // Provider paths are enforced at commit time on their own terms (only new files there are left
+            // out), not added to the configured blacklist, which would leave out the repository's edits too.
             config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
 
             result = await ExecutePipelineStepsAsync(new ExecutePipelineStepsRequest(
@@ -255,6 +255,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 PipelineRunType.Review => AgentStepPipelineBuilder.BuildReviewStepPipeline(job, issueOps, repoConfig),
                 PipelineRunType.DecompositionAnalysis => AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, issueOps, repoConfig),
                 PipelineRunType.Decomposition => AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, issueOps, repoConfig),
+                PipelineRunType.Triage => AgentStepPipelineBuilder.BuildTriageStepPipeline(job, issueOps, repoConfig),
                 _ => AgentStepPipelineBuilder.BuildAgentStepPipeline(job, issueOps, repoConfig)
             };
 
@@ -271,7 +272,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                     // This is by design. brain_syncs_completed_total (pre-run) will still increment for
                     // review/decomposition runs if a brain provider is configured, creating an apparent
                     // asymmetry where pre-run brain metrics exist but post-run metrics are absent.
+                    // Triage runs end at ReportingRca the same way; a tracker triage's final label is
+                    // agent:triage-review, set by ReportTriageResultStep.
                     if (run.RunType is PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
+                            or PipelineRunType.Triage
                         && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled
                                and not PipelineStep.PrMerged and not PipelineStep.PrClosed)
                     {
@@ -410,7 +414,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     /// </summary>
     internal void WarnIfNoBrainProvider(JobAssignmentMessage job)
     {
-        if (job.RunType is not (PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+        if (job.RunType is not (PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
+                or PipelineRunType.Triage)
             && string.IsNullOrEmpty(job.BrainProviderConfigId))
         {
             _logger.Warning(
