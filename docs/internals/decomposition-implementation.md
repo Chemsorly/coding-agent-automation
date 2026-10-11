@@ -20,11 +20,12 @@ When polling for decomposition candidates:
 
 ## Loop Integration
 
-Fixed priority order: PRs first, then Decomposition, then Issues (Implementation):
+Fixed priority order: Triage first, then PRs, then Decomposition, then Issues (Implementation):
 ```
-Priority 1 (highest): PR queue → dispatched first each cycle
-Priority 2:           Decomposition queue (repo epics + project epics share this tier)
-Priority 3:           Issue queue (Implementation)
+Priority 1 (highest): Triage queue → dispatched first each cycle
+Priority 2:           PR queue
+Priority 3:           Decomposition queue (repo epics + project epics share this tier)
+Priority 4:           Issue queue (Implementation)
 ```
 
 - Total dispatches per cycle ≤ `ClosedLoopMaxRunsPerCycle`
