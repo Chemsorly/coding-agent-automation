@@ -23,8 +23,11 @@ public class BrainConsolidationExecutorTests
         // The brain update service pushes through the brain provider; a push it cannot merge fails like the provider's.
         _mockBrainUpdateService
             .Setup(x => x.PushConsolidationAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
-            .Returns((string path, string _, IRepositoryProvider provider, CancellationToken ct, int _) =>
-                provider.PushBranchAsync(path, provider.BaseBranch, ct));
+            .Returns(async (string path, string _, IRepositoryProvider provider, CancellationToken ct, int _) =>
+            {
+                await provider.PushBranchAsync(path, provider.BaseBranch, ct);
+                return 1;
+            });
     }
 
     private BrainConsolidationExecutor CreateExecutor() => new(_mockLogger.Object, _mockBrainUpdateService.Object);
