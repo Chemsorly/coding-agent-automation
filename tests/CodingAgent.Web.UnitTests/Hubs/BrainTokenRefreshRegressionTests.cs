@@ -409,4 +409,56 @@ public class BrainTokenRefreshRegressionTests
             Times.Never,
             "repository token refresh must not call ResolveBrainReadOnlyAsync");
     }
+
+    /// <summary>
+    /// When BrainReadOnly is true but PrepareAgentConfigsAsync returns a config without a
+    /// Token key (graceful degradation), the service falls back to GenerateAgentTokenAsync
+    /// and logs a warning. This covers the fallback-to-write-token branch in VendTokenAsync.
+    /// </summary>
+    [Fact]
+    public async Task RefreshToken_BrainKind_BrainReadOnly_PrepareReturnsNoToken_FallsBackToWriteToken()
+    {
+        var brainConfig = CreateBrainConfigWithPrivateKey();
+        var run = CreateRunWithBrain();
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(brainConfig);
+        _mockFacade.Setup(f => f.ResolveBrainReadOnlyAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // PrepareAgentConfigsAsync returns a config with NO Token key (simulates graceful degradation)
+        _mockTokenVending
+            .Setup(t => t.PrepareAgentConfigsAsync(
+                It.IsAny<IReadOnlyList<ProviderConfig>>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(),
+                It.IsAny<IReadOnlySet<string>?>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new()
+                {
+                    Id = "brain-repo-1",
+                    Kind = ProviderKind.Repository,
+                    ProviderType = "GitHub",
+                    DisplayName = "Brain Repo",
+                    Settings = new Dictionary<string, string>() // No Token key
+                }
+            });
+
+        _mockTokenVending
+            .Setup(t => t.GenerateAgentTokenAsync(brainConfig, It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(("ghs_fallback_write_token", DateTimeOffset.UtcNow.AddHours(1)));
+
+        var service = CreateService();
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+
+        // Fallback write token is returned (sub-optimal but current behavior)
+        response.Token.Should().Be("ghs_fallback_write_token");
+        _mockTokenVending.Verify(
+            t => t.GenerateAgentTokenAsync(brainConfig, It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Once,
+            "fallback to write token must be used when PrepareAgentConfigsAsync returns no token");
+    }
 }
