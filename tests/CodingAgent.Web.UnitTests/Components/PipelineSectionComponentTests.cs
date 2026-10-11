@@ -165,7 +165,53 @@ public class PipelineSectionComponentTests : BunitContext
     {
         var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
-        Assert.Equal(4, hints.Count); // Poll Interval, Max Runs Per Cycle, Reserved Issue Slots, Queue Sweep (advanced fields hidden by default)
+        Assert.Equal(5, hints.Count); // Poll Interval, Max Runs Per Cycle, Reserved Issue Slots, Dispatch Order, Queue Sweep (advanced fields hidden by default)
+    }
+
+    [Fact]
+    public void LoopSection_ShowsTheStoredDispatchOrder()
+    {
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                DispatchOrder = [WorkItemTaskType.Implementation, WorkItemTaskType.Triage, WorkItemTaskType.Review]
+            });
+
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        var names = cut.FindAll(".dispatch-order-name").Select(e => e.TextContent.Trim()).ToList();
+        Assert.Equal(["Implementation", "Triage", "Review", "Decomposition", "Consolidation"], names);
+    }
+
+    [Fact]
+    public void LoopSection_DispatchOrder_FirstCannotMoveUpAndLastCannotMoveDown()
+    {
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        var rows = cut.FindAll(".dispatch-order-row");
+        Assert.True(rows[0].QuerySelector("button[title='Move up']")!.HasAttribute("disabled"));
+        Assert.True(rows[^1].QuerySelector("button[title='Move down']")!.HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public async Task LoopSection_MoveReviewUp_SavesReviewBeforeTriage()
+    {
+        Func<PipelineConfiguration, PipelineConfiguration>? update = null;
+        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Callback<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>((f, _) => update = f)
+            .Returns(Task.CompletedTask);
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        var reviewRow = cut.FindAll(".dispatch-order-row")
+            .Single(r => r.QuerySelector(".dispatch-order-name")!.TextContent.Trim() == "Review");
+        await reviewRow.QuerySelector("button[title='Move up']")!.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        await cut.FindAll("button").First(b => b.TextContent.Contains("Save Pipeline Loop"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.NotNull(update);
+        Assert.Equal(
+            [WorkItemTaskType.Review, WorkItemTaskType.Triage, WorkItemTaskType.Decomposition, WorkItemTaskType.Implementation, WorkItemTaskType.Consolidation],
+            update(new PipelineConfiguration()).DispatchOrder);
     }
 
     // ═══ PipelinePromptsSection ═══

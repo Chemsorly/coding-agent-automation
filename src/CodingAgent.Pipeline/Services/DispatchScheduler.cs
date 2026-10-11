@@ -6,8 +6,8 @@ namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
 /// Priority-based dispatch logic across triage/PR/decomposition/issue queues.
-/// Selects the highest-priority eligible queue type each iteration: Triage first, then PullRequests,
-/// then Decomposition, then Issues (Implementation). Within each type, FIFO order is
+/// Selects the highest-priority eligible queue type each iteration, in <see cref="PipelineConfiguration.DispatchOrder"/>
+/// (default: Triage, PullRequests, Decomposition, Issues). Within each type, FIFO order is
 /// preserved by the per-queue dequeue logic.
 /// </summary>
 /// <remarks>
@@ -186,7 +186,8 @@ internal sealed partial class DispatchScheduler
         while (remaining > 0 && !ct.IsCancellationRequested)
         {
             var (hasIssues, hasPrs, hasDecomp, hasTriage) = ComputeQueueAvailability(request, activeDecompositionCount);
-            var (foundTurn, selectedTurn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp, hasTriage);
+            var (foundTurn, selectedTurn) = TrySelectHighestPriorityQueue(
+                hasIssues, hasPrs, hasDecomp, hasTriage, request.Config.DispatchOrder);
             if (!foundTurn) break;
 
             var roundCtx = new RoundDispatchContext
@@ -492,26 +493,27 @@ internal sealed partial class DispatchScheduler
     }
 
     /// <summary>
-    /// Priority order for turn selection. Triage is dispatched first, then Review (PRs), then Decomposition,
-    /// then Issues (Implementation). Within each type, FIFO order is preserved by the per-queue dequeue logic.
-    /// </summary>
-    private static readonly DispatchTurn[] PriorityOrder =
-        [DispatchTurn.Triage, DispatchTurn.PullRequests, DispatchTurn.Decomposition, DispatchTurn.Issues];
-
-    /// <summary>
-    /// Selects the next eligible queue type using priority ordering: Triage first, then PullRequests,
-    /// then Decomposition, then Issues. Returns (found=false, default) when all queues are exhausted.
+    /// Selects the next eligible queue type in <paramref name="dispatchOrder"/> (<see cref="PipelineConfiguration.DispatchOrder"/>;
+    /// null is the default: Triage, PullRequests, Decomposition, Issues). Review is the PullRequests turn and
+    /// Implementation the Issues turn; Consolidation has no turn in the loop. Within each type, FIFO order is preserved
+    /// by the per-queue dequeue logic. Returns (found=false, default) when all queues are exhausted.
     /// </summary>
     internal static (bool found, DispatchTurn selectedTurn) TrySelectHighestPriorityQueue(
-        bool hasIssues, bool hasPrs, bool hasDecomp, bool hasTriage = false)
+        bool hasIssues, bool hasPrs, bool hasDecomp, bool hasTriage = false,
+        IReadOnlyList<WorkItemTaskType>? dispatchOrder = null)
     {
-        foreach (var turn in PriorityOrder)
+        foreach (var taskType in dispatchOrder ?? WorkItemDispatchOrder.Default)
         {
-            if ((turn == DispatchTurn.Issues && hasIssues)
-                || (turn == DispatchTurn.PullRequests && hasPrs)
-                || (turn == DispatchTurn.Decomposition && hasDecomp)
-                || (turn == DispatchTurn.Triage && hasTriage))
-                return (true, turn);
+            DispatchTurn? turn = taskType switch
+            {
+                WorkItemTaskType.Triage when hasTriage => DispatchTurn.Triage,
+                WorkItemTaskType.Review when hasPrs => DispatchTurn.PullRequests,
+                WorkItemTaskType.Decomposition when hasDecomp => DispatchTurn.Decomposition,
+                WorkItemTaskType.Implementation when hasIssues => DispatchTurn.Issues,
+                _ => null,
+            };
+            if (turn is { } selected)
+                return (true, selected);
         }
         return (false, default);
     }
