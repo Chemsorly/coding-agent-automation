@@ -1915,9 +1915,9 @@ public sealed class WorkItemEndpointTests
 
     /// <summary>
     /// AC: GET /api/work-items/pending applies RunType tier ordering as the primary sort:
-    /// Review &gt; Decomposition &gt; Implementation &gt; Consolidation, regardless of CreatedAt.
+    /// Triage &gt; Review &gt; Decomposition &gt; Implementation &gt; Consolidation, regardless of CreatedAt.
     /// Within the same tier, higher PriorityWeight comes first (secondary sort).
-    /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation"
+    /// Decision: decisions.md "Dispatch priority: static ordering Triage > Review > Decomposition > Implementation > Consolidation"
     /// and "PriorityWeight: secondary sort key within RunType tier".
     /// </summary>
     [Fact]
@@ -1927,7 +1927,7 @@ public sealed class WorkItemEndpointTests
         var base_ = DateTimeOffset.UtcNow.AddMinutes(-30);
 
         // Seed one item per tier — all at PriorityWeight=0, Consolidation created first (oldest).
-        // Expected order after tier sort: Review, Decomposition, Implementation, Consolidation.
+        // Expected order after tier sort: Triage, Review, Decomposition, Implementation, Consolidation.
         var consolidation = SeedEntity(WorkItemStatus.Pending,
             issueIdentifier: $"{prefix}-consolidation",
             taskType: WorkItemTaskType.Consolidation,
@@ -1944,6 +1944,10 @@ public sealed class WorkItemEndpointTests
             issueIdentifier: $"{prefix}-review",
             taskType: WorkItemTaskType.Review,
             createdAt: base_.AddMinutes(3));
+        var triage = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-triage",
+            taskType: WorkItemTaskType.Triage,
+            createdAt: base_.AddMinutes(5));
 
         // Seed a second Implementation at higher PriorityWeight to verify within-tier secondary sort.
         var highWeightImpl = SeedEntity(WorkItemStatus.Pending,
@@ -1959,17 +1963,19 @@ public sealed class WorkItemEndpointTests
         items.Should().NotBeNull();
 
         // Filter to just the fixture items in original list order.
-        var fixtureIds = new HashSet<Guid> { review.Id, decomposition.Id, implementation.Id, consolidation.Id, highWeightImpl.Id };
+        var fixtureIds = new HashSet<Guid> { triage.Id, review.Id, decomposition.Id, implementation.Id, consolidation.Id, highWeightImpl.Id };
         var fixture = items!.Where(i => fixtureIds.Contains(i.Id)).ToList();
-        fixture.Should().HaveCount(5, "all 5 seeded items must be in the pending list");
+        fixture.Should().HaveCount(6, "all 6 seeded items must be in the pending list");
 
+        var triageIdx = fixture.FindIndex(i => i.Id == triage.Id);
         var reviewIdx = fixture.FindIndex(i => i.Id == review.Id);
         var decompIdx = fixture.FindIndex(i => i.Id == decomposition.Id);
         var highWeightIdx = fixture.FindIndex(i => i.Id == highWeightImpl.Id);
         var implIdx = fixture.FindIndex(i => i.Id == implementation.Id);
         var consolidIdx = fixture.FindIndex(i => i.Id == consolidation.Id);
 
-        // Tier ordering: Review < Decomposition < Implementation(both) < Consolidation
+        // Tier ordering: Triage < Review < Decomposition < Implementation(both) < Consolidation
+        triageIdx.Should().BeLessThan(reviewIdx, "Triage must come before Review");
         reviewIdx.Should().BeLessThan(decompIdx, "Review must come before Decomposition");
         decompIdx.Should().BeLessThan(highWeightIdx, "Decomposition must come before Implementation");
         decompIdx.Should().BeLessThan(implIdx, "Decomposition must come before Implementation");
@@ -1984,7 +1990,7 @@ public sealed class WorkItemEndpointTests
     /// window fills entirely with Reviews and the single Implementation item is absent.
     /// This documents the intentional starvation contract: lower-tier items are invisible to
     /// the WorkItemDispatchLoop for that cycle whenever a higher tier has 50+ pending items.
-    /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation".
+    /// Decision: decisions.md "Dispatch priority: static ordering Triage > Review > Decomposition > Implementation > Consolidation".
     /// </summary>
     [Fact]
     public async Task GetPendingWorkItems_HighTierBacklogFillsWindow_LowerTierItemAbsent()

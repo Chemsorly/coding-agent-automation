@@ -33,7 +33,7 @@ The rules a plausible change could break. Details are in the linked entries.
 - Reviewers run in isolated sessions. ([Isolated review](#code-review-always-uses-isolated-sessions-no-shared-mode))
 - Durable agent output gets an adversarial review step with its own switch. ([Adversarial review](#adversarial-review-is-a-default-pattern-for-all-durable-agent-outputs))
 - Only CRITICAL findings trigger another review round; non-compliant acceptance criteria count as CRITICAL. ([Review iteration](#code-review-iteration-critical-only-triggers-re-review-warnings-get-one-fix-pass), [Acceptance criteria](#noncompliant-acceptance-criteria-as-critical-hard-contract-retry-budget-bounds-cost))
-- Dispatch order is Review, Decomposition and Triage, Implementation, Consolidation; no urgency crosses a tier. ([Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation))
+- Dispatch order is Triage, Review, Decomposition, Implementation, Consolidation; no urgency crosses a tier. ([Dispatch priority](#dispatch-priority-static-ordering-triage--review--decomposition--implementation--consolidation))
 - A work item stores identity only; config is resolved at assignment, and a failed enrichment returns 503. ([Payload](#workitemspayload-config-snapshot-must-be-at-dispatch-time-not-enqueue-time))
 - `AgentTimeout` is the only agent time limit; chat pods have their own. ([Timeouts](#agenttimeout-is-the-only-agent-time-limit))
 - An agent pod exits 0 exactly when its run's outcome is recorded and never reports SIGTERM; pod retries belong to the Kubernetes Job. ([Agent Jobs](#agent-jobs-kubernetes-retries-pods-the-agent-records-outcomes))
@@ -102,7 +102,7 @@ The rules a plausible change could break. Details are in the linked entries.
 ### Projects share the agents, their capacity and the namespace; the operator sizes them
 <!-- 2026-10-10 -->
 **Rule:** One deployment serves several teams, each with its own projects. The operator runs the deployment and owns the agents. Capacity is global: each job template's `maxConcurrent`, the decomposition cap and the loop's limits apply across all projects, with no quota or fair share per project. All agent pods run in the release's namespace, and the chart adds no network isolation between the pods of different projects.
-**Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation)); an agent pod reaches whatever the other projects' pods reach in the namespace.
+**Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-static-ordering-triage--review--decomposition--implementation--consolidation)); an agent pod reaches whatever the other projects' pods reach in the namespace.
 **Not:** quotas or fair-share dispatch per project; a namespace or network policy per project.
 **Revisit when:** one project's work measurably starves another's, or a team must not share a network with another team's repositories.
 
@@ -174,10 +174,10 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ## Dispatch and scheduling
 
-### Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation
-<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 (triage) -->
-**Rule:** Pending work dispatches by tier: Review, then Decomposition and Triage, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable. All projects share this one queue. In the loop, triage follows decomposition and has no concurrency cap of its own.
-**Why:** Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, a triage answers someone waiting on a problem, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier; a burst of triages delays implementation. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
+### Dispatch priority: static ordering Triage > Review > Decomposition > Implementation > Consolidation
+<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 (triage), 2026-10-11 (triage first) -->
+**Rule:** Pending work dispatches by tier: Triage, then Review, then Decomposition, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable. All projects share this one queue. In the loop, triage goes first and has no concurrency cap of its own.
+**Why:** A triage answers someone waiting on a problem, which matters more than anything else in the queue. Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier; a burst of triages delays every other run type. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
 **Not:** configurable weights per run type; age-based promotion; round-robin; label-based priority; fair share between projects.
 **Revisit when:** lower tiers or one project's work visibly starve in practice, or someone needs cross-tier urgency.
 
@@ -374,7 +374,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Refactoring proposal quality bar
 <!-- 2026-07-04 -->
-**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
+**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity, not counting commits of the scan's own issues), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
 **Why:** The bar must be high enough to avoid noise and low enough to catch real debt; outcome data (done vs. wont-do) should move it over time.
 **Not:** fixed complexity or duplication thresholds; filtering by scope only; leaving calibration entirely to the operator.
 **Revisit when:** more than 50% of proposals are wont-do over 90 days; the system is then too aggressive.
@@ -507,9 +507,9 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** agents still make conflicting changes, or recently closed context proves valuable.
 
 ### Brain: runs append, consolidation curates
-<!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29 -->
-**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental.
-**Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it.
+<!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29; token scope 2026-10-11 -->
+**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental. A read-only brain gets a read-only token where the provider allows it.
+**Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it. A GitLab or personal-access-token brain keeps its own token, so for those the pipeline's behaviour is the only guard; use a token without write access for a brain that should stay read-only.
 **Not:** a database store (loses git history and inspectability); expiry by age (drops rare but useful entries); periodic full resets; brain access per provider or per run.
 **Revisit when:** the feature becomes stable, brain size measurably slows runs, or consolidation keeps finding nothing to change.
 

@@ -107,16 +107,18 @@ public class DispatchSchedulerTriageTests
         };
 
     [Theory]
-    [InlineData(true, true, (int)DispatchTurn.Decomposition)]
-    [InlineData(false, true, (int)DispatchTurn.Triage)]
-    [InlineData(false, false, (int)DispatchTurn.Triage)]
-    public void TrySelectHighestPriorityQueue_TriageComesAfterDecompositionAndBeforeIssues(
-        bool hasDecomp, bool hasIssues, int expected)
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, false, false)]
+    public void TrySelectHighestPriorityQueue_TriageComesBeforeEveryOtherQueue(
+        bool hasPrs, bool hasDecomp, bool hasIssues)
     {
-        var (found, turn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs: false, hasDecomp, hasTriage: true);
+        var (found, turn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp, hasTriage: true);
 
         found.Should().BeTrue();
-        turn.Should().Be((DispatchTurn)expected);
+        turn.Should().Be(DispatchTurn.Triage);
     }
 
     [Fact]
@@ -160,7 +162,7 @@ public class DispatchSchedulerTriageTests
     }
 
     [Fact]
-    public async Task FairRoundRobin_DispatchesDecompositionThenTriageThenIssues()
+    public async Task FairRoundRobin_DispatchesTriageThenDecompositionThenIssues()
     {
         var template = Template();
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -174,7 +176,7 @@ public class DispatchSchedulerTriageTests
             CancellationToken.None, CancellationToken.None);
 
         result.ProcessedCount.Should().Be(3);
-        _dispatchOrder.Should().Equal("epic:epic", "triage:bug", "issue:feature");
+        _dispatchOrder.Should().Equal("triage:bug", "epic:epic", "issue:feature");
     }
 
     [Fact]

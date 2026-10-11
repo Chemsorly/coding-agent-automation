@@ -16,8 +16,8 @@ namespace CodingAgent.Orchestration.Dispatch;
 ///     All task types (Implementation, Review, Decomposition, Consolidation) — calls
 ///     <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem visible in the UI queue.
 ///     <c>WorkItemDispatchLoop</c> in the Scheduler polls those items ordered by
-///     <c>tier(TaskType) ASC, PriorityWeight DESC, CreatedAt ASC</c> (Review &gt; Decomposition &gt;
-///     Implementation; within a tier, higher <c>PriorityWeight</c> first, then FIFO) and creates
+///     <c>tier(TaskType) ASC, PriorityWeight DESC, CreatedAt ASC</c> (Triage &gt; Review &gt; Decomposition &gt;
+///     Implementation &gt; Consolidation; within a tier, higher <c>PriorityWeight</c> first, then FIFO) and creates
 ///     the K8s Job when capacity is available. This preserves the UI queue so operators can
 ///     reorder work via <c>PriorityWeight</c> before pods are created.
 ///   </item>

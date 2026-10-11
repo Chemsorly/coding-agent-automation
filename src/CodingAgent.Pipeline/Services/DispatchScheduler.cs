@@ -5,8 +5,8 @@ using CodingAgent.Pipeline.Telemetry;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
-/// Priority-based dispatch logic across issue/PR/decomposition queues.
-/// Selects the highest-priority eligible queue type each iteration: PullRequests first,
+/// Priority-based dispatch logic across triage/PR/decomposition/issue queues.
+/// Selects the highest-priority eligible queue type each iteration: Triage first, then PullRequests,
 /// then Decomposition, then Issues (Implementation). Within each type, FIFO order is
 /// preserved by the per-queue dequeue logic.
 /// </summary>
@@ -492,16 +492,15 @@ internal sealed partial class DispatchScheduler
     }
 
     /// <summary>
-    /// Priority order for turn selection. Review (PRs) is dispatched first, then Decomposition,
-    /// then Triage (the same tier: both are planning work), then Issues (Implementation). Within each type,
-    /// FIFO order is preserved by the per-queue dequeue logic.
+    /// Priority order for turn selection. Triage is dispatched first, then Review (PRs), then Decomposition,
+    /// then Issues (Implementation). Within each type, FIFO order is preserved by the per-queue dequeue logic.
     /// </summary>
     private static readonly DispatchTurn[] PriorityOrder =
-        [DispatchTurn.PullRequests, DispatchTurn.Decomposition, DispatchTurn.Triage, DispatchTurn.Issues];
+        [DispatchTurn.Triage, DispatchTurn.PullRequests, DispatchTurn.Decomposition, DispatchTurn.Issues];
 
     /// <summary>
-    /// Selects the next eligible queue type using priority ordering: PullRequests first,
-    /// then Decomposition, then Triage, then Issues. Returns (found=false, default) when all queues are exhausted.
+    /// Selects the next eligible queue type using priority ordering: Triage first, then PullRequests,
+    /// then Decomposition, then Issues. Returns (found=false, default) when all queues are exhausted.
     /// </summary>
     internal static (bool found, DispatchTurn selectedTurn) TrySelectHighestPriorityQueue(
         bool hasIssues, bool hasPrs, bool hasDecomp, bool hasTriage = false)
