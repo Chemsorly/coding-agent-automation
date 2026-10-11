@@ -22,6 +22,8 @@ set:
   database.host: "pg-host"
   database.auth.existingSecret: "my-secret"
   signalr.redis.connectionString: "redis:6379"
+  # The scheduler image has no default tag; the chart refuses to render without one.
+  scheduler.image.tag: "test"
 
 tests:
 

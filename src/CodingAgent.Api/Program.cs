@@ -46,7 +46,7 @@ try
 }
 catch (InvalidOperationException ex)
 {
-    Log.Fatal("{Reason} Exiting.", ex.Message);
+    Log.Fatal(ex, "{Reason} Exiting.", ex.Message);
     return;
 }
 

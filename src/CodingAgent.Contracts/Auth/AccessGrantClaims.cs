@@ -28,14 +28,18 @@ public static class AccessGrantClaims
     public static IEnumerable<Claim> ToClaims(AccessGrant grant)
     {
         ArgumentNullException.ThrowIfNull(grant);
+        return Enumerate(grant);
 
-        if (grant.GlobalRole > AccessRole.None)
-            yield return new Claim(UserTokenClaimTypes.GlobalRole, AccessRoleNames.ToName(grant.GlobalRole));
-
-        foreach (var (projectId, role) in grant.ProjectRoles.OrderBy(p => p.Key, StringComparer.Ordinal))
+        static IEnumerable<Claim> Enumerate(AccessGrant grant)
         {
-            if (role is AccessRole.ReadOnly or AccessRole.Operator)
-                yield return new Claim(UserTokenClaimTypes.ProjectRole, $"{projectId}:{AccessRoleNames.ToName(role)}");
+            if (grant.GlobalRole > AccessRole.None)
+                yield return new Claim(UserTokenClaimTypes.GlobalRole, AccessRoleNames.ToName(grant.GlobalRole));
+
+            foreach (var (projectId, role) in grant.ProjectRoles.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                if (role is AccessRole.ReadOnly or AccessRole.Operator)
+                    yield return new Claim(UserTokenClaimTypes.ProjectRole, $"{projectId}:{AccessRoleNames.ToName(role)}");
+            }
         }
     }
 

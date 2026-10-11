@@ -35,6 +35,14 @@ public class AccessGrantClaimsTests
     }
 
     [Fact]
+    public void ToClaims_RejectsNull_BeforeEnumeration()
+    {
+        var act = () => AccessGrantClaims.ToClaims(null!);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
     public void ToClaims_DropsAProjectScopedAdmin()
     {
         var grant = new AccessGrant(AccessRole.None, new Dictionary<string, AccessRole> { [ProjectA] = AccessRole.Admin }, []);
