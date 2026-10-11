@@ -239,6 +239,7 @@ public static class PipelineConfigurationResolver
         // TODO: Add ArgumentNullException.ThrowIfNull for loadConfig, loadTemplates parameters to produce clear validation errors instead of NRE
         var config = await loadConfig(ct);
         config = ApplyProjectOverrides(config, project);
+        config = ClampSubIssueCap(config);
         var templates = await loadTemplates(ct);
         return ApplyTemplateOverrides(config, repoProviderId, providerConfigs, templates);
     }
@@ -258,7 +259,29 @@ public static class PipelineConfigurationResolver
     {
         // TODO: Add ArgumentNullException.ThrowIfNull for preLoaded, loadTemplates parameters to produce clear validation errors instead of NRE
         var config = ApplyProjectOverrides(preLoaded, project);
+        config = ClampSubIssueCap(config);
         var templates = await loadTemplates(ct);
         return ApplyTemplateOverrides(config, repoProviderId, providerConfigs, templates);
+    }
+
+    /// <summary>
+    /// Clamps <see cref="PipelineConfiguration.MaxDecompositionSubIssues"/> to a minimum of 1.
+    /// A value of 0 or below can arrive from storage (direct DB edit, a row that pre-dates the
+    /// [Range(1,20)] annotation, or any non-API save path that bypasses
+    /// <see cref="PipelineSettingsValidator"/>). Without this guard, <c>CreateSubIssuesStep</c>
+    /// would silently mark every proposal as SkippedByCap and post an agent:error outcome, and
+    /// <c>PostDecompositionPlanStep</c> would display a misleading "0 sub-issues will be created"
+    /// warning in the human approval comment.
+    /// </summary>
+    private static PipelineConfiguration ClampSubIssueCap(PipelineConfiguration config)
+    {
+        if (config.MaxDecompositionSubIssues >= 1)
+            return config;
+
+        Log.Warning(
+            "MaxDecompositionSubIssues resolved to {Value} (must be \u2265 1); clamping to 1. " +
+            "Correct the global configuration.",
+            config.MaxDecompositionSubIssues);
+        return config with { MaxDecompositionSubIssues = 1 };
     }
 }
