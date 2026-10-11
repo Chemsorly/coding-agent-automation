@@ -12,8 +12,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// <para>
 /// NOTE: These properties sort anonymous in-memory lists using the same expression as production.
 /// They guard the within-tier logic (PriorityWeight and CreatedAt invariants) and the cross-tier
-/// invariant. For an integration-level guard against the production <c>DispatchStateBuilder.BuildStateAsync</c>
-/// query, see <c>DispatchStateBuilderBranchTests</c> in <c>CodingAgent.Orchestration.UnitTests</c>.
+/// invariant. For a guard against the production <c>WorkItemDispatchOrderExtensions.ApplyDispatchOrder</c>
+/// sort, see <c>WorkItemDispatchOrderExtensionsTests</c> in <c>CodingAgent.Orchestration.UnitTests</c>.
 /// </para>
 /// <para><b>Updated for #2563:</b> added tier as primary sort key; Requirements 5.7 updated for #2172.</para>
 /// </summary>

@@ -1,4 +1,5 @@
 @using CodingAgent.Api.Client
+@using Serilog
 @inject IPipelineApiConfigClient ConfigClient
 @inject NavigationManager Navigation
 @inject IAccessGuard Guard
@@ -9,6 +10,7 @@
         <span class="first-run-banner-message">
             No job templates configured. Go to <a href="pipelines"><strong>Pipelines → Pipeline Job Templates</strong></a> to set up your first template before the pipeline can dispatch work.
         </span>
+        <InlineStatus Message="@_errorMessage" IsError="true" OnDismissed="ClearError" />
         <button class="first-run-banner-dismiss" @onclick="DismissAsync" aria-label="Dismiss banner">Dismiss</button>
     </div>
 }
@@ -16,6 +18,7 @@
 @code {
     private bool _show;
     private bool _dismissed;
+    private string? _errorMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -48,9 +51,22 @@
         // Spec 049: the dismissal is shared configuration; CockpitLayout renders the banner for admins only.
         try { await Guard.DemandAsync(AccessRole.Admin, null, "DismissFirstRunBanner"); }
         catch (AccessDeniedException) { return; }
-        await ConfigClient.SetKeyValueAsync("first_run_banner_dismissed", "true", CancellationToken.None);
+        try
+        {
+            await ConfigClient.SetKeyValueAsync("first_run_banner_dismissed", "true", CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // An exception escaping an event handler terminates the circuit; keep the banner and say why.
+            Log.Warning(ex, "FirstRunBanner: failed to save the dismissal");
+            _errorMessage = $"Failed to dismiss: {ex.Message}";
+            return;
+        }
+        _errorMessage = null;
         _dismissed = true;
         await EvaluateAsync();
         StateHasChanged();
     }
+
+    private void ClearError() => _errorMessage = null;
 }

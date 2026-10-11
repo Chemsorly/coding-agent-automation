@@ -1105,14 +1105,12 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     /// dispatched before a lower-weight one of the same task type when WorkItemDispatchLoop
     /// polls the Pending queue.
     ///
-    /// Regression guard: if the within-tier secondary sort (PriorityWeight DESC) is removed from
-    /// <c>DispatchStateBuilder.BuildStateAsync</c>, this test fails. Both items are
-    /// <c>Implementation</c> (same tier), so the tier primary key is equal and the secondary
-    /// PriorityWeight DESC sort is the deciding factor.
+    /// Both items are <c>Implementation</c> (same tier), so the tier primary key is equal and the
+    /// secondary PriorityWeight DESC sort is the deciding factor.
     ///
-    /// For the tier-primary sort invariant (Review &gt; Decomp &gt; Impl &gt; Consolidation), see
-    /// <c>DispatchStateBuilderBranchTests.BuildStateAsync_MixedTaskTypes_OrdersByTierThenPriorityThenCreatedAt</c>
-    /// in <c>CodingAgent.Orchestration.UnitTests</c>.
+    /// The sort itself (<c>WorkItemDispatchOrderExtensions.ApplyDispatchOrder</c>) is guarded by
+    /// <c>WorkItemDispatchOrderExtensionsTests</c> in <c>CodingAgent.Orchestration.UnitTests</c>
+    /// and <c>WorkItemEndpointTests.GetPendingWorkItems_OrderedByRunTypeTierThenPriorityWeightThenCreatedAt</c>.
     /// </summary>
     [Fact]
     public async Task PendingQueueRestore_Regression_PriorityWeight_HigherWeightClaimedFirst()

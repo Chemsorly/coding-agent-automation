@@ -6,7 +6,7 @@ namespace CodingAgent.Api.Dispatch;
 
 /// <summary>
 /// Lightweight projection of pending work items (no Payload loaded).
-/// Used by <see cref="DispatchStateBuilder"/> and its consumers.
+/// Built by <see cref="DispatchWorkItemService"/> and consumed by <see cref="DispatchLifecycleService"/>.
 /// Previously defined in <c>CodingAgent.Orchestration.Dispatch</c> (Spec 043 dead code);
 /// moved here as the canonical location (arch-audit 2026-08-22).
 /// </summary>
@@ -22,27 +22,6 @@ internal sealed record PendingWorkItemProjection
     public string? IssueProviderConfigId { get; init; }
     public int PriorityWeight { get; init; }
 }
-
-/// <summary>
-/// Result of <see cref="DispatchStateBuilder.BuildStateAsync"/>: the dispatch state
-/// needed for per-item gating decisions.
-/// </summary>
-internal sealed class DispatchState
-{
-    public required PipelineDbContext Db { get; init; }
-    public required List<PendingWorkItemProjection> PendingItems { get; init; }
-    public required Dictionary<string, int> ConcurrencyBySelector { get; init; }
-    public required List<string> AvailablePvcs { get; init; }
-}
-
-/// <summary>
-/// A dispatch-ready candidate that has passed all gating checks.
-/// </summary>
-internal sealed record DispatchCandidate(
-    PendingWorkItemProjection Item,
-    JobTemplate Template,
-    string EffectiveSelector,
-    bool IsKiro);
 
 /// <summary>
 /// Parameter object for <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/>.

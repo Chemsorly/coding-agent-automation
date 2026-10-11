@@ -447,7 +447,7 @@ public partial class LayerBoundaryTests
 
     // ── Dispatch duplication guard ──────────────────────────────────────
     // Prevents finding 01 from recurring after the cleanup lands.
-    // The Api copies of the shared dispatch types (DispatchStateBuilder, DispatchLifecycleService,
+    // The Api copies of the shared dispatch types (DispatchLifecycleService,
     // DispatchTemplateResolver, PvcAvailabilityResult) are canonical. K8sJobCreationContext is a
     // private nested record inside DispatchLifecycleService — it appears in reflection but is not
     // a public type and not a duplication concern.
