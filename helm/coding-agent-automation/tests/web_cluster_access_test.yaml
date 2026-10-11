@@ -1,0 +1,67 @@
+# helm unittest suite for the web host's cluster access.
+# Run with: helm unittest helm/coding-agent-automation
+#
+# The web host is the internet-facing pod and makes no Kubernetes API calls: leader election runs
+# in the Scheduler and the Job Controller, Job creation in the Pipeline API.
+#
+# Covers:
+#   1. No service account token is mounted into the web pod
+#   2. No leader-election settings are passed to the web pod
+#   3. The web ConfigMap carries only the work-distribution key the web host reads
+#   4. The removed pipeline-loop startup delay is not rendered
+
+suite: web cluster access
+
+templates:
+  - templates/web-deployment.yaml
+  - templates/web-env-configmap.yaml
+
+# Required values to avoid render failures in dependent templates
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  signalr.redis.connectionString: "redis:6379"
+
+tests:
+
+  - it: mounts no service account token into the web pod
+    template: templates/web-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+
+  - it: passes no leader-election settings to the web pod
+    template: templates/web-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LeaderElection__PipelineLoopLeaseName
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LeaderElection__Namespace
+          any: true
+
+  - it: carries only the chat connect timeout from the work-distribution settings
+    template: templates/web-env-configmap.yaml
+    set:
+      workDistribution.dispatch.chatPodConnectTimeoutSeconds: 90
+    asserts:
+      - equal:
+          path: data.WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds
+          value: "90"
+      - notExists:
+          path: data.WorkDistribution__OrchestratorUrl
+      - notExists:
+          path: data.WorkDistribution__AgentApiKeySecretName
+      - notExists:
+          path: data.WorkDistribution__Namespace
+
+  - it: renders no pipeline-loop startup delay
+    template: templates/web-env-configmap.yaml
+    asserts:
+      - notExists:
+          path: data.PIPELINE_LOOP_STARTUP_DELAY_SECONDS

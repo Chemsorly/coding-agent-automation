@@ -23,11 +23,6 @@ web:
   podSecurityContext: {}
   # Extra initContainers injected before the main container (e.g., permission fixers)
   initContainers: []
-  leaderElection:
-    # Override the PipelineLoopService leader election lease name.
-    # Empty (default) = release-scoped: caa-<release>-pipeline-loop-lock
-    # Set explicitly to use a fixed name across Helm releases.
-    pipelineLoopLeaseName: ""
   service:
     type: ClusterIP
     port: 8080
@@ -102,10 +97,6 @@ web:
     # Set false when TLS ends in front of the ingress and the ingress sees only HTTP.
     httpsRedirect: true
   env:
-    # Startup delay was previously needed to give the web hub time to rehydrate active runs
-    # before dispatching. After Spec 044, the API owns IOrchestratorRunService and rehydrates on
-    # its own startup; the web service no longer dispatches directly. Set to 0 (Spec 044 Req 7.2).
-    pipelineLoopStartupDelaySeconds: 0
     # Seconds to wait after marking /readyz as 503 before proceeding with shutdown.
     readinessDrainDelaySeconds: 15
     # Log level for the web application

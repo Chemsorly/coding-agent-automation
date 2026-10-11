@@ -3,11 +3,9 @@ using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
-using CodingAgent.Orchestration.Redis;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Web.Services;
 using Serilog;
-using StackExchange.Redis;
 
 namespace CodingAgent.Web;
 
@@ -19,8 +17,7 @@ namespace CodingAgent.Web;
 public static partial class WorkDistributionRegistration
 {
     /// <summary>
-    /// Registers work distribution services: K8s infrastructure, leader election,
-    /// work distributor, and SignalR backplane.
+    /// Registers work distribution services: API-backed stores, the work distributor and job templates.
     /// All persistence routes through Pipeline API — no IDbContextFactory in this method.
     /// </summary>
     public static IServiceCollection AddWorkDistribution(
@@ -56,74 +53,15 @@ public static partial class WorkDistributionRegistration
         // AddStandardResilienceHandler pipeline — so it has no consumer for these and no longer
         // references Infrastructure.Persistence where RegisterResiliencePipelines() is defined.
 
-        // ── K8s infrastructure + consolidation registrations ─────────────────────────────────────
+        // ── Work distributor, job templates and chat dispatch ─────────────────────────────────────
         RegisterConsolidationServices(services, configuration);
 
-        // ── SignalR Redis backplane (optional) ────────────────────────────────
-        ConfigureSignalRRedisBackplane(services, configuration);
+        // No SignalR backplane: the web host maps no hub of its own, and Blazor circuits are
+        // pinned to one replica by sticky sessions. The hubs and their backplane live in the API.
 
         Log.Information("WorkDistribution: Kubernetes mode — all persistence routes through Pipeline API. " +
                         "No direct Postgres access in orchestrator. T8 complete.");
 
         return services;
-    }
-
-    /// <summary>
-    /// Wires SignalR Redis backplane when SignalR:Redis:ConnectionString is configured.
-    /// Without Redis, uses default in-memory transport (single replica only).
-    /// The Redis backplane is for the SignalR hub used by the web UI, not for work distribution.
-    /// </summary>
-    private static void ConfigureSignalRRedisBackplane(IServiceCollection services, IConfiguration configuration)
-    {
-        var redisConnectionString = configuration.GetValue<string>("SignalR:Redis:ConnectionString");
-        if (string.IsNullOrEmpty(redisConnectionString))
-            return;
-
-        // Shared config and connection reference — used by both the SignalR factory and DI registration.
-        var config = RedisConnectionOptions.Parse(redisConnectionString);
-        config.ChannelPrefix = RedisChannel.Literal("caa");
-
-        IConnectionMultiplexer? sharedConnection = null;
-        var connectionLock = new object();
-
-        // Replace the default AddSignalR() registration with Redis backplane.
-        // Note: AddSignalR() is already called in Program.cs. AddStackExchangeRedis extends it.
-        services.AddSignalR().AddStackExchangeRedis(options =>
-        {
-            options.Configuration = config;
-
-            options.ConnectionFactory = async (writer) =>
-            {
-                // With AbortOnConnectFail=false, ConnectAsync returns immediately with a
-                // disconnected multiplexer that retries in the background. This ensures
-                // startup never crashes due to Redis unavailability.
-                var connection = await ConnectionMultiplexer.ConnectAsync(config, writer);
-                connection.ConnectionFailed += (_, e) =>
-                    Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",
-                        e.FailureType, e.Exception?.Message);
-                connection.ConnectionRestored += (_, e) =>
-                    Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
-
-                // Capture the connection for DI health checks (single assignment, no awaits in lock)
-                lock (connectionLock) { sharedConnection = connection; }
-
-                return connection;
-            };
-        });
-
-        // Register IConnectionMultiplexer as a lazy singleton so InfrastructureHealthService
-        // can resolve it for health checks. The factory delegate above sets sharedConnection
-        // when SignalR first creates the Redis connection. Fallback uses the same resilient config
-        // (AbortOnConnectFail=false) to avoid throwing on transient Redis unavailability.
-        services.AddSingleton<IConnectionMultiplexer>(sp =>
-        {
-            lock (connectionLock)
-            {
-                return sharedConnection
-                    ?? ConnectionMultiplexer.Connect(config);
-            }
-        });
-
-        Log.Information("WorkDistribution: SignalR Redis backplane configured with AbortOnConnectFail=false");
     }
 }

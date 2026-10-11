@@ -76,6 +76,8 @@ public static class DataProtectionRegistration
         }
 
         var mux = connectionMultiplexerFactory();
+        // The same connection backs the sidebar's Redis indicator (InfrastructureHealthService).
+        services.AddSingleton(mux);
         services.AddDataProtection()
             .PersistKeysToStackExchangeRedis(() => mux.GetDatabase(), RedisKey)
             .SetApplicationName(ApplicationName);

@@ -1,46 +1,36 @@
 using System.Threading.RateLimiting;
-using CodingAgent.AgentGateway;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Web.Auth;
 
 /// <summary>
 /// Registers user authentication for the web UI (Spec 049): a cookie session, the local admin
-/// login, OIDC (when enabled), the fallback "authenticated user" policy, the login rate limit,
-/// forwarded headers and the agent API key scheme (kept for <c>/api/export/runs.json</c>).
+/// login, OIDC (when enabled), the fallback "authenticated user" policy, the login rate limit and
+/// forwarded headers. The web host accepts no API keys; those belong to the Pipeline API.
 /// </summary>
 internal static class UserAuthenticationRegistration
 {
     public const string CookieScheme = CookieAuthenticationDefaults.AuthenticationScheme;
     public const string LoginRateLimitPolicy = "login";
 
-    /// <summary>The agent API key policy name, unchanged from before Spec 049.</summary>
-    public const string AgentApiKeyPolicy = "AgentApiKey";
-
     public static IServiceCollection AddUserAuthentication(
-        this IServiceCollection services, IConfiguration configuration, ILogger logger)
+        this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<AuthOptions>()
             .Bind(configuration.GetSection(AuthOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<AuthOptions>, AuthOptionsValidator>();
 
-        var agentApiKey = AgentApiKeyAuthHandler.ResolveApiKey(logger);
         var authentication = services.AddAuthentication(options =>
             {
                 options.DefaultScheme = CookieScheme;
                 options.DefaultChallengeScheme = CookieScheme;
             })
-            .AddCookie(CookieScheme)
-            // Only endpoints with RequireAuthorization("AgentApiKey") use this scheme.
-            .AddScheme<AgentApiKeyAuthOptions, AgentApiKeyAuthHandler>(
-                AgentApiKeyDefaults.AuthenticationScheme,
-                options => options.ApiKey = agentApiKey);
+            .AddCookie(CookieScheme);
         if (configuration.GetValue<bool>($"{AuthOptions.SectionName}:Oidc:Enabled"))
             authentication.AddOidcLogin();
 
@@ -50,10 +40,7 @@ internal static class UserAuthenticationRegistration
 
         var authorization = services.AddAuthorizationBuilder();
         authorization
-            .SetFallbackPolicy(new AuthorizationPolicyBuilder(CookieScheme).RequireAuthenticatedUser().Build())
-            .AddPolicy(AgentApiKeyPolicy, policy =>
-                policy.AddAuthenticationSchemes(AgentApiKeyDefaults.AuthenticationScheme)
-                      .RequireAuthenticatedUser());
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder(CookieScheme).RequireAuthenticatedUser().Build());
         AccessPolicies.Register(authorization);
         services.AddSingleton<IAuthorizationHandler, AccessAuthorizationHandler>();
 

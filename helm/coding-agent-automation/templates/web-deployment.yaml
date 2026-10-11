@@ -34,7 +34,9 @@ spec:
         app.kubernetes.io/component: web
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" . }}
-      automountServiceAccountToken: true
+      # The web host makes no Kubernetes API calls (leader election runs in the Scheduler and the
+      # Job Controller), so the internet-facing pod carries no service account token.
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ $web.terminationGracePeriodSeconds }}
       {{- with $web.podSecurityContext }}
       securityContext:
@@ -150,14 +152,6 @@ spec:
               {{- else -}}
                 {{- printf "http://%s-scheduler.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.scheduler.service.port | int) | quote }}
               {{- end }}
-            # Leader election lease name — release-scoped to prevent collision when multiple
-            # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.
-            - name: LeaderElection__PipelineLoopLeaseName
-              value: {{ include "coding-agent-automation.leaseName" (dict "override" $web.leaderElection.pipelineLoopLeaseName "suffix" "pipeline-loop-lock" "root" .) }}
-            - name: LeaderElection__Namespace
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
             # Downward API: expose namespace and pod name so OTEL_RESOURCE_ATTRIBUTES can reference
             # them via $(VAR_NAME) substitution. These MUST come before OTEL_RESOURCE_ATTRIBUTES.
             {{- include "coding-agent-automation.otelEnv" (dict "serviceName" (.Values.otel.webServiceName | default "coding-agent-web") "deploymentName" (printf "%s-web" (include "coding-agent-automation.fullname" .)) "root" .) | nindent 12 }}
