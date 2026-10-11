@@ -63,14 +63,18 @@ public class TemplateTableSectionLabelPreviewTests : BunitContext
         // ARRANGE
         var dotnetProfile = new AgentProfile
         {
-            Id = "dotnet-profile", DisplayName = ".NET Profile",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "dotnet-profile",
+            DisplayName = ".NET Profile",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10"]
         };
         var polyglotProfile = new AgentProfile
         {
-            Id = "polyglot-profile", DisplayName = "Polyglot Profile",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "polyglot-profile",
+            DisplayName = "Polyglot Profile",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10", "python", "python312"]
         };
 
@@ -79,7 +83,10 @@ public class TemplateTableSectionLabelPreviewTests : BunitContext
 
         var repoProvider = new ProviderConfig
         {
-            Id = RepoProviderId, DisplayName = "Repo", Kind = ProviderKind.Repository, ProviderType = "GitHub",
+            Id = RepoProviderId,
+            DisplayName = "Repo",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
             RequiredLabels = ["kiro", "dotnet", "dotnet10"]
         };
 
@@ -113,8 +120,10 @@ public class TemplateTableSectionLabelPreviewTests : BunitContext
         // ARRANGE: only a Java profile, but the repo is labelled for .NET
         var javaProfile = new AgentProfile
         {
-            Id = "java-profile", DisplayName = "Java Profile",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "java-profile",
+            DisplayName = "Java Profile",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["kiro", "java", "java21"]
         };
 
@@ -123,7 +132,10 @@ public class TemplateTableSectionLabelPreviewTests : BunitContext
 
         var repoProvider = new ProviderConfig
         {
-            Id = RepoProviderId, DisplayName = "Repo", Kind = ProviderKind.Repository, ProviderType = "GitHub",
+            Id = RepoProviderId,
+            DisplayName = "Repo",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
             RequiredLabels = ["kiro", "dotnet", "dotnet10"]
         };
 

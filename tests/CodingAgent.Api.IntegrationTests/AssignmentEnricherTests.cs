@@ -375,14 +375,18 @@ public sealed class AssignmentEnricherTests
         // ARRANGE
         var dotnetProfile = new AgentProfile
         {
-            Id = "dotnet-profile", DisplayName = ".NET Profile",
-            AgentProviderConfigId = "agent-cfg-1", Enabled = true,
+            Id = "dotnet-profile",
+            DisplayName = ".NET Profile",
+            AgentProviderConfigId = "agent-cfg-1",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10"]
         };
         var polyglotProfile = new AgentProfile
         {
-            Id = "polyglot-profile", DisplayName = "Polyglot Profile",
-            AgentProviderConfigId = "agent-cfg-2", Enabled = true,
+            Id = "polyglot-profile",
+            DisplayName = "Polyglot Profile",
+            AgentProviderConfigId = "agent-cfg-2",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10", "python", "python312"]
         };
 
@@ -1035,7 +1039,8 @@ public sealed class AssignmentEnricherTests
         // Anchored on the stored suggestions, not on the last successful harness run: a run that found no
         // feedback also succeeds, and anchoring on it would skip feedback that no run has analyzed
         var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
-            with { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
+            with
+        { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
         var generatedAt = new DateTime(2026, 9, 20, 8, 0, 0, DateTimeKind.Utc);
         var history = MakeRunHistory(
             [MakeConsolidationRunSummary("HarnessSuggestions:global", new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero))],
@@ -1057,7 +1062,8 @@ public sealed class AssignmentEnricherTests
     public async Task EnrichAsync_HarnessSuggestions_NoStoredSuggestions_TakesTheNewestFeedback()
     {
         var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
-            with { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
+            with
+        { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
         var history = MakeRunHistory([], [MakeRunWithFeedback("Build tool missing")]);
         var store = new Mock<IHarnessSuggestionStore>();
         store.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>())).ReturnsAsync((HarnessSuggestions?)null);
@@ -1074,7 +1080,8 @@ public sealed class AssignmentEnricherTests
     public async Task EnrichAsync_HarnessSuggestions_NoFeedback_LeavesFeedbackNull()
     {
         var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
-            with { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
+            with
+        { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
         var (_, _, enricher) = MakeConsolidationEnricher(runHistory: MakeRunHistory([]).Object);
 
         var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);

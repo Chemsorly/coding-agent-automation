@@ -21,14 +21,18 @@ public sealed class ProfileResolverRequiredLabelsTests
     {
         var dotnetProfile = new AgentProfile
         {
-            Id = "dotnet-profile", DisplayName = ".NET",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "dotnet-profile",
+            DisplayName = ".NET",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10"]
         };
         var sonnetProfile = new AgentProfile
         {
-            Id = "sonnet-profile", DisplayName = ".NET Sonnet",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "sonnet-profile",
+            DisplayName = ".NET Sonnet",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10", "sonnet"]
         };
         var profiles = new[] { dotnetProfile, sonnetProfile };
@@ -48,14 +52,18 @@ public sealed class ProfileResolverRequiredLabelsTests
     {
         var dotnetProfile = new AgentProfile
         {
-            Id = "dotnet-profile", DisplayName = ".NET",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "dotnet-profile",
+            DisplayName = ".NET",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10"]
         };
         var sonnetProfile = new AgentProfile
         {
-            Id = "sonnet-profile", DisplayName = ".NET Sonnet",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "sonnet-profile",
+            DisplayName = ".NET Sonnet",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10", "sonnet"]
         };
         var profiles = new[] { dotnetProfile, sonnetProfile };
@@ -78,14 +86,18 @@ public sealed class ProfileResolverRequiredLabelsTests
     {
         var dotnetProfile = new AgentProfile
         {
-            Id = "dotnet-profile", DisplayName = ".NET",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "dotnet-profile",
+            DisplayName = ".NET",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10"]
         };
         var polyglotProfile = new AgentProfile
         {
-            Id = "polyglot-profile", DisplayName = "Polyglot",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "polyglot-profile",
+            DisplayName = "Polyglot",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10", "python", "python312"]
         };
         var profiles = new[] { dotnetProfile, polyglotProfile };
@@ -105,14 +117,18 @@ public sealed class ProfileResolverRequiredLabelsTests
     {
         var dotnetProfile = new AgentProfile
         {
-            Id = "dotnet-profile", DisplayName = ".NET",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "dotnet-profile",
+            DisplayName = ".NET",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10"]
         };
         var polyglotProfile = new AgentProfile
         {
-            Id = "polyglot-profile", DisplayName = "Polyglot",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "polyglot-profile",
+            DisplayName = "Polyglot",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10", "python", "python312"]
         };
         var profiles = new[] { dotnetProfile, polyglotProfile };
@@ -133,15 +149,19 @@ public sealed class ProfileResolverRequiredLabelsTests
     {
         var lowPriority = new AgentProfile
         {
-            Id = "low", DisplayName = "Low Priority",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "low",
+            DisplayName = "Low Priority",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["dotnet", "dotnet10"],
             Priority = 1
         };
         var highPriority = new AgentProfile
         {
-            Id = "high", DisplayName = "High Priority",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "high",
+            DisplayName = "High Priority",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["dotnet", "dotnet10"],
             Priority = 10
         };
@@ -163,15 +183,19 @@ public sealed class ProfileResolverRequiredLabelsTests
     {
         var upperProfile = new AgentProfile
         {
-            Id = "A-profile", DisplayName = "Upper",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "A-profile",
+            DisplayName = "Upper",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["dotnet", "dotnet10"],
             Priority = 0
         };
         var lowerProfile = new AgentProfile
         {
-            Id = "a-profile", DisplayName = "Lower",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "a-profile",
+            DisplayName = "Lower",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["dotnet", "dotnet10"],
             Priority = 0
         };
@@ -219,14 +243,18 @@ public sealed class ProfileResolverRequiredLabelsTests
     {
         var twoLabelProfile = new AgentProfile
         {
-            Id = "two-labels", DisplayName = "Two Labels",
-            AgentProviderConfigId = "agent-1", Enabled = true,
+            Id = "two-labels",
+            DisplayName = "Two Labels",
+            AgentProviderConfigId = "agent-1",
+            Enabled = true,
             MatchLabels = ["dotnet", "dotnet10"]
         };
         var threeLabelProfile = new AgentProfile
         {
-            Id = "three-labels", DisplayName = "Three Labels",
-            AgentProviderConfigId = "agent-2", Enabled = true,
+            Id = "three-labels",
+            DisplayName = "Three Labels",
+            AgentProviderConfigId = "agent-2",
+            Enabled = true,
             MatchLabels = ["kiro", "dotnet", "dotnet10"]
         };
         var profiles = new[] { threeLabelProfile, twoLabelProfile };
