@@ -167,6 +167,22 @@ public class OpenCodeSseEventTests
         result.OutputLines.Should().ContainMatch("✖ OpenCode *");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_HttpErrorFromTheMessageRequest_IsShownLive()
+    {
+        // What OpenCode 1.18.35 answers for a model its provider does not have.
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, Session);
+        ctx.Handler.ForUrlPattern("/session/.+/message", HttpStatusCode.InternalServerError,
+            """{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details."}}""");
+        var lines = new List<string>();
+
+        var result = await ctx.Provider.ExecuteAsync(OpenCodeTestHelpers.CreateRequest("p"), CancellationToken.None, lines.Add);
+
+        result.ExitCode.Should().Be(ExitCodes.GeneralFailure);
+        lines.Should().ContainSingle().Which.Should().StartWith("HTTP 500: ").And.Contain("Unexpected server error");
+    }
+
     [Theory]
     [InlineData("anthropic/claude-sonnet-4-5", "anthropic", "claude-sonnet-4-5")]
     [InlineData("openrouter/x-ai/grok-4", "openrouter", "x-ai/grok-4")]

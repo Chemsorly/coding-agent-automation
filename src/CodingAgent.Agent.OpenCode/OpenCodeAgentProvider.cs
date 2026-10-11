@@ -280,7 +280,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                     $"/session/{sessionId}/message", messageRequest, OpenCodeJson.JsonOptions, linkedCt);
 
                 if (!response.IsSuccessStatusCode)
-                    return await HandleHttpErrorResponseAsync(response, sessionId, workspacePath);
+                    return await HandleHttpErrorResponseAsync(response, sessionId, workspacePath, onOutputLine);
 
                 return await ParseAndEmitResponseAsync(response, sseState, onOutputLine);
             },
@@ -344,7 +344,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     /// Evicts stale cached sessions on 404/410 and returns a failure result.
     /// </summary>
     private async Task<AgentResult> HandleHttpErrorResponseAsync(
-        HttpResponseMessage response, string sessionId, string workspacePath)
+        HttpResponseMessage response, string sessionId, string workspacePath, Action<string>? onOutputLine)
     {
         // 404/410: session no longer exists (e.g., opencode server restarted).
         // Evict the stale cached session and let the caller retry via the pipeline retry logic.
@@ -371,10 +371,15 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
             _ => AgentErrorCategory.None
         };
 
+        // Shown live as well, like a failed turn's error: an unknown model, for one, ends here with
+        // HTTP 500, and the run's output would otherwise end without a reason.
+        var line = $"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}";
+        _logger.Warning("OpenCode message request failed: {Error}", line);
+        onOutputLine?.Invoke(StripAnsiEscapes(line));
         return new AgentResult
         {
             ExitCode = ExitCodes.GeneralFailure,
-            OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"],
+            OutputLines = [line],
             ErrorCategory = category
         };
     }
