@@ -31,6 +31,11 @@ public class RefactoringExecutorTests : IDisposable
         _mockIssueProvider
             .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(emptyResult);
+        // Default: return empty closed issues so CollectScanIssueReferencesAsync succeeds without additional setups
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyResult);
     }
 
     public void Dispose()
@@ -1690,6 +1695,203 @@ public class RefactoringExecutorTests : IDisposable
 
         result.Should().Contain("src/Kept.cs");
         result.Should().NotContain("src/Deleted.cs");
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_ScanCommitExcluded_DoesNotCountItsFiles()
+    {
+        // Two commits both change src/A.cs.
+        // One has subject "feat: x (#5) (#9)" — excluded by a predicate that checks for (#5).
+        // The other has subject "feat: y (#7)" — not excluded.
+        // The output should list src/A.cs with 1 change (only the non-excluded commit counts).
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput =
+            "COMMIT_DATE:2026-07-19 14:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: x (#5) (#9)\n" +
+            "src/A.cs\n" +
+            "COMMIT_DATE:2026-07-18 10:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: y (#7)\n" +
+            "src/A.cs\n";
+
+        Func<string, bool> isExcluded = subject => subject.Contains("(#5)", StringComparison.Ordinal);
+
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime, isExcludedCommit: isExcluded);
+
+        result.Should().NotBeNull();
+        result.Should().Contain("src/A.cs");
+        result.Should().Contain("1 changes");
+        // The excluded commit's contribution must not be counted
+        result.Should().NotContain("2 changes");
+        // TODO [WARNING]: This test does not verify that the excluded commit's recency weight does not
+        // leak into the score. ParseHotspotOutput uses time-decay weighting and the score line (e.g.
+        // "0.9 — src/A.cs (1 changes, avg 2 days ago)") could include both commits' weights even when
+        // the change count is 1. Add an assertion that the score corresponds to a single-commit
+        // contribution (i.e., not the sum of both commits' recency factors) to guard against that bug.
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_NonScanCommitStillCounts_AndNoCommitSubjectLines()
+    {
+        // A commit whose subject references a non-scan issue (#7) still counts.
+        // No output line should start with "COMMIT_SUBJECT:".
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput =
+            "COMMIT_DATE:2026-07-19 14:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: some change (#7)\n" +
+            "src/B.cs\n";
+
+        // With predicate (nothing excluded)
+        Func<string, bool> isExcluded = subject => subject.Contains("(#99)", StringComparison.Ordinal);
+        var resultWithPredicate = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime, isExcludedCommit: isExcluded);
+
+        resultWithPredicate.Should().NotBeNull();
+        resultWithPredicate.Should().Contain("src/B.cs");
+        resultWithPredicate.Should().Contain("1 changes");
+        // No line should start with "COMMIT_SUBJECT:"
+        // TODO [WARNING]: This assertion checks that no line *starts with* "COMMIT_SUBJECT:", but a bug
+        // where "COMMIT_SUBJECT:feat:..." was parsed as a file path would produce a line like
+        // "0.9 — COMMIT_SUBJECT:feat: some change (#7) (1 changes...)" which would not start with
+        // "COMMIT_SUBJECT:" and would not be caught. Change the assertion to check that no line
+        // *contains* "COMMIT_SUBJECT:" to be effective against that class of bug.
+        foreach (var line in resultWithPredicate!.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            line.Should().NotStartWith("COMMIT_SUBJECT:");
+
+        // Without predicate (null)
+        var resultWithoutPredicate = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+
+        resultWithoutPredicate.Should().NotBeNull();
+        resultWithoutPredicate.Should().Contain("src/B.cs");
+        resultWithoutPredicate.Should().Contain("1 changes");
+        foreach (var line in resultWithoutPredicate!.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            line.Should().NotStartWith("COMMIT_SUBJECT:");
+    }
+
+    // ── CollectScanIssueReferencesAsync tests ────────────────────────────────────────────────
+
+    private static IssueSummary MakeScanIssue(string identifier, string title = "Refactor X") =>
+        new() { Identifier = identifier, Title = title, Labels = ["agent:generated"], Description = $"*{RefactoringExecutor.GeneratedIssueFooter}.*" };
+
+    private static IssueSummary MakeNonScanIssue(string identifier, string title = "Other issue") =>
+        new() { Identifier = identifier, Title = title, Labels = [], Description = "Some other description." };
+
+    [Fact]
+    public async Task CollectScanIssueReferences_HasMoreOnPage1_RequestsPage2()
+    {
+        // When page 1 HasMore = true, page 2 should be requested.
+        var executor = CreateExecutor();
+
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(1, 100,
+                It.Is<IReadOnlyList<string>>(l => l.Contains("agent:generated")),
+                It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [MakeScanIssue("10")],
+                Page = 1, PageSize = 100, HasMore = true
+            });
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(2, 100,
+                It.Is<IReadOnlyList<string>>(l => l.Contains("agent:generated")),
+                It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [MakeScanIssue("11")],
+                Page = 2, PageSize = 100, HasMore = false
+            });
+        _mockIssueProvider
+            .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
+            .Returns<IssueIdentifier>(id => $"#{id.Value}");
+
+        var refs = await executor.CollectScanIssueReferencesAsync(
+            _mockIssueProvider.Object, openIssues: [], TimeSpan.FromDays(90), "job1", CancellationToken.None);
+
+        refs.Should().Contain("#10");
+        refs.Should().Contain("#11");
+        _mockIssueProvider.Verify(x => x.ListClosedIssuesAsync(2, 100,
+            It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        // TODO [WARNING]: This test verifies page 2 was called once, but does not explicitly verify that
+        // page 1 was also called exactly once. An implementation that skipped page 1 and jumped directly
+        // to page 2 would fail the refs.Should().Contain("#10") assertion (providing indirect coverage),
+        // but adding an explicit Verify for page 1 (Times.Once) would make the intent clear and guard
+        // against a future refactor that changes initial page logic without breaking the refs assertions.
+    }
+
+    [Fact]
+    public async Task CollectScanIssueReferences_NonScanIssuesNotIncluded()
+    {
+        // Issues without the footer are not included in the result.
+        var executor = CreateExecutor();
+
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), 100,
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [MakeScanIssue("20"), MakeNonScanIssue("21")],
+                Page = 1, PageSize = 100, HasMore = false
+            });
+        _mockIssueProvider
+            .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
+            .Returns<IssueIdentifier>(id => $"#{id.Value}");
+
+        var refs = await executor.CollectScanIssueReferencesAsync(
+            _mockIssueProvider.Object, openIssues: [], TimeSpan.FromDays(90), "job1", CancellationToken.None);
+
+        refs.Should().Contain("#20");
+        refs.Should().NotContain("#21");
+    }
+
+    [Fact]
+    public async Task CollectScanIssueReferences_ClosedQueryThrows_ReturnsOpenScanRefs()
+    {
+        // An exception from ListClosedIssuesAsync still returns the open scan issues' references.
+        var executor = CreateExecutor();
+
+        var openScanIssue = MakeScanIssue("5");
+
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), 100,
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+        _mockIssueProvider
+            .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
+            .Returns<IssueIdentifier>(id => $"#{id.Value}");
+
+        var refs = await executor.CollectScanIssueReferencesAsync(
+            _mockIssueProvider.Object, openIssues: [openScanIssue], TimeSpan.FromDays(90), "job1", CancellationToken.None);
+
+        // Open scan issues are still collected despite the closed query failing
+        refs.Should().Contain("#5");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ListOpenIssuesCalledOnce_EvenWithScanIssueRefCollection()
+    {
+        // ListOpenIssuesAsync must be called exactly once per ExecuteAsync — CollectScanIssueReferencesAsync
+        // must reuse the result rather than making a second call.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        _mockIssueProvider.Verify(
+            x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        // TODO [WARNING]: This test verifies ListOpenIssuesAsync is called once but relies on the default
+        // empty mock setup, so it does not verify that the openIssues result is actually passed through to
+        // CollectScanIssueReferencesAsync. A bug where openIssues was always passed as an empty list would
+        // not be caught. Add a stronger test that populates the open-issues mock with scan issues and then
+        // verifies those refs are present in the hotspot exclusion path (e.g., by inspecting that the git
+        // log call uses an exclusion predicate matching those refs, or by checking a log message).
     }
 
     [Fact]

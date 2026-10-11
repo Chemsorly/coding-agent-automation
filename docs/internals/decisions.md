@@ -359,7 +359,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Refactoring proposal quality bar
 <!-- 2026-07-04 -->
-**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
+**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity, not counting commits of the scan's own issues), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
 **Why:** The bar must be high enough to avoid noise and low enough to catch real debt; outcome data (done vs. wont-do) should move it over time.
 **Not:** fixed complexity or duplication thresholds; filtering by scope only; leaving calibration entirely to the operator.
 **Revisit when:** more than 50% of proposals are wont-do over 90 days; the system is then too aggressive.
