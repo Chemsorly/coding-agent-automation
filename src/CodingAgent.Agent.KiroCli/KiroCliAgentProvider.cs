@@ -30,7 +30,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly string _executablePath;
     private readonly string? _agentName;
     private readonly IProcessStarter _processStarter;
-    private Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> _createEphemeralOrchestrator;
     private readonly ConcurrentDictionary<string, byte> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _mainSessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<IKiroCliOrchestrator, byte> _activeOrchestrators = new();
@@ -83,15 +82,11 @@ public partial class KiroCliAgentProvider : IAgentProvider
         _executablePath = executablePath;
         _agentName = agentName;
         _processStarter = processStarter ?? new DefaultProcessStarter();
-        _createEphemeralOrchestrator = config => new KiroCliOrchestrator(config, _logger);
+        CreateEphemeralOrchestratorWith = config => new KiroCliOrchestrator(config, _logger);
     }
 
     /// <summary>Creates the orchestrator for an isolated call; tests replace it.</summary>
-    internal Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> CreateEphemeralOrchestratorWith
-    {
-        get => _createEphemeralOrchestrator;
-        init => _createEphemeralOrchestrator = value;
-    }
+    internal Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> CreateEphemeralOrchestratorWith { get; init; }
 
     /// <summary>
     /// The run settings for this provider's orchestrators: the CLI path, and the model, effort and agent
@@ -284,7 +279,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     {
         var config = CreateRunConfiguration(_executablePath, _model, _agentName, _effort);
         _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
-        return _createEphemeralOrchestrator(config);
+        return CreateEphemeralOrchestratorWith(config);
     }
 
     /// <inheritdoc />
