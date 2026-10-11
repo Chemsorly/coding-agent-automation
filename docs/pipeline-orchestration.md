@@ -23,16 +23,17 @@ The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService`
 
 ### Dispatch Priority
 
-When multiple WorkItems are pending and an agent becomes available, the Scheduler's `WorkItemDispatchLoop` selects the highest-priority item first. The Pipeline API applies this fixed priority order (`WorkItemDispatchOrderExtensions.ApplyDispatchOrder`) when the Scheduler fetches pending items:
+When multiple WorkItems are pending and an agent becomes available, the Scheduler's `WorkItemDispatchLoop` selects the highest-priority item first. The Pipeline API sorts pending items by the `dispatchOrder` setting (Settings → Global Defaults → Pipeline Loop; `WorkItemDispatchOrderExtensions.ApplyDispatchOrder`) when the Scheduler fetches them. The default order:
 
 | Dispatch Order | Run Type | Notes |
 |----------------|----------|-------|
-| 1st (highest) | Review | PR review runs |
-| 2nd | Decomposition / DecompositionAnalysis, Triage | Both epic decomposition phases and [triage](triage.md) runs |
-| 3rd | Implementation | Standard issue implementation |
-| 4th (lowest) | Consolidation | Brain / refactoring / harness runs |
+| 1st (highest) | Triage | [Triage](triage.md) runs |
+| 2nd | Review | PR review runs |
+| 3rd | Decomposition / DecompositionAnalysis | Both epic decomposition phases |
+| 4th | Implementation | Standard issue implementation |
+| 5th (lowest) | Consolidation | Brain / refactoring / harness runs |
 
-The tier order is an explicit mapping (Review 0, Decomposition and Triage 1, Implementation 2, Consolidation 3); it does not follow the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3, Triage=4`). Within a tier, items with a higher `PriorityWeight` go first (manual dispatches get 100, closed-loop dispatches 0, and operators can change it on the Work page), then the oldest enqueue time.
+A task type's tier is its position in the setting; it does not follow the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3, Triage=4`). Within a tier, items with a higher `PriorityWeight` go first (manual dispatches get 100, closed-loop dispatches 0, and operators can change it on the Work page), then the oldest enqueue time.
 
 > **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Consolidation`. The Consolidation page lists them through `IPipelineApiRunHistoryClient.GetRunHistoryAsync` with `RunType = PipelineRunType.Consolidation`.
 

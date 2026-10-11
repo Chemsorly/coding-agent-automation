@@ -7,7 +7,7 @@ namespace CodingAgent.Pipeline.Services;
 internal sealed partial class DispatchScheduler
 {
     /// <summary>
-    /// Dispatches one round of triage (one per template). Triage shares the Decomposition priority tier but
+    /// Dispatches one round of triage (one per template). Triage is the first tier by default and
     /// has no concurrency cap of its own: a triage run is a single investigation, and the cycle budget
     /// still bounds it. Each candidate carries the tracker its issue lives in, and the run is bound to it.
     /// </summary>

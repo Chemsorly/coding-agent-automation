@@ -8,7 +8,8 @@ using static CodingAgent.Pipeline.Services.DispatchScheduler;
 namespace CodingAgent.Pipeline.UnitTests;
 
 /// <summary>
-/// The triage turn of <see cref="DispatchScheduler"/>: the Decomposition tier, its own queue, no concurrency cap,
+/// The triage turn of <see cref="DispatchScheduler"/>: first by default, its place in a configured
+/// <see cref="PipelineConfiguration.DispatchOrder"/>, its own queue, no concurrency cap,
 /// and the run bound to the tracker the <c>agent:triage</c> issue lives in.
 /// </summary>
 public class DispatchSchedulerTriageTests
@@ -107,16 +108,18 @@ public class DispatchSchedulerTriageTests
         };
 
     [Theory]
-    [InlineData(true, true, (int)DispatchTurn.Decomposition)]
-    [InlineData(false, true, (int)DispatchTurn.Triage)]
-    [InlineData(false, false, (int)DispatchTurn.Triage)]
-    public void TrySelectHighestPriorityQueue_TriageComesAfterDecompositionAndBeforeIssues(
-        bool hasDecomp, bool hasIssues, int expected)
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, false, false)]
+    public void TrySelectHighestPriorityQueue_TriageComesBeforeEveryOtherQueue(
+        bool hasPrs, bool hasDecomp, bool hasIssues)
     {
-        var (found, turn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs: false, hasDecomp, hasTriage: true);
+        var (found, turn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp, hasTriage: true);
 
         found.Should().BeTrue();
-        turn.Should().Be((DispatchTurn)expected);
+        turn.Should().Be(DispatchTurn.Triage);
     }
 
     [Fact]
@@ -160,7 +163,7 @@ public class DispatchSchedulerTriageTests
     }
 
     [Fact]
-    public async Task FairRoundRobin_DispatchesDecompositionThenTriageThenIssues()
+    public async Task FairRoundRobin_DispatchesTriageThenDecompositionThenIssues()
     {
         var template = Template();
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -174,7 +177,51 @@ public class DispatchSchedulerTriageTests
             CancellationToken.None, CancellationToken.None);
 
         result.ProcessedCount.Should().Be(3);
-        _dispatchOrder.Should().Equal("epic:epic", "triage:bug", "issue:feature");
+        _dispatchOrder.Should().Equal("triage:bug", "epic:epic", "issue:feature");
+    }
+
+    [Theory]
+    [InlineData(true, true, true, true, (int)DispatchTurn.Issues)]
+    [InlineData(false, true, true, true, (int)DispatchTurn.Decomposition)]
+    [InlineData(false, true, false, true, (int)DispatchTurn.PullRequests)]
+    [InlineData(false, false, false, true, (int)DispatchTurn.Triage)]
+    public void TrySelectHighestPriorityQueue_FollowsTheConfiguredOrder(
+        bool hasIssues, bool hasPrs, bool hasDecomp, bool hasTriage, int expected)
+    {
+        WorkItemTaskType[] order =
+        [
+            WorkItemTaskType.Implementation, WorkItemTaskType.Decomposition, WorkItemTaskType.Review,
+            WorkItemTaskType.Triage, WorkItemTaskType.Consolidation,
+        ];
+
+        var (found, turn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp, hasTriage, order);
+
+        found.Should().BeTrue();
+        turn.Should().Be((DispatchTurn)expected);
+    }
+
+    [Fact]
+    public async Task FairRoundRobin_FollowsTheConfiguredDispatchOrder()
+    {
+        var config = new PipelineConfiguration
+        {
+            MaxConcurrentDecompositions = 5,
+            DispatchOrder = [WorkItemTaskType.Implementation, WorkItemTaskType.Decomposition, WorkItemTaskType.Triage],
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            Request(Template(),
+                new Dictionary<string, List<TriageCandidate>> { ["t1"] = [new TriageCandidate(Issue("bug"), "ip-1")] },
+                issueQueues: new Dictionary<string, List<IssueSummary>> { ["t1"] = [Issue("feature")] },
+                decompositionQueues: new Dictionary<string, List<EpicCandidate>>
+                {
+                    ["t1"] = [new EpicCandidate(Issue("epic"), PipelineRunType.DecompositionAnalysis, "ip-1")]
+                },
+                config: config),
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(3);
+        _dispatchOrder.Should().Equal("issue:feature", "epic:epic", "triage:bug");
     }
 
     [Fact]
