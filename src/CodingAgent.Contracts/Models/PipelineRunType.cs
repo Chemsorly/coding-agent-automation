@@ -18,5 +18,8 @@ public enum PipelineRunType
     Decomposition,
 
     /// <summary>Brain consolidation, refactoring detection, or harness suggestion run.</summary>
-    Consolidation
+    Consolidation,
+
+    /// <summary>Triage — investigate a reported problem, report a root cause analysis and propose fix issues as drafts.</summary>
+    Triage
 }

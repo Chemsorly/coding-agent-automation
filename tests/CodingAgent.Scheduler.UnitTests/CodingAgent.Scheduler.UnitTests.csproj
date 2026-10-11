@@ -11,6 +11,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgent.Scheduler\CodingAgent.Scheduler.csproj" />
+    <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" />

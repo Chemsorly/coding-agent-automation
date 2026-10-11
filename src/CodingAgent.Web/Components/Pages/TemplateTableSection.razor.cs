@@ -43,6 +43,7 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleImplementation { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleTriage { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleHousekeeping { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleBranchCleanup { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
@@ -62,14 +63,8 @@ public partial class TemplateTableSection
 
     private bool HasLiveValues => IsLoopActive || _expandedPreviewTemplateId != null || ShowAddForm;
 
-    // Number of columns — 9 when Actions is visible (loop inactive), 8 when hidden (loop active).
-    // TODO: [WARNING] _columnCount is an expression-bodied property that reads the [Parameter] IsLoopActive on
-    // every access. It is currently read twice per render (feature-config colspan and label-preview colspan).
-    // Both reads occur in the same synchronous render pass so there is no race today, but if additional
-    // colspan usages are added, each new call re-evaluates IsLoopActive. Consider caching as a local variable
-    // in the render method, or converting to a computed field updated in OnParametersSet, to make the pattern
-    // explicit and safe for future changes.
-    private int _columnCount => IsLoopActive ? 8 : 9;
+    // Number of columns: 9 with the Actions column (admins), 8 without it.
+    private int _columnCount => CanEdit ? 9 : 8;
 
     private void ToggleMoveMenu(string? templateId) =>
         _moveMenuTemplateId = _moveMenuTemplateId == templateId ? null : templateId;
@@ -191,6 +186,7 @@ public partial class TemplateTableSection
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;
         public bool DecompositionEnabled { get; set; }
+        public bool TriageEnabled { get; set; }
 
         /// <summary>A form that edits <paramref name="template"/>, filled with its current values.</summary>
         public static TemplateFormModel ForEdit(PipelineJobTemplate template, string projectId) => new()
@@ -209,6 +205,7 @@ public partial class TemplateTableSection
             ImplementationEnabled = template.ImplementationEnabled,
             ReviewEnabled = template.ReviewEnabled,
             DecompositionEnabled = template.DecompositionEnabled,
+            TriageEnabled = template.TriageEnabled,
         };
     }
 

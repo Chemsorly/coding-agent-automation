@@ -388,4 +388,16 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
             await _connection.InvokeAsync(
                 HubMethodNames.RequestUpdateComment, _jobId, issueIdentifier, commentId.ToString(), body, token), ct).AsTask();
     }
+
+    /// <summary>
+    /// Reports this triage run's result to the API through the orchestrator.
+    /// </summary>
+    public Task ReportTriageResultAsync(string resultJson, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(resultJson);
+
+        return _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync(
+                HubMethodNames.ReportTriageResult, _jobId, resultJson, token), ct).AsTask();
+    }
 }

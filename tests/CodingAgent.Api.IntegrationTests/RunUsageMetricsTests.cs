@@ -348,12 +348,12 @@ public sealed class RunUsageMetricsTests
 
         Program.EmitPreInitCounters();
 
-        // 5 run_types × 10 phases × 4 providers = 200 series
-        tokenSeries.Should().HaveCount(200,
-            "5 run_types × 10 phases × 4 providers = 200 pre-init series for pipeline.run.tokens");
+        // 6 run_types × 10 phases × 4 providers = 240 series
+        tokenSeries.Should().HaveCount(240,
+            "6 run_types × 10 phases × 4 providers = 240 pre-init series for pipeline.run.tokens");
 
-        sessionSeries.Should().HaveCount(200,
-            "pipeline.run.agent_sessions: model='unknown' is fixed in pre-init, same 200 series");
+        sessionSeries.Should().HaveCount(240,
+            "pipeline.run.agent_sessions: model='unknown' is fixed in pre-init, same 240 series");
 
         // Verify all 10 phases are present
         var phases = tokenSeries.Select(m => m.Tags.GetValueOrDefault("phase")?.ToString())
@@ -385,10 +385,10 @@ public sealed class RunUsageMetricsTests
 
         Program.EmitPreInitCounters();
 
-        counts["pipeline.run.token_usage"].Should().Be(100, "5 run_types × 4 providers × 5 token types");
-        counts["pipeline.run.billing_cost_usd"].Should().Be(60, "5 run_types × 4 providers × 3 billing modes");
-        counts["pipeline.run.agent_turns"].Should().Be(20, "5 run_types × 4 providers");
-        counts["pipeline.run.web_search_requests"].Should().Be(20, "5 run_types × 4 providers");
+        counts["pipeline.run.token_usage"].Should().Be(120, "6 run_types × 4 providers × 5 token types");
+        counts["pipeline.run.billing_cost_usd"].Should().Be(72, "6 run_types × 4 providers × 3 billing modes");
+        counts["pipeline.run.agent_turns"].Should().Be(24, "6 run_types × 4 providers");
+        counts["pipeline.run.web_search_requests"].Should().Be(24, "6 run_types × 4 providers");
         counts["pipeline.run.rate_limit_events"].Should().Be(15, "claude × 5 windows × 3 statuses");
     }
 

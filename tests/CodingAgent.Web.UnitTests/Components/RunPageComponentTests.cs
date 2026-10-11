@@ -64,6 +64,7 @@ public class RunPageComponentTests : BunitContext
 
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
@@ -973,6 +974,7 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());
     }
 
@@ -1116,6 +1118,7 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
