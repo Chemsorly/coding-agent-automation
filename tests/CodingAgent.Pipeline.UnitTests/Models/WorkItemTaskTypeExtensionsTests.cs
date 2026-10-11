@@ -16,6 +16,7 @@ public sealed class WorkItemTaskTypeExtensionsTests
     [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
     [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
     [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)]
+    [InlineData(WorkItemTaskType.Triage, PipelineRunType.Triage)]
     public void ToDefaultRunType_KnownValues_ReturnExpectedRunType(
         WorkItemTaskType taskType, PipelineRunType expectedRunType)
     {
@@ -55,6 +56,7 @@ public sealed class WorkItemTaskTypeExtensionsTests
     [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
     [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
     [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)]
+    [InlineData(WorkItemTaskType.Triage, PipelineRunType.Triage)]
     public void ToDefaultRunTypeOrNull_KnownValues_ReturnExpectedRunType(
         WorkItemTaskType taskType, PipelineRunType expectedRunType)
     {

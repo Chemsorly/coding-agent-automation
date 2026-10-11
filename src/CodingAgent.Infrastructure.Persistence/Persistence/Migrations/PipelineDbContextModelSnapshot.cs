@@ -365,6 +365,73 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                     b.ToTable("ReviewerConfigs");
                 });
 
+            modelBuilder.Entity("CodingAgent.Infrastructure.Persistence.Entities.TriageEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Data")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Facts")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("HasOpenAttempt")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("KeyIdentifier")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("KeyProviderConfigId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HasOpenAttempt")
+                        .HasFilter("\"HasOpenAttempt\"");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.HasIndex("KeyProviderConfigId", "KeyIdentifier")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "UpdatedAt");
+
+                    b.ToTable("Triages");
+                });
+
             modelBuilder.Entity("CodingAgent.Infrastructure.Persistence.Entities.WorkItemEntity", b =>
                 {
                     b.Property<Guid>("Id")

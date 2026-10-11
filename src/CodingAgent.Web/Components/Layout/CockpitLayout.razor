@@ -7,6 +7,7 @@
 @using Serilog
 @inject IPipelineApiConfigClient ConfigClient
 @inject IPipelineApiRunHistoryClient RunHistory
+@inject IPipelineApiTriageClient Triages
 @inject CockpitState State
 @inject IFaroService Faro
 @inject NotificationFaroBridge FaroBridge
@@ -44,6 +45,9 @@
                 </NavLink>
                 <NavLink class="cockpit-nav-link" href="runs" Match="NavLinkMatch.Prefix" aria-label="Runs" title="Runs">
                     <span class="cockpit-nav-icon"><Icon Name="scroll-text" Size="18" /></span><span class="cockpit-nav-text">Runs</span>
+                </NavLink>
+                <NavLink class="cockpit-nav-link" href="triage" Match="NavLinkMatch.Prefix" aria-label="Triage" title="Triage">
+                    <span class="cockpit-nav-icon"><Icon Name="stethoscope" Size="18" /></span><span class="cockpit-nav-text">Triage</span>
                 </NavLink>
             }
             @if (Access.HasGlobalRead)
@@ -282,7 +286,8 @@
         try
         {
             var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId));
-            State.SetAttentionCount(AttentionAggregator.Aggregate(runs.Items).TotalCount);
+            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, CancellationToken.None);
+            State.SetAttentionCount(AttentionAggregator.Aggregate(runs.Items, triages).TotalCount);
         }
         catch (Exception ex)
         {
