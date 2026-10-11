@@ -8,7 +8,8 @@ namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 /// <summary>
 /// Unit tests for <see cref="WorkItemDispatchOrderExtensions.ApplyDispatchOrder"/> — the canonical
 /// dispatch sort used by GET /api/work-items/pending, which WorkItemDispatchLoop polls.
-/// Sort keys: RunType tier ASC (Triage &gt; Review &gt; Decomposition &gt; Implementation &gt; Consolidation),
+/// Sort keys with <see cref="WorkItemDispatchOrder.Default"/>: task type tier ASC
+/// (Triage &gt; Review &gt; Decomposition &gt; Implementation &gt; Consolidation),
 /// then PriorityWeight DESC, then CreatedAt ASC.
 /// <para>
 /// These run the expression as LINQ-to-Objects, so they guard the sort keys, not the SQL
@@ -106,7 +107,7 @@ public class WorkItemDispatchOrderExtensionsTests
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static List<Guid> Order(params WorkItemEntity[] items) =>
-        items.AsQueryable().ApplyDispatchOrder().Select(w => w.Id).ToList();
+        items.AsQueryable().ApplyDispatchOrder(WorkItemDispatchOrder.Default).Select(w => w.Id).ToList();
 
     private static WorkItemEntity Item(
         WorkItemTaskType taskType,

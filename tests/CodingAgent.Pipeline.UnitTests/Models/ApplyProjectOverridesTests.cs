@@ -815,5 +815,6 @@ public class ApplyProjectOverridesTests
         typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MaxConcurrentDecompositions)).Should().BeNull();
         typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MinIssueSlots)).Should().BeNull();
         typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.HarnessSuggestionsReviewEnabled)).Should().BeNull();
+        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.DispatchOrder)).Should().BeNull();
     }
 }
