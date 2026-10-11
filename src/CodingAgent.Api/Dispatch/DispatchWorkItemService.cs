@@ -272,7 +272,7 @@ internal sealed class DispatchWorkItemService
     ///
     /// <para>
     /// The concurrency check delegates to
-    /// <see cref="DispatchStateBuilder.IsAtConcurrencyLimit"/> which already normalises the
+    /// <see cref="IsAtConcurrencyLimit"/> which already normalises the
     /// zero/unlimited semantics — no further normalization is needed.
     /// </para>
     /// </summary>
@@ -321,9 +321,9 @@ internal sealed class DispatchWorkItemService
         // unescaped in a frontend. Fix: add an internal debug-mode assertion or rename to
         // a sanitized-string wrapper type to make the contract explicit.
 
-        // Concurrency gate — delegates to DispatchStateBuilder.IsAtConcurrencyLimit
+        // Concurrency gate — delegates to IsAtConcurrencyLimit
         // which already handles maxConcurrent <= 0 as "no limit".
-        if (DispatchStateBuilder.IsAtConcurrencyLimit(normalizedSelector, concurrencyBySelector, template.MaxConcurrent))
+        if (IsAtConcurrencyLimit(normalizedSelector, concurrencyBySelector, template.MaxConcurrent))
         {
             var currentCount = concurrencyBySelector.GetValueOrDefault(normalizedSelector, 0);
             Log.Information(
@@ -345,6 +345,21 @@ internal sealed class DispatchWorkItemService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Returns true if the given selector group is at or above its concurrency limit.
+    /// A limit of 0 means no limit is configured — always returns false.
+    /// </summary>
+    internal static bool IsAtConcurrencyLimit(
+        string? agentSelector,
+        Dictionary<string, int> concurrencyBySelector,
+        int maxConcurrent)
+    {
+        if (maxConcurrent <= 0)
+            return false;
+        var current = concurrencyBySelector.GetValueOrDefault(agentSelector ?? "", 0);
+        return current >= maxConcurrent;
     }
 
     // ── Entity factory ───────────────────────────────────────────────────────
@@ -809,14 +824,12 @@ internal sealed class DispatchWorkItemService
         // Build the concurrency snapshot and PVC availability result via the shared preamble.
         // IMPORTANT: this call must remain inside the advisory lock, after the post-lock status
         // re-check. The lock-ordering constraint is: acquire lock → re-check status → preamble.
-        // NOTE: do NOT use DispatchStateBuilder.BuildStateAsync here — it does NOT normalise
-        // keys (uses raw x.Selector). BuildDispatchPreambleAsync keys each active item on its
-        // template's selector so active items stored by any path are counted correctly.
+        // BuildDispatchPreambleAsync keys each active item on its template's selector (not the raw
+        // stored selector) so active items stored by any path are counted correctly.
         var (concurrencyBySelector, pvcResult) = await BuildDispatchPreambleAsync(db, lifecycle, templateResolver, ct);
         // Emit credential-pool gauge BEFORE the PVC gate so the metric is always updated
         // whenever the PVC query runs (including on PVC-exhaustion 503).
-        // Deliberate exception to the BuildStateAsync restriction: this endpoint is the
-        // Scheduler-driven dispatch path and is the appropriate emitter for this metric.
+        // This endpoint is the Scheduler-driven dispatch path and the only emitter of this metric.
         WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
 
         if (template is null)

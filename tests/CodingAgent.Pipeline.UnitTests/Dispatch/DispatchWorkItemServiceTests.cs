@@ -233,7 +233,7 @@ public sealed class DispatchWorkItemServiceTests
     public void ApplyGates_AllGatesPass_ReturnsNull()
     {
         // TODO [WARNING]: This test uses maxConcurrent=5 with count=1, which is far from the
-        // boundary. An off-by-one error in DispatchStateBuilder.IsAtConcurrencyLimit (using >
+        // boundary. An off-by-one error in DispatchWorkItemService.IsAtConcurrencyLimit (using >
         // instead of >=) would not be caught here. Add a complementary test that uses
         // maxConcurrent=2 with count=1 (exactly one below the limit) and asserts null is returned,
         // to constrain the comparison operator and catch off-by-one regressions at the boundary.
@@ -317,6 +317,67 @@ public sealed class DispatchWorkItemServiceTests
         result.Should().NotBeNull("combined condition must fire a gate");
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
             "concurrency gate fires first and must return 409 Conflict, not 503, even when PVC pool is also empty");
+    }
+
+    // ── IsAtConcurrencyLimit ──────────────────────────────────────────────────
+
+    [Fact]
+    public void IsAtConcurrencyLimit_MaxConcurrentZero_AlwaysReturnsFalse()
+    {
+        // maxConcurrent == 0 means "no limit configured" — always allow
+        var concurrency = new Dictionary<string, int> { ["selector-1"] = 999 };
+        DispatchWorkItemService.IsAtConcurrencyLimit("selector-1", concurrency, maxConcurrent: 0)
+            .Should().BeFalse("zero maxConcurrent disables the limit");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_NegativeMax_AlwaysReturnsFalse()
+    {
+        var concurrency = new Dictionary<string, int> { ["selector-1"] = 999 };
+        DispatchWorkItemService.IsAtConcurrencyLimit("selector-1", concurrency, maxConcurrent: -1)
+            .Should().BeFalse("negative maxConcurrent disables the limit");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_BelowLimit_ReturnsFalse()
+    {
+        var concurrency = new Dictionary<string, int> { ["sel"] = 1 };
+        DispatchWorkItemService.IsAtConcurrencyLimit("sel", concurrency, maxConcurrent: 2)
+            .Should().BeFalse("current(1) < max(2) — not at limit");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_AtLimit_ReturnsTrue()
+    {
+        var concurrency = new Dictionary<string, int> { ["sel"] = 2 };
+        DispatchWorkItemService.IsAtConcurrencyLimit("sel", concurrency, maxConcurrent: 2)
+            .Should().BeTrue("current(2) == max(2) — at limit");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_AboveLimit_ReturnsTrue()
+    {
+        var concurrency = new Dictionary<string, int> { ["sel"] = 5 };
+        DispatchWorkItemService.IsAtConcurrencyLimit("sel", concurrency, maxConcurrent: 2)
+            .Should().BeTrue("current(5) > max(2) — above limit");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_SelectorNotInMap_ReturnsFalse()
+    {
+        // Selector not in the dictionary → GetValueOrDefault returns 0
+        var concurrency = new Dictionary<string, int>();
+        DispatchWorkItemService.IsAtConcurrencyLimit("new-selector", concurrency, maxConcurrent: 1)
+            .Should().BeFalse("no active items for selector → current=0 < max=1");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_NullSelector_FallsBackToEmpty_ReturnsFalse()
+    {
+        // Null agentSelector → "" key, nothing in map → 0 active
+        var concurrency = new Dictionary<string, int>();
+        DispatchWorkItemService.IsAtConcurrencyLimit(null, concurrency, maxConcurrent: 1)
+            .Should().BeFalse("null selector uses empty key, not in map → 0 active");
     }
 
     // ── CreateWorkItemEntity ──────────────────────────────────────────────────
