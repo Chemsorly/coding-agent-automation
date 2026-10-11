@@ -106,11 +106,14 @@ public sealed class SettingOverrideWebApplicationFactory(string variable, string
 [Collection("SmokeTests")]
 public class SecretKeyStartupTests
 {
+    /// <summary>20 characters, below the 32-character minimum (low entropy, so secret scanners ignore it).</summary>
+    private const string TooShort = "aaaaaaaaaaaaaaaaaaaa";
+
     [Theory]
     [InlineData("UserToken__SigningKey", null, "UserToken:SigningKey")]
-    [InlineData("UserToken__SigningKey", "too-short-0123456789", "UserToken:SigningKey")]
+    [InlineData("UserToken__SigningKey", TooShort, "UserToken:SigningKey")]
     [InlineData("DataProtection__Key", null, "DataProtection:Key")]
-    [InlineData("DataProtection__Key", "too-short-0123456789", "DataProtection:Key")]
+    [InlineData("DataProtection__Key", TooShort, "DataProtection:Key")]
     public void Startup_MissingOrShortKey_FailsFastWithNamedSetting(string variable, string? value, string setting)
     {
         using var factory = new SettingOverrideWebApplicationFactory(variable, value);
