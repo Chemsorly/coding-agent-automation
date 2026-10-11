@@ -1822,16 +1822,16 @@ public class DispatchOrchestrationServiceTests
 
     private static DecompositionDispatchOrchestrationRequest EpicRequest(
         string epicId, string issueProviderId, PipelineProject project) => new()
-    {
-        EpicIdentifier = epicId,
-        EpicTitle = "Epic",
-        PhaseType = PipelineRunType.Decomposition,
-        IssueProviderId = issueProviderId,
-        RepoProviderId = "repo-1",
-        BrainProviderId = null,
-        InitiatedBy = "decomp-loop",
-        Project = project
-    };
+        {
+            EpicIdentifier = epicId,
+            EpicTitle = "Epic",
+            PhaseType = PipelineRunType.Decomposition,
+            IssueProviderId = issueProviderId,
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "decomp-loop",
+            Project = project
+        };
 
     private void SetupEpicInTracker(string epicId)
     {
