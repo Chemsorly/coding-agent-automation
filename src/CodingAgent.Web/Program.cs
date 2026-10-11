@@ -2,6 +2,7 @@ using CodingAgent.Web;
 using CodingAgent.Api.Client;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.Common.Auth;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
@@ -13,6 +14,7 @@ using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.IdentityModel.Tokens;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -67,6 +69,22 @@ if (string.IsNullOrEmpty(apiBaseUrl))
     Log.Fatal("PipelineApi:BaseUrl is required. Ensure CodingAgent.Api is deployed first.");
     return;
 }
+
+// Spec 051: the web host signs a user token for each signed-in user; the API checks it on
+// /api/ui. Fail fast on a missing or short key so the host never starts unable to call the API
+// as its users.
+SecurityKey userTokenSigningKey;
+try
+{
+    userTokenSigningKey = UserTokens.CreateSigningKey(builder.Configuration.GetValue<string>(UserTokens.SigningKeyConfigKey));
+}
+catch (InvalidOperationException ex)
+{
+    Log.Fatal(ex, "{Reason} Exiting.", ex.Message);
+    return;
+}
+
+builder.Services.AddUiClients(apiBaseUrl, userTokenSigningKey);
 
 var agentApiKey = builder.Configuration.GetValue<string>(AgentApiKeyConfigKey)
     ?? Environment.GetEnvironmentVariable(AgentApiKeyConfigKey)

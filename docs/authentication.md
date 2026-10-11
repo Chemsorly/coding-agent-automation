@@ -7,7 +7,7 @@ The Job Controller, the Scheduler and agent pods use the agent API keys describe
 The Pipeline API has two surfaces:
 
 - **Service surface** (`/api/**` except `/api/ui/**`, and `/hubs/agent`): API keys only.
-- **UI surface** (`/api/ui/**`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. The API refuses to start without it.
+- **UI surface** (`/api/ui/**`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints one token per browser session (circuit) and page request, and only for users with a role; it never calls the UI surface with the master API key.
 
 An API endpoint that declares no policy is denied. A credential of one surface is never accepted on the other.
 
@@ -78,7 +78,7 @@ auth:
 
 - A `group` binding matches one value of the groups claim exactly (case-sensitive). A `user` binding matches the username claim (case-insensitive).
 - A user's role is the highest of `defaultRole` and every matching binding; on a project it is the highest of the global role and the project's bindings.
-- A project binding names the project by its ID, shown on the project's Overview tab (Settings → Projects → project → Overview). Renaming a project does not change who can access it. A binding to an ID that does not exist grants nothing (warning in the log, shown on the profile page).
+- A project binding names the project by its ID, shown on the project's Overview tab (Settings → Projects → project → Overview). Renaming a project does not change who can access it. Bindings are not checked against the project list: a binding to an ID that no project has opens nothing, and the profile page flags it.
 - Binding changes take effect when the web pods restart. The chart annotates the pods with a checksum of the auth configuration, so `helm upgrade` restarts them.
 - Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, `admin` bound to a project, or `project` used instead of `projectId`. The web host also stops on an unknown role or a `projectId` that is not a valid GUID.
 - **Upgrade note:** Bindings that still use `project:` stop `helm template` and the web host at startup; replace them with `projectId: <id>` (the ID is shown on the project's Overview tab).
@@ -159,7 +159,7 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 | Symptom | Check |
 |---|---|
 | "You have no access yet" after sign-in | Open the profile page (`/user`). If no groups are listed, the provider does not put groups into the ID token (Keycloak mapper, Entra groups claim or overage). If groups are listed, add a binding with one of them. |
-| A binding shows "unknown project" | The `projectId` value must equal the ID shown on the project's Overview tab (Settings → Projects → project → Overview). |
+| The profile page says a binding "opens nothing: no project has this ID" | The `projectId` value must equal the ID shown on the project's Overview tab (Settings → Projects → project → Overview). |
 | "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client ID, client secret or issuer, a provider it cannot reach, or a clock skew. |
 | Redirect URI uses `http://` behind TLS | The ingress must send `X-Forwarded-Proto: https`. |
 | Signed out on every request with several web replicas | Configure `signalr.redis.connectionString`. |

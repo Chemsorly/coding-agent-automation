@@ -1,7 +1,5 @@
 using System.Net;
 using System.Text.RegularExpressions;
-using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.IntegrationTests.Smoke;
 using Microsoft.AspNetCore.Authentication;
@@ -13,8 +11,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Moq;
 using Testcontainers.Keycloak;
 
 namespace CodingAgent.Web.IntegrationTests.Auth.Keycloak;
@@ -82,8 +78,8 @@ public sealed class KeycloakFixture : IAsyncLifetime
 
 /// <summary>
 /// The smoke-test web host with OIDC pointed at the test realm, RBAC bindings for the realm's
-/// groups, a project "payments", and a test-only <c>/test/whoami</c> endpoint that reports the
-/// session claims and the evaluated grant.
+/// groups (one bound to <see cref="KeycloakFixture.PaymentsProjectId"/>), and a test-only
+/// <c>/test/whoami</c> endpoint that reports the session claims and the evaluated grant.
 /// </summary>
 public sealed class OidcWebApplicationFactory(string issuer) : CustomWebApplicationFactory
 {
@@ -114,12 +110,6 @@ public sealed class OidcWebApplicationFactory(string issuer) : CustomWebApplicat
             // The test realm runs on plain http. Configure (not PostConfigure): the handler's own
             // post-configure validates the metadata address and runs before later post-configures.
             services.Configure<OpenIdConnectOptions>(OidcRegistration.OidcScheme, o => o.RequireHttpsMetadata = false);
-
-            var projects = new Mock<IProjectStore>();
-            projects.Setup(p => p.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync([new PipelineProject { Id = KeycloakFixture.PaymentsProjectId, Name = "payments" }]);
-            services.RemoveAll<IProjectStore>();
-            services.AddSingleton(projects.Object);
 
             services.AddSingleton<IStartupFilter, WhoAmIStartupFilter>();
         });

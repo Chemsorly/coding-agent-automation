@@ -35,7 +35,7 @@ The web host signs short-lived user tokens that the Pipeline API checks on its U
 - The secret-init hook creates the Secret once, with random keys, and keeps it across upgrades.
 - To bring your own, set `userToken.existingSecret` to a Secret with both keys (each at least 32 characters).
 - To rotate, delete the Secret and run `helm upgrade`; restart the web and API pods if they are not restarted by the upgrade. Users sign in again.
-- The API refuses to start when `UserToken__SigningKey` is missing or shorter than 32 characters. For local `dotnet run`, set it in the environment of both hosts.
+- The web and API hosts refuse to start when `UserToken__SigningKey` is missing or shorter than 32 characters. For local `dotnet run`, set the same value in the environment of both hosts.
 
 ### Token Vending
 

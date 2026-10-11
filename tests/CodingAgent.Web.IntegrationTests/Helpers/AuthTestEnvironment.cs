@@ -13,17 +13,22 @@ public static partial class AuthTestEnvironment
 {
     public const string AdminPassword = "integration-test-admin-password";
 
-    /// <summary>Sets the admin password and a rate limit high enough for repeated logins.</summary>
+    /// <summary>Spec 051: the key the web host signs user tokens with; it refuses to start without one.</summary>
+    public const string UserTokenSigningKey = "web-test-user-token-signing-key-0123456789";
+
+    /// <summary>Sets the admin password, a rate limit high enough for repeated logins, and the user-token key.</summary>
     public static void Apply(int loginRateLimitPerMinute = 10_000)
     {
         Environment.SetEnvironmentVariable("Auth__Admin__Password", AdminPassword);
         Environment.SetEnvironmentVariable("Auth__LoginRateLimitPerMinute", loginRateLimitPerMinute.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", UserTokenSigningKey);
     }
 
     public static void Clear()
     {
         Environment.SetEnvironmentVariable("Auth__Admin__Password", null);
         Environment.SetEnvironmentVariable("Auth__LoginRateLimitPerMinute", null);
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", null);
     }
 
     /// <summary>Creates a client and signs it in as the local admin; the client keeps the session cookie.</summary>
