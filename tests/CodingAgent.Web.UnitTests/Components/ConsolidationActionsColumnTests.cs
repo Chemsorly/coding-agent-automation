@@ -24,7 +24,6 @@ public class ConsolidationActionsColumnTests : BunitContext
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
     private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
-    private readonly ConsolidationBadgeService _badgeService = new();
 
     public ConsolidationActionsColumnTests()
     {
@@ -58,7 +57,6 @@ public class ConsolidationActionsColumnTests : BunitContext
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
         Services.AddSingleton<IAgentHubConnection>(_mockHubConnection.Object);
-        Services.AddSingleton(_badgeService);
         Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
     }
 

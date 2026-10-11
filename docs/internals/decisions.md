@@ -81,7 +81,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Dispatch loop belongs in a leader-elected controller, not the stateless API
 <!-- 2026-09-12; includes the 2026-08-14 leader-gating decisions -->
-**Rule:** Every background loop runs on exactly one elected leader: dispatch in the Scheduler, reconciliation in the JobController, maintenance sweeps triggered by the Scheduler, and the web app's pipeline loop only on its leader. The API holds no loops and no leases. Kubernetes Job creation stays in the API because that is where the RBAC lives.
+**Rule:** Every background loop runs on exactly one elected leader: dispatch in the Scheduler, reconciliation in the JobController, maintenance sweeps triggered by the Scheduler, and the pipeline loop in the Scheduler. The API and the web app hold no loops and no leases. Kubernetes Job creation stays in the API because that is where the RBAC lives.
 **Why:** Loops on every replica break per-selector concurrency caps (seen live: 4 pods for a cap of 3) and fire side effects such as branch updates twice. The pipeline loop resumes after a restart, so every replica would start polling.
 **Not:** gating only the calls that reach external APIs; dispatch on every API replica.
 **Revisit when:** never for the principle.

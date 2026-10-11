@@ -89,13 +89,9 @@ public class DataProtectionRedisStartupTests
         act.Should().NotThrow(
             "AddDataProtectionServices must not throw when Redis is unreachable — the multiplexer starts disconnected and reconnects in the background");
 
-        // TODO: The IConnectionMultiplexer created inside AddDataProtectionServices (stored in the local
-        // variable 'mux' captured by the PersistKeysToStackExchangeRedis lambda) is never disposed here.
-        // The ServiceProvider is not built, so DI never calls Dispose on it. Background reconnect threads
-        // spawned by StackExchange.Redis will outlive this test. It is not possible to assert IsConnected==false
-        // on that internal multiplexer from here; see CreateMultiplexerFactory_WithUnreachableRedis_ReturnsDisconnectedMultiplexer
-        // for the path that verifies the disconnected-multiplexer postcondition. Consider refactoring
-        // AddDataProtectionServices to expose the multiplexer via DI so tests can resolve and dispose it.
-        // (Review finding: DotNetSpecialist/TestQualityReviewer WARNING DataProtectionRedisStartupTests.cs:88)
+        // The multiplexer is registered in DI (it also backs the sidebar's Redis indicator), so the
+        // container owns it: disposing the provider stops its background reconnect threads.
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IConnectionMultiplexer>().IsConnected.Should().BeFalse();
     }
 }

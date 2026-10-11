@@ -36,8 +36,15 @@ builder.Configuration
     .AddJsonFile(builder.Configuration[AuthOptions.ConfigPathKey] ?? AuthOptions.DefaultConfigPath, optional: true, reloadOnChange: false)
     .AddEnvironmentVariables();
 
-// Register services
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+// Register services. The circuit hub keeps the 128 KB message limit it inherited from the
+// agent-hub SignalR setup this host used to register (large pastes, e.g. config import).
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents()
+    .AddHubOptions(options =>
+    {
+        options.MaximumReceiveMessageSize = 128 * 1024;
+        options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    });
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(BuildInfo.Load());
 
@@ -46,28 +53,6 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
-
-// ── Monolith runtime options (T11: replaces scattered env reads) ─────────────────────────────
-// Binds READINESS_DRAIN_DELAY_SECONDS, PIPELINE_LOOP_STARTUP_DELAY_SECONDS from IConfiguration.
-// ValidateDataAnnotations ensures startup fails fast with a named error if values are out of range.
-// Note: AgentApiKey is set from builder.Configuration (read below) — options registration deferred.
-builder.Services.AddOptions<MonolithRuntimeOptions>()
-    .Configure<IConfiguration>((opts, cfg) =>
-    {
-        var drainDelay = Environment.GetEnvironmentVariable("READINESS_DRAIN_DELAY_SECONDS");
-        if (!string.IsNullOrWhiteSpace(drainDelay) && int.TryParse(drainDelay, out var d))
-            opts.ReadinessDrainDelaySeconds = d;
-
-        var loopDelay = cfg.GetValue<int?>("Orchestrator:PipelineLoopStartupDelaySeconds");
-        if (loopDelay.HasValue)
-            opts.PipelineLoopStartupDelaySeconds = loopDelay.Value;
-
-        opts.AgentApiKey = cfg.GetValue<string>(AgentApiKeyConfigKey)
-            ?? Environment.GetEnvironmentVariable(AgentApiKeyConfigKey)
-            ?? "";
-    })
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
 
 // Host shutdown timeout: drain delay (15s) + ShutdownService timeout (15s) = 30s used, 10s headroom remaining.
 // ShutdownBudgetValidation warns if headroom drops below 5s (i.e., drain + shutdown > 35s).
@@ -108,10 +93,6 @@ var pipelineConfig = new PipelineConfiguration();
 
 builder.Services.AddInfrastructureServices();
 builder.Services.AddPipelineServices(Serilog.Log.Logger);
-// BrainUpdateService is an Infrastructure impl (Infrastructure.Git) — registered by the host
-// composition root so the Pipeline-side AddPipelineServices helper stays Pipeline-only.
-builder.Services.AddSingleton<CodingAgent.Pipeline.Interfaces.IBrainUpdateService>(
-    sp => new CodingAgent.Infrastructure.Git.BrainUpdateService(Serilog.Log.Logger));
 builder.Services.AddPipelineCoreServices();
 builder.Services.AddOrchestrationServices();
 // AddConsolidationServices registers IConsolidationSelectorResolver and wires IWorkDistributor
@@ -141,11 +122,8 @@ builder.Services.AddScoped<CodingAgent.Web.Services.CockpitState>();
 builder.Services.AddScoped<CodingAgent.Web.Services.BlockedIssuesService>();
 builder.Services.AddScoped<CodingAgent.Web.Services.IChatPromptBuilder, CodingAgent.Web.Services.ChatPromptBuilder>();
 
-// SignalR — hub services with MessagePack protocol and agent authorization filter
-builder.Services.AddSignalRServices(builder.Environment);
-
-// User authentication (cookie, local admin, OIDC, role bindings) plus the agent API key scheme
-builder.Services.AddUserAuthentication(builder.Configuration, Serilog.Log.Logger);
+// User authentication (cookie, local admin, OIDC, role bindings)
+builder.Services.AddUserAuthentication(builder.Configuration);
 
 // Configure Serilog
 builder.Host.ConfigureSerilog();

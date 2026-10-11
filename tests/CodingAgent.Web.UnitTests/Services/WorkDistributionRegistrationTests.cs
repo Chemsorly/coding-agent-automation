@@ -13,13 +13,15 @@ namespace CodingAgent.Web.UnitTests.Services;
 public class WorkDistributionRegistrationTests
 {
     [Fact]
-    public void AddWorkDistribution_WithDbHost_RegistersIKubernetesDescriptor()
+    public void AddWorkDistribution_RegistersNoKubernetesClientAndNoSignalRBackplane()
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Database:Host"] = "localhost",
                 ["Database:Name"] = "test",
+                // Configured Redis used to add a SignalR backplane; the web host maps no hub.
+                ["SignalR:Redis:ConnectionString"] = "localhost:6379",
             })
             .Build();
 
@@ -28,10 +30,10 @@ public class WorkDistributionRegistrationTests
 
         services.AddWorkDistribution(config);
 
-        // The IKubernetes descriptor must be present (factory-based, deferred)
-        var descriptor = services.FirstOrDefault(d =>
-            d.ServiceType == typeof(k8s.IKubernetes));
-        descriptor.Should().NotBeNull("AddWorkDistribution must register IKubernetes");
+        // The web host makes no Kubernetes API calls (leader election runs in the Scheduler and
+        // the Job Controller), and the chart mounts no service account token into the web pod.
+        services.Should().NotContain(d => d.ServiceType == typeof(k8s.IKubernetes));
+        services.Should().NotContain(d => d.ServiceType.FullName!.Contains("SignalR.StackExchangeRedis"));
     }
 
     [Fact]
