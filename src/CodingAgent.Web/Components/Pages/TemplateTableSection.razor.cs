@@ -43,6 +43,7 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleImplementation { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleTriage { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleHousekeeping { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleBranchCleanup { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
@@ -128,18 +129,18 @@ public partial class TemplateTableSection
         if (labels.Count == 0)
             return new LabelPreviewResult();
 
+        // Profile: resolve what dispatch would use (fewest covering labels wins, then Priority, then Id).
+        // ResolveByRequiredLabels is static — no ProfileResolver instance needed.
+        var matchedProfile = ProfileResolver.ResolveByRequiredLabels(AgentProfiles, labels);
+
+        // QG and Reviewers: resolved against the profile's MatchLabels when a profile was found,
+        // mirroring AssignmentEnricher behaviour. Fall back to repo labels when no profile matched.
+        var resolveLabels = matchedProfile?.MatchLabels ?? labels;
         var qgResolver = new QualityGateResolver();
-        var matchedQgs = qgResolver.Resolve(QualityGateConfigs, labels);
+        var matchedQgs = qgResolver.Resolve(QualityGateConfigs, resolveLabels);
 
         var rvResolver = new ReviewerResolver();
-        var matchedRvs = rvResolver.Resolve(ReviewerConfigs, labels);
-
-        var matchedProfiles = AgentProfiles
-            .Where(p => p.Enabled)
-            .Where(p => p.MatchLabels.Count == 0 || p.MatchLabels.All(l => labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
-            .OrderByDescending(p => p.MatchLabels.Count)
-            .ThenByDescending(p => p.Priority)
-            .ToList();
+        var matchedRvs = rvResolver.Resolve(ReviewerConfigs, resolveLabels);
 
         var allAgents = Registry.GetAllAgents()
             .Where(a => !a.Disabled)
@@ -152,7 +153,7 @@ public partial class TemplateTableSection
             Labels = labels,
             QualityGates = matchedQgs.Select(q => q.DisplayName).ToList(),
             Reviewers = matchedRvs.Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})").ToList(),
-            Profiles = matchedProfiles.Select(p => p.DisplayName).ToList(),
+            Profiles = matchedProfile is not null ? [matchedProfile.DisplayName] : [],
             Agents = allAgents.Select(a => a.AgentId.Value).ToList(),
             OnlineAgentCount = onlineCount
         };
@@ -185,6 +186,7 @@ public partial class TemplateTableSection
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;
         public bool DecompositionEnabled { get; set; }
+        public bool TriageEnabled { get; set; }
 
         /// <summary>A form that edits <paramref name="template"/>, filled with its current values.</summary>
         public static TemplateFormModel ForEdit(PipelineJobTemplate template, string projectId) => new()
@@ -203,6 +205,7 @@ public partial class TemplateTableSection
             ImplementationEnabled = template.ImplementationEnabled,
             ReviewEnabled = template.ReviewEnabled,
             DecompositionEnabled = template.DecompositionEnabled,
+            TriageEnabled = template.TriageEnabled,
         };
     }
 

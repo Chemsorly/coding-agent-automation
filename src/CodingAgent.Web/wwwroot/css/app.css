@@ -576,6 +576,10 @@ select option { background: var(--surface); color: var(--text); }
 [data-theme="light"] .label-agent-epic { color: #5b21b6; border-color: #7057ff; }
 [data-theme="light"] .label-agent-epic-approved { color: #0e8a16; border-color: #0e8a16; }
 [data-theme="light"] .label-agent-epic-review { color: #92400e; border-color: #d97706; }
+.label-agent-triage { background: rgba(11, 114, 133, 0.15); color: #7dd3e3; border-color: #0b7285; }
+.label-agent-triage-review { background: rgba(251, 202, 4, 0.12); color: var(--warning); border-color: var(--warning); }
+[data-theme="light"] .label-agent-triage { color: #0b5566; border-color: #0b7285; }
+[data-theme="light"] .label-agent-triage-review { color: #92400e; border-color: #d97706; }
 
 /* ===== Agent Chat Page ===== */
 .chat-setup { max-width: 600px; }

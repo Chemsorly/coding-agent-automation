@@ -66,20 +66,20 @@ public class OutputParser : IOutputParser
 
     private TestResult? DetectTestResults(string line)
     {
+        // TryParse: these handlers run on the process's output thread, where an exception (e.g. an
+        // overflow from a 10-digit count in echoed text) would end the whole agent process.
         var testMatch = Regex.Match(line, @"Tests?:\s*(\d+)\s+passed(?:,\s*(\d+)\s+failed)?", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-        if (testMatch.Success)
+        if (testMatch.Success && int.TryParse(testMatch.Groups[1].Value, out var passed))
         {
-            var passed = int.Parse(testMatch.Groups[1].Value);
-            var failed = testMatch.Groups[2].Success ? int.Parse(testMatch.Groups[2].Value) : 0;
+            var failed = 0;
+            if (testMatch.Groups[2].Success && !int.TryParse(testMatch.Groups[2].Value, out failed))
+                return null;
             return new TestResult { TotalTests = passed + failed, PassedTests = passed, FailedTests = failed };
         }
 
         var simpleTestMatch = Regex.Match(line, @"[✓✔]\s*(\d+)\s+tests?", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-        if (simpleTestMatch.Success)
-        {
-            var total = int.Parse(simpleTestMatch.Groups[1].Value);
+        if (simpleTestMatch.Success && int.TryParse(simpleTestMatch.Groups[1].Value, out var total))
             return new TestResult { TotalTests = total, PassedTests = total, FailedTests = 0 };
-        }
 
         return null;
     }

@@ -146,6 +146,10 @@ internal static class AgentStallMonitor
         if (result.Cost is { } cost)
             sessionSpan.SetTag("agent.cost_usd", (double)cost);
 
+        // Every provider can classify a failure; only some report usage details.
+        if (result.ErrorCategory != AgentErrorCategory.None)
+            sessionSpan.SetTag("agent.error_category", result.ErrorCategory.ToString());
+
         if (result.UsageDetails is not { } details)
             return;
 
@@ -154,8 +158,6 @@ internal static class AgentStallMonitor
         sessionSpan.SetTag("agent.api_duration_s", details.ApiDurationSeconds);
         if (details.WebSearchRequests > 0)
             sessionSpan.SetTag("agent.web_search_requests", details.WebSearchRequests);
-        if (result.ErrorCategory != AgentErrorCategory.None)
-            sessionSpan.SetTag("agent.error_category", result.ErrorCategory.ToString());
     }
 
     private static void SetTagIfPositive(Activity span, string key, long value)

@@ -211,8 +211,16 @@ public sealed partial class AgentHub
     /// Supports both SignalR mode (PipelineRun in memory) and K8s mode (WorkItem payload in DB).
     /// </summary>
     [RequiresActiveJob]
-    public Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind, bool includeIssuePermission = false)
-        => _tokenRefreshService.RefreshTokenAsync(jobId.Value, providerKind, CancellationToken.None, includeIssuePermission);
+    public async Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind, bool includeIssuePermission = false)
+    {
+        // A triage run only proposes issues; a person creates them in the app. It never gets issue write access.
+        if (includeIssuePermission && await IsTriageRunAsync(jobId))
+        {
+            _logger.Warning("Token refresh for triage job {JobId} asked for issue permission; granted without it", jobId.Value);
+            includeIssuePermission = false;
+        }
+        return await _tokenRefreshService.RefreshTokenAsync(jobId.Value, providerKind, CancellationToken.None, includeIssuePermission);
+    }
 
     // ── Issue ops private helpers ───────────────────────────────────────
 

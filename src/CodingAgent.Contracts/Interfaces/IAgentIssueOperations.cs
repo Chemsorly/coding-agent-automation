@@ -103,4 +103,11 @@ public interface IAgentIssueOperations
     Task<PagedResult<IssueSummary>> ListClosedIssuesForProviderAsync(
         string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
         => ListClosedIssuesAsync(page, pageSize, labels, since, ct);
+
+    /// <summary>
+    /// Reports the result of the caller's triage run (JSON of a <c>TriageResult</c>) to the API, which records it
+    /// on the run's triage. Only the agent-side proxy implements it.
+    /// </summary>
+    Task ReportTriageResultAsync(string resultJson, CancellationToken ct)
+        => throw new NotSupportedException("ReportTriageResultAsync is not implemented by this provider");
 }

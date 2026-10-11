@@ -199,6 +199,17 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
         => SharedRepositoryOperations.GetHeadCommitShaAsync(workspacePath, ct);
 
     /// <inheritdoc />
+    public string? GetCommitWebUrl(string commitSha)
+    {
+        if (string.IsNullOrEmpty(HttpUrlToRepo) || string.IsNullOrEmpty(commitSha))
+            return null;
+        var webUrl = HttpUrlToRepo.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
+            ? HttpUrlToRepo[..^".git".Length]
+            : HttpUrlToRepo;
+        return $"{webUrl}/-/commit/{commitSha}";
+    }
+
+    /// <inheritdoc />
     public Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.HasCommitsAheadAsync(workspacePath, _baseBranch, _gitPipeline, ct);
 

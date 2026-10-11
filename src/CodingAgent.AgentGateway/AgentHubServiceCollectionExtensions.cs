@@ -67,6 +67,9 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger));
 
+        // IHubTriageOperations is registered by the host that stores triages (the API); without it the hub
+        // refuses triage results.
+
         // AgentHubDependencies is scoped to match the Hub's per-connection lifetime.
         // All wrapped dependencies are singletons, so this is a safe downgrade.
         // T10: 13 → 11 members — consolidation cluster extracted into IHubConsolidationOperations.
@@ -80,7 +83,8 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IAgentTokenRefreshService>(),
             Log.Logger,
             sp.GetRequiredService<IAgentOrphanRecoveryService>(),
-            sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub>>()));
+            sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub>>(),
+            sp.GetService<IHubTriageOperations>()));
 
         return services;
     }

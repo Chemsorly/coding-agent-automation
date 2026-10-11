@@ -22,4 +22,5 @@ public sealed record AgentHubDependencies(
     IAgentTokenRefreshService TokenRefreshService,
     ILogger Logger,
     IAgentOrphanRecoveryService OrphanRecoveryService,
-    IHubContext<AgentHub> UiContext);
+    IHubContext<AgentHub> UiContext,
+    IHubTriageOperations? TriageOps = null);
