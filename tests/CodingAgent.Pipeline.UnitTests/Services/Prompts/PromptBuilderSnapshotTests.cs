@@ -449,6 +449,9 @@ Write findings to `.agent/refactoring-structural-findings.json` as a JSON object
 - Every finding MUST have `crossReference` — a second location proving the issue isn't isolated.
   For duplication: the other copy. For drift: the layer rule violated + the import. For complexity: the callers affected.
 - For duplication, find EVERY copy, not just two: put the search that lists them in `scopeQuery`.
+- For duplication, compare the copies with each other and list every behavioral difference in `evidence`:
+  a guard, call, side effect, error path or order of steps that one copy has and another does not.
+  Write "no differences" when the copies behave the same. A difference you do not list is lost in the shared code.
 - Findings about over-engineering require proof the abstraction is never extended: check all implementations
   of the interface, check test mocks, check DI registrations, check git history for attempts to add implementations.
 - **Do NOT flag patterns listed in `intentionalPatterns`.** If unsure, skip it.
@@ -609,6 +612,8 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
 - **rationale** (required) — the problem. State what goes wrong, or what it costs, and commit to it: "X causes Y because Z."
   For `bug`, state the failure scenario: the input or state, and the wrong outcome.
 - **description** (required) — the change. Propose ONE approach; do not offer alternatives ("X or Y").
+  For `duplication`, list each behavioral difference between the copies and say whether the shared code keeps it
+  (for example as a parameter) or removes it, and why removing it is safe. Write "The copies behave the same" when they do.
 - **evidence** (required) — the decisive code or tool output, quoted verbatim, starting with the file and line range.
   Copy it from the sub-agent finding; do not paraphrase.
 - **evidenceSources** (required) — list of evidence that supports this proposal. Prefix with type:
@@ -636,13 +641,14 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
   - Prefer negative assertions ("no references remain", "no callers exist") — they catch incomplete implementations.
   - When `scopeQuery` is set, one criterion MUST state that no match of the pattern remains (apart from the exclusions in `description`).
   - For `bug`, one criterion MUST require a test that reproduces the failure scenario and passes after the fix.
+  - For `duplication` with behavioral differences, one criterion MUST state that each listed difference is kept or removed as `description` says.
   - Do NOT use #N notation — GitHub autolinks to wrong issues.
 
   Examples by category:
   - dead-code: "No remaining callers or references to deleted methods in .cs files"
   - rename: "Zero occurrences of old name in source, test, and configuration files"
   - extract-class: "Original class no longer contains the extracted methods", "New class is registered in DI"
-  - duplication: "Duplicated logic consolidated to single call site"
+  - duplication: "Duplicated logic consolidated to single call site", "The guard only the retry copy had is kept on the retry path"
   - bug: "A test that sets X to null before calling Y fails before the fix and passes after it"
 
 ## Writing for the Implementer
@@ -651,6 +657,7 @@ Each proposal becomes an issue for an engineer who has not seen this analysis:
 - Do NOT mention the analysis agents (A, B, C), phases, scores, rankings, or this scan in any text field.
 - Keep the issue self-contained: name the files, symbols and line ranges the engineer needs.
 - Keep it short. A shorter, well-scoped issue is more likely to be implemented correctly.
+- Every number you state (occurrences, lines, files, counts) must come from a command you ran on this commit. Give the command in `scopeQuery` or `evidence`.
 
 ## Scope Constraints
 

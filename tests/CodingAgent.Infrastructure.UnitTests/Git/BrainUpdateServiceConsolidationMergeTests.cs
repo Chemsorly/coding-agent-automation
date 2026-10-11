@@ -120,11 +120,51 @@ public class BrainUpdateServiceConsolidationMergeTests
         provider.Setup(p => p.BaseBranch).Returns("main");
         var sut = new BrainUpdateService(new LoggerConfiguration().CreateLogger(), git.Object);
 
-        await sut.PushConsolidationAsync("/brain", "Brain consolidation run r1", provider.Object, CancellationToken.None);
+        var result = await sut.PushConsolidationAsync("/brain", "Brain consolidation run r1", provider.Object, CancellationToken.None);
 
+        result.Should().Be(1);
         provider.Verify(p => p.PushBranchAsync("/brain", (BranchName)"main", It.IsAny<CancellationToken>()), Times.Once);
         git.Verify(g => g.ResetHardToRemote(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         provider.Verify(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PushConsolidationAsync_RejectedOnce_ReturnsSecondAttempt()
+    {
+        var git = new Mock<IGitOperations>();
+        git.Setup(g => g.GetHeadCommitChanges("/brain"))
+            .Returns([new FileChange("knowledge.md", FileChangeStatus.Modified)]);
+        git.Setup(g => g.GetFileContentFromHead("/brain", "knowledge.md")).Returns("- merged\n");
+        git.Setup(g => g.GetFileContentFromHeadParent("/brain", "knowledge.md")).Returns("- a\n");
+        // TODO: PushConsolidationAsync_RejectedEveryTime_ThrowsAfterTheLastAttempt does NOT set up
+        // FileExists; this test does. Moq returns false by default, so both tests pass by coincidence.
+        // Add FileExists setup to the existing rejection test as well, so the intent is explicit and
+        // a future change to FileExists semantics will not be masked.
+        git.Setup(g => g.FileExists(It.IsAny<string>())).Returns(false);
+
+        var provider = new Mock<IRepositoryProvider>();
+        provider.Setup(p => p.BaseBranch).Returns("main");
+        var pushCallCount = 0;
+        provider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                pushCallCount++;
+                if (pushCallCount == 1)
+                    throw new InvalidOperationException("Push failed for ref 'refs/heads/main': non-fast-forward");
+                return Task.CompletedTask;
+            });
+        provider.Setup(p => p.PullAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        provider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = new BrainUpdateService(new LoggerConfiguration().CreateLogger(), git.Object);
+
+        var result = await sut.PushConsolidationAsync("/brain", "Brain consolidation run r1", provider.Object, CancellationToken.None, maxPushRetries: 3);
+
+        result.Should().Be(2);
+        provider.Verify(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        git.Verify(g => g.ResetHardToRemote("/brain", "main"), Times.Once);
     }
 
     [Fact]
