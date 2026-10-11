@@ -102,6 +102,15 @@ public sealed class RoleBindingOptions
     /// <summary><c>readonly</c>, <c>operator</c> or <c>admin</c>.</summary>
     public string Role { get; set; } = "";
 
-    /// <summary>Project name (exact). Empty means a global binding. Not allowed with <c>admin</c>.</summary>
+    /// <summary>
+    /// No longer supported. Bindings name projects by <see cref="ProjectId"/>. Set only to report
+    /// the old key at startup.
+    /// </summary>
     public string? Project { get; set; }
+
+    /// <summary>
+    /// ID of the project (shown on Settings → Projects → project → Overview). Empty means a global
+    /// binding. Not allowed with <c>admin</c>.
+    /// </summary>
+    public string? ProjectId { get; set; }
 }
