@@ -167,7 +167,6 @@ public static class WorkDistributionTelemetry
     /// Tags: <c>result</c> (dispatched | deferred | transient),
     ///       <c>reason</c> (none | concurrency_limit | not_pending | no_template |
     ///                      pvc_unavailable | lock_timeout | k8s_error).
-    /// Pre-initialized at API startup via <see cref="PreInitializeDispatchAttempts"/>.
     /// </summary>
     public static readonly Counter<long> DispatchAttempts =
         Meter.CreateCounter<long>("workdistribution.dispatch.attempts", "{attempt}",
@@ -346,36 +345,6 @@ public static class WorkDistributionTelemetry
         // Volatile.Write provides a release fence, matching the pattern used for _pollEpochMillis.
         Volatile.Write(ref _oldestPendingMillis,
             oldestCreatedAt.HasValue ? oldestCreatedAt.Value.ToUnixTimeMilliseconds() : 0L);
-    }
-
-    /// <summary>
-    /// Pre-initializes all valid <c>result × reason</c> tag combinations for
-    /// <see cref="DispatchAttempts"/> to zero, ensuring Prometheus <c>increase()</c> can see the
-    /// first real increment after a deploy.
-    ///
-    /// Must be called from the API process only (not from Scheduler, Job Controller, or Agent).
-    /// The convention is to call this from <c>Program.EmitPreInitCounters</c> in the API host.
-    /// </summary>
-    public static void PreInitializeDispatchAttempts()
-    {
-        // 7 valid combinations: dispatched/none + 3 deferred + 3 transient
-        DispatchAttempts.Add(0,
-            new KeyValuePair<string, object?>("result", "dispatched"),
-            new KeyValuePair<string, object?>("reason", "none"));
-
-        foreach (var reason in new[] { "concurrency_limit", "not_pending", "no_template" })
-        {
-            DispatchAttempts.Add(0,
-                new KeyValuePair<string, object?>("result", "deferred"),
-                new KeyValuePair<string, object?>("reason", reason));
-        }
-
-        foreach (var reason in new[] { "pvc_unavailable", "lock_timeout", "k8s_error" })
-        {
-            DispatchAttempts.Add(0,
-                new KeyValuePair<string, object?>("result", "transient"),
-                new KeyValuePair<string, object?>("reason", reason));
-        }
     }
 
 }

@@ -52,18 +52,10 @@ public sealed class WebTelemetryExportTests : IDisposable
         Environment.SetEnvironmentVariable(ServiceNameVariable, _previousServiceName);
     }
 
-    [Fact]
-    public void PreInitializedGitHubCounters_AreExportedBeforeTheFirstEvent()
-    {
-        // Building the host runs Program.cs, including the counter pre-initialization.
-        var meterProvider = _factory.Services.GetRequiredService<MeterProvider>();
-        meterProvider.ForceFlush();
-
-        _metrics.PointsFor("github.api.requests").Should().NotBeEmpty(
-            "pre-initialized zero series must reach the exporter, otherwise increase() misses the first event");
-        _metrics.PointsFor("pipeline.pull_requests.closed").Should().Contain(tags => tags["outcome"] == "merged");
-    }
-
+    // TODO [WARNING]: No test asserts that the Web host starts without seeding github.api.requests or
+    // pipeline.pull_requests.closed, and the Scheduler host has no export-level test at all. Putting Add(0) seeding
+    // back into Web/Program.cs or Scheduler/Program.cs would pass the whole suite. Add a negative BeEmpty test here
+    // using the existing _metrics exporter (ForceFlush the MeterProvider, then assert no points for those counters).
     [Fact]
     public void Resource_UsesTheConfiguredServiceName()
     {

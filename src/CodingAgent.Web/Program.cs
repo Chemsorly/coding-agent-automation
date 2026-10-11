@@ -167,10 +167,6 @@ app.ValidateShutdownBudget();
 app.ValidateDiWiring();
 app.MapApplicationEndpoints();
 
-// Seed the github.api.requests and pipeline.pull_requests.closed series with 0 so Prometheus
-// increase() sees the first real increment after a deploy.
-MetricPreInitialization.Run(app.Services, () => GitHubTelemetry.PreInitialize());
-
 await app.RunAsync();
 
 // Make Program class accessible for WebApplicationFactory in tests

@@ -141,8 +141,7 @@ public partial class GitHubRepositoryProvider
                 // Note: review.Id is available in the URL above for tracing, but is intentionally
                 // NOT included in the operation name tag — including it would create an unbounded
                 // set of metric series (one per distinct review ID), causing a cardinality explosion
-                // on the metrics backend. The static name matches the pre-initialized entry in
-                // GitHubTelemetry.AllOperationNames.
+                // on the metrics backend.
             },
             review => review.Id.ToString(),
             "review",
