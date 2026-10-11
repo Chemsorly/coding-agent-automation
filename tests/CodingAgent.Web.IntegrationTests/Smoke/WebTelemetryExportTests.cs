@@ -53,18 +53,6 @@ public sealed class WebTelemetryExportTests : IDisposable
     }
 
     [Fact]
-    public void PreInitializedGitHubCounters_AreExportedBeforeTheFirstEvent()
-    {
-        // Building the host runs Program.cs, including the counter pre-initialization.
-        var meterProvider = _factory.Services.GetRequiredService<MeterProvider>();
-        meterProvider.ForceFlush();
-
-        _metrics.PointsFor("github.api.requests").Should().NotBeEmpty(
-            "pre-initialized zero series must reach the exporter, otherwise increase() misses the first event");
-        _metrics.PointsFor("pipeline.pull_requests.closed").Should().Contain(tags => tags["outcome"] == "merged");
-    }
-
-    [Fact]
     public void Resource_UsesTheConfiguredServiceName()
     {
         _ = _factory.Services.GetRequiredService<TracerProvider>();

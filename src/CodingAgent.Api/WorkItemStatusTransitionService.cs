@@ -355,7 +355,7 @@ public sealed partial class WorkItemStatusTransitionService
 
     /// <summary>
     /// Records the phase-less usage detail counters for one phase of the breakdown.
-    /// Zero values are skipped; the series exist from pre-initialization.
+    /// Zero values are skipped.
     /// </summary>
     private static void RecordUsageDetailMetrics(string runTypeTag, string provider, PhaseUsagePayload usage)
     {
@@ -563,9 +563,7 @@ public sealed partial class WorkItemStatusTransitionService
         // A payload with FinalStep=ConflictRestart AND AnalysisRecommendation=WontDo/NotReady would produce
         // outcome='conflict_restart' (not 'wont_do'/'needs_refinement'). This combination should never occur
         // in practice. If issue #2956 introduces new FinalStep values that overlap with analysis gate outcomes,
-        // review this ordering to ensure the intended outcome is produced. The pre-initialization does not
-        // include a (run_type, "conflict_restart", non-"none" failure_reason) series; an invalid combo would
-        // create an uninitialized series and partially defeat the pre-init goal.
+        // review this ordering to ensure the intended outcome is produced.
         if (payload?.FinalStep == PipelineStep.ConflictRestart)
             return ("conflict_restart", "none");
 
@@ -613,13 +611,6 @@ public sealed partial class WorkItemStatusTransitionService
     /// <para>
     /// <strong>Tag set for pipeline.run.outcomes:</strong> <c>run_type</c>, <c>outcome</c>,
     /// <c>failure_reason</c>, and <c>pipeline.project_name</c> (Requirement 1).
-    /// The pre-initialization in <c>Program.EmitPreInitCounters</c> emits only the 3-tag combination
-    /// (without <c>pipeline.project_name</c>) per Requirement 7, which says to leave
-    /// <c>pipeline.project_name</c> out of pre-initialization because it has unbounded cardinality.
-    /// This means pre-initialized series (3 tags) and live series (4 tags) have different Prometheus
-    /// label fingerprints; the first real event for a new project name will still show as 0 in
-    /// <c>increase()</c> until a second event arrives, but the pre-init goal is met for the closed
-    /// tag dimensions (<c>run_type</c>, <c>outcome</c>, <c>failure_reason</c>).
     /// </para>
     /// </remarks>
     private static void RecordRunOutcomeMetrics(
@@ -630,7 +621,6 @@ public sealed partial class WorkItemStatusTransitionService
         TimeSpan? duration)
     {
         // 4-tag label set per Requirement 1: run_type, outcome, failure_reason, pipeline.project_name.
-        // pipeline.project_name is excluded from pre-initialization (unbounded cardinality) per Req 7.
         PipelineTelemetry.RunOutcomes.Add(1,
             new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
             new KeyValuePair<string, object?>("outcome", outcome),
