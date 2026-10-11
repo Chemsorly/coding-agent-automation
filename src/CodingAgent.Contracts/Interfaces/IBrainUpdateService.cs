@@ -18,8 +18,9 @@ public interface IBrainUpdateService
     /// brain since the consolidation cloned it, the push is retried on top of their changes: the
     /// consolidated files are kept, and the lines those runs added to them are appended, so nothing they
     /// learned is lost; the next consolidation folds those lines in. Throws when the push still fails.
+    /// Returns the attempt on which the push succeeded: 1 when no other run pushed in the meantime, 2 or more when the consolidation was merged onto newer brain commits first.
     /// </summary>
-    Task PushConsolidationAsync(string brainPath, string commitMessage, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
+    Task<int> PushConsolidationAsync(string brainPath, string commitMessage, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
 
     /// <summary>
     /// Ensures a .gitignore entry exists in the given content. Pure string manipulation.

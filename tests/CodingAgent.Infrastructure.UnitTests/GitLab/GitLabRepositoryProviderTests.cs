@@ -333,6 +333,38 @@ public class GitLabRepositoryProviderTests
     }
 
     #endregion
+
+    #region GetCommitWebUrl
+
+    [Fact]
+    public void GetCommitWebUrl_WithHttpUrlToRepo_ReturnsCommitUrl()
+    {
+        var (client, projectId) = CreateServerWithProject();
+        var provider = new TestableGitLabRepositoryProvider(client, projectId, "main");
+        provider.SetHttpUrlToRepo("https://gitlab.example.com/group/project.git");
+
+        var result = provider.GetCommitWebUrl("abc123");
+
+        result.Should().Be("https://gitlab.example.com/group/project/-/commit/abc123");
+    }
+
+    [Fact]
+    public void GetCommitWebUrl_WithoutHttpUrlToRepo_ReturnsNull()
+    {
+        var (client, projectId) = CreateServerWithProject();
+        var provider = new TestableGitLabRepositoryProvider(client, projectId, "main");
+        // SetHttpUrlToRepo not called — HttpUrlToRepo remains null
+
+        var result = provider.GetCommitWebUrl("abc123");
+
+        result.Should().BeNull();
+    }
+
+    // TODO: Missing test: GetCommitWebUrl with HttpUrlToRepo set but an empty commitSha ("") should
+    // return null. The implementation guards on string.IsNullOrEmpty(commitSha), but this path is
+    // untested. Add a fact analogous to GetCommitWebUrl_EmptySha_ReturnsNull in the GitHub tests.
+
+    #endregion
 }
 
 #region Test Helpers

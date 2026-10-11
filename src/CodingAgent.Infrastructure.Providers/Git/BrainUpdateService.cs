@@ -283,7 +283,7 @@ public partial class BrainUpdateService : IBrainUpdateService
     }
 
     /// <inheritdoc />
-    public async Task PushConsolidationAsync(
+    public async Task<int> PushConsolidationAsync(
         string brainPath, string commitMessage, IRepositoryProvider brainProvider,
         CancellationToken ct, int maxPushRetries = 3)
     {
@@ -292,7 +292,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         ArgumentNullException.ThrowIfNull(brainProvider);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxPushRetries, 0);
 
-        await PushWithRetryRebaseAsync(brainPath, brainProvider, maxPushRetries,
+        return await PushWithRetryRebaseAsync(brainPath, brainProvider, maxPushRetries,
             () => MergeConsolidationOntoRemoteAsync(brainPath, brainProvider, commitMessage, ct), ct);
     }
 
@@ -301,7 +301,7 @@ public partial class BrainUpdateService : IBrainUpdateService
     /// On conflict: <paramref name="rebaseOntoRemote"/> fetches the remote, resets to it, re-applies the
     /// local changes and recommits; then the push is retried.
     /// </summary>
-    private async Task PushWithRetryRebaseAsync(
+    private async Task<int> PushWithRetryRebaseAsync(
         string brainPath, IRepositoryProvider brainProvider,
         int maxRetries, Func<Task> rebaseOntoRemote, CancellationToken ct)
     {
@@ -319,7 +319,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                         "Brain push succeeded on attempt {Attempt}/{MaxRetries}",
                         attempt, maxRetries);
                 }
-                return; // success
+                return attempt; // success
             }
             catch (InvalidOperationException ex) when (
                 ex.Message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) &&
@@ -336,6 +336,11 @@ public partial class BrainUpdateService : IBrainUpdateService
                 await rebaseOntoRemote();
             }
         }
+
+        // Unreachable: the loop always returns on success or throws on the final failed attempt.
+        // This throw exists only to satisfy the compiler's definite-assignment analysis.
+        // PushConsolidationAsync already rejects maxPushRetries <= 0, so maxRetries >= 1 is guaranteed.
+        throw new InvalidOperationException("Brain push failed after all attempts.");
     }
 
     /// <summary>

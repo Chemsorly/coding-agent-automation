@@ -59,8 +59,11 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         var brainUpdateService = new Mock<IBrainUpdateService>();
         brainUpdateService
             .Setup(x => x.PushConsolidationAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
-            .Returns((string path, string _, IRepositoryProvider provider, CancellationToken ct, int _) =>
-                provider.PushBranchAsync(path, provider.BaseBranch, ct));
+            .Returns(async (string path, string _, IRepositoryProvider provider, CancellationToken ct, int _) =>
+            {
+                await provider.PushBranchAsync(path, provider.BaseBranch, ct);
+                return 1;
+            });
         return new(_mockLogger.Object, brainUpdateService.Object);
     }
 
