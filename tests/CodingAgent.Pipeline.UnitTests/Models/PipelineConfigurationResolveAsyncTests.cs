@@ -4,6 +4,7 @@ using CodingAgent.Pipeline.Services;
 
 namespace CodingAgent.Pipeline.UnitTests.Models;
 
+
 /// <summary>
 /// Tests for <see cref="PipelineConfigurationResolver.ResolveAsync"/> static methods.
 /// Verifies the resolution chain: Global → Project overrides → Template overrides.
@@ -134,5 +135,100 @@ public class PipelineConfigurationResolveAsyncTests
 
         // Template override still applied
         result.BrainReadOnly.Should().BeTrue();
+    }
+
+    // ── MaxDecompositionSubIssues clamp — Issue #3624 ─────────────────────────
+
+    // TODO: The tests below only cover the path where the global config itself has an invalid value.
+    // The original bug scenario is a project-level override setting MaxDecompositionSubIssues to 0
+    // on top of a valid global config (e.g., global = 5, PipelineProject.MaxDecompositionSubIssues = 0).
+    // Add a test that passes a PipelineProject with MaxDecompositionSubIssues = 0 (and a global config
+    // with a valid positive value) and asserts the resolved cap is still >= 1, to verify that
+    // ClampSubIssueCap runs *after* ApplyProjectOverrides and catches the project-introduced regression.
+
+    /// <summary>
+    /// Feature: Issue #3624 — MaxDecompositionSubIssues = 0 silently fails decomposition runs.
+    ///
+    /// When the global config is loaded from storage with MaxDecompositionSubIssues = 0
+    /// (possible via direct DB edit or a row that pre-dates validation), ResolveAsync must
+    /// clamp it to at least 1 so that CreateSubIssuesStep never receives a 0 cap.
+    ///
+    /// This test fails before the fix (result.MaxDecompositionSubIssues == 0) and
+    /// passes after it (result.MaxDecompositionSubIssues == 1).
+    ///
+    /// Acceptance criterion: "A test that resolves an effective config with
+    /// MaxDecompositionSubIssues = 0 and asserts the effective cap is at least 1
+    /// fails before the fix and passes after it."
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-100)]
+    public async Task ResolveAsync_WhenGlobalConfigHasNonPositiveMaxDecompositionSubIssues_ClampsToOne(int badValue)
+    {
+        var globalConfig = new PipelineConfiguration { MaxDecompositionSubIssues = badValue };
+        var templates = new List<PipelineJobTemplate>();
+        var providerConfigs = new List<ProviderConfig>();
+
+        var result = await PipelineConfigurationResolver.ResolveAsync(
+            ct => Task.FromResult(globalConfig),
+            ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
+            null,
+            "repo-1",
+            providerConfigs,
+            CancellationToken.None);
+
+        result.MaxDecompositionSubIssues.Should().BeGreaterThanOrEqualTo(1,
+            $"a stored value of {badValue} must be clamped to at least 1 before reaching CreateSubIssuesStep");
+    }
+
+    /// <summary>
+    /// Pre-loaded overload of ResolveAsync must also clamp MaxDecompositionSubIssues.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-100)]
+    public async Task ResolveAsync_PreLoaded_WhenGlobalConfigHasNonPositiveMaxDecompositionSubIssues_ClampsToOne(int badValue)
+    {
+        var preLoadedConfig = new PipelineConfiguration { MaxDecompositionSubIssues = badValue };
+        var templates = new List<PipelineJobTemplate>();
+        var providerConfigs = new List<ProviderConfig>();
+
+        var result = await PipelineConfigurationResolver.ResolveAsync(
+            preLoadedConfig,
+            ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
+            null,
+            "repo-1",
+            providerConfigs,
+            CancellationToken.None);
+
+        result.MaxDecompositionSubIssues.Should().BeGreaterThanOrEqualTo(1,
+            $"a pre-loaded value of {badValue} must be clamped to at least 1 before reaching CreateSubIssuesStep");
+    }
+
+    /// <summary>
+    /// A valid MaxDecompositionSubIssues value must pass through the resolver unchanged.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(20)]
+    public async Task ResolveAsync_WhenGlobalConfigHasValidMaxDecompositionSubIssues_PreservesValue(int validValue)
+    {
+        var globalConfig = new PipelineConfiguration { MaxDecompositionSubIssues = validValue };
+        var templates = new List<PipelineJobTemplate>();
+        var providerConfigs = new List<ProviderConfig>();
+
+        var result = await PipelineConfigurationResolver.ResolveAsync(
+            ct => Task.FromResult(globalConfig),
+            ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
+            null,
+            "repo-1",
+            providerConfigs,
+            CancellationToken.None);
+
+        result.MaxDecompositionSubIssues.Should().Be(validValue,
+            "a valid value must not be altered by the clamp");
     }
 }

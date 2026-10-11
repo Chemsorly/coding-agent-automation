@@ -65,6 +65,21 @@ public sealed class CreateSubIssuesStep : IPipelineStep
 
         // 3. Enforce MaxDecompositionSubIssues cap (take first N alphabetically — already sorted by parser)
         var cap = context.Config.MaxDecompositionSubIssues;
+        if (cap <= 0)
+        {
+            // Last-line-of-defense guard: the resolver should have clamped this already, but a 0
+            // or negative value can arrive if the step is invoked outside the normal resolution
+            // chain (e.g., in tests that construct PipelineConfiguration directly, or from a
+            // code path that bypasses ResolveAsync). Without this guard, proposals.Count > 0 would
+            // be true and proposals.Take(0) would produce an empty list, causing every proposal to
+            // be recorded as SkippedByCap and the run to post agent:error with no actionable reason.
+            context.Logger.Warning(
+                "MaxDecompositionSubIssues is {Value} at step execution (must be \u2265 1); " +
+                "clamping to 1 for this run. Correct the global configuration.",
+                cap);
+            cap = 1;
+        }
+
         // TODO: The two branches of this ternary have asymmetric types: the capped branch yields
         // IList<SubIssueProposal> (from .ToList()), while the uncapped branch preserves whatever
         // concrete type the parser returned (IReadOnlyList<SubIssueProposal> or similar). Both
@@ -140,11 +155,6 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         }
 
         // Record proposals beyond the cap as SkippedByCap — not counted as failures.
-        // TODO: If MaxDecompositionSubIssues is misconfigured as 0, every decomposition run will
-        // skip all proposals (proposals.Count > 0 == true, cappedProposals is empty) and post
-        // an agent:error label. Consider adding a validation guard in PipelineConfiguration that
-        // enforces a minimum value (e.g. >= 1) for MaxDecompositionSubIssues, or logging a
-        // clear warning when cap == 0 to make the misconfiguration obvious.
         if (proposals.Count > cap)
         {
             var skippedProposals = proposals.Skip(cap);
