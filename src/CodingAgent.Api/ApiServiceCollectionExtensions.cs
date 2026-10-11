@@ -691,7 +691,6 @@ public static class ApiServiceCollectionExtensions
         // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
         // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
-        // DispatchStateBuilder     — builds concurrency map and PVC availability state.
         // Used by WorkItemDispatchLoop (Scheduler) via POST /api/work-items/{id}/dispatch.
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
@@ -711,13 +710,6 @@ public static class ApiServiceCollectionExtensions
             new CodingAgent.Api.Dispatch.DispatchTemplateResolver(
                 sp.GetService<IAgentProfileStore>(),
                 sp.GetRequiredService<JobTemplateStore>()));
-        services.AddSingleton<CodingAgent.Api.Dispatch.DispatchStateBuilder>(sp =>
-            new CodingAgent.Api.Dispatch.DispatchStateBuilder(
-                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-                sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchLifecycleService>(),
-                sp.GetRequiredService<JobTemplateStore>(),
-                sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchTemplateResolver>(),
-                DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
 
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
         // Shared helpers for the two synchronous dispatch handlers (DispatchWorkItem and
