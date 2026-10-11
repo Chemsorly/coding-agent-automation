@@ -73,6 +73,21 @@ public class QualityGateExecutorRetryLoopClassifierTests
         outcome.Should().Be(RetryOutcome.AbortAuth);
     }
 
+    [Fact]
+    public void ProviderMisconfigured_ReturnsAbortAuth()
+    {
+        var result = new AgentResult
+        {
+            ExitCode = 4,
+            OutputLines = ["Error: failed to set agent 'default': Mode 'default' not found"],
+            ErrorCategory = AgentErrorCategory.ProviderMisconfigured
+        };
+
+        var outcome = QualityGateExecutor.ClassifyRetryOutcome(result);
+
+        outcome.Should().Be(RetryOutcome.AbortAuth, "every later fix attempt fails the same way");
+    }
+
     // ── Dead/exhausted session → RestartSession ──────────────────────────────
 
     // TODO: [WARNING] The RestartSession classifier guard requires all three conditions:

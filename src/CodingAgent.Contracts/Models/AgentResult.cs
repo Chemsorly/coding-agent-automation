@@ -17,6 +17,12 @@ public enum AgentErrorCategory
 
     /// <summary>HTTP 401/403: authentication or authorisation failure — permanent until credentials are fixed.</summary>
     PermanentAuthFailure,
+
+    /// <summary>
+    /// The agent CLI refused its own configuration before doing any work (for example an agent name it
+    /// does not know) — permanent until the agent provider's settings are fixed.
+    /// </summary>
+    ProviderMisconfigured,
 }
 
 public sealed class AgentResult

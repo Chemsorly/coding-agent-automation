@@ -46,7 +46,7 @@ public static class ProviderSettingKeys
     /// <summary>Base URL for HTTP-based agent providers (e.g., OpenCode).</summary>
     public const string BaseUrl = "baseUrl";
 
-    /// <summary>Agent name identifier (e.g., "default").</summary>
+    /// <summary>Kiro agent passed as <c>--agent</c>; blank (or the legacy <c>default</c>) uses the CLI's own agent.</summary>
     public const string AgentName = "agentName";
 
     /// <summary>Workspace-relative path for MCP server configuration.</summary>

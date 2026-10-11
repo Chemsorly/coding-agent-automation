@@ -25,6 +25,7 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
     [InlineData(AgentErrorCategory.ProviderRateLimit)]
     [InlineData(AgentErrorCategory.ProviderOverload)]
     [InlineData(AgentErrorCategory.PermanentAuthFailure)]
+    [InlineData(AgentErrorCategory.ProviderMisconfigured)]
     public async Task ProviderOutageDuringAnalysis_FailsAsInfrastructure_WithoutRetryingOrLabellingTheIssue(AgentErrorCategory category)
     {
         var agent = new Mock<IAgentProvider>();
@@ -58,6 +59,7 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
 
         proceed.Should().BeFalse();
         run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        run.FailureReason.Should().EndWith(": provider said no", "the operator needs the provider's own reason");
         issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Never);
         agent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once,
             "retrying at once cannot help while the provider is unavailable");
