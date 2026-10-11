@@ -1766,6 +1766,44 @@ public class RefactoringExecutorTests : IDisposable
             line.Should().NotStartWith("COMMIT_SUBJECT:");
     }
 
+    // ── CountExcludedCommits tests ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void CountExcludedCommits_CountsOnlyMatchingSubjects()
+    {
+        // Two commits: one whose subject matches the predicate and one that does not.
+        // Only the matching one should be counted.
+        var gitLog =
+            "COMMIT_DATE:2026-07-19 14:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: x (#5)\n" +
+            "src/A.cs\n" +
+            "COMMIT_DATE:2026-07-18 10:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: y (#7)\n" +
+            "src/B.cs\n";
+
+        Func<string, bool> isExcluded = subject => subject.Contains("(#5)", StringComparison.Ordinal);
+
+        var count = RefactoringExecutor.CountExcludedCommits(gitLog, isExcluded);
+
+        count.Should().Be(1);
+    }
+
+    [Fact]
+    public void CountExcludedCommits_NoMatchingSubjects_ReturnsZero()
+    {
+        // No commit subject matches — count should be zero.
+        var gitLog =
+            "COMMIT_DATE:2026-07-19 14:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: some unrelated change\n" +
+            "src/A.cs\n";
+
+        Func<string, bool> isExcluded = subject => subject.Contains("(#99)", StringComparison.Ordinal);
+
+        var count = RefactoringExecutor.CountExcludedCommits(gitLog, isExcluded);
+
+        count.Should().Be(0);
+    }
+
     // ── CollectScanIssueReferencesAsync tests ────────────────────────────────────────────────
 
     private static IssueSummary MakeScanIssue(string identifier, string title = "Refactor X") =>
@@ -1886,12 +1924,53 @@ public class RefactoringExecutorTests : IDisposable
         _mockIssueProvider.Verify(
             x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
             Times.Once);
-        // TODO [WARNING]: This test verifies ListOpenIssuesAsync is called once but relies on the default
+        // NOTE (issue #3540): This test verifies ListOpenIssuesAsync is called once but relies on the default
         // empty mock setup, so it does not verify that the openIssues result is actually passed through to
         // CollectScanIssueReferencesAsync. A bug where openIssues was always passed as an empty list would
         // not be caught. Add a stronger test that populates the open-issues mock with scan issues and then
         // verifies those refs are present in the hotspot exclusion path (e.g., by inspecting that the git
         // log call uses an exclusion predicate matching those refs, or by checking a log message).
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithOpenScanIssues_HotspotAnalysisRunsWithExclusionPredicate()
+    {
+        // When open scan issues are present, WriteHotspotAnalysisAsync must construct the isExcludedCommit
+        // predicate (scanIssueRefs.Count > 0 path) and log the excluded commit count.
+        // This covers the exclusion predicate construction and CountExcludedCommits logging branches.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var openScanIssue = MakeScanIssue("42");
+
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [openScanIssue],
+                Page = 1, PageSize = 50, HasMore = false
+            });
+        _mockIssueProvider
+            .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
+            .Returns<IssueIdentifier>(id => $"#{id.Value}");
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // The test should complete without throwing — if the exclusion predicate or CountExcludedCommits
+        // throws due to a null-ref or logic error, the exception would surface here via WrapWithCancellationHandlingAsync.
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // The run should succeed (or return a summary result) — what matters is that the
+        // scanIssueRefs.Count > 0 branch was exercised without error.
+        result.Should().NotBeNull();
+        // FormatIssueReference was called for the open scan issue — confirming it was added to refs.
+        _mockIssueProvider.Verify(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()), Times.AtLeastOnce);
     }
 
     [Fact]

@@ -602,7 +602,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// <summary>
     /// Counts the number of commits in the git log output whose subject matches the exclusion predicate.
     /// </summary>
-    private static int CountExcludedCommits(string gitLogOutput, Func<string, bool> isExcludedCommit)
+    internal static int CountExcludedCommits(string gitLogOutput, Func<string, bool> isExcludedCommit)
     {
         var count = 0;
         foreach (var line in gitLogOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
