@@ -277,9 +277,11 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
 
     public async Task SetKeyValueAsync(string key, string value, CancellationToken ct = default)
     {
+        // The endpoint binds KeyValueSetRequest { value }; a bare JSON string fails binding with 400.
+        var body = new { value };
         var response = await _http.PutAsJsonAsync(
             $"/api/config/key-value/{Uri.EscapeDataString(key)}",
-            value,
+            body,
             PipelineJsonOptions.Default,
             ct);
         response.EnsureSuccessStatusCode();
