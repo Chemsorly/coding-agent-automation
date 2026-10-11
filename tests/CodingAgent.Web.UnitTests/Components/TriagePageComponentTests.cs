@@ -19,15 +19,16 @@ namespace CodingAgent.Web.UnitTests.Components;
 public class TriagePageComponentTests : BunitContext
 {
     private readonly Mock<IPipelineApiTriageClient> _triages = new();
-    private readonly Mock<IPipelineApiConfigClient> _config = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _config = new();
 
     public TriagePageComponentTests()
     {
-        _config.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
-        _config.Setup(c => c.GetTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _config.Setup(c => c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, new PipelineConfiguration().TriageRetentionDays));
+        _config.Setup(c => c.GetTemplatesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([
-                new PipelineJobTemplate { Id = "t1", Name = "payments-worker", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
-                new PipelineJobTemplate { Id = "t2", Name = "checkout-api", IssueProviderId = "ip-2", RepoProviderId = "rp-2", Enabled = true },
+                new CodingAgent.Contracts.Ui.UiTemplate("t1", "payments-worker", true),
+                new CodingAgent.Contracts.Ui.UiTemplate("t2", "checkout-api", true),
             ]);
         Services.AddSingleton(_triages.Object);
         Services.AddSingleton(_config.Object);

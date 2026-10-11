@@ -75,6 +75,9 @@ public class TriageSurroundingsComponentTests : BunitContext
         Services.AddSingleton(hub.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiWorkItemClient>());
         Services.AddSingleton(config.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
+            c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>())
+                == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());

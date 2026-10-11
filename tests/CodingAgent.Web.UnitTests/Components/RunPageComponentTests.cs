@@ -67,6 +67,8 @@ public class RunPageComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
+            c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(new CockpitState());
     }
@@ -973,6 +975,8 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
         Services.AddSingleton(mockConfigClient.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
+            c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());
@@ -1117,6 +1121,8 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
         Services.AddSingleton(mockConfigClient.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
+            c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());

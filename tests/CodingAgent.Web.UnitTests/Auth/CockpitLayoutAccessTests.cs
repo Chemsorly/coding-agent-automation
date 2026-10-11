@@ -23,6 +23,7 @@ public class CockpitLayoutAccessTests : BunitContext
     private const string AlphaId = "6f1c2a9e-0000-0000-0000-00000000000c";
 
     private readonly Mock<IPipelineApiConfigClient> _configClient = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _uiConfig = new();
     private readonly Mock<IPipelineApiRunHistoryClient> _runHistory = new();
     private readonly Mock<IJSRuntime> _js = new();
     private readonly CockpitState _state = new();
@@ -30,13 +31,16 @@ public class CockpitLayoutAccessTests : BunitContext
 
     public CockpitLayoutAccessTests()
     {
-        _configClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
+        // The API filters the list to the readable projects; the layout filters it again, so the
+        // full list here also checks that second filter.
+        _uiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CodingAgent.Contracts.Ui.UiProject>
             {
-                new() { Id = PaymentsId, Name = "payments" },
-                new() { Id = BillingId, Name = "billing" },
-                new() { Id = AlphaId, Name = "alpha" },
+                new(PaymentsId, "payments", true),
+                new(BillingId, "billing", true),
+                new(AlphaId, "alpha", true),
             });
+        Services.AddSingleton(_uiConfig.Object);
         _configClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
         _configClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _runHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
@@ -158,7 +162,7 @@ public class CockpitLayoutAccessTests : BunitContext
         cut.FindAll(".cockpit-project-switcher").Should().BeEmpty();
         cut.FindAll("[data-testid=user-menu]").Should().ContainSingle("a no-access user still reaches the profile and logout");
         _attentionQueries.Should().BeEmpty();
-        _configClient.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _uiConfig.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]

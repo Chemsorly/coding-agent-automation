@@ -49,6 +49,9 @@ public class TriageListAndFormComponentTests : BunitContext
         _state.SetProject(ShopProjectId, "Shop");
         Services.AddSingleton(_triages.Object);
         Services.AddSingleton(_config.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
+            c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>())
+                == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, new PipelineConfiguration().TriageRetentionDays))));
         Services.AddSingleton(_state);
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
