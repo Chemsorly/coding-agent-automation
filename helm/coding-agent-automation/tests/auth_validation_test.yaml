@@ -48,10 +48,30 @@ tests:
       auth.rbac.bindings:
         - group: team-a
           role: admin
-          project: payments
+          projectId: 6f1c2a9e-0000-0000-0000-000000000000
     asserts:
       - failedTemplate:
           errorPattern: "can only be bound globally"
+
+  - it: fails when project key is used instead of projectId
+    set:
+      auth.rbac.bindings:
+        - group: team-a
+          role: operator
+          project: payments-api
+    asserts:
+      - failedTemplate:
+          errorPattern: "no longer supported"
+
+  - it: fails when projectId is not a valid GUID
+    set:
+      auth.rbac.bindings:
+        - group: team-a
+          role: operator
+          projectId: payments-api
+    asserts:
+      - failedTemplate:
+          errorPattern: "which is not a project ID"
 
   - it: fails for several web replicas without Redis
     set:
