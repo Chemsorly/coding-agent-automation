@@ -112,7 +112,7 @@ With a `tls` section on the Ingress, the web host also sends clients that reache
 
 Every response also carries `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and a Content Security Policy with `base-uri`, `form-action`, `frame-ancestors` and `object-src`. The policy does not restrict scripts or styles, because the page shell has inline scripts. `Cross-Origin-Resource-Policy` is `same-origin` everywhere except `/favicon.svg`, which is `cross-origin` so dashboards on other hosts can show it as the service icon.
 
-Running several web replicas requires `signalr.redis.connectionString`: sessions are encrypted with a key ring shared through Redis. The chart refuses `web.replicas > 1` without it.
+Sessions are encrypted with one key from the `data-protection-key` of the `<release>-coding-agent-automation-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)). Every web replica reads the same key, so a session works on all replicas and survives restarts; the web host needs no Redis.
 
 Several web replicas also need sticky sessions at the ingress. Each open page is a Blazor Server circuit that lives in one pod's memory; its connection and every reconnect must reach that pod. Without stickiness the browser's connection is routed to a pod that does not know it, and the page stays unresponsive. With Traefik, set the annotations on the web Service:
 
@@ -162,5 +162,5 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 | The profile page says a binding "opens nothing: no project has this ID" | The `projectId` value must equal the ID shown on the project's Overview tab (Settings → Projects → project → Overview). |
 | "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client ID, client secret or issuer, a provider it cannot reach, or a clock skew. |
 | Redirect URI uses `http://` behind TLS | The ingress must send `X-Forwarded-Proto: https`. |
-| Signed out on every request with several web replicas | Configure `signalr.redis.connectionString`. |
+| Signed out on every request with several web replicas | All web pods must read the same `data-protection-key`; restart them after replacing the Secret. Check the sticky-session annotations. |
 | Pages load but stay unresponsive with several web replicas; the browser console shows "No Connection with that ID" | Enable sticky sessions at the ingress (see [Exposing the UI](#exposing-the-ui)). |

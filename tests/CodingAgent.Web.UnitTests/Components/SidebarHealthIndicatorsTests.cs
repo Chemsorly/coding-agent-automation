@@ -1,361 +1,150 @@
 using Bunit;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Components.Layout;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Infrastructure;
-using CodingAgent.Web.Services;
-using Microsoft.Extensions.Configuration;
+using CodingAgent.Web.Ui;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Serilog;
-using StackExchange.Redis;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
-// TODO: Missing test coverage (review warnings):
-// - Test for periodic timer refresh actually updating the UI when underlying service state changes
-// - Test for graceful degradation when injected services throw (verify catch block prevents render failures)
+/// <summary>
+/// The sidebar's health section. Database and Redis come from the Pipeline API
+/// (<c>/api/ui/health</c>, spec 051); agents from the registry.
+/// </summary>
 public class SidebarHealthIndicatorsTests : BunitContext
 {
     private static readonly string[] DotnetLabels = ["dotnet"];
     private readonly Mock<ILogger> _mockLogger = new();
+    private readonly FakeUiHealthClient _health = new();
 
-    private static InfrastructureHealthService CreateHealthService(
-        bool dbConfigured = false,
-        bool dbHealthy = true,
-        bool redisConfigured = false,
-        bool redisConnected = true)
+    private AgentRegistryService CreateRegistry() => new(_mockLogger.Object);
+
+    private AgentRegistryService RegistryWith(params (string Id, AgentStatus? Status)[] agents)
     {
-        var services = new ServiceCollection();
-
-        if (dbConfigured)
-        {
-            var dbHealth = new DatabaseHealthState();
-            if (!dbHealthy)
-                dbHealth.MarkUnhealthy();
-            services.AddSingleton(dbHealth);
-        }
-
-        if (redisConfigured)
-        {
-            var redisMock = new Mock<IConnectionMultiplexer>();
-            redisMock.Setup(r => r.IsConnected).Returns(redisConnected);
-            services.AddSingleton(redisMock.Object);
-        }
-
-        var sp = services.BuildServiceProvider();
-
-        var configData = new Dictionary<string, string?>();
-        if (dbConfigured)
-            configData["Database:Host"] = "localhost";
-        if (redisConfigured)
-            configData["SignalR:Redis:ConnectionString"] = "localhost:6379";
-
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(configData)
-            .Build();
-
-        return new InfrastructureHealthService(sp, configuration, Mock.Of<CodingAgent.Api.Client.IPipelineApiHealthClient>());
-    }
-
-    private AgentRegistryService CreateRegistry()
-    {
-        return new AgentRegistryService(_mockLogger.Object);
-    }
-
-    private void RegisterServices(InfrastructureHealthService? healthService = null, AgentRegistryService? registry = null)
-    {
-        Services.AddSingleton(healthService ?? CreateHealthService());
-        Services.AddSingleton<IAgentRegistryService>(registry ?? CreateRegistry());
-    }
-
-    [Fact]
-    public void HidesEntireSection_WhenFullLegacyMode()
-    {
-        // No DB, no Redis, no agents — entire section hidden
-        RegisterServices();
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        Assert.Empty(cut.Markup.Trim());
-    }
-
-    [Fact]
-    public void ShowsSection_WhenDbConfigured()
-    {
-        // Spec 045 Task 10 (Req 1.5): DB health removed from monolith.
-        // DatabaseConnected is always null — DB items never render.
-        // The section is only visible when Redis or agents are configured.
-        // When only dbConfigured=true (no Redis, no agents), section is hidden.
-        RegisterServices(CreateHealthService(dbConfigured: true, dbHealthy: true));
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        // Section is hidden because DatabaseConnected is always null → no DB item,
-        // and no Redis or agents registered.
-        Assert.Empty(cut.Markup.Trim());
-    }
-
-    [Fact]
-    public void ShowsSection_WhenRedisConfigured()
-    {
-        // Section becomes visible when Redis is configured.
-        RegisterServices(CreateHealthService(redisConfigured: true, redisConnected: true));
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        Assert.NotEmpty(cut.Markup.Trim());
-        var section = cut.Find(".sidebar-health");
-        Assert.NotNull(section);
-    }
-
-    [Fact]
-    public void ShowsDbGreenDot_WhenDatabaseConnected()
-    {
-        // Spec 045 Task 10 (Req 1.5): DB items are never rendered (DatabaseConnected always null).
-        // Verify no DB item appears regardless of dbConfigured.
-        RegisterServices(CreateHealthService(dbConfigured: true, dbHealthy: true));
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        // Section is hidden entirely (no Redis, no agents), so no DB item.
-        Assert.Empty(cut.Markup.Trim());
-    }
-
-    [Fact]
-    public void ShowsDbRedDot_WhenDatabaseDisconnected()
-    {
-        // Spec 045 Task 10 (Req 1.5): DB items are never rendered (DatabaseConnected always null).
-        RegisterServices(CreateHealthService(dbConfigured: true, dbHealthy: false));
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        // Section hidden; no DB item rendered.
-        Assert.Empty(cut.Markup.Trim());
-    }
-
-    [Fact]
-    public void HidesDbIndicator_WhenDbNotConfigured()
-    {
-        // Redis configured but DB not — DB indicator should be hidden
-        RegisterServices(CreateHealthService(redisConfigured: true, redisConnected: true));
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        Assert.DoesNotContain(items, i => i.TextContent.Contains("Database"));
-    }
-
-    [Fact]
-    public void ShowsRedisGreenDot_WhenRedisConnected()
-    {
-        RegisterServices(CreateHealthService(redisConfigured: true, redisConnected: true));
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var redisItem = items.First(i => i.TextContent.Contains("Redis"));
-        var dot = redisItem.QuerySelector(".infra-health-dot")!;
-        Assert.Contains("dot-healthy", dot.ClassList.ToString());
-    }
-
-    [Fact]
-    public void ShowsRedisRedDot_WhenRedisDisconnected()
-    {
-        RegisterServices(CreateHealthService(redisConfigured: true, redisConnected: false));
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var redisItem = items.First(i => i.TextContent.Contains("Redis"));
-        var dot = redisItem.QuerySelector(".infra-health-dot")!;
-        Assert.Contains("dot-unhealthy", dot.ClassList.ToString());
-    }
-
-    [Fact]
-    public void ShowsRedisGreyDot_WhenRedisNotConfigured_ButSectionVisible()
-    {
-        // Spec 045: DB health removed — use an agent to make section visible instead.
-        // Redis not configured — grey dot.
         var registry = CreateRegistry();
-        registry.Register(new AgentRegistrationMessage
+        foreach (var (id, status) in agents)
         {
-            AgentId = "agent-1",
-            Hostname = "host-1",
-            Labels = DotnetLabels
-        }, "conn-1");
-        RegisterServices(CreateHealthService(), registry);
+            registry.Register(new AgentRegistrationMessage { AgentId = id, Hostname = $"host-{id}", Labels = DotnetLabels }, $"conn-{id}");
+            if (status is { } s)
+                registry.TransitionStatus(id, s);
+        }
+        return registry;
+    }
 
-        var cut = Render<SidebarHealthIndicators>();
+    private IRenderedComponent<SidebarHealthIndicators> RenderSidebar(UiHealthResponse? health = null, AgentRegistryService? registry = null)
+    {
+        if (health is not null)
+            _health.Response = health;
+        Services.AddSingleton<IUiHealthClient>(_health);
+        Services.AddSingleton<IAgentRegistryService>(registry ?? CreateRegistry());
+        return Render<SidebarHealthIndicators>();
+    }
 
-        var items = cut.FindAll(".sidebar-health-item");
-        var redisItem = items.First(i => i.TextContent.Contains("Redis"));
-        var dot = redisItem.QuerySelector(".infra-health-dot")!;
-        Assert.Contains("dot-inactive", dot.ClassList.ToString());
+    private static string DotOf(IRenderedComponent<SidebarHealthIndicators> cut, string label) =>
+        cut.FindAll(".sidebar-health-item").First(i => i.TextContent.Contains(label))
+            .QuerySelector(".infra-health-dot")!.ClassName ?? "";
+
+    private static string TooltipOf(IRenderedComponent<SidebarHealthIndicators> cut, string label) =>
+        cut.FindAll(".sidebar-health-item").First(i => i.TextContent.Contains(label)).GetAttribute("title")!;
+
+    [Fact]
+    public void HidesSection_UntilTheFirstHealthRead_WhenNoAgents()
+    {
+        _health.Gate = new TaskCompletionSource().Task; // the request never answers
+
+        var cut = RenderSidebar();
+
+        Assert.Empty(cut.Markup.Trim());
+        Assert.Equal(1, _health.Calls);
+    }
+
+    [Fact]
+    public void ShowsDatabaseGreen_WhenTheApiReportsItConnected()
+    {
+        var cut = RenderSidebar(new UiHealthResponse(DatabaseConnected: true, RedisConnected: null));
+
+        Assert.Contains("dot-healthy", DotOf(cut, "Database"));
+        Assert.Equal("Database: Connected", TooltipOf(cut, "Database"));
+    }
+
+    [Fact]
+    public void ShowsDatabaseRed_WhenTheApiReportsItDisconnected()
+    {
+        var cut = RenderSidebar(new UiHealthResponse(DatabaseConnected: false, RedisConnected: null));
+
+        Assert.Contains("dot-unhealthy", DotOf(cut, "Database"));
+        Assert.Equal("Database: Disconnected", TooltipOf(cut, "Database"));
+    }
+
+    [Theory]
+    [InlineData(true, "dot-healthy", "Redis: Connected")]
+    [InlineData(false, "dot-unhealthy", "Redis: Disconnected")]
+    [InlineData(null, "dot-inactive", "Redis: Not configured")]
+    public void ShowsRedis_AsTheApiReportsIt(bool? redis, string dot, string tooltip)
+    {
+        var cut = RenderSidebar(new UiHealthResponse(DatabaseConnected: true, RedisConnected: redis));
+
+        Assert.Contains(dot, DotOf(cut, "Redis"));
+        Assert.Equal(tooltip, TooltipOf(cut, "Redis"));
+    }
+
+    [Fact]
+    public void ShowsDatabaseRed_AndRedisUnknown_WhenTheApiIsUnreachable()
+    {
+        _health.Failure = new HttpRequestException("connection refused");
+
+        var cut = RenderSidebar();
+
+        Assert.Contains("dot-unhealthy", DotOf(cut, "Database"));
+        Assert.Contains("dot-inactive", DotOf(cut, "Redis"));
     }
 
     [Fact]
     public void ShowsAgentGreenDot_WhenAllConnected()
     {
-        var registry = CreateRegistry();
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host-1",
-            Labels = DotnetLabels
-        }, "conn-1");
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-2",
-            Hostname = "host-2",
-            Labels = DotnetLabels
-        }, "conn-2");
+        var cut = RenderSidebar(registry: RegistryWith(("agent-1", null), ("agent-2", null)));
 
-        RegisterServices(CreateHealthService(dbConfigured: true), registry);
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var agentItem = items.First(i => i.TextContent.Contains("Agents"));
-        var dot = agentItem.QuerySelector(".infra-health-dot")!;
-        Assert.Contains("dot-healthy", dot.ClassList.ToString());
-        Assert.Contains("Agents: 2", agentItem.TextContent);
+        Assert.Contains("dot-healthy", DotOf(cut, "Agents"));
+        Assert.Contains("Agents: 2", cut.FindAll(".sidebar-health-item").First(i => i.TextContent.Contains("Agents")).TextContent);
     }
 
     [Fact]
     public void ShowsAgentYellowDot_WhenSomeDisconnected()
     {
-        var registry = CreateRegistry();
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host-1",
-            Labels = DotnetLabels
-        }, "conn-1");
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-2",
-            Hostname = "host-2",
-            Labels = DotnetLabels
-        }, "conn-2");
-        registry.TransitionStatus("agent-2", AgentStatus.Disconnected);
+        var cut = RenderSidebar(registry: RegistryWith(("agent-1", null), ("agent-2", AgentStatus.Disconnected)));
 
-        RegisterServices(CreateHealthService(dbConfigured: true), registry);
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var agentItem = items.First(i => i.TextContent.Contains("Agents"));
-        var dot = agentItem.QuerySelector(".infra-health-dot")!;
-        Assert.Contains("dot-warning", dot.ClassList.ToString());
-        Assert.Contains("Agents: 1", agentItem.TextContent);
+        Assert.Contains("dot-warning", DotOf(cut, "Agents"));
+        Assert.Equal("Agents: 1 connected, 1 disconnected", TooltipOf(cut, "Agents"));
     }
 
     [Fact]
     public void ShowsAgentRedDot_WhenAllDisconnected()
     {
-        var registry = CreateRegistry();
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host-1",
-            Labels = DotnetLabels
-        }, "conn-1");
-        registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
+        var cut = RenderSidebar(registry: RegistryWith(("agent-1", AgentStatus.Disconnected)));
 
-        // Use Redis to keep section visible when all agents are disconnected
-        // (section requires connectedCount>0 OR dbStatus!=null OR redisStatus!=null)
-        RegisterServices(CreateHealthService(redisConfigured: true), registry);
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var agentItem = items.First(i => i.TextContent.Contains("Agents"));
-        var dot = agentItem.QuerySelector(".infra-health-dot")!;
-        Assert.Contains("dot-unhealthy", dot.ClassList.ToString());
-        Assert.Contains("Agents: 0", agentItem.TextContent);
+        Assert.Contains("dot-unhealthy", DotOf(cut, "Agents"));
     }
 
     [Fact]
-    public void ShowsCorrectTooltips()
+    public void ShowsAgentInactiveDot_WhenNoAgentIsRegistered()
     {
-        // Spec 045: DB health removed. Only Redis tooltip is tested.
-        RegisterServices(CreateHealthService(redisConfigured: true, redisConnected: true));
+        var cut = RenderSidebar();
 
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var redisItem = items.First(i => i.TextContent.Contains("Redis"));
-        Assert.Equal("Redis: Connected", redisItem.GetAttribute("title"));
+        Assert.Contains("dot-inactive", DotOf(cut, "Agents"));
+        Assert.Contains("Agents: 0", cut.FindAll(".sidebar-health-item").First(i => i.TextContent.Contains("Agents")).TextContent);
     }
 
     [Fact]
-    public void ShowsDisconnectedTooltips()
+    public void ShowsAgents_BeforeTheFirstHealthRead()
     {
-        // Spec 045: DB health removed. Only Redis tooltip is tested.
-        RegisterServices(CreateHealthService(redisConfigured: true, redisConnected: false));
+        _health.Gate = new TaskCompletionSource().Task;
 
-        var cut = Render<SidebarHealthIndicators>();
+        var cut = RenderSidebar(registry: RegistryWith(("agent-1", null)));
 
-        var items = cut.FindAll(".sidebar-health-item");
-        var redisItem = items.First(i => i.TextContent.Contains("Redis"));
-        Assert.Equal("Redis: Disconnected", redisItem.GetAttribute("title"));
-    }
-
-    [Fact]
-    public void ShowsRedisNotConfiguredTooltip()
-    {
-        // Spec 045: DB health removed — use agent to make section visible.
-        var registry = CreateRegistry();
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host-1",
-            Labels = DotnetLabels
-        }, "conn-1");
-        RegisterServices(CreateHealthService(), registry);
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var redisItem = items.First(i => i.TextContent.Contains("Redis"));
-        Assert.Equal("Redis: Not configured", redisItem.GetAttribute("title"));
-    }
-
-    [Fact]
-    public void ShowsAgentsWithRegisteredAgents_EvenWhenNoDbRedis()
-    {
-        // Only agents registered — section should be visible
-        var registry = CreateRegistry();
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host-1",
-            Labels = DotnetLabels
-        }, "conn-1");
-
-        RegisterServices(registry: registry);
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        Assert.NotEmpty(cut.Markup.Trim());
-        var items = cut.FindAll(".sidebar-health-item");
-        Assert.Contains(items, i => i.TextContent.Contains("Agents"));
-    }
-
-    [Fact]
-    public void ShowsAgentInactiveDot_WhenZeroAgentsRegistered_ButSectionVisible()
-    {
-        // Spec 045: DB health removed — use Redis to make section visible with zero agents.
-        var registry = CreateRegistry(); // no agents registered
-        RegisterServices(CreateHealthService(redisConfigured: true, redisConnected: true), registry);
-
-        var cut = Render<SidebarHealthIndicators>();
-
-        var items = cut.FindAll(".sidebar-health-item");
-        var agentItem = items.First(i => i.TextContent.Contains("Agents"));
-        var dot = agentItem.QuerySelector(".infra-health-dot")!;
-        Assert.Contains("dot-inactive", dot.ClassList.ToString());
-        Assert.Contains("Agents: 0", agentItem.TextContent);
+        Assert.Contains(cut.FindAll(".sidebar-health-item"), i => i.TextContent.Contains("Agents: 1"));
+        Assert.DoesNotContain(cut.FindAll(".sidebar-health-item"), i => i.TextContent.Contains("Database"));
     }
 }

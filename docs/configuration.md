@@ -305,6 +305,8 @@ The Helm chart sets these from the `auth` values; see [Authentication](authentic
 | `Auth__Admin__Password` | Password of the local `admin` account (from the admin Secret). Required while the local admin is enabled. |
 | `Auth__Oidc__ClientSecret` | Client secret of the OIDC identity provider. Required when OIDC is enabled. |
 | `Auth__ConfigPath` | Path of the auth settings file the chart renders (default: `/app/config/auth.json`). |
+| `UserToken__SigningKey` | Key the web host signs user tokens with; the Pipeline API needs the same value (from the user-token Secret). **Required**, at least 32 characters. See [Deployment](deployment.md#user-token-secret). |
+| `DataProtection__Key` | The one key of the web host's Data Protection ring (login cookie, antiforgery tokens), from the user-token Secret. **Required**, at least 32 characters; all web replicas need the same value. |
 
 Every other `Auth__*` variable overrides the same setting in the file, for example `Auth__Rbac__DefaultRole=readonly` for a local run.
 
@@ -318,7 +320,7 @@ Every other `Auth__*` variable overrides the same setting in the file, for examp
 
 | Variable | Description |
 |----------|-------------|
-| `SignalR__Redis__ConnectionString` | Redis connection string. The Pipeline API uses it for the SignalR backplane and shared state (required with more than one API replica); the web host uses it only to share the Data Protection key ring (required with more than one web replica). Format: `host:port,password=xxx` |
+| `SignalR__Redis__ConnectionString` | Redis connection string. The Pipeline API uses it for the SignalR backplane and shared state (required with more than one API replica). The web host does not use Redis. Format: `host:port,password=xxx` |
 
 ### Database Maintenance
 

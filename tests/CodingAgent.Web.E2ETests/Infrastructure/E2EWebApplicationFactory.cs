@@ -145,6 +145,8 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 
         // Spec 051: the same key as the API host, so the user tokens this host signs are accepted there.
         Environment.SetEnvironmentVariable("UserToken__SigningKey", E2ETestDefaults.UserTokenSigningKey);
+        // Spec 051 D10: the web host's Data Protection ring (login cookie, antiforgery) comes from this key.
+        Environment.SetEnvironmentVariable("DataProtection__Key", E2ETestDefaults.DataProtectionKey);
 
         E2ETestDefaults.ApplyDatabaseEnvironment();
 

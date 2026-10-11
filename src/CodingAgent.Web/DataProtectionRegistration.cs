@@ -1,90 +1,96 @@
-using CodingAgent.Orchestration.Redis;
+using System.Text;
+using System.Xml.Linq;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.AuthenticatedEncryption.ConfigurationModel;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-using Serilog;
-using StackExchange.Redis;
+using Microsoft.AspNetCore.DataProtection.Repositories;
 
 namespace CodingAgent.Web;
 
 /// <summary>
-/// Registers ASP.NET Core Data Protection with a shared Redis key ring when Redis is configured.
+/// The web host's Data Protection key ring (spec 051 D10). Data Protection encrypts the login
+/// cookie and the antiforgery tokens.
 ///
 /// <para>
-/// Without a shared key ring, each orchestrator pod generates its own ephemeral keys in
-/// <c>/home/ubuntu/.aspnet/DataProtection-Keys</c>. The Rancher proxy can load-balance the
-/// initial page request to replica A (antiforgery token encrypted with A's key) then route
-/// the Blazor WebSocket to replica B, which cannot decrypt the token — causing
-/// <c>CryptographicException: The key was not found in the key ring</c> and the client
-/// circuit-failure "The circuit failed to initialize".
+/// The ring holds one fixed key built from the <c>data-protection-key</c> of the
+/// <c>…-web-user-token</c> Secret, which is mounted into the web pods only. Every replica builds the
+/// same key, so a cookie issued by one replica is accepted by all of them and survives restarts,
+/// with no shared storage. Without a shared ring, a page load on replica A and its circuit on
+/// replica B fail with "The circuit failed to initialize".
 /// </para>
 ///
 /// <para>
-/// When <paramref name="redisConnectionString"/> is provided, keys are persisted to Redis under
-/// <c>caa:data-protection-keys</c> and all replicas share one ring. When absent (local dev /
-/// single-replica), the default ephemeral in-process ring is used.
+/// The ring is read-only and automatic key generation is off, so nothing can add a key to it.
+/// The Redis ring this replaces could be written by anything that reached Redis. Rotation means
+/// replacing the Secret value and restarting the web pods; everyone signs in again.
 /// </para>
 /// </summary>
 public static class DataProtectionRegistration
 {
-    internal const string RedisKey = "caa:data-protection-keys";
     internal const string ApplicationName = "coding-agent-web";
 
-    /// <summary>
-    /// Creates a factory that returns an <see cref="IConnectionMultiplexer"/> for the given
-    /// <paramref name="redisConnectionString"/>, or <c>null</c> if the string is null or empty
-    /// (Redis not configured).
-    ///
-    /// <para>
-    /// The factory defers the actual connection until it is invoked, but the caller
-    /// (<see cref="AddDataProtectionServices"/>) invokes it immediately during service registration.
-    /// <see cref="RedisConnectionOptions.Parse"/> ensures <c>AbortOnConnectFail = false</c>
-    /// so that the connection returns a disconnected multiplexer instead of throwing when Redis
-    /// is unreachable at startup.
-    /// </para>
-    /// </summary>
-    /// <param name="redisConnectionString">Redis connection string, or <c>null</c> / <c>""</c> when Redis is not configured.</param>
-    /// <returns>A factory delegate, or <c>null</c> when <paramref name="redisConnectionString"/> is null or empty.</returns>
-    internal static Func<IConnectionMultiplexer>? CreateMultiplexerFactory(string? redisConnectionString)
-    {
-        if (string.IsNullOrEmpty(redisConnectionString))
-            return null;
-        return () => ConnectionMultiplexer.Connect(RedisConnectionOptions.Parse(redisConnectionString));
-    }
+    /// <summary>IConfiguration key of the key material (Helm: <c>DataProtection__Key</c>).</summary>
+    public const string KeyConfigKey = "DataProtection:Key";
+
+    /// <summary>Minimum length in characters, as for the user-token signing key.</summary>
+    public const int MinimumKeyLength = 32;
 
     /// <summary>
-    /// Configures Data Protection. When <paramref name="connectionMultiplexerFactory"/> is provided
-    /// (i.e. Redis is configured), keys are persisted to Redis. Otherwise the default ephemeral
-    /// in-process key ring is used.
+    /// The one key's ID. It is fixed: after a rotation, payloads under this ID fail authentication
+    /// with the new material, which signs everyone out as intended.
     /// </summary>
-    /// <param name="services">The service collection to configure.</param>
-    /// <param name="connectionMultiplexerFactory">
-    /// Factory that returns the <see cref="IConnectionMultiplexer"/> to use for key persistence.
-    /// Pass <c>null</c> to fall back to the default ephemeral key ring.
-    /// </param>
-    internal static IServiceCollection AddDataProtectionServices(
-        this IServiceCollection services,
-        Func<IConnectionMultiplexer>? connectionMultiplexerFactory)
-    {
-        if (connectionMultiplexerFactory is null)
-        {
-            Log.Warning(
-                "Data Protection: Redis not configured — " +
-                "using ephemeral in-process key ring (single replica only)");
-            return services;
-        }
+    internal static readonly Guid KeyId = new("0a51d10e-0051-4d10-a051-000000000d10");
 
-        var mux = connectionMultiplexerFactory();
-        // The same connection backs the sidebar's Redis indicator (InfrastructureHealthService).
-        services.AddSingleton(mux);
+    private static readonly DateTimeOffset KeyActivation = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset KeyExpiration = new(2999, 12, 31, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>
+    /// Registers Data Protection with the read-only ring. Throws <see cref="InvalidOperationException"/>
+    /// when the key is missing or shorter than <see cref="MinimumKeyLength"/>.
+    /// </summary>
+    internal static IServiceCollection AddDataProtectionServices(this IServiceCollection services, string? configuredKey)
+    {
+        var key = CreateKeyElement(configuredKey);
+
         services.AddDataProtection()
-            .PersistKeysToStackExchangeRedis(() => mux.GetDatabase(), RedisKey)
-            .SetApplicationName(ApplicationName);
-
-        Log.Information(
-            "Data Protection: keys persisted to Redis (key={RedisKey})", RedisKey);
+            .SetApplicationName(ApplicationName)
+            .DisableAutomaticKeyGeneration();
+        services.Configure<KeyManagementOptions>(options => options.XmlRepository = new ReadOnlyKeyRing(key));
 
         return services;
+    }
+
+    /// <summary>The key in the XML form the key manager reads, as it would have written it.</summary>
+    internal static XElement CreateKeyElement(string? configuredKey)
+    {
+        if (string.IsNullOrWhiteSpace(configuredKey))
+            throw new InvalidOperationException($"{KeyConfigKey} is not configured.");
+        if (configuredKey.Length < MinimumKeyLength)
+            throw new InvalidOperationException($"{KeyConfigKey} must be at least {MinimumKeyLength} characters long.");
+
+        // The framework's default algorithms (AES-256-CBC, HMACSHA256); subkeys are derived from the master key.
+        var descriptor = new AuthenticatedEncryptorDescriptor(
+            new AuthenticatedEncryptorConfiguration(), new Secret(Encoding.UTF8.GetBytes(configuredKey)));
+        var xml = descriptor.ExportToXml();
+
+        return new XElement("key",
+            new XAttribute("id", KeyId),
+            new XAttribute("version", 1),
+            new XElement("creationDate", KeyActivation),
+            new XElement("activationDate", KeyActivation),
+            new XElement("expirationDate", KeyExpiration),
+            new XElement("descriptor",
+                new XAttribute("deserializerType", xml.DeserializerType.AssemblyQualifiedName!),
+                xml.SerializedDescriptorElement));
+    }
+
+    /// <summary>A key ring with exactly one key that never changes.</summary>
+    internal sealed class ReadOnlyKeyRing(XElement key) : IXmlRepository
+    {
+        public IReadOnlyCollection<XElement> GetAllElements() => [new XElement(key)];
+
+        public void StoreElement(XElement element, string friendlyName) =>
+            throw new NotSupportedException(
+                "The Data Protection key ring is read-only (spec 051 D10): its key comes from the web-user-token Secret.");
     }
 }

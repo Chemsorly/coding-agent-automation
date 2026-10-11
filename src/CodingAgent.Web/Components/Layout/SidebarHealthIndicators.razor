@@ -1,8 +1,7 @@
 @implements IDisposable
-@using CodingAgent.Web.Services
 @using CodingAgent.Orchestration.Registry
 @using CodingAgent.Pipeline.Models
-@inject InfrastructureHealthService InfraHealth
+@inject IUiHealthClient Health
 @inject IAgentRegistryService Registry
 
 @if (_sectionVisible)
@@ -31,8 +30,18 @@
 }
 
 @code {
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Database and Redis come from the Pipeline API (spec 051, <c>/api/ui/health</c>) with the
+    /// user's token: every 5th tick (10 s) is enough for a sidebar dot. Agents refresh every tick.
+    /// </summary>
+    private const int HealthEveryTicks = 5;
+
     private System.Threading.Timer? _refreshTimer;
     private bool _disposed;
+    private int _ticks;
+    private bool _healthInFlight;
 
     private bool? _dbStatus;
     private bool? _redisStatus;
@@ -40,8 +49,8 @@
     private int _totalCount;
 
     /// <summary>
-    /// Section is visible when at least one indicator has data (DB configured, Redis configured, or agents registered).
-    /// In full legacy mode (nothing configured, no agents), the section is hidden entirely.
+    /// Section is visible when at least one indicator has data (health read from the API, or agents
+    /// registered). Before the first health read and without agents, it is hidden.
     /// </summary>
     private bool _sectionVisible;
 
@@ -82,41 +91,72 @@
 
     protected override void OnInitialized()
     {
-        RefreshState();
-        _refreshTimer = new System.Threading.Timer(RefreshTick, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        RefreshAgents();
+        _refreshTimer = new System.Threading.Timer(RefreshTick, null, RefreshInterval, RefreshInterval);
     }
 
-    private void RefreshState()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Not during prerendering: the first health read waits until the circuit is interactive.
+        if (firstRender && await RefreshHealthAsync() && !_disposed)
+            StateHasChanged();
+    }
+
+    private async Task<bool> RefreshHealthAsync()
+    {
+        if (_healthInFlight)
+            return false;
+        _healthInFlight = true;
+        try
+        {
+            var health = await Health.GetAsync();
+            _dbStatus = health.DatabaseConnected;
+            _redisStatus = health.RedisConnected;
+        }
+        catch
+        {
+            // Graceful degradation: the API is unreachable (or refused), so the database cannot be
+            // reached through it. Redis keeps its last known state.
+            _dbStatus = false;
+        }
+        finally
+        {
+            _healthInFlight = false;
+        }
+        UpdateVisibility();
+        return true;
+    }
+
+    private void RefreshAgents()
     {
         try
         {
-            _dbStatus = InfraHealth.DatabaseConnected;
-            _redisStatus = InfraHealth.RedisConnected;
-
-            // Trigger non-blocking API health poll so next render has fresh DB status
-            InfraHealth.RefreshDbHealthBackground();
-
             var agents = Registry.GetAllAgents();
             _totalCount = agents.Count;
             _connectedCount = agents.Count(a => a.Status != AgentStatus.Disconnected);
-
-            _sectionVisible = _dbStatus is not null || _redisStatus is not null || _connectedCount > 0;
         }
         catch
         {
             // Graceful degradation — don't crash the sidebar render
         }
+        UpdateVisibility();
     }
+
+    private void UpdateVisibility() =>
+        _sectionVisible = _dbStatus is not null || _redisStatus is not null || _connectedCount > 0;
 
     private async void RefreshTick(object? state)
     {
         if (_disposed) return;
         try
         {
-            await InvokeAsync(() =>
+            await InvokeAsync(async () =>
             {
                 if (_disposed) return;
-                RefreshState();
+                if (++_ticks % HealthEveryTicks == 0)
+                    await RefreshHealthAsync();
+                if (_disposed) return;
+                RefreshAgents();
                 StateHasChanged();
             });
         }

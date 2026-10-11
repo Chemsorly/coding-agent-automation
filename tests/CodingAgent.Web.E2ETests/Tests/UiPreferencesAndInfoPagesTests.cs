@@ -371,9 +371,9 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         await Page.WaitForSelectorAsync("div.sidebar-health", new() { Timeout = 15_000 });
 
         // Wait for Database dot to show dot-healthy.
-        // DB health path: InfrastructureHealthService calls the API host's /readyz endpoint.
-        // The API's DatabaseHealthState defaults to IsDatabaseHealthy=true and DatabaseReadinessMonitor
-        // is removed (RemoveAll<IHostedService>), so /readyz always returns 200 in the harness.
+        // DB health path (spec 051): the sidebar calls the API host's /api/ui/health with the
+        // admin's user token. The API's DatabaseHealthState defaults to IsDatabaseHealthy=true and
+        // DatabaseReadinessMonitor is removed (RemoveAll<IHostedService>), so it reports healthy.
         await Page.WaitForSelectorAsync(
             ".sidebar-health-item:has(.sidebar-health-label:text('Database')) .infra-health-dot.dot-healthy",
             new() { Timeout = 15_000 });

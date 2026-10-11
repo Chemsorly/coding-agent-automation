@@ -327,6 +327,21 @@ Usage (inside an env: list, indented to 12):
 {{- end }}
 
 {{/*
+DataProtection__Key env entry for the web host only (spec 051 D10): the one key of its read-only
+Data Protection ring, which protects the login cookie and antiforgery tokens on every replica.
+
+Usage (inside an env: list, indented to 12):
+  {{- include "coding-agent-automation.dataProtectionKeyEnv" . | nindent 12 }}
+*/}}
+{{- define "coding-agent-automation.dataProtectionKeyEnv" -}}
+- name: DataProtection__Key
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "coding-agent-automation.userTokenSecretName" . }}
+      key: data-protection-key
+{{- end }}
+
+{{/*
 The `auth.admin` values with defaults applied: enabled unless explicitly false.
 */}}
 {{- define "coding-agent-automation.adminEnabled" -}}
@@ -386,9 +401,5 @@ Spec 049: render-time validation of the auth values (the web host validates them
       {{- fail (printf "auth.rbac.bindings[%d] binds role admin to projectId %q. The admin role can only be bound globally." $i $b.projectId) }}
     {{- end }}
   {{- end }}
-{{- end }}
-{{- $web := .Values.web | default dict -}}
-{{- if and (gt (int ($web.replicas | default 1)) 1) (empty ((.Values.signalr | default dict).redis | default dict).connectionString) }}
-  {{- fail "web.replicas is greater than 1 but signalr.redis.connectionString is empty. Login sessions are encrypted with a key ring shared through Redis; without it a session created on one web pod is rejected by the others. Set signalr.redis.connectionString or web.replicas: 1." }}
 {{- end }}
 {{- end }}

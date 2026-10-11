@@ -1,189 +1,99 @@
+using System.Security.Cryptography;
+using System.Xml.Linq;
 using AwesomeAssertions;
 using CodingAgent.Web;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Moq;
-using StackExchange.Redis;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
-/// Unit tests for <see cref="DataProtectionRegistration.AddDataProtectionServices"/>.
-///
-/// These tests verify the DI wiring shape — specifically whether keys are persisted
-/// to Redis (multi-replica) or kept in the default ephemeral in-process ring (single-replica
-/// / local dev). They do NOT connect to a real Redis instance.
-///
-/// Root cause documented: when 2+ orchestrator replicas run, each pod's ephemeral key ring
-/// causes AntiforgeryValidationException ("key not found") when the Rancher proxy routes
-/// the page load and the Blazor WebSocket to different pods, which manifests as
-/// "The circuit failed to initialize" on the client.
+/// Spec 051 D10: the web host's Data Protection ring is one fixed key from the
+/// <c>data-protection-key</c> Secret value. Each test builds separate hosts' worth of DI, as two
+/// replicas (or a restart) would.
 /// </summary>
 public class DataProtectionRegistrationTests
 {
-    // ── helpers ──────────────────────────────────────────────────────────────
+    private const string Key = "data-protection-test-key-0123456789abcdef";
+    private const string OtherKey = "another-data-protection-key-0123456789ab";
 
-    /// <summary>
-    /// Builds a service provider with AddDataProtectionServices wired and resolves
-    /// the KeyManagementOptions so tests can inspect the configured IXmlRepository.
-    /// </summary>
-    private static KeyManagementOptions ResolveKeyManagementOptions(
-        Func<IConnectionMultiplexer>? multiplexerFactory)
+    private static ServiceProvider Host(string key)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDataProtectionServices(multiplexerFactory);
-
-        var provider = services.BuildServiceProvider();
-        var opts = provider.GetRequiredService<IOptions<KeyManagementOptions>>();
-        return opts.Value;
+        services.AddDataProtectionServices(key);
+        return services.BuildServiceProvider();
     }
 
-    /// <summary>
-    /// Creates a mock <see cref="IConnectionMultiplexer"/> whose <c>GetDatabase()</c>
-    /// returns a mock <see cref="IDatabase"/>. Sufficient for DI-wiring tests — no
-    /// network calls are made.
-    /// </summary>
-    private static IConnectionMultiplexer CreateMockMultiplexer()
-    {
-        var db = new Mock<IDatabase>();
-        // PersistKeysToStackExchangeRedis stores XML; mock RedisValue reads so the
-        // repository initialises without a real server.
-        db.Setup(d => d.ListRange(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<long>(), It.IsAny<CommandFlags>()))
-          .Returns([]);
-        var mux = new Mock<IConnectionMultiplexer>();
-        mux.Setup(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object>())).Returns(db.Object);
-        return mux.Object;
-    }
-
-    // ── no Redis (null factory) ───────────────────────────────────────────────
+    private static IDataProtector Protector(ServiceProvider host) =>
+        host.GetRequiredService<IDataProtectionProvider>().CreateProtector("test-purpose");
 
     [Fact]
-    public void WhenNullFactory_XmlRepository_IsNull()
+    public void TwoHostsWithTheSameKey_ReadEachOthersPayloads()
     {
-        // When Redis is not configured, AddDataProtection() is not called at all,
-        // so KeyManagementOptions.XmlRepository stays at the default (null — framework picks ephemeral).
-        var opts = ResolveKeyManagementOptions(multiplexerFactory: null);
+        using var replicaA = Host(Key);
+        using var replicaB = Host(Key);
 
-        opts.XmlRepository.Should().BeNull(
-            "no Redis configured — framework falls back to ephemeral in-process key ring");
+        var payload = Protector(replicaA).Protect("session");
+
+        Protector(replicaB).Unprotect(payload).Should().Be("session");
     }
 
     [Fact]
-    public void WhenNullFactory_IDataProtectionProvider_StillResolvable()
+    public void AHostWithAnotherKey_RejectsThePayload()
     {
-        // Even without explicit AddDataProtection(), ASP.NET Core auto-registers a default provider.
-        // Verify DI does not throw — the app can still start in single-replica / dev mode.
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddDataProtection(); // ASP.NET Core default (no Redis)
-        services.AddDataProtectionServices(connectionMultiplexerFactory: null);
+        using var issuer = Host(Key);
+        using var rotated = Host(OtherKey);
 
-        var act = () => services.BuildServiceProvider()
-                                .GetRequiredService<IDataProtectionProvider>();
+        var payload = Protector(issuer).Protect("session");
 
-        act.Should().NotThrow("IDataProtectionProvider must resolve in fallback mode");
+        var act = () => Protector(rotated).Unprotect(payload);
+        act.Should().Throw<CryptographicException>("a rotated key must sign everyone out");
     }
 
-    // ── with Redis (non-null factory) ────────────────────────────────────────
-
-    [Fact]
-    public void WhenFactoryProvided_XmlRepository_IsNotNull()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("too-short-0123456789")]
+    public void MissingOrShortKey_IsRefused_NamingTheSetting(string? key)
     {
-        // PersistKeysToStackExchangeRedis sets KeyManagementOptions.XmlRepository to
-        // a RedisXmlRepository instance. Asserting non-null verifies the wiring is active.
-        var opts = ResolveKeyManagementOptions(() => CreateMockMultiplexer());
+        var act = () => new ServiceCollection().AddDataProtectionServices(key);
 
-        opts.XmlRepository.Should().NotBeNull(
-            "Redis is configured — keys must be stored in the shared Redis ring, not in-process");
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*{DataProtectionRegistration.KeyConfigKey}*");
     }
 
     [Fact]
-    public void WhenFactoryProvided_XmlRepository_IsRedisXmlRepository()
+    public void TheRing_IsReadOnly_AndNeverGeneratesKeys()
     {
-        var opts = ResolveKeyManagementOptions(() => CreateMockMultiplexer());
+        using var host = Host(Key);
+        var options = host.GetRequiredService<IOptions<KeyManagementOptions>>().Value;
 
-        opts.XmlRepository!.GetType().Name.Should().Be("RedisXmlRepository",
-            "PersistKeysToStackExchangeRedis must register RedisXmlRepository, not a file or in-memory repository");
+        options.AutoGenerateKeys.Should().BeFalse();
+        options.XmlRepository.Should().BeOfType<DataProtectionRegistration.ReadOnlyKeyRing>();
+        options.XmlRepository!.GetAllElements().Should().ContainSingle();
+        var store = () => options.XmlRepository.StoreElement(new XElement("key"), "attacker-key");
+        store.Should().Throw<NotSupportedException>();
     }
 
     [Fact]
-    public void WhenFactoryProvided_ApplicationName_IsCodingAgentWeb()
+    public void TheKey_IsUsedForProtection()
     {
-        // SetApplicationName isolates the key ring per app — prevents key sharing accidents
-        // with other apps pointing at the same Redis instance.
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddDataProtectionServices(() => CreateMockMultiplexer());
+        using var host = Host(Key);
+        var keys = host.GetRequiredService<IKeyManager>().GetAllKeys();
 
-        var provider = services.BuildServiceProvider();
-        var dpOptions = provider.GetRequiredService<IOptions<DataProtectionOptions>>();
-
-        dpOptions.Value.ApplicationDiscriminator.Should().Be(
-            DataProtectionRegistration.ApplicationName,
-            "application name must be scoped to 'coding-agent-web' to prevent cross-app key sharing");
+        keys.Should().ContainSingle().Which.KeyId.Should().Be(DataProtectionRegistration.KeyId);
+        Protector(host).Unprotect(Protector(host).Protect("x")).Should().Be("x");
     }
 
     [Fact]
-    public void WhenFactoryProvided_MultiplexerFactory_IsCalledExactlyOnce()
+    public void ApplicationName_IsPinned()
     {
-        // The factory should be called once during DI registration, not per-resolve.
-        var callCount = 0;
-        var mux = CreateMockMultiplexer();
-        Func<IConnectionMultiplexer> factory = () =>
-        {
-            callCount++;
-            return mux;
-        };
+        // Changing it invalidates every session and in-flight antiforgery token.
+        using var host = Host(Key);
 
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddDataProtectionServices(factory);
-        _ = services.BuildServiceProvider(); // trigger any deferred factory calls
-
-        callCount.Should().Be(1, "the multiplexer factory should be called exactly once during registration");
-    }
-
-    [Fact]
-    public void WhenFactoryProvided_MultiplexerIsRegisteredForTheHealthIndicator()
-    {
-        // InfrastructureHealthService reads Redis health from the IConnectionMultiplexer in DI. Since
-        // the web host has no SignalR backplane, the key-ring connection is the one it must get.
-        var mux = CreateMockMultiplexer();
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddDataProtectionServices(() => mux);
-
-        using var provider = services.BuildServiceProvider();
-        provider.GetRequiredService<IConnectionMultiplexer>().Should().BeSameAs(mux);
-    }
-
-    [Fact]
-    public void WhenNullFactory_NoMultiplexerIsRegistered()
-    {
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddDataProtectionServices(connectionMultiplexerFactory: null);
-
-        using var provider = services.BuildServiceProvider();
-        provider.GetService<IConnectionMultiplexer>().Should().BeNull();
-    }
-
-    // ── constants ─────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void RedisKey_ConstantValue_IsExpected()
-    {
-        // Pin the Redis key name — changing it would orphan all existing keys in production.
-        DataProtectionRegistration.RedisKey.Should().Be("caa:data-protection-keys");
-    }
-
-    [Fact]
-    public void ApplicationName_ConstantValue_IsExpected()
-    {
-        // Pin the application name — changing it invalidates all in-flight antiforgery tokens.
-        DataProtectionRegistration.ApplicationName.Should().Be("coding-agent-web");
+        host.GetRequiredService<IOptions<DataProtectionOptions>>().Value.ApplicationDiscriminator
+            .Should().Be("coding-agent-web");
     }
 }
