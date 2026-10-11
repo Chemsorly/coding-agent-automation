@@ -674,9 +674,12 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
 
         await _client.SetKeyValueAsync("my-setting", "some-value");
 
-        _server.LogEntries.Should().Contain(e =>
+        var entry = _server.LogEntries.Should().ContainSingle(e =>
             e.RequestMessage!.Method == "PUT" &&
-            e.RequestMessage.Path == "/api/config/key-value/my-setting");
+            e.RequestMessage.Path == "/api/config/key-value/my-setting").Subject;
+        // The endpoint binds KeyValueSetRequest, so the value travels in an object, not as a bare string.
+        using var doc = JsonDocument.Parse(entry.RequestMessage!.Body!);
+        doc.RootElement.GetProperty("value").GetString().Should().Be("some-value");
     }
 
     // ── DeleteKeyValueAsync ────────────────────────────────────────────────────

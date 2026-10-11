@@ -332,6 +332,7 @@
     background: var(--surface); color: var(--text-muted); font: 600 12px 'Manrope', ui-sans-serif, sans-serif; cursor: pointer;
 }
 .cockpit .first-run-banner-dismiss:hover { color: var(--text); border-color: var(--accent); background: var(--bg-hover); }
+.cockpit .first-run-banner .inline-status { margin-bottom: 0; padding: 5px 10px; }
 
 /* ---- shared page chrome ---------------------------------------------------- */
 .cockpit-page { padding: 22px 28px 40px; display: flex; flex-direction: column; gap: 16px; }
