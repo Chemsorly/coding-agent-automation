@@ -9,4 +9,7 @@ namespace CodingAgent.Web.Ui;
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(UiMeResponse))]
 [JsonSerializable(typeof(UiHealthResponse))]
+[JsonSerializable(typeof(IReadOnlyList<UiProject>))]
+[JsonSerializable(typeof(IReadOnlyList<UiTemplate>))]
+[JsonSerializable(typeof(UiPipelineSettings))]
 internal sealed partial class UiJsonContext : JsonSerializerContext;

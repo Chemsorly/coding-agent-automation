@@ -11,7 +11,7 @@
 @using Microsoft.AspNetCore.SignalR.Client
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IPipelineApiWorkItemClient WorkItems
-@inject IPipelineApiConfigClient ConfigClient
+@inject IUiConfigClient UiConfig
 @inject IPipelineApiTriageClient Triages
 @inject IConfigurationStore ConfigStore
 @inject IAgentHubConnection HubConnection
@@ -416,11 +416,11 @@
 
             try
             {
-                var config = await ConfigClient.GetPipelineConfigAsync(_cts.Token);
+                var config = await UiConfig.GetPipelineSettingsAsync(_cts.Token);
                 _maxRetries = config.MaxRetries;
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to load pipeline config for MaxRetries; using default"); }
+            catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to load the pipeline settings for MaxRetries; using default"); }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)

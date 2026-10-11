@@ -257,6 +257,7 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>());
         Services.AddSingleton(mockConfigStore);
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(new CockpitState());
@@ -287,9 +288,12 @@ public class BasepathNavigationTests : BunitContext
         Services.AddTestAccess();
         var mockLogger = new Mock<ILogger>();
 
+        var mockUiConfig = new Mock<CodingAgent.Web.Ui.IUiConfigClient>();
+        mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CodingAgent.Contracts.Ui.UiProject>());
+        Services.AddSingleton(mockUiConfig.Object);
+
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
-        mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>());
         mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
         mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))

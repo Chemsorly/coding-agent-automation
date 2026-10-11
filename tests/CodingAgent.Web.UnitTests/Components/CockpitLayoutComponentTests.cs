@@ -1,4 +1,6 @@
 using AwesomeAssertions;
+using CodingAgent.Contracts.Ui;
+using CodingAgent.Web.Ui;
 using Bunit;
 using CodingAgent.Web.UnitTests.Auth;
 using CodingAgent.Api.Client;
@@ -24,6 +26,7 @@ public class CockpitLayoutComponentTests : BunitContext
 {
     private readonly Mock<IJSRuntime> _mockJs = new();
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
+    private readonly Mock<IUiConfigClient> _mockUiConfig = new();
     private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistory = new();
     private readonly CockpitState _state = new();
 
@@ -32,13 +35,14 @@ public class CockpitLayoutComponentTests : BunitContext
         var mockLogger = new Mock<ILogger>();
 
         // Config client: projects (scope switcher) + the keys FirstRunBanner reads.
-        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>());
+        _mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiProject>());
         _mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
         _mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         Services.AddSingleton(_mockConfigClient.Object);
+        Services.AddSingleton(_mockUiConfig.Object);
 
         // Run-history client: the top-bar attention-count query.
         _mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
@@ -104,10 +108,10 @@ public class CockpitLayoutComponentTests : BunitContext
     public void CockpitLayout_WithSavedProjectId_RestoresProjectOnFirstRender()
     {
         // Arrange: projects list includes the saved project
-        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
+        _mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiProject>
             {
-                new() { Id = "proj-123", Name = "My Project" }
+                new("proj-123", "My Project", true)
             });
 
         // localStorage returns the saved project ID.
@@ -165,8 +169,8 @@ public class CockpitLayoutComponentTests : BunitContext
     public void CockpitLayout_WithDeletedProjectId_ClearsStaleKeyAndFallsBackToAll()
     {
         // Arrange: projects list is empty (project was deleted), but localStorage has a stale ID
-        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>());
+        _mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiProject>());
 
         _mockJs
             .Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]?>()))
@@ -205,10 +209,10 @@ public class CockpitLayoutComponentTests : BunitContext
     public async Task CockpitLayout_OnProjectChanged_WritesToLocalStorage()
     {
         // Arrange: project available in the list
-        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
+        _mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiProject>
             {
-                new() { Id = "proj-abc", Name = "Alpha" }
+                new("proj-abc", "Alpha", true)
             });
 
         var cut = Render<CockpitLayout>();
@@ -236,10 +240,10 @@ public class CockpitLayoutComponentTests : BunitContext
     public async Task CockpitLayout_OnProjectChangedToAll_WritesEmptyStringToLocalStorage()
     {
         // Arrange: start with a project available
-        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
+        _mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiProject>
             {
-                new() { Id = "proj-abc", Name = "Alpha" }
+                new("proj-abc", "Alpha", true)
             });
 
         var cut = Render<CockpitLayout>();
@@ -272,10 +276,10 @@ public class CockpitLayoutComponentTests : BunitContext
     {
         // Arrange: a project that will be selected.
         const string projectId = "proj-scoped";
-        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
+        _mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiProject>
             {
-                new() { Id = projectId, Name = "Scoped Project" }
+                new(projectId, "Scoped Project", true)
             });
 
         var cut = Render<CockpitLayout>();

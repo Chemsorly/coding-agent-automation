@@ -508,6 +508,16 @@ Database and Redis state of the answering API replica, for the web UI's sidebar.
 { "databaseConnected": true, "redisConnected": true }
 ```
 
+### Configuration reads (any role)
+
+These return slim views of the configuration for pages outside Settings. They never contain prompts, secrets or MCP servers.
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/projects` | The projects the user can read, as `{ id, name, enabled }`, by name. A global reader gets all of them; a project-scoped user gets only its own. |
+| `GET /api/ui/projects/{projectId}/templates` | The project's job templates as `{ id, name, enabled }`. `404` when the user cannot read the project or it does not exist. |
+| `GET /api/ui/pipeline-settings` | `{ maxRetries, triageRetentionDays }`: global values, without project overrides. |
+
 ---
 
 ## Health Probe Endpoints
@@ -572,5 +582,8 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |
 | GET | `/api/ui/me` | User token | The signed-in user and their roles |
 | GET | `/api/ui/health` | User token | Database and Redis state for the sidebar |
+| GET | `/api/ui/projects` | User token | Projects the user can read |
+| GET | `/api/ui/projects/{projectId}/templates` | User token | Templates of a readable project |
+| GET | `/api/ui/pipeline-settings` | User token | Global settings pages outside Settings show |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |
