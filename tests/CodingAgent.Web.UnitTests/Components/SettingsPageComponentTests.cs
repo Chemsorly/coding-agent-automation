@@ -1,3 +1,4 @@
+using System.Reflection;
 using Bunit;
 using Moq;
 using CodingAgent.Api.Client;
@@ -201,6 +202,30 @@ public class SettingsPageComponentTests : BunitContext
         Assert.DoesNotContain("Max Retries", component.Markup);
         Assert.DoesNotContain("Agent Timeout", component.Markup);
         Assert.DoesNotContain("Min Coverage Threshold", component.Markup);
+    }
+
+    /// <summary>Every <see cref="SettingsNodes"/> constant except the id-carrying ProjectDetail prefix.</summary>
+    public static TheoryData<string> AllSectionNodes()
+    {
+        var data = new TheoryData<string>();
+        foreach (var field in typeof(SettingsNodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+                     .Where(f => f.IsLiteral && f.Name != nameof(SettingsNodes.ProjectDetail)))
+            data.Add((string)field.GetRawConstantValue()!);
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(AllSectionNodes))]
+    public void Settings_SectionQuery_SelectsThatNode_NotTheDefault(string section)
+    {
+        // Regression: a node missing from IsKnownSection fell back to Providers/Issue on click.
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={section}");
+
+        var component = Render<Settings>();
+
+        var active = component.Find("a[aria-current='page']");
+        Assert.EndsWith($"section={section}", active.GetAttribute("href"));
     }
 
     [Fact]

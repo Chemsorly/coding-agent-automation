@@ -19,7 +19,7 @@ namespace CodingAgent.Scheduler.Services;
 /// Each poll cycle:
 /// <list type="number">
 ///   <item>Fetches Pending WorkItems via <c>GET /api/work-items/pending</c>
-///     (sorted by RunType tier: Review &gt; Decomposition &gt; Implementation &gt; Consolidation,
+///     (sorted by RunType tier: Review &gt; Decomposition and Triage &gt; Implementation &gt; Consolidation,
 ///     then <c>PriorityWeight DESC</c> within a tier, then <c>CreatedAt ASC</c>).
 ///     The <c>maxResults</c> window (default 50) is filled strictly in tier order — if 50+
 ///     items of a higher tier are pending, lower-tier items are invisible to this cycle.</item>
