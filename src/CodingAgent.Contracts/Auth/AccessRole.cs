@@ -1,4 +1,4 @@
-namespace CodingAgent.Web.Auth;
+namespace CodingAgent.Contracts.Auth;
 
 /// <summary>The built-in roles, ordered: a higher role includes every lower one.</summary>
 public enum AccessRole

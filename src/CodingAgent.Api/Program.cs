@@ -1,5 +1,7 @@
 using CodingAgent.Api;
 using CodingAgent.Api.Triage;
+using CodingAgent.Api.Ui;
+using CodingAgent.Infrastructure.Common.Auth;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
@@ -36,6 +38,18 @@ if (string.IsNullOrEmpty(agentApiKey))
     return;
 }
 
+// ── Fast-fail: user-token signing key required (spec 051, UI surface) ─────────
+Microsoft.IdentityModel.Tokens.SecurityKey userTokenSigningKey;
+try
+{
+    userTokenSigningKey = UserTokens.CreateSigningKey(builder.Configuration.GetValue<string>(UserTokens.SigningKeyConfigKey));
+}
+catch (InvalidOperationException ex)
+{
+    Log.Fatal("{Reason} Exiting.", ex.Message);
+    return;
+}
+
 // ── Configure JSON serialization (enum-as-string to match agent DTOs) ───────
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -55,8 +69,8 @@ builder.Services.AddAgentHubServices();  // shared, from CodingAgent.AgentGatewa
 // ── SignalR (with optional Redis backplane) ──────────────────────────────────
 builder.Services.AddApiSignalR(builder.Configuration, builder.Environment);
 
-// ── Agent API key authentication + authorization ─────────────────────────────
-builder.Services.AddApiAuthentication(agentApiKey, Log.Logger);
+// ── Authentication + authorization: API keys (service surface), user token (UI surface) ──
+builder.Services.AddApiAuthentication(agentApiKey, userTokenSigningKey, Log.Logger);
 
 // ── Readiness drain on SIGTERM ────────────────────────────────────────────────
 // Registered LAST so its StoppingAsync fires FIRST (IHostedLifecycleService fires in reverse order).
@@ -143,6 +157,7 @@ app.MapTriageEndpoints();
 app.MapAgentEndpoints();
 app.MapChatEndpoints();
 app.MapApiSchedulerEndpoints();
+app.MapUiEndpoints();
 
 // ── Startup DI validation ─────────────────────────────────────────────────────
 // AssignmentEnricher is injected as optional [FromServices] in GetAssignment.

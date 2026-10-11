@@ -3,3 +3,4 @@
 // leader election types moved to CodingAgent.Pipeline.LeaderElection.
 global using CodingAgent.Kubernetes;
 global using CodingAgent.Pipeline.LeaderElection;
+global using CodingAgent.Contracts.Auth;

@@ -295,6 +295,38 @@ no explicit secrets.agentApiKey). Returns "true" or "".
 {{- end }}
 
 {{/*
+Spec 051 — user-token helpers.
+
+generateUserTokenKeys: no userToken.existingSecret, so the secret-init hook creates
+<fullname>-web-user-token. Returns "true" or "".
+*/}}
+{{- define "coding-agent-automation.generateUserTokenKeys" -}}
+{{- if not ((.Values.userToken | default dict).existingSecret) }}true{{- end }}
+{{- end }}
+
+{{/*
+Name of the Secret that holds signing-key and data-protection-key.
+*/}}
+{{- define "coding-agent-automation.userTokenSecretName" -}}
+{{- (.Values.userToken | default dict).existingSecret | default (printf "%s-web-user-token" (include "coding-agent-automation.fullname" .)) -}}
+{{- end }}
+
+{{/*
+UserToken__SigningKey env entry for the two hosts that share it: the web host (signs) and the
+Pipeline API (validates). No other workload receives it.
+
+Usage (inside an env: list, indented to 12):
+  {{- include "coding-agent-automation.userTokenEnv" . | nindent 12 }}
+*/}}
+{{- define "coding-agent-automation.userTokenEnv" -}}
+- name: UserToken__SigningKey
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "coding-agent-automation.userTokenSecretName" . }}
+      key: signing-key
+{{- end }}
+
+{{/*
 The `auth.admin` values with defaults applied: enabled unless explicitly false.
 */}}
 {{- define "coding-agent-automation.adminEnabled" -}}

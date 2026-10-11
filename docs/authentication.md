@@ -2,7 +2,14 @@
 
 The web UI requires a signed-in user. Users sign in through one OpenID Connect identity provider (Keycloak, Microsoft Entra ID or any other OIDC provider) or with the local `admin` account. The UI has no user database: identity comes from the provider, and roles come from bindings in the Helm values, in the style of ArgoCD.
 
-Only the web UI is affected. The Pipeline API, the Job Controller, the Scheduler and agent pods keep using the agent API keys described in [Deployment](deployment.md#agent-api-keys).
+The Job Controller, the Scheduler and agent pods use the agent API keys described in [Deployment](deployment.md#agent-api-keys).
+
+The Pipeline API has two surfaces:
+
+- **Service surface** (`/api/**` except `/api/ui/**`, and `/hubs/agent`): API keys only.
+- **UI surface** (`/api/ui/**`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. The API refuses to start without it.
+
+An API endpoint that declares no policy is denied. A credential of one surface is never accepted on the other.
 
 ## Roles
 

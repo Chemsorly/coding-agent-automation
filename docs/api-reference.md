@@ -10,10 +10,18 @@ The Pipeline API (`CodingAgent.Api`, port **8080**) exposes HTTP API endpoints f
 | Config Import/Export (`/api/config/`) | ✅ |
 | Run Export (`/api/export/`) | ✅ |
 | Health Probes (`/healthz`, `/readyz`) | ✅ |
+| UI surface (`/api/ui/`) | ✅ |
 
 > **Note:** The SignalR hub (`/hubs/agent`) is a WebSocket transport endpoint used for real-time agent communication. It is not a REST API and is not covered in this reference.
 
 ## Authentication
+
+The API has two surfaces, and each accepts one kind of credential:
+
+- **Service surface** — every path except `/api/ui/**`: the agent API keys below (`AgentApiKey`, `OperatorApiKey`).
+- **UI surface** — `/api/ui/**`: a user token (`Authorization: Bearer <token>`) signed by the web host for the signed-in user. See [Authentication and Roles](authentication.md). API keys get `401` there, and user tokens get `401` on the service surface.
+
+An endpoint without a declared policy is denied (`401` without credentials, `403` with an API key). Only `/healthz` and `/readyz` are anonymous.
 
 Endpoints requiring the `AgentApiKey` policy accept credentials via two methods:
 
@@ -467,6 +475,33 @@ Present on runs recorded after the version identity feature was introduced. Cont
 
 ---
 
+## UI Surface Endpoints
+
+Every endpoint under `/api/ui` requires a user token whose grant has a role (global or on at least one project); a token without any role gets `403`. An endpoint can require more (for example a global role). Requests about a project the user cannot see answer `404`; requests the user can see but not change answer `403`.
+
+### GET /api/ui/me
+
+Returns the user and the roles their token grants, with project names resolved.
+
+**Example response (200):**
+
+```json
+{
+  "subject": "oidc:5f0c...",
+  "username": "alice",
+  "identitySource": "oidc",
+  "globalRole": "readonly",
+  "projectRoles": [
+    { "projectId": "6f1c2a9e-0000-0000-0000-00000000000a", "projectName": "Alpha", "role": "operator", "known": true },
+    { "projectId": "6f1c2a9e-0000-0000-0000-00000000000b", "projectName": null, "role": "readonly", "known": false }
+  ]
+}
+```
+
+`known: false` means no project has that ID; the binding grants nothing usable.
+
+---
+
 ## Health Probe Endpoints
 
 > No authentication required.
@@ -527,5 +562,6 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/config/export` | OperatorApiKey | Download config bundle |
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |
+| GET | `/api/ui/me` | User token | The signed-in user and their roles |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

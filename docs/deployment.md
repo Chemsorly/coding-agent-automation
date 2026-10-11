@@ -28,6 +28,15 @@ echo "AGENT_API_KEY=$(openssl rand -hex 32)" > .env
 
 The dispatcher derives each agent Job's own key, `HMAC-SHA256(master key, job name)`, and hands it to the pod through a per-Job Secret (`caa-key-{job name}`); the job name is the agent's `AGENT_ID`, and agent pods never receive the master key. This enables per-agent revocation without rotating the master key.
 
+### User Token Secret
+
+The web host signs short-lived user tokens that the Pipeline API checks on its UI surface (`/api/ui/**`, see [Authentication](authentication.md)). The key comes from the `<release>-coding-agent-automation-web-user-token` Secret, key `signing-key`, mounted as `UserToken__SigningKey` into the web and API pods only. The Secret also holds `data-protection-key`, reserved for the web host's login-cookie key ring.
+
+- The secret-init hook creates the Secret once, with random keys, and keeps it across upgrades.
+- To bring your own, set `userToken.existingSecret` to a Secret with both keys (each at least 32 characters).
+- To rotate, delete the Secret and run `helm upgrade`; restart the web and API pods if they are not restarted by the upgrade. Users sign in again.
+- The API refuses to start when `UserToken__SigningKey` is missing or shorter than 32 characters. For local `dotnet run`, set it in the environment of both hosts.
+
 ### Token Vending
 
 The orchestrator generates short-lived GitHub installation tokens for agents on demand. Private keys never leave the orchestrator container — agents receive time-limited tokens for API calls.
@@ -105,6 +114,7 @@ The chart deploys:
 | `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
+| `userToken.existingSecret` | Existing Secret with `signing-key` and `data-protection-key` (default: empty — the secret-init hook creates `<release>-coding-agent-automation-web-user-token`). See [User Token Secret](#user-token-secret). |
 | `secrets.otelHeaders` | OTLP auth headers |
 | `secrets.opencodeConfigContent` | OpenCode config JSON for opencode agents (Secret key `opencode-config-content`; passed to the pod as `OPENCODE_CONFIG_CONTENT`, which the image's entrypoint writes to `opencode.json`) |
 | `secrets.claudeApiKey` | Anthropic API key for claude agents (Secret key `claude-api-key`; optional) |

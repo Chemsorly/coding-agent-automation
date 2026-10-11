@@ -27,12 +27,18 @@ namespace CodingAgent.Api.IntegrationTests;
 /// CodingAgent.Infrastructure.IntegrationTests — EF InMemory cannot exercise
 /// xmin row-version tokens required for real concurrency testing.
 /// </summary>
-public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
+public class ApiWebApplicationFactory : WebApplicationFactory<Program>
 {
     /// <summary>
     /// The API key used in all tests. Set as AGENT_API_KEY before host build.
     /// </summary>
     public const string ApiKey = "test-api-key";
+
+    /// <summary>
+    /// The user-token signing key used in all tests. Set as UserToken__SigningKey before host build;
+    /// <see cref="TestUserTokens"/> signs with it.
+    /// </summary>
+    public const string UserTokenSigningKey = "test-user-token-signing-key-0123456789abcdef";
 
     private readonly string _dbName = $"ApiIntegration-{Guid.NewGuid():N}";
 
@@ -61,6 +67,7 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             Environment.SetEnvironmentVariable("Database__MigrateOnStartup", null);
             Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
             Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable("UserToken__SigningKey", null);
         }
 
         base.Dispose(disposing);
@@ -79,6 +86,7 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", ApiKey);
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", UserTokenSigningKey);
 
         // Reset Serilog's global logger to a fresh bootstrap state.
         // Use CreateBootstrapLogger() (not CreateLogger()) — UseSerilog captures Log.Logger
@@ -144,7 +152,14 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             // do not call the dispatch endpoint so the no-op implementation is never invoked.
             services.RemoveAll<IKubernetesJobClient>();
             services.AddSingleton(new Mock<IKubernetesJobClient>().Object);
+
+            ConfigureTestServices(services);
         });
+    }
+
+    /// <summary>Last-word service overrides for factories derived from this one.</summary>
+    protected virtual void ConfigureTestServices(IServiceCollection services)
+    {
     }
 
     private static void RemoveDbContextRegistrations(IServiceCollection services)
