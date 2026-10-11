@@ -330,6 +330,7 @@ internal sealed class AgentRegistryFailFastFactory : WebApplicationFactory<Progr
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", ApiWebApplicationFactory.ApiKey);
+        Environment.SetEnvironmentVariable("UserToken__SigningKey", ApiWebApplicationFactory.UserTokenSigningKey);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)

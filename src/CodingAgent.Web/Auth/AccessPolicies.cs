@@ -37,14 +37,6 @@ public static class AccessPolicies
     }
 }
 
-public enum AccessPolicyKind
-{
-    AnyAccess,
-    AnyOperator,
-    GlobalRead,
-    Admin,
-}
-
 public sealed record AccessRequirement(AccessPolicyKind Kind) : IAuthorizationRequirement;
 
 /// <summary>Evaluates <see cref="AccessRequirement"/> from the principal's bindings.</summary>
@@ -53,16 +45,7 @@ public sealed class AccessAuthorizationHandler(IRbacEvaluator rbac) : Authorizat
     protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, AccessRequirement requirement)
     {
         var grant = await rbac.EvaluateAsync(context.User);
-        if (IsSatisfied(grant, requirement.Kind))
+        if (AccessPolicyRules.IsSatisfied(grant, requirement.Kind))
             context.Succeed(requirement);
     }
-
-    internal static bool IsSatisfied(AccessGrant grant, AccessPolicyKind kind) => kind switch
-    {
-        AccessPolicyKind.AnyAccess => grant.HasAnyAccess,
-        AccessPolicyKind.AnyOperator => grant.HasAnyOperator,
-        AccessPolicyKind.GlobalRead => grant.GlobalRole >= AccessRole.ReadOnly,
-        AccessPolicyKind.Admin => grant.GlobalRole == AccessRole.Admin,
-        _ => false,
-    };
 }

@@ -1,0 +1,85 @@
+GET /api/agents/ -> Service: OperatorApiKey
+GET /api/agents/credential-pool -> Service: OperatorApiKey
+POST /api/agents/{agentId}/chat-prompt -> Service: OperatorApiKey
+POST /api/chat/dispatch -> Service: OperatorApiKey
+POST /api/chat/{agentId}/keepalive -> Service: OperatorApiKey
+POST /api/chat/{agentId}/terminate -> Service: OperatorApiKey
+GET /api/config/agent-profiles -> Service: OperatorApiKey
+PUT /api/config/agent-profiles -> Service: OperatorApiKey
+DELETE /api/config/agent-profiles/{id} -> Service: OperatorApiKey
+GET /api/config/export -> Service: OperatorApiKey
+POST /api/config/import -> Service: OperatorApiKey
+DELETE /api/config/key-value/{key} -> Service: OperatorApiKey
+GET /api/config/key-value/{key} -> Service: OperatorApiKey
+PUT /api/config/key-value/{key} -> Service: OperatorApiKey
+GET /api/config/models -> Service: OperatorApiKey
+GET /api/config/pipeline -> Service: OperatorApiKey
+PUT /api/config/pipeline -> Service: OperatorApiKey
+GET /api/config/projects -> Service: OperatorApiKey
+PUT /api/config/projects -> Service: OperatorApiKey
+GET /api/config/projects/has-enabled-templates -> Service: OperatorApiKey
+DELETE /api/config/projects/{id} -> Service: OperatorApiKey
+GET /api/config/projects/{id} -> Service: OperatorApiKey
+GET /api/config/projects/{projectId}/templates -> Service: OperatorApiKey
+PUT /api/config/projects/{projectId}/templates -> Service: OperatorApiKey
+DELETE /api/config/projects/{projectId}/templates/{templateId} -> Service: OperatorApiKey
+POST /api/config/projects/{sourceProjectId}/templates/{templateId}/move -> Service: OperatorApiKey
+GET /api/config/provider-configs -> Service: OperatorApiKey
+PUT /api/config/provider-configs -> Service: OperatorApiKey
+DELETE /api/config/provider-configs/{id} -> Service: OperatorApiKey
+GET /api/config/provider-configs/{id} -> Service: OperatorApiKey
+GET /api/config/quality-gate-configs -> Service: OperatorApiKey
+PUT /api/config/quality-gate-configs -> Service: OperatorApiKey
+DELETE /api/config/quality-gate-configs/{id} -> Service: OperatorApiKey
+GET /api/config/reviewer-configs -> Service: OperatorApiKey
+PUT /api/config/reviewer-configs -> Service: OperatorApiKey
+POST /api/config/reviewer-configs/reset-to-defaults -> Service: OperatorApiKey
+DELETE /api/config/reviewer-configs/{id} -> Service: OperatorApiKey
+GET /api/config/templates -> Service: OperatorApiKey
+POST /api/config/templates/move -> Service: OperatorApiKey
+GET /api/export/runs.json -> Service: OperatorApiKey
+GET /api/feedback-comment-outbox/pending -> Service: OperatorApiKey
+POST /api/feedback-comment-outbox/{id:guid}/complete -> Service: OperatorApiKey
+POST /api/feedback-comment-outbox/{id:guid}/fail -> Service: OperatorApiKey
+GET /api/harness-suggestions/ -> Service: OperatorApiKey
+PUT /api/harness-suggestions/ -> Service: OperatorApiKey
+GET /api/pipeline-runs/ -> Service: OperatorApiKey
+POST /api/pipeline-runs/ -> Service: OperatorApiKey
+GET /api/pipeline-runs/active-branches -> Service: OperatorApiKey
+GET /api/pipeline-runs/{runId:guid} -> Service: OperatorApiKey
+POST /api/scheduler/maintenance/retention-sweep -> Service: OperatorApiKey
+GET /api/triages/ -> Service: OperatorApiKey
+POST /api/triages/ -> Service: OperatorApiKey
+GET /api/triages/by-run/{runId:guid} -> Service: OperatorApiKey
+GET /api/triages/similar -> Service: OperatorApiKey
+GET /api/triages/{id:guid} -> Service: OperatorApiKey
+POST /api/triages/{id:guid}/create-issues -> Service: OperatorApiKey
+POST /api/triages/{id:guid}/dismiss -> Service: OperatorApiKey
+PUT /api/triages/{id:guid}/drafts/{draftId} -> Service: OperatorApiKey
+POST /api/triages/{id:guid}/drafts/{draftId}/reset -> Service: OperatorApiKey
+POST /api/triages/{id:guid}/rerun -> Service: OperatorApiKey
+GET /api/ui/me -> Ui: Ui.AnyAccess
+POST /api/work-items/ -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/active -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/active-decomposition-count -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/active-identifiers -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/counts-by-status -> Service: AgentApiKey, OperatorApiKey
+POST /api/work-items/dispatch -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/is-distributed -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/pending -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/staleness -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/{id:guid}/assignment -> Service: AgentApiKey
+POST /api/work-items/{id:guid}/claim -> Service: AgentApiKey, OperatorApiKey
+POST /api/work-items/{id:guid}/dispatch -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/{id:guid}/k8s-job-name -> Service: AgentApiKey, OperatorApiKey
+POST /api/work-items/{id:guid}/label-swap -> Service: AgentApiKey, OperatorApiKey
+POST /api/work-items/{id:guid}/last-progress -> Service: AgentApiKey, OperatorApiKey
+POST /api/work-items/{id:guid}/priority -> Service: AgentApiKey, OperatorApiKey
+POST /api/work-items/{id:guid}/requeue -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/{id:guid}/retry-count -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/{id:guid}/status -> Service: AgentApiKey, OperatorApiKey
+POST /api/work-items/{id:guid}/status -> Service: AgentApiKey
+GET /healthz -> Anonymous
+* /hubs/agent (hub) -> Service: AgentApiKey
+* /hubs/agent/negotiate (hub) -> Service: AgentApiKey
+GET /readyz -> Anonymous

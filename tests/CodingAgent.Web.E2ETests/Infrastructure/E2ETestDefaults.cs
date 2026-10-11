@@ -34,6 +34,12 @@ internal static class E2ETestDefaults
     public const string UnreachableSchedulerBaseUrl = "http://127.0.0.1:1";
 
     /// <summary>
+    /// The user-token signing key (spec 051) shared by the web and API hosts of the harness. The
+    /// API refuses to start without one.
+    /// </summary>
+    public const string UserTokenSigningKey = "e2e-user-token-signing-key-0123456789abcdef";
+
+    /// <summary>
     /// Applies the database settings both hosts need at startup.
     ///
     /// Spec 041 made PostgreSQL mandatory and Spec 045 left <c>AddPooledDbContextFactory</c> in

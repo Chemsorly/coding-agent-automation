@@ -110,6 +110,7 @@ spec:
                 name: {{ include "coding-agent-automation.fullname" . }}-web-env
           env:
             {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
+            {{- include "coding-agent-automation.userTokenEnv" . | nindent 12 }}
             # Spec 049: secrets of the user login (the rest of the auth config is in auth.json).
             {{- if include "coding-agent-automation.adminEnabled" . }}
             - name: Auth__Admin__Password
