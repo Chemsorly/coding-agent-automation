@@ -143,76 +143,65 @@ $"""
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble);
-
-        sb.AppendLine("# Agent A: Structural Debt Detection");
-        sb.AppendLine();
-        sb.AppendLine("You are one of three parallel analysis agents. Your focus is **structural debt** —");
-        sb.AppendLine("patterns where incremental changes have created global incoherence.");
-        sb.AppendLine();
-
-        PromptBuilder.AppendSection(sb, "## Your Categories", s =>
-        {
-            s.AppendLine("1. **Duplicated logic** — Similar code patterns repeated across multiple files that could be extracted.");
-            s.AppendLine("   Look for: near-identical method bodies, copy-pasted error handling, repeated validation logic,");
-            s.AppendLine("   similar DTO transformations in multiple locations.");
-            s.AppendLine();
-            s.AppendLine("2. **Structural drift** — Areas where the architecture has diverged from the intended design.");
-            s.AppendLine("   Consult `.agent/refactoring-conventions.json` for layer rules. Look for: imports crossing");
-            s.AppendLine("   layer boundaries, services doing work outside their responsibility, components that grew");
-            s.AppendLine("   beyond their original scope.");
-            s.AppendLine();
-            s.AppendLine("3. **Overly complex areas** — Methods or classes that have grown too large or have too many responsibilities.");
-            s.AppendLine("   Metrics: methods >50 lines, classes >500 lines, constructors with >6 parameters,");
-            s.AppendLine("   methods with >4 levels of nesting. Focus on hotspot files — complexity in rarely-touched code");
-            s.AppendLine("   is low priority.");
-            s.AppendLine();
-            s.AppendLine("4. **Over-engineering & unnecessary abstraction** — Wrapper classes that pass through without logic;");
-            s.AppendLine("   factory/builder patterns where a constructor would suffice; configuration options nobody uses.");
-            s.AppendLine("   **This category has the highest false-positive rate in published benchmarks.** An interface with one");
-            s.AppendLine("   production implementation is NOT a finding when it is registered for dependency injection, has test");
-            s.AppendLine("   doubles (mocks or fakes in test projects), or is the seam across a project boundary.");
-            s.AppendLine("   **Check `.agent/refactoring-conventions.json` → `intentionalPatterns` before flagging.**");
-            s.AppendLine("   If the project's philosophy is \"minimal interfaces\", a missing interface is NOT a finding.");
-        });
-
-        PromptBuilder.AppendSection(sb, "## Exploration Strategy", s =>
-        {
-            s.AppendLine($"1. Read `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — start with the top 15 most-changed files");
-            s.AppendLine("2. Read `.agent/refactoring-conventions.json` — understand what's intentional vs accidental");
-            s.AppendLine("3. For each hotspot file: read it, assess structural health against the 4 categories above");
-            s.AppendLine("4. Then read 5 files NOT in the hotspot list (stable but potentially problematic)");
-            s.AppendLine("5. For duplication detection: when you find a pattern in one file, grep for similar patterns elsewhere");
-        });
-
-        AppendFindingsOutputFormat(sb, new FindingsOutputSpec
-        {
-            OutputPath = AgentWorkspacePaths.RefactoringStructuralFindingsFilePath,
-            Categories = RefactoringCategories.Structural,
-            EvidenceHint = "Concrete code snippet or line reference proving the issue",
-            EvidenceSourcesExample = "\"code-reading:File.cs:L42\", \"grep:catch (Exception ex)\", \"tool:dotnet-build:CA1502\"",
-            CrossReferenceHint = "Second file/location that corroborates (duplication partner, drift boundary, etc.)",
-            ImpactHint = "What goes wrong because of this — be specific",
-            SuggestedFixHint = "Brief approach, not full implementation"
-        });
-
-        // NOTE (issue #3534): This is the final section of BuildRefactoringStructuralPrompt. AppendSection always appends
-        // a trailing sb.AppendLine() after the body, which adds one extra trailing newline compared to the original
-        // inline block (which ended at the last content line with no following AppendLine before return). The
-        // pre-existing snapshot in PromptBuilderSnapshotTests.cs was updated to accept the new +\n+\n ending rather
-        // than proving invariance. If AC3 ("byte-for-byte unchanged") is to be enforced strictly, this final section
-        // should either remain inline (without AppendSection) or AppendSection should be changed to not emit the
-        // trailing blank when the caller signals it is the last section. (Review finding: correctness agent)
-        PromptBuilder.AppendSection(sb, "## Quality Bar", s =>
-        {
-            s.AppendLine("- Every finding MUST have `crossReference` — a second location proving the issue isn't isolated.");
-            s.AppendLine("  For duplication: the other copy. For drift: the layer rule violated + the import. For complexity: the callers affected.");
-            s.AppendLine("- For duplication, find EVERY copy, not just two: put the search that lists them in `scopeQuery`.");
-            s.AppendLine("- Findings about over-engineering require proof the abstraction is never extended: check all implementations");
-            s.AppendLine("  of the interface, check test mocks, check DI registrations, check git history for attempts to add implementations.");
-            s.AppendLine("- **Do NOT flag patterns listed in `intentionalPatterns`.** If unsure, skip it.");
-            s.AppendLine("- Prefer fewer high-quality findings over many shallow ones. Maximum 10 findings.");
-        });
+        AppendSubAgentScaffold(
+            sb,
+            agentTitle: "Agent A: Structural Debt Detection",
+            agentFocusBold: "structural debt",
+            agentFocusContinuation: "patterns where incremental changes have created global incoherence.",
+            conventionsNote: null,
+            appendCategories: s =>
+            {
+                s.AppendLine("1. **Duplicated logic** — Similar code patterns repeated across multiple files that could be extracted.");
+                s.AppendLine("   Look for: near-identical method bodies, copy-pasted error handling, repeated validation logic,");
+                s.AppendLine("   similar DTO transformations in multiple locations.");
+                s.AppendLine();
+                s.AppendLine("2. **Structural drift** — Areas where the architecture has diverged from the intended design.");
+                s.AppendLine("   Consult `.agent/refactoring-conventions.json` for layer rules. Look for: imports crossing");
+                s.AppendLine("   layer boundaries, services doing work outside their responsibility, components that grew");
+                s.AppendLine("   beyond their original scope.");
+                s.AppendLine();
+                s.AppendLine("3. **Overly complex areas** — Methods or classes that have grown too large or have too many responsibilities.");
+                s.AppendLine("   Metrics: methods >50 lines, classes >500 lines, constructors with >6 parameters,");
+                s.AppendLine("   methods with >4 levels of nesting. Focus on hotspot files — complexity in rarely-touched code");
+                s.AppendLine("   is low priority.");
+                s.AppendLine();
+                s.AppendLine("4. **Over-engineering & unnecessary abstraction** — Wrapper classes that pass through without logic;");
+                s.AppendLine("   factory/builder patterns where a constructor would suffice; configuration options nobody uses.");
+                s.AppendLine("   **This category has the highest false-positive rate in published benchmarks.** An interface with one");
+                s.AppendLine("   production implementation is NOT a finding when it is registered for dependency injection, has test");
+                s.AppendLine("   doubles (mocks or fakes in test projects), or is the seam across a project boundary.");
+                s.AppendLine("   **Check `.agent/refactoring-conventions.json` → `intentionalPatterns` before flagging.**");
+                s.AppendLine("   If the project's philosophy is \"minimal interfaces\", a missing interface is NOT a finding.");
+            },
+            explorationStrategyHeading: "## Exploration Strategy",
+            appendExplorationStrategy: s =>
+            {
+                s.AppendLine($"1. Read `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — start with the top 15 most-changed files");
+                s.AppendLine("2. Read `.agent/refactoring-conventions.json` — understand what's intentional vs accidental");
+                s.AppendLine("3. For each hotspot file: read it, assess structural health against the 4 categories above");
+                s.AppendLine("4. Then read 5 files NOT in the hotspot list (stable but potentially problematic)");
+                s.AppendLine("5. For duplication detection: when you find a pattern in one file, grep for similar patterns elsewhere");
+            },
+            outputSpec: new FindingsOutputSpec
+            {
+                OutputPath = AgentWorkspacePaths.RefactoringStructuralFindingsFilePath,
+                Categories = RefactoringCategories.Structural,
+                EvidenceHint = "Concrete code snippet or line reference proving the issue",
+                EvidenceSourcesExample = "\"code-reading:File.cs:L42\", \"grep:catch (Exception ex)\", \"tool:dotnet-build:CA1502\"",
+                CrossReferenceHint = "Second file/location that corroborates (duplication partner, drift boundary, etc.)",
+                ImpactHint = "What goes wrong because of this — be specific",
+                SuggestedFixHint = "Brief approach, not full implementation"
+            },
+            appendQualityBar: s =>
+            {
+                s.AppendLine("- Every finding MUST have `crossReference` — a second location proving the issue isn't isolated.");
+                s.AppendLine("  For duplication: the other copy. For drift: the layer rule violated + the import. For complexity: the callers affected.");
+                s.AppendLine("- For duplication, find EVERY copy, not just two: put the search that lists them in `scopeQuery`.");
+                s.AppendLine("- Findings about over-engineering require proof the abstraction is never extended: check all implementations");
+                s.AppendLine("  of the interface, check test mocks, check DI registrations, check git history for attempts to add implementations.");
+                s.AppendLine("- **Do NOT flag patterns listed in `intentionalPatterns`.** If unsure, skip it.");
+                s.AppendLine("- Prefer fewer high-quality findings over many shallow ones. Maximum 10 findings.");
+            });
 
         return sb.ToString();
     }
@@ -229,95 +218,86 @@ $"""
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble);
-
-        sb.AppendLine("# Agent B: Correctness & Hygiene Detection");
-        sb.AppendLine();
-        sb.AppendLine("You are one of three parallel analysis agents. Your focus is **correctness and hygiene** —");
-        sb.AppendLine("concrete issues that are wrong, dead, or misleading.");
-        sb.AppendLine();
-
-        PromptBuilder.AppendSection(sb, "## Your Categories", s =>
-        {
-            s.AppendLine("1. **TODO/HACK/FIXME comments** — Left by previous work, indicating incomplete implementation.");
-            s.AppendLine("   Not all TODOs are actionable — only flag ones that indicate a real gap or risk.");
-            s.AppendLine("   Some TODOs are deferred review findings (e.g. `TODO [WARNING]`). Treat them like any other TODO:");
-            s.AppendLine("   verify the problem still exists in the current code, and drop it if the code already handles it.");
-            s.AppendLine();
-            s.AppendLine("2. **Dead code & unused artifacts** — Unreferenced methods, classes, interfaces, or files.");
-            s.AppendLine("   Includes: unused using directives beyond IDE cleanup, orphaned files from removed features,");
-            s.AppendLine("   parameters that are never used, private methods never called.");
-            s.AppendLine();
-            s.AppendLine("3. **Obvious bugs** — High-confidence correctness issues ONLY. You must be certain the code is wrong:");
-            s.AppendLine("   null dereference after a code path that doesn't guarantee non-null, off-by-one in boundary");
-            s.AppendLine("   checks, unreachable code paths (dead branches), resource leaks (opened but never disposed),");
-            s.AppendLine("   logic errors where conditions are always true/false, race conditions in shared mutable state.");
-            s.AppendLine("   **Do NOT flag \"potential\" issues you're unsure about.** Only high-confidence bugs.");
-            s.AppendLine();
-            s.AppendLine("4. **Stale documentation & misleading comments** — XML doc comments describing behavior the code");
-            s.AppendLine("   no longer exhibits; README sections referencing removed features; comments explaining \"why\"");
-            s.AppendLine("   that reference conditions no longer true; parameter descriptions that don't match signatures.");
-        });
-
-        PromptBuilder.AppendSection(sb, "## Exploration Strategy: Enumerate Then Verify", s =>
-        {
-            s.AppendLine("Research shows LLM agents miss absences when scanning for bad patterns.");
-            s.AppendLine("Flip the approach: enumerate what exists, then verify each item.");
-            s.AppendLine();
-            s.AppendLine("**For TODOs/HACKs/FIXMEs:**");
-            s.AppendLine("1. Search the codebase: grep/search for `TODO`, `HACK`, `FIXME`, `XXX`, `WORKAROUND`");
-            s.AppendLine("2. For each result: read the surrounding context and assess if it indicates a real gap");
-            s.AppendLine("3. Discard TODOs that are aspirational (\"TODO: nice to have\") — keep ones indicating broken/incomplete behavior");
-            s.AppendLine();
-            s.AppendLine("**For dead code:**");
-            s.AppendLine($"1. Check the tool output in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/` and the MCP tools in `availableTools` for unused-code");
-            s.AppendLine("   reports — the highest-confidence approach. Common sources: compiler warnings (CS0219, IDE0051),");
-            s.AppendLine("   `eslint --rule no-unused-vars`, `pylint`, `deadcode`. If none covers unused code, you may install and run");
-            s.AppendLine("   a read-only analyzer that does not build.");
-            s.AppendLine("2. If no tools available: enumerate public types/methods in key files, then search for their usages.");
-            s.AppendLine("   A public method with zero callers outside its own class is a dead code candidate.");
-            s.AppendLine("3. Check git history for recently-deleted features — their support code may linger.");
-            s.AppendLine();
-            s.AppendLine("**For bugs:**");
-            s.AppendLine("1. Focus on hotspot files (high churn = more likely to contain recent regressions)");
-            s.AppendLine("2. Read error handling paths specifically — bugs hide in catch blocks and edge cases");
-            s.AppendLine("3. Check null safety: follow nullable references through code paths and verify guards exist");
-            s.AppendLine("4. When a bug is one instance of a pattern (the same faulty catch, guard or call in several places),");
-            s.AppendLine("   search for every instance and put the search in `scopeQuery`. A fix for half the instances is not a fix.");
-            s.AppendLine();
-            s.AppendLine("**For stale docs:**");
-            s.AppendLine("1. Read method signatures, then read their XML doc comments — do they match?");
-            s.AppendLine("2. Check README.md for references to files/features that no longer exist");
-            s.AppendLine("3. Check inline comments that reference specific behavior — verify the behavior still exists");
-        });
-
-        AppendFindingsOutputFormat(sb, new FindingsOutputSpec
-        {
-            OutputPath = AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath,
-            Categories = RefactoringCategories.Correctness,
-            EvidenceHint = "The exact code snippet or comment text proving the issue",
-            EvidenceSourcesExample = "\"grep:TODO\", \"tool:dotnet-build:IDE0051\", \"usage-search:FooService.Bar:0-callers\"",
-            CrossReferenceHint = "For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.",
-            ImpactHint = "What goes wrong or what cognitive cost this imposes",
-            SuggestedFixHint = "Brief approach"
-        });
-
-        // NOTE (issue #3534): This is the final section of BuildRefactoringCorrectnessPrompt. AppendSection appends a
-        // trailing blank line that the original inline block did not emit before return. The pre-existing snapshot
-        // was updated to accept the +\n+\n ending. If AC3 ("byte-for-byte unchanged") is enforced, keep this
-        // final section inline or make AppendSection skip the trailing blank for last-section calls.
-        // (Review finding: correctness agent, ConsolidationPromptBuilder.Refactoring.cs)
-        PromptBuilder.AppendSection(sb, "## Quality Bar", s =>
-        {
-            s.AppendLine("- **Dead code findings MUST include proof of zero usage** — either tool output or a usage search showing no callers.");
-            s.AppendLine("  Do NOT flag code as dead without searching for references. Reflection, DI registration, and test mocks can create invisible references.");
-            s.AppendLine("- **Bug findings MUST demonstrate a concrete failure scenario** — not \"this could fail\" but \"when X is null at L42, L47 dereferences it without a guard.\"");
-            s.AppendLine("- **TODO findings must include the surrounding context** — the comment alone is not enough. Show what's incomplete or broken.");
-            s.AppendLine("- **Stale doc findings must show both** the documented claim AND the actual code behavior side-by-side.");
-            s.AppendLine("- Findings sourced from deterministic tools (grep, linter, compiler warnings) are inherently higher quality.");
-            s.AppendLine("  Tag them as described in the critical rules.");
-            s.AppendLine("- Maximum 10 findings. Prefer bugs > dead code > stale docs > TODOs (by impact).");
-        });
+        AppendSubAgentScaffold(
+            sb,
+            agentTitle: "Agent B: Correctness & Hygiene Detection",
+            agentFocusBold: "correctness and hygiene",
+            agentFocusContinuation: "concrete issues that are wrong, dead, or misleading.",
+            conventionsNote: null,
+            appendCategories: s =>
+            {
+                s.AppendLine("1. **TODO/HACK/FIXME comments** — Left by previous work, indicating incomplete implementation.");
+                s.AppendLine("   Not all TODOs are actionable — only flag ones that indicate a real gap or risk.");
+                s.AppendLine("   Some TODOs are deferred review findings (e.g. `TODO [WARNING]`). Treat them like any other TODO:");
+                s.AppendLine("   verify the problem still exists in the current code, and drop it if the code already handles it.");
+                s.AppendLine();
+                s.AppendLine("2. **Dead code & unused artifacts** — Unreferenced methods, classes, interfaces, or files.");
+                s.AppendLine("   Includes: unused using directives beyond IDE cleanup, orphaned files from removed features,");
+                s.AppendLine("   parameters that are never used, private methods never called.");
+                s.AppendLine();
+                s.AppendLine("3. **Obvious bugs** — High-confidence correctness issues ONLY. You must be certain the code is wrong:");
+                s.AppendLine("   null dereference after a code path that doesn't guarantee non-null, off-by-one in boundary");
+                s.AppendLine("   checks, unreachable code paths (dead branches), resource leaks (opened but never disposed),");
+                s.AppendLine("   logic errors where conditions are always true/false, race conditions in shared mutable state.");
+                s.AppendLine("   **Do NOT flag \"potential\" issues you're unsure about.** Only high-confidence bugs.");
+                s.AppendLine();
+                s.AppendLine("4. **Stale documentation & misleading comments** — XML doc comments describing behavior the code");
+                s.AppendLine("   no longer exhibits; README sections referencing removed features; comments explaining \"why\"");
+                s.AppendLine("   that reference conditions no longer true; parameter descriptions that don't match signatures.");
+            },
+            explorationStrategyHeading: "## Exploration Strategy: Enumerate Then Verify",
+            appendExplorationStrategy: s =>
+            {
+                s.AppendLine("Research shows LLM agents miss absences when scanning for bad patterns.");
+                s.AppendLine("Flip the approach: enumerate what exists, then verify each item.");
+                s.AppendLine();
+                s.AppendLine("**For TODOs/HACKs/FIXMEs:**");
+                s.AppendLine("1. Search the codebase: grep/search for `TODO`, `HACK`, `FIXME`, `XXX`, `WORKAROUND`");
+                s.AppendLine("2. For each result: read the surrounding context and assess if it indicates a real gap");
+                s.AppendLine("3. Discard TODOs that are aspirational (\"TODO: nice to have\") — keep ones indicating broken/incomplete behavior");
+                s.AppendLine();
+                s.AppendLine("**For dead code:**");
+                s.AppendLine($"1. Check the tool output in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/` and the MCP tools in `availableTools` for unused-code");
+                s.AppendLine("   reports — the highest-confidence approach. Common sources: compiler warnings (CS0219, IDE0051),");
+                s.AppendLine("   `eslint --rule no-unused-vars`, `pylint`, `deadcode`. If none covers unused code, you may install and run");
+                s.AppendLine("   a read-only analyzer that does not build.");
+                s.AppendLine("2. If no tools available: enumerate public types/methods in key files, then search for their usages.");
+                s.AppendLine("   A public method with zero callers outside its own class is a dead code candidate.");
+                s.AppendLine("3. Check git history for recently-deleted features — their support code may linger.");
+                s.AppendLine();
+                s.AppendLine("**For bugs:**");
+                s.AppendLine("1. Focus on hotspot files (high churn = more likely to contain recent regressions)");
+                s.AppendLine("2. Read error handling paths specifically — bugs hide in catch blocks and edge cases");
+                s.AppendLine("3. Check null safety: follow nullable references through code paths and verify guards exist");
+                s.AppendLine("4. When a bug is one instance of a pattern (the same faulty catch, guard or call in several places),");
+                s.AppendLine("   search for every instance and put the search in `scopeQuery`. A fix for half the instances is not a fix.");
+                s.AppendLine();
+                s.AppendLine("**For stale docs:**");
+                s.AppendLine("1. Read method signatures, then read their XML doc comments — do they match?");
+                s.AppendLine("2. Check README.md for references to files/features that no longer exist");
+                s.AppendLine("3. Check inline comments that reference specific behavior — verify the behavior still exists");
+            },
+            outputSpec: new FindingsOutputSpec
+            {
+                OutputPath = AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath,
+                Categories = RefactoringCategories.Correctness,
+                EvidenceHint = "The exact code snippet or comment text proving the issue",
+                EvidenceSourcesExample = "\"grep:TODO\", \"tool:dotnet-build:IDE0051\", \"usage-search:FooService.Bar:0-callers\"",
+                CrossReferenceHint = "For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.",
+                ImpactHint = "What goes wrong or what cognitive cost this imposes",
+                SuggestedFixHint = "Brief approach"
+            },
+            appendQualityBar: s =>
+            {
+                s.AppendLine("- **Dead code findings MUST include proof of zero usage** — either tool output or a usage search showing no callers.");
+                s.AppendLine("  Do NOT flag code as dead without searching for references. Reflection, DI registration, and test mocks can create invisible references.");
+                s.AppendLine("- **Bug findings MUST demonstrate a concrete failure scenario** — not \"this could fail\" but \"when X is null at L42, L47 dereferences it without a guard.\"");
+                s.AppendLine("- **TODO findings must include the surrounding context** — the comment alone is not enough. Show what's incomplete or broken.");
+                s.AppendLine("- **Stale doc findings must show both** the documented claim AND the actual code behavior side-by-side.");
+                s.AppendLine("- Findings sourced from deterministic tools (grep, linter, compiler warnings) are inherently higher quality.");
+                s.AppendLine("  Tag them as described in the critical rules.");
+                s.AppendLine("- Maximum 10 findings. Prefer bugs > dead code > stale docs > TODOs (by impact).");
+            });
 
         return sb.ToString();
     }
@@ -334,84 +314,142 @@ $"""
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble);
-
-        sb.AppendLine("# Agent C: Design Consistency Detection");
-        sb.AppendLine();
-        sb.AppendLine("You are one of three parallel analysis agents. Your focus is **design consistency** —");
-        sb.AppendLine("patterns where naming, typing, or API shape deviates from the project's own conventions.");
-        sb.AppendLine();
-        sb.AppendLine("**This agent depends heavily on `.agent/refactoring-conventions.json`.** Read it first.");
-        sb.AppendLine("Your job is to find deviations from the project's OWN standards, not generic best practices.");
-        sb.AppendLine();
-
-        PromptBuilder.AppendSection(sb, "## Your Categories", s =>
-        {
-            s.AppendLine("1. **Naming inconsistencies** — Classes, methods, or variables that don't follow the project's naming conventions.");
-            s.AppendLine("   Use `namingConventions` from conventions.json as your reference. Examples:");
-            s.AppendLine("   - Service classes without the expected suffix (e.g., `FooHandler` when convention is `FooService`)");
-            s.AppendLine("   - Interfaces that don't follow the prefix/suffix pattern");
-            s.AppendLine("   - Files whose names don't match their primary class");
-            s.AppendLine("   - Methods using different verb patterns than the rest of the codebase (e.g., `Fetch` vs `Get` vs `Load`)");
-            s.AppendLine("   - Inconsistent casing in specific contexts (event names, configuration keys, JSON properties)");
-            s.AppendLine();
-            s.AppendLine("2. **Primitive obsession** — Using strings, ints, or raw types to represent domain concepts.");
-            s.AppendLine("   Look for:");
-            s.AppendLine("   - String parameters representing structured data (emails, URLs, IDs, file paths) without validation");
-            s.AppendLine("   - Magic numbers/strings without named constants — especially repeated across multiple files");
-            s.AppendLine("   - Repeated validation logic for the same concept in multiple call sites");
-            s.AppendLine("   - Method signatures with multiple same-typed parameters that could be confused (e.g., `void Move(string from, string to)`)");
-            s.AppendLine("   - Enums that should be polymorphic types (switch statements over the same enum in many places)");
-        });
-
-        PromptBuilder.AppendSection(sb, "## Exploration Strategy", s =>
-        {
-            s.AppendLine("**For naming inconsistencies:**");
-            s.AppendLine("1. Read `namingConventions` from conventions.json — this IS the truth");
-            s.AppendLine("2. Enumerate class/interface names across projects (list files, read declarations)");
-            s.AppendLine("3. For each naming convention rule: verify compliance across a representative sample");
-            s.AppendLine("4. Focus on PUBLIC API surface — internal inconsistencies matter less");
-            s.AppendLine("5. Only flag patterns that appear more than once — a single oddly-named class might be intentional");
-            s.AppendLine();
-            s.AppendLine("**For primitive obsession:**");
-            s.AppendLine("1. Look at method signatures in service interfaces — these define the API contracts");
-            s.AppendLine("2. Search for repeated string-typed parameters with the same name across different methods");
-            s.AppendLine("   (e.g., `string repositoryUrl` appearing in 5+ method signatures = candidate for a value type)");
-            s.AppendLine("3. Search for magic strings/numbers: look for string literals and numeric constants used in");
-            s.AppendLine("   conditional logic. If the same literal appears in 3+ places, it should be a constant or enum.");
-            s.AppendLine("4. Check switch statements over enums — if the same enum is switched over in 4+ locations,");
-            s.AppendLine("   it may be a candidate for polymorphism (but check `intentionalPatterns` first).");
-        });
-
-        AppendFindingsOutputFormat(sb, new FindingsOutputSpec
-        {
-            OutputPath = AgentWorkspacePaths.RefactoringDesignFindingsFilePath,
-            Categories = RefactoringCategories.Design,
-            EvidenceHint = "The specific naming deviation or primitive usage with concrete examples",
-            EvidenceSourcesExample = "\"grep:string repositoryUrl\", \"usage-search:repositoryUrl:5-signatures\"",
-            CrossReferenceHint = "For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.",
-            ImpactHint = "Cognitive cost, confusion risk, or bug risk from the inconsistency",
-            SuggestedFixHint = "Brief approach — rename to X, introduce value type Y, extract constant Z"
-        });
-
-        // NOTE (issue #3534): This is the final section of BuildRefactoringDesignPrompt. AppendSection appends a trailing
-        // blank line that the original inline block did not emit before return. The pre-existing snapshot was updated
-        // to accept the +\n+\n ending. If AC3 ("byte-for-byte unchanged") is enforced, keep this final section
-        // inline or make AppendSection skip the trailing blank for last-section calls.
-        // (Review finding: correctness agent, ConsolidationPromptBuilder.Refactoring.cs)
-        PromptBuilder.AppendSection(sb, "## Quality Bar", s =>
-        {
-            s.AppendLine("- **Naming findings require a convention rule reference.** \"This name seems odd\" is not a finding.");
-            s.AppendLine("  \"Convention says services end with 'Service' but `FooHandler` doesn't follow this\" IS a finding.");
-            s.AppendLine("- **Primitive obsession findings require 3+ occurrences.** A single string parameter is not primitive obsession.");
-            s.AppendLine("  The same concept passed as raw string through 3+ call sites IS primitive obsession.");
-            s.AppendLine("- Every naming and primitive-obsession finding needs a `scopeQuery` that lists all occurrences, so the fix is complete.");
-            s.AppendLine("- **Do NOT flag naming in test projects** unless conventions.json explicitly covers test naming.");
-            s.AppendLine("- **Do NOT flag names that match `intentionalPatterns`** from conventions.json.");
-            s.AppendLine("- This agent has the highest false-positive risk. Be conservative. Maximum 8 findings.");
-        });
+        AppendSubAgentScaffold(
+            sb,
+            agentTitle: "Agent C: Design Consistency Detection",
+            agentFocusBold: "design consistency",
+            agentFocusContinuation: "patterns where naming, typing, or API shape deviates from the project's own conventions.",
+            conventionsNote: "**This agent depends heavily on `.agent/refactoring-conventions.json`.** Read it first.\nYour job is to find deviations from the project's OWN standards, not generic best practices.",
+            appendCategories: s =>
+            {
+                s.AppendLine("1. **Naming inconsistencies** — Classes, methods, or variables that don't follow the project's naming conventions.");
+                s.AppendLine("   Use `namingConventions` from conventions.json as your reference. Examples:");
+                s.AppendLine("   - Service classes without the expected suffix (e.g., `FooHandler` when convention is `FooService`)");
+                s.AppendLine("   - Interfaces that don't follow the prefix/suffix pattern");
+                s.AppendLine("   - Files whose names don't match their primary class");
+                s.AppendLine("   - Methods using different verb patterns than the rest of the codebase (e.g., `Fetch` vs `Get` vs `Load`)");
+                s.AppendLine("   - Inconsistent casing in specific contexts (event names, configuration keys, JSON properties)");
+                s.AppendLine();
+                s.AppendLine("2. **Primitive obsession** — Using strings, ints, or raw types to represent domain concepts.");
+                s.AppendLine("   Look for:");
+                s.AppendLine("   - String parameters representing structured data (emails, URLs, IDs, file paths) without validation");
+                s.AppendLine("   - Magic numbers/strings without named constants — especially repeated across multiple files");
+                s.AppendLine("   - Repeated validation logic for the same concept in multiple call sites");
+                s.AppendLine("   - Method signatures with multiple same-typed parameters that could be confused (e.g., `void Move(string from, string to)`)");
+                s.AppendLine("   - Enums that should be polymorphic types (switch statements over the same enum in many places)");
+            },
+            explorationStrategyHeading: "## Exploration Strategy",
+            appendExplorationStrategy: s =>
+            {
+                s.AppendLine("**For naming inconsistencies:**");
+                s.AppendLine("1. Read `namingConventions` from conventions.json — this IS the truth");
+                s.AppendLine("2. Enumerate class/interface names across projects (list files, read declarations)");
+                s.AppendLine("3. For each naming convention rule: verify compliance across a representative sample");
+                s.AppendLine("4. Focus on PUBLIC API surface — internal inconsistencies matter less");
+                s.AppendLine("5. Only flag patterns that appear more than once — a single oddly-named class might be intentional");
+                s.AppendLine();
+                s.AppendLine("**For primitive obsession:**");
+                s.AppendLine("1. Look at method signatures in service interfaces — these define the API contracts");
+                s.AppendLine("2. Search for repeated string-typed parameters with the same name across different methods");
+                s.AppendLine("   (e.g., `string repositoryUrl` appearing in 5+ method signatures = candidate for a value type)");
+                s.AppendLine("3. Search for magic strings/numbers: look for string literals and numeric constants used in");
+                s.AppendLine("   conditional logic. If the same literal appears in 3+ places, it should be a constant or enum.");
+                s.AppendLine("4. Check switch statements over enums — if the same enum is switched over in 4+ locations,");
+                s.AppendLine("   it may be a candidate for polymorphism (but check `intentionalPatterns` first).");
+            },
+            outputSpec: new FindingsOutputSpec
+            {
+                OutputPath = AgentWorkspacePaths.RefactoringDesignFindingsFilePath,
+                Categories = RefactoringCategories.Design,
+                EvidenceHint = "The specific naming deviation or primitive usage with concrete examples",
+                EvidenceSourcesExample = "\"grep:string repositoryUrl\", \"usage-search:repositoryUrl:5-signatures\"",
+                CrossReferenceHint = "For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.",
+                ImpactHint = "Cognitive cost, confusion risk, or bug risk from the inconsistency",
+                SuggestedFixHint = "Brief approach — rename to X, introduce value type Y, extract constant Z"
+            },
+            appendQualityBar: s =>
+            {
+                s.AppendLine("- **Naming findings require a convention rule reference.** \"This name seems odd\" is not a finding.");
+                s.AppendLine("  \"Convention says services end with 'Service' but `FooHandler` doesn't follow this\" IS a finding.");
+                s.AppendLine("- **Primitive obsession findings require 3+ occurrences.** A single string parameter is not primitive obsession.");
+                s.AppendLine("  The same concept passed as raw string through 3+ call sites IS primitive obsession.");
+                s.AppendLine("- Every naming and primitive-obsession finding needs a `scopeQuery` that lists all occurrences, so the fix is complete.");
+                s.AppendLine("- **Do NOT flag naming in test projects** unless conventions.json explicitly covers test naming.");
+                s.AppendLine("- **Do NOT flag names that match `intentionalPatterns`** from conventions.json.");
+                s.AppendLine("- This agent has the highest false-positive risk. Be conservative. Maximum 8 findings.");
+            });
 
         return sb.ToString();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Phase 1 shared scaffold
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Emits the invariant structural scaffold shared by the three Phase 1 sub-agent prompts
+    /// (Agents A, B, C). Delegates all per-agent content to the supplied actions and values,
+    /// eliminating the duplicated intro paragraph and section-call boilerplate that previously
+    /// appeared three times (issue #3537 — intra-file duplication at lines 139–175, 215–248,
+    /// 598–634 per SonarQube).
+    /// </summary>
+    /// <param name="sb">The <see cref="StringBuilder"/> receiving the prompt.</param>
+    /// <param name="agentTitle">Agent heading text, e.g. <c>"Agent A: Structural Debt Detection"</c>.</param>
+    /// <param name="agentFocusBold">
+    /// The bolded portion of the focus clause in the intro line,
+    /// e.g. <c>"structural debt"</c>. Rendered as <c>**structural debt**</c>.
+    /// </param>
+    /// <param name="agentFocusContinuation">
+    /// The second line of the intro paragraph (plain text), e.g.
+    /// <c>"patterns where incremental changes have created global incoherence."</c>.
+    /// </param>
+    /// <param name="conventionsNote">
+    /// Optional extra block emitted after the intro paragraph (Agent C only).
+    /// Pass <see langword="null"/> for Agents A and B.
+    /// May contain embedded newlines to produce multiple lines.
+    /// </param>
+    /// <param name="appendCategories">Action that writes the <c>## Your Categories</c> body.</param>
+    /// <param name="explorationStrategyHeading">
+    /// Full section heading for the exploration strategy section.
+    /// Agents A and C use <c>"## Exploration Strategy"</c>;
+    /// Agent B uses <c>"## Exploration Strategy: Enumerate Then Verify"</c>.
+    /// </param>
+    /// <param name="appendExplorationStrategy">Action that writes the exploration strategy body.</param>
+    /// <param name="outputSpec">Per-agent spec forwarded to <see cref="AppendFindingsOutputFormat"/>.</param>
+    /// <param name="appendQualityBar">Action that writes the <c>## Quality Bar</c> body.</param>
+    private static void AppendSubAgentScaffold(
+        StringBuilder sb,
+        string agentTitle,
+        string agentFocusBold,
+        string agentFocusContinuation,
+        string? conventionsNote,
+        Action<StringBuilder> appendCategories,
+        string explorationStrategyHeading,
+        Action<StringBuilder> appendExplorationStrategy,
+        FindingsOutputSpec outputSpec,
+        Action<StringBuilder> appendQualityBar)
+    {
+        sb.Append(RefactoringSubAgentPreamble);
+
+        sb.AppendLine($"# {agentTitle}");
+        sb.AppendLine();
+        sb.AppendLine($"You are one of three parallel analysis agents. Your focus is **{agentFocusBold}** —");
+        sb.AppendLine(agentFocusContinuation);
+        if (conventionsNote is not null)
+        {
+            sb.AppendLine();
+            sb.AppendLine(conventionsNote);
+        }
+        sb.AppendLine();
+
+        PromptBuilder.AppendSection(sb, "## Your Categories", appendCategories);
+        PromptBuilder.AppendSection(sb, explorationStrategyHeading, appendExplorationStrategy);
+        AppendFindingsOutputFormat(sb, outputSpec);
+        // NOTE (issues #3534 / #3537): AppendSection always appends a trailing sb.AppendLine() after the body.
+        // This is the final call in the scaffold, so the output ends with \n\n (the last content line's \n
+        // plus AppendSection's trailing blank line). The full-prompt snapshot tests in PromptBuilderSnapshotTests.cs
+        // (tests 12–14) capture this exact trailing pattern and will fail if it changes.
+        PromptBuilder.AppendSection(sb, "## Quality Bar", appendQualityBar);
     }
 
     /// <summary>
