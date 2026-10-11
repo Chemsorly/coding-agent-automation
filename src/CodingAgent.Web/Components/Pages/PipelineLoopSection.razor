@@ -26,6 +26,28 @@
             </div>
             <input type="number" @bind="_minIssueSlots" min="@SettingLimits.Min(nameof(PipelineConfiguration.MinIssueSlots))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MinIssueSlots))" />
         </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.DispatchOrder)">
+            <div class="label-with-hint">
+                <label id="dispatch-order-label">Dispatch Order</label>
+                <span class="form-hint-icon" aria-hidden="true" title="The order in which work goes to agents, top first, for all projects. Within a type, higher priority (manual dispatches) goes first, then the oldest. Reserved Issue Slots still apply. Default: Triage, Review, Decomposition, Implementation, Consolidation">?</span>
+            </div>
+            <ol class="dispatch-order-list" aria-labelledby="dispatch-order-label">
+                @for (var i = 0; i < _dispatchOrder.Count; i++)
+                {
+                    var index = i;
+                    var taskType = _dispatchOrder[index];
+                    <li class="dispatch-order-row">
+                        <span class="dispatch-order-number">@(index + 1).</span>
+                        <span class="dispatch-order-name">@taskType</span>
+                        <span class="dispatch-order-hint">@Describe(taskType)</span>
+                        <span class="dispatch-order-actions">
+                            <button type="button" class="btn-icon" title="Move up" aria-label="Move @taskType up" disabled="@(index == 0)" @onclick="() => Move(index, -1)">↑</button>
+                            <button type="button" class="btn-icon" title="Move down" aria-label="Move @taskType down" disabled="@(index == _dispatchOrder.Count - 1)" @onclick="() => Move(index, 1)">↓</button>
+                        </span>
+                    </li>
+                }
+            </ol>
+        </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
             <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
             <span>Advanced settings</span>
@@ -87,6 +109,7 @@
     private int _closedLoopPollIntervalSeconds = 60;
     private int _closedLoopMaxRunsPerCycle = 0;
     private int _minIssueSlots = 1;
+    private List<WorkItemTaskType> _dispatchOrder = WorkItemDispatchOrder.Default.ToList();
     private int _closedLoopMaxPagesToFetch = 10;
     private int _closedLoopMaxConsecutivePollFailures = 5;
     private int _closedLoopCircuitBreakerCooldownSeconds = 300;
@@ -100,6 +123,7 @@
         _closedLoopPollIntervalSeconds = (int)config.ClosedLoopPollInterval.TotalSeconds;
         _closedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
         _minIssueSlots = config.MinIssueSlots;
+        _dispatchOrder = config.DispatchOrder.ToList();
         _closedLoopMaxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
         _closedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures;
         _closedLoopCircuitBreakerCooldownSeconds = (int)config.ClosedLoopCircuitBreakerCooldown.TotalSeconds;
@@ -117,6 +141,7 @@
                     ClosedLoopPollInterval = TimeSpan.FromSeconds(_closedLoopPollIntervalSeconds),
                     ClosedLoopMaxRunsPerCycle = _closedLoopMaxRunsPerCycle,
                     MinIssueSlots = _minIssueSlots,
+                    DispatchOrder = _dispatchOrder.ToArray(),
                     ClosedLoopMaxPagesToFetch = _closedLoopMaxPagesToFetch,
                     ClosedLoopMaxConsecutivePollFailures = _closedLoopMaxConsecutivePollFailures,
                     ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(_closedLoopCircuitBreakerCooldownSeconds),
@@ -131,4 +156,23 @@
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
         }
     }
+
+    /// <summary>Swaps the task type at <paramref name="index"/> with its neighbour <paramref name="offset"/> places away.</summary>
+    private void Move(int index, int offset)
+    {
+        var target = index + offset;
+        if (target < 0 || target >= _dispatchOrder.Count)
+            return;
+        (_dispatchOrder[index], _dispatchOrder[target]) = (_dispatchOrder[target], _dispatchOrder[index]);
+    }
+
+    private static string Describe(WorkItemTaskType taskType) => taskType switch
+    {
+        WorkItemTaskType.Triage => "Problem reports to investigate",
+        WorkItemTaskType.Review => "Pull requests to review",
+        WorkItemTaskType.Decomposition => "Epics to split into issues",
+        WorkItemTaskType.Implementation => "Issues to implement",
+        WorkItemTaskType.Consolidation => "Brain and refactoring housekeeping",
+        _ => "",
+    };
 }
