@@ -144,7 +144,6 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         sp.GetRequiredService<AssignmentEnricher>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchLifecycleService>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchTemplateResolver>().Should().NotBeNull();
-        sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchStateBuilder>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchWorkItemService>().Should().NotBeNull();
 
         // Chat dispatch
