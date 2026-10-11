@@ -632,6 +632,12 @@ public sealed class HubConsolidationOperationsTests
     // RunLifecycleManager.RemoveRun claims it, so AddRunToHistoryAsync serialises the
     // summary into the persisted PipelineRunSummary. (review-findings-correctness.md CRITICAL)
 
+    // TODO [WARNING]: This test uses a mock IOrchestratorRunService that returns the same mutable
+    // inMemoryRun reference on every GetRun call. The capturedSummary callback closes over that
+    // same object, so the test passes vacuously even without _runService.ReplaceRun(inMemoryRun) —
+    // it does not exercise Redis copy-semantics. The regression guard against the actual bug is
+    // HandleConsolidationComplete_RedisRunService_SummaryIsOnTheRunThatCompletionRemoves below.
+    // (review-findings-testqualityreviewer.md WARNING finding #1)
     [Fact]
     public async Task HandleConsolidationComplete_Success_SetsSummaryOnInMemoryRunBeforeLifecycleCall()
     {
@@ -671,6 +677,10 @@ public sealed class HubConsolidationOperationsTests
         inMemoryRun.ConsolidationResultSummary.Should().Be("Consolidated 3 files");
     }
 
+    // TODO [WARNING]: Same vacuous-pass issue as the success sibling above — uses a mock run service
+    // returning the same mutable reference, so this test passes even without ReplaceRun. The true
+    // regression guard is HandleConsolidationComplete_RedisRunService_SummaryIsOnTheRunThatCompletionRemoves.
+    // (review-findings-testqualityreviewer.md WARNING finding #1)
     [Fact]
     public async Task HandleConsolidationComplete_Failure_SetsErrorMessageAsSummaryOnInMemoryRunBeforeLifecycleCall()
     {
@@ -752,5 +762,90 @@ public sealed class HubConsolidationOperationsTests
             new RunId(jobId), WorkItemStatus.Succeeded,
             It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once,
             "CompleteRunAsync must be called even when the in-memory run is not found");
+    }
+
+    /// <summary>
+    /// Regression test for issue #3562: proves that <see cref="HubConsolidationOperations.HandleConsolidationCompleteAsync"/>
+    /// must call <c>_runService.ReplaceRun(inMemoryRun)</c> after setting <c>ConsolidationResultSummary</c>.
+    ///
+    /// With <see cref="DistributedRunService"/>, <c>GetRun</c> deserialises a fresh copy from the Redis hash
+    /// on every call. Mutating that copy without calling <c>ReplaceRun</c> discards the change.
+    /// <c>RemoveRun</c> (called inside <c>CompleteRunAsync</c>/<c>FailRunAsync</c>) reads the hash again —
+    /// if <c>ReplaceRun</c> was not called first, the returned run has <c>ConsolidationResultSummary = null</c>
+    /// and the history row renders "—".
+    ///
+    /// This test uses a real <see cref="DistributedRunService"/> backed by <see cref="CodingAgent.Web.TestUtilities.FakeRedisStore"/>
+    /// so that the Redis copy-semantics are exercised. An in-memory <see cref="OrchestratorRunService"/> would
+    /// pass vacuously because <c>GetRun</c> returns the same mutable reference.
+    ///
+    /// NOTE: <see cref="CodingAgent.Web.TestUtilities.FakeRedisStore"/> completes all async operations
+    /// synchronously (via <c>Task.FromResult</c>), so fire-and-forget continuations settle before the next
+    /// statement; no <c>await Task.Yield()</c> barrier is needed here because <c>ReplaceRun</c> and
+    /// <c>RemoveRun</c> are both synchronous (they call <c>.GetAwaiter().GetResult()</c> internally).
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task HandleConsolidationComplete_RedisRunService_SummaryIsOnTheRunThatCompletionRemoves(bool success)
+    {
+        // Arrange: capture variable must be declared before the mock setup lambdas that assign to it
+        PipelineRun? removed = null;
+
+        var runService = new DistributedRunService(
+            new CodingAgent.Web.TestUtilities.FakeRedisStore(),
+            (_, _, _) => Task.FromResult(false),
+            Mock.Of<ILogger>());
+
+        var jobId = Guid.NewGuid().ToString();
+        runService.AddRun(new PipelineRun
+        {
+            RunId = jobId,
+            IssueIdentifier = new IssueIdentifier("RefactoringDetection:tpl-1"),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-1"
+        });
+
+        // _mockLifecycleManager callbacks simulate what RunLifecycleManager does: call RemoveRun to claim
+        // the run from the store. The returned PipelineRun is what AddRunToHistoryAsync would serialize.
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync(new RunId(jobId), WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Callback(() => removed = runService.RemoveRun(new RunId(jobId)))
+            .ReturnsAsync((PipelineRun?)null);
+
+        _mockLifecycleManager
+            .Setup(l => l.FailRunAsync(new RunId(jobId), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Callback(() => removed = runService.RemoveRun(new RunId(jobId)))
+            .ReturnsAsync((PipelineRun?)null);
+
+        // Construct SUT with the real runService instead of _mockRunService.Object.
+        // _mockRunService is not involved — no Setup calls needed for it in this test.
+        var sut = new HubConsolidationOperations(
+            CreateModelFetchService(),
+            _mockConsolidation.Object,
+            _badgeService,
+            _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
+            runService,
+            _mockLogger.Object);
+
+        var result = success
+            ? new ConsolidationJobResult { JobId = jobId, Success = true, Summary = "Created 3 refactoring issue(s): #1, #2, #3" }
+            : new ConsolidationJobResult { JobId = jobId, Success = false, ErrorMessage = "Push failed: rejected" };
+
+        // Act
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        // Assert: the run claimed by RemoveRun (inside the lifecycle manager callback) must carry
+        // the summary that was set before CompleteRunAsync/FailRunAsync was called.
+        // Without _runService.ReplaceRun(inMemoryRun), removed.ConsolidationResultSummary is null
+        // because RemoveRun reads the Redis hash, which was never updated.
+        removed.Should().NotBeNull("RemoveRun must have been called by the lifecycle manager mock callback");
+        var expectedSummary = success ? "Created 3 refactoring issue(s): #1, #2, #3" : "Push failed: rejected";
+        removed!.ConsolidationResultSummary.Should().Be(expectedSummary,
+            "ConsolidationResultSummary must be written back to the store via ReplaceRun BEFORE " +
+            "CompleteRunAsync/FailRunAsync calls RemoveRun, otherwise the persisted history row shows '—'");
     }
 }
