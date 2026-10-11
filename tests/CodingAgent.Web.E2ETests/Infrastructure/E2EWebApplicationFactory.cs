@@ -302,6 +302,8 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // PostgresHarnessSuggestionStore). Not clearing this would let Scenario 4 leave
             // stale suggestions visible to subsequent tests.
             db.KeyValueStore.RemoveRange(db.KeyValueStore);
+            // Triages that need someone count on Attention: a leftover one changes another test's counts
+            db.Triages.RemoveRange(db.Triages);
             db.SaveChanges();
         }
 

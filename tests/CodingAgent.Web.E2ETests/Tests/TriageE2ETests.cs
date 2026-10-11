@@ -105,7 +105,8 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
             return d is { Status: TriageStatus.NeedsReview } ? d : null;
         });
         Assert.Equal(TriageVerdict.CauseFound, detail.Record.LatestResult!.Verdict);
-        Assert.Single(detail.Record.Drafts);
+        // Draft ids carry the attempt number, so a later attempt's d1 is never taken for this one's created issue
+        Assert.Equal("a1-d1", Assert.Single(detail.Record.Drafts).Current.Id);
 
         // The run page's link back to the triage
         var byRun = await api.GetAsync($"/api/triages/by-run/{assignment.JobId}");
@@ -115,7 +116,7 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
         var issuesBefore = Fixture.IssueProvider.CreatedIssues.Count;
         var createIssues = await api.PostAsJsonAsync($"/api/triages/{triage.Record.Id}/create-issues", new CreateTriageIssuesRequest
         {
-            DraftIds = ["d1"],
+            DraftIds = ["a1-d1"],
             Queue = true,
             CreatedBy = "anna",
         }, PipelineJsonOptions.Default);
