@@ -17,7 +17,6 @@
 @using Microsoft.AspNetCore.SignalR.Client
 @using Serilog
 @inject IConfigurationStore ConfigStore
-@inject PipelineRunLifecycleService PipelineLifecycle
 @inject IPipelineApiAgentClient AgentClient
 @inject IJSRuntime JS
 @inject IChatJobDispatcher ChatDispatcher
@@ -197,8 +196,6 @@
 
     protected override void OnInitialized()
     {
-        PipelineLifecycle.OnChange += HandleStateChange;
-
         _options_connectTimeout = Configuration.GetValue<int>(
             "WorkDistribution:Dispatch:ChatPodConnectTimeoutSeconds", 120);
     }
@@ -396,7 +393,7 @@
                     LogSanitizer.SanitizeForLog(agentConfig.DisplayName));
             _resolvedMcpConfigPath = agentConfig.ProviderType?.ToLowerInvariant() switch
             {
-                "opencode" => "/home/ubuntu/.opencode/mcp.json",
+                "opencode" => "/home/ubuntu/.opencode/opencode.json",
                 "claudecode" => AgentDefaults.ClaudeMcpConfigPath,
                 _ => "/home/ubuntu/.kiro/settings/mcp.json"
             };
@@ -569,13 +566,6 @@
         catch (Exception unsubEx) { Log.Warning(unsubEx, "AgentChat: failed to unsubscribe after send failure for session {SessionId}", _activeSessionId); }
     }
 
-    // ── Response handlers ─────────────────────────────────────────────────────
-
-    private void HandleStateChange()
-    {
-        InvokeAsync(StateHasChanged);
-    }
-
     // ── EndChat ───────────────────────────────────────────────────────────────
 
     private async Task EndChat()
@@ -663,8 +653,6 @@
             HubConnection.Reconnected -= _reconnectedHandler;
             _reconnectedHandler = null;
         }
-
-        PipelineLifecycle.OnChange -= HandleStateChange;
 
         _chatResponseSub?.Dispose();
         _chatCompletedSub?.Dispose();

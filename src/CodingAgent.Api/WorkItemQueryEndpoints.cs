@@ -60,10 +60,12 @@ public static class WorkItemQueryEndpoints
     // is ever re-added here, verify the registration site matches.
     internal static async Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
+        IPipelineConfigStore configStore,
         int maxResults = 50,
         string? projectId = null,
         CancellationToken ct = default)
     {
+        var dispatchOrder = (await configStore.LoadPipelineConfigAsync(ct)).DispatchOrder;
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Phase 1: SQL projection — include Payload and ProjectId alongside the 7 scalar fields.
@@ -78,7 +80,7 @@ public static class WorkItemQueryEndpoints
             pending = pending.Where(w => w.ProjectId == scopeProjectId);
 
         var raw = await pending
-            .ApplyDispatchOrder()
+            .ApplyDispatchOrder(dispatchOrder)
             .Take(maxResults)
             .Select(w => new
             {

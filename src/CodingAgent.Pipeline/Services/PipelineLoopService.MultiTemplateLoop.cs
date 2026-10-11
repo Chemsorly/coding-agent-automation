@@ -124,7 +124,7 @@ public sealed partial class PipelineLoopService
     {
         var failuresBefore = BuildTemplateFailureBaseline(snapshot.PollableTemplates);
 
-        var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated) = await _poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated, triageQueues) = await _poller.PollTemplateQueuesAsync(
             snapshot.PollableTemplates, snapshot.Config.ClosedLoopMaxPagesToFetch, _templateStatuses,
             i => CurrentCycleTemplateIndex = i,
             msg => { lock (_lock) { StatusMessage = msg; } },
@@ -136,6 +136,10 @@ public sealed partial class PipelineLoopService
         // Project epics join their executor template's decomposition queue (one round-robin for all epics)
         await _poller.AddProjectEpicsAsync(
             snapshot.Projects, snapshot.TemplateLookup, snapshot.Config.ClosedLoopMaxPagesToFetch, decompositionQueues, ct);
+
+        // Triage issues in a project's epic tracker join the triage queue of the project's triage executor
+        await _poller.AddProjectTriagesAsync(
+            snapshot.Projects, snapshot.TemplateLookup, snapshot.Config.ClosedLoopMaxPagesToFetch, triageQueues, ct);
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
@@ -169,6 +173,7 @@ public sealed partial class PipelineLoopService
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompositionQueues,
+                TriageQueues = triageQueues,
                 ReportStatus = msg => { lock (_lock) { StatusMessage = msg; } },
                 ReportIssue = id => CurrentIssueIdentifier = id,
                 NotifyChange = NotifyChange
@@ -752,11 +757,11 @@ public sealed partial class PipelineLoopService
         await _cacheManager.ReconcileIssueProvidersAsync(neededIds, issueProviderConfigs, ct);
     }
 
-    /// <summary>Reconciles the repo provider cache for templates with ReviewEnabled or DecompositionEnabled.</summary>
+    /// <summary>Reconciles the repo provider cache for templates with ReviewEnabled, DecompositionEnabled, TriageEnabled or HousekeepingEnabled.</summary>
     private async Task ReconcileRepoProviderCacheAsync(IReadOnlyList<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
     {
         var neededRepoIds = enabledTemplates
-            .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.HousekeepingEnabled)
+            .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.TriageEnabled || t.HousekeepingEnabled)
             .Select(t => t.RepoProviderId)
             .ToHashSet();
         if (neededRepoIds.Count == 0) return;

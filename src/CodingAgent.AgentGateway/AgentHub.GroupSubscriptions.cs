@@ -79,7 +79,11 @@ public sealed partial class AgentHub
             // Called inside this block so it is gated by the ownership check above and
             // only executes when the run is confirmed active.
             var chatHistory = await _facade.GetChatHistoryAsync(new Pipeline.Models.JobId(jobId));
-            var snapshot = BuildRunStateSnapshot(activeRun, chatHistory);
+            // Fetch quality-gate history from the run service (cross-replica in distributed mode).
+            // In Redis mode GetRun returns a copy with empty QualityGateHistory, so we must read
+            // from the dedicated Redis list — the same reason chat history is loaded this way.
+            var qgHistory = await _facade.GetQualityGateHistoryAsync(new Pipeline.Models.JobId(jobId));
+            var snapshot = BuildRunStateSnapshot(activeRun, chatHistory, qgHistory);
             await _uiContext.Clients.Client(Context.ConnectionId)
                 .SendAsync(HubMethodNames.OnRunStateSnapshot, jobId, snapshot);
             _logger.Debug("Pushed RunStateSnapshot to new subscriber for run-{JobId} at step {Step}",
@@ -102,7 +106,7 @@ public sealed partial class AgentHub
     /// <summary>
     /// Builds a <see cref="RunStateSnapshot"/> from the current state of an active <see cref="PipelineRun"/>.
     /// </summary>
-    private static RunStateSnapshot BuildRunStateSnapshot(PipelineRun run, IReadOnlyList<ChatEntry> chatHistory) => new()
+    private static RunStateSnapshot BuildRunStateSnapshot(PipelineRun run, IReadOnlyList<ChatEntry> chatHistory, IReadOnlyList<QualityGateReport> qgHistory) => new()
     {
         CurrentStep = run.CurrentStep,
         HighWaterMark = run.HighWaterMark,
@@ -126,7 +130,7 @@ public sealed partial class AgentHub
         CodeReviewWarningCount = run.CodeReviewWarningCount,
         CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
         LatestQualityReport = run.LatestQualityReport,
-        QualityGateHistory = run.QualityGateHistory.ToArray(),
+        QualityGateHistory = qgHistory,
         PullRequestUrl = run.PullRequestUrl,
         PullRequestNumber = run.PullRequestNumber,
         IsDraftPr = run.IsDraftPr,

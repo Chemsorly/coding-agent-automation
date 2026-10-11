@@ -10,6 +10,9 @@ namespace CodingAgent.Pipeline.Services;
 
 public partial class AgentPhaseExecutor
 {
+    /// <summary>The phase the analysis agent calls' token usage is recorded under.</summary>
+    private const string AnalysisPhase = "analysis";
+
     /// <summary>
     /// Executes the analysis phase: checks for existing analysis, runs agent analysis if needed,
     /// reads the analysis file, evaluates the confidence gate, and posts the analysis comment.
@@ -147,10 +150,15 @@ public partial class AgentPhaseExecutor
                     assessment = await RunSingleAnalysisAttemptAsync(context, analysisFilePath, assessmentFilePath, ct);
                     break; // Success — exit retry loop
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException and not AnalysisIncompleteException)
+                catch (Exception ex) when (ex is not OperationCanceledException and not AnalysisIncompleteException and not ProviderUnavailableException)
                 {
                     throw new AnalysisIncompleteException($"Agent execution failed: {ex.Message}", ex);
                 }
+            }
+            catch (ProviderUnavailableException ex)
+            {
+                await FailForUnavailableProviderAsync(context, ex);
+                return (false, null);
             }
             catch (AnalysisIncompleteException ex)
             {
@@ -241,12 +249,16 @@ public partial class AgentPhaseExecutor
             ct,
             line => context.Callbacks.EmitOutputLine(line),
             reportStallEvent: BuildStallEventReporter(context.ReportPipelineRunEvent),
-            phase: "analysis");
+            phase: AnalysisPhase);
 
-        run.AccumulateTokenUsage(analysisResult, phase: "analysis");
+        run.AccumulateTokenUsage(analysisResult, phase: AnalysisPhase);
 
         _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
             run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
+
+        if (!analysisResult.Success && ProviderUnavailableException.IsProviderFailure(analysisResult.ErrorCategory))
+            throw new ProviderUnavailableException(analysisResult.ErrorCategory,
+                $"Agent provider unavailable ({analysisResult.ErrorCategory}), exit code {analysisResult.ExitCode}");
 
         ValidateAnalysisFile(run, analysisFilePath, analysisResult);
 
@@ -263,6 +275,24 @@ public partial class AgentPhaseExecutor
         }
 
         return await ReadAssessmentAsync(run, ct);
+    }
+
+    /// <summary>
+    /// Ends a run whose model provider is unavailable (rate limit, overload, rejected credentials) as an
+    /// infrastructure failure at once: retrying against the same outage cannot help. The run ends with
+    /// <c>agent:error</c> like other infrastructure failures, not <c>agent:needs-refinement</c>, which
+    /// would ask the author to rewrite an issue that is not at fault.
+    /// </summary>
+    private async Task FailForUnavailableProviderAsync(AgentPhaseContext context, ProviderUnavailableException ex)
+    {
+        var run = context.Run;
+        _logger.Error("Pipeline {RunId} analysis stopped: {Message}", run.RunId, ex.Message);
+        context.Callbacks.EmitOutputLine($"❌ {ex.Message} — an infrastructure failure, not a problem with the issue");
+        run.FailureReason = ex.Message;
+        run.FailureCategory = FailureReason.InfrastructureFailure;
+        run.MarkCompleted();
+        context.Callbacks.TransitionTo(PipelineStep.Failed);
+        await context.Callbacks.AddRunToHistoryAsync(run);
     }
 
     /// <summary>Validates that analysis.md exists and meets minimum length. Throws AnalysisIncompleteException if not.</summary>
@@ -326,6 +356,10 @@ public partial class AgentPhaseExecutor
             line => context.Callbacks.EmitOutputLine(line),
             _logger,
             ct);
+
+        // The reviewer and the refinement are agent calls of their own; count their tokens too.
+        run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: AnalysisPhase);
+        run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: AnalysisPhase);
 
         if (!reviewResult.RefinementTriggered) return currentAssessment;
 

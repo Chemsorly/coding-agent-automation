@@ -13,17 +13,11 @@ public static partial class ServiceCollectionExtensions
     private static void RegisterPipelineShutdown(IServiceCollection services)
     {
         // Readiness drain: marks /readyz as 503 during shutdown, then waits for endpoint removal.
+        // The delay comes from READINESS_DRAIN_DELAY_SECONDS (default 15 s, clamped to 0–120 s),
+        // read by ReadinessDrainService.ResolveDrainDelay.
         services.AddSingleton<ReadinessState>();
-        services.AddHostedService(sp =>
-        {
-            var opts = sp.GetService<Microsoft.Extensions.Options.IOptions<MonolithRuntimeOptions>>()?.Value;
-            var drainDelay = opts is not null
-                ? TimeSpan.FromSeconds(System.Math.Clamp(opts.ReadinessDrainDelaySeconds, 0, 120))
-                : (TimeSpan?)null;
-            return new ReadinessDrainService(
-                sp.GetRequiredService<ReadinessState>(),
-                Log.Logger,
-                drainDelay: drainDelay);
-        });
+        services.AddHostedService(sp => new ReadinessDrainService(
+            sp.GetRequiredService<ReadinessState>(),
+            Log.Logger));
     }
 }

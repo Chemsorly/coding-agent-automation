@@ -84,13 +84,24 @@ public class DispatchInfrastructure
         ILogger logger,
         CancellationToken ct)
     {
-        var providerConfigs = await PrepareProviderConfigsAsync(
+        // Build raw configs first so PipelineConfigurationResolver can read the repo blacklist
+        // without having tokens in the settings (vending only adds/replaces Token and TokenExpiresAt
+        // and removes PrivateKeyBase64 — none of those affect blacklist resolution).
+        var rawConfigs = await BuildAgentProviderConfigsAsync(
             repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
 
+        // Resolve pipeline config (including BrainReadOnly) before vending tokens.
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, providerConfigs, ct);
+            project, repoProviderId, rawConfigs, ct);
+
+        // Vend tokens: pass the brain config as read-only when BrainReadOnly is true.
+        IReadOnlySet<string>? readOnlyConfigIds = config.BrainReadOnly && !string.IsNullOrEmpty(brainProviderId)
+            ? new HashSet<string>(StringComparer.Ordinal) { brainProviderId }
+            : null;
+        var providerConfigs = await TokenVending.PrepareAgentConfigsAsync(
+            rawConfigs, repoProviderId.Value, ct, readOnlyConfigIds: readOnlyConfigIds);
 
         return (providerConfigs, config);
     }
@@ -125,6 +136,13 @@ public class DispatchInfrastructure
     /// decomposition clones. The agent only reads them, so they get read-only tokens and none of their
     /// secrets or setup steps; see <see cref="ITokenVendingService.PrepareReadOnlyCloneConfigsAsync"/>.
     /// </remarks>
+    // NOTE (issue #3573): this helper is no longer called from any production dispatch path — both call
+    // sites in DispatchInfrastructure were migrated to the BuildAgentProviderConfigsAsync + explicit
+    // PrepareAgentConfigsAsync(readOnlyConfigIds) pattern. However, this method remains internal and
+    // callable from tests or subclasses. It does NOT pass readOnlyConfigIds, so any future dispatch
+    // path that reuses this helper would silently vend write tokens for read-only brains.
+    // Either remove this method or add a readOnlyConfigIds parameter and forward it to
+    // PrepareAgentConfigsAsync (DotNetSpecialist finding).
     internal async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
         ProviderConfigId repoProviderId,
         string agentProviderId,
@@ -383,7 +401,8 @@ public class DispatchInfrastructure
     internal async Task<IssueContextResult?> BuildIssueContextAsync(
         IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool newestComments = false)
     {
         var issueConfig = await Resolution.ConfigStore
             .GetProviderConfigByIdAsync(issueProviderId.Value, ProviderKind.Issue, ct);
@@ -398,10 +417,13 @@ public class DispatchInfrastructure
             issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
             parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
             var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
-            // Cap at 50 comments per REQ-4.4
-            issueComments = allComments.Count > 50
-                ? allComments.Take(50).ToList().AsReadOnly()
-                : allComments;
+            // Cap at 50 comments per REQ-4.4 (the newest ones when asked: a triage needs the latest feedback)
+            if (allComments.Count <= 50)
+                issueComments = allComments;
+            else if (newestComments)
+                issueComments = allComments.Skip(allComments.Count - 50).ToList().AsReadOnly();
+            else
+                issueComments = allComments.Take(50).ToList().AsReadOnly();
         }
 
         // Extract images from body + comments (mirrors FetchIssueStep pattern).
@@ -598,7 +620,7 @@ public class DispatchInfrastructure
         // A review is about a pull request, so its context comes from the pull request, never from the tracker.
         var issueContext = request.PullRequest is { } pullRequest
             ? BuildPullRequestContext(pullRequest)
-            : await BuildIssueContextAsync(issueIdentifier, issueProviderId, ct);
+            : await BuildIssueContextAsync(issueIdentifier, issueProviderId, ct, request.NewestComments);
         if (issueContext is null)
         {
             logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);
@@ -606,14 +628,36 @@ public class DispatchInfrastructure
         }
 
         // ── Step 3: Prepare provider configs and resolve pipeline configuration ──
-        var providerConfigs = await PrepareProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct,
-            request.AdditionalRepoProviderIds);
+        // Build raw configs first so BrainReadOnly is resolved before tokens are vended.
+        // PipelineConfigurationResolver only reads the repo blacklist from provider configs;
+        // vending (which adds Token/TokenExpiresAt and removes PrivateKeyBase64) does not change
+        // the blacklist, so passing raw configs is safe.
+        var rawConfigs = await BuildAgentProviderConfigsAsync(
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
 
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, providerConfigs, ct);
+            project, repoProviderId, rawConfigs, ct);
+
+        // Vend tokens: brain config gets a read-only token when BrainReadOnly is resolved true.
+        IReadOnlySet<string>? readOnlyConfigIds = config.BrainReadOnly && !string.IsNullOrEmpty(brainProviderId)
+            ? new HashSet<string>(StringComparer.Ordinal) { brainProviderId }
+            : null;
+        var vendedConfigs = await TokenVending.PrepareAgentConfigsAsync(
+            rawConfigs, repoProviderId.Value, ct, readOnlyConfigIds: readOnlyConfigIds);
+
+        // Append read-only clone configs for additional project repositories (unchanged path).
+        IReadOnlyList<ProviderConfig> providerConfigs = vendedConfigs;
+        if (request.AdditionalRepoProviderIds is not null)
+        {
+            var additionalConfigs = await ResolveAdditionalRepoConfigsAsync(
+                request.AdditionalRepoProviderIds,
+                excludedIds: [repoProviderId.Value, brainProviderId],
+                logger, ct);
+            var cloneConfigs = await TokenVending.PrepareReadOnlyCloneConfigsAsync(additionalConfigs, ct);
+            providerConfigs = [.. vendedConfigs, .. cloneConfigs];
+        }
 
         // ── Step 4: Carry forward staleness signals from issue context ──
         var forceRefresh = issueContext.ForceRefreshAnalysis;

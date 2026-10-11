@@ -156,6 +156,9 @@ public record JobDistributionRequest
     /// <summary>Template ID for template-scoped consolidation runs (null for global).</summary>
     public string? ConsolidationTemplateId { get; init; }
 
+    /// <summary>Display name of the template for template-scoped consolidation runs (null for global).</summary>
+    public string? ConsolidationTemplateName { get; init; }
+
     /// <summary>
     /// When the last consolidation of the same type and scope succeeded; null when there is none in the run
     /// history. Set at delivery time; brain consolidation focuses on what changed since.
@@ -167,6 +170,12 @@ public record JobDistributionRequest
     /// harness suggestion run, as JSON. Set at delivery time; null when there is none.
     /// </summary>
     public string? ConsolidationFeedbackDataJson { get; init; }
+
+    /// <summary>
+    /// For triage runs: the triage's earlier attempts and the project's other triages, as Markdown. Set at
+    /// delivery time by the assignment enricher; never part of the stored payload.
+    /// </summary>
+    public string? TriageContextMarkdown { get; init; }
 
     /// <summary>
     /// When true, created refactoring issues will receive both <c>agent:generated</c> and

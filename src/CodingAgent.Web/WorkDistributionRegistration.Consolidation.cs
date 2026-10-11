@@ -4,8 +4,6 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Web.Services;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.LeaderElection;
-using k8s;
 using Serilog;
 
 namespace CodingAgent.Web;
@@ -14,15 +12,12 @@ public static partial class WorkDistributionRegistration
 {
     /// <summary>
     /// Registers services for Kubernetes work distribution:
-    /// - K8s infrastructure (IKubernetes for leader election)
-    /// - Leader election (ILeaderElectionService)
     /// - IWorkDistributor (KubernetesWorkDistributor — fully API-backed, no EF)
     /// - JobTemplateStore
     /// - Pipeline API client
     ///
-    /// IKubernetesJobClient and IJobCleanupStrategy are NOT registered here — they run
-    /// in CodingAgent.Api (RunLifecycleManager → KubernetesJobCleanup). The monolith
-    /// only needs IKubernetes for LeaderElectionService lease management.
+    /// The web host makes no Kubernetes API calls: job operations run in CodingAgent.Api, and
+    /// leader election runs in the Scheduler and the Job Controller.
     /// </summary>
     private static void RegisterConsolidationServices(IServiceCollection services, IConfiguration configuration)
     {
@@ -33,45 +28,6 @@ public static partial class WorkDistributionRegistration
         {
             RegisterPipelineApiClientFallback(services, configuration);
         }
-
-        // ── K8s client — in-cluster-first with kubeconfig fallback for local dev ──
-        // Required by LeaderElectionService for Lease-based leader election.
-        // IKubernetesJobClient is not registered here — job operations run in the API service.
-        services.AddSingleton<IKubernetes>(_ =>
-        {
-            var inCluster = KubernetesClientConfiguration.IsInCluster();
-            var config = inCluster
-                ? KubernetesClientConfiguration.InClusterConfig()
-                : KubernetesClientConfiguration.BuildDefaultConfig();
-
-            Log.Information("Kubernetes client configured: Source={Source} Host={Host}",
-                inCluster ? "in-cluster" : "kubeconfig", config.Host);
-
-            if (string.IsNullOrEmpty(config.Host) || config.Host == "http://localhost:8080")
-            {
-                Log.Fatal("No usable Kubernetes configuration. In-cluster: ensure the service account " +
-                          "token is mounted. Outside a cluster: set KUBECONFIG or provide ~/.kube/config.");
-                throw new InvalidOperationException("No usable Kubernetes configuration.");
-            }
-
-            return new k8s.Kubernetes(config);
-        });
-
-        // ── Leader election ───────────────────────────────────────────────────
-        services.AddOptions<LeaderElectionOptions>()
-            .Bind(configuration.GetSection(LeaderElectionOptions.SectionName))
-            .PostConfigure(opts =>
-            {
-                // Map PipelineLoopLeaseName → LeaseName (Helm injects LeaderElection__PipelineLoopLeaseName)
-                var leaseName = configuration.GetValue<string>($"{LeaderElectionOptions.SectionName}:PipelineLoopLeaseName");
-                if (!string.IsNullOrEmpty(leaseName))
-                    opts.LeaseName = leaseName;
-            })
-            .ValidateDataAnnotations()
-            .ValidateOnStart();
-        services.AddSingleton<LeaderElectionService>();
-        services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
-        services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
         // ── IWorkDistributor (KubernetesWorkDistributor) ─────────────────────
         // KubernetesWorkDistributor is now fully API-backed — no IDbContextFactory,
@@ -97,7 +53,7 @@ public static partial class WorkDistributionRegistration
         // HTTP status codes back to the domain exceptions AgentChat.razor expects.
         services.AddSingleton<IChatJobDispatcher, ApiChatJobDispatcher>();
 
-        Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client)");
+        Log.Information("WorkDistribution: work distributor and job templates registered");
     }
 
     [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(

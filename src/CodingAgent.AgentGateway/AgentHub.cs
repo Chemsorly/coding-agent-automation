@@ -28,6 +28,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
     private readonly IHubContext<AgentHub> _uiContext;
+    private readonly IHubTriageOperations? _triageOps;
 
     /// <summary>
     /// Primary constructor used by SignalR's hub activator (ActivatorUtilities).
@@ -47,6 +48,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _orphanRecoveryService = deps.OrphanRecoveryService;
         _logger = deps.Logger;
         _uiContext = deps.UiContext;
+        _triageOps = deps.TriageOps;
     }
 
     /// <summary>
@@ -116,6 +118,36 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 // returning so stale keys are reclaimed at connection close time.
                 return base.OnDisconnectedAsync(exception);
             }
+
+            // Cross-replica reconnect guard (issue #3554):
+            // The #2758 guard above only catches same-replica reconnects, where
+            // agent.ConnectionId != Context.ConnectionId because Register already updated the
+            // local snapshot to conn-B on this replica. In a cross-replica reconnect, replica A's
+            // local snapshot still holds conn-A (only replica B has written conn-B to Redis), so
+            // agent.ConnectionId == Context.ConnectionId passes the guard above. We must read the
+            // authoritative store to detect this case: if the current Redis entry shows a different
+            // ConnectionId, the agent has already registered on another connection on another replica
+            // and we must not change its status.
+            // Note: string.Equals with Ordinal is equivalent to the != operator used in the #2758
+            // guard — both perform ordinal comparison on SignalR-generated connection ID strings.
+            // TODO (WARNING, issue #3554): GetByAgentId on DistributedAgentRegistryService issues a
+            // synchronous Redis call (HashGetAllAsync(...).GetAwaiter().GetResult()). If the Redis
+            // connection is interrupted at this moment, GetResult() will throw RedisConnectionException.
+            // That exception is currently unhandled and will propagate out of OnDisconnectedAsync,
+            // preventing base.OnDisconnectedAsync(exception) from running and potentially leaving
+            // SignalR connection bookkeeping in a partially-cleaned-up state. The pre-existing
+            // synchronous wrapper in AgentHubFacade.GetByAgentId carries this risk; a future fix
+            // should wrap this call in a try/catch and treat a Redis failure as "entry unknown"
+            // (i.e. fall through to the existing handling), logging the exception as a Warning.
+            var current = _facade.GetByAgentId(agent.AgentId);
+            if (current is not null && !string.Equals(current.ConnectionId, Context.ConnectionId, StringComparison.Ordinal))
+            {
+                _logger.Information(
+                    "Agent {AgentId} connection {ConnectionId} closed, but the agent is registered on connection {CurrentConnectionId}; skipping",
+                    agent.AgentId, Context.ConnectionId, current.ConnectionId);
+                return base.OnDisconnectedAsync(exception);
+            }
+            // Proceed: entry is null (TTL-expired / deregistered) or connection IDs match.
 
             // TODO: Verify that AgentEntry.Labels is IReadOnlyList<string> or another immutable/thread-safe
             // collection type. If it is a mutable List<T>, concurrent writes (e.g., from a registry update

@@ -593,6 +593,17 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Reports a triage result via the hub's ReportTriageResult method (requires an active Triage job), as the
+    /// agent's <c>ReportTriageResultStep</c> does.
+    /// </summary>
+    public async Task ReportTriageResultAsync(string jobId, TriageResult result)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync(HubMethodNames.ReportTriageResult, jobId,
+            System.Text.Json.JsonSerializer.Serialize(result, PipelineJsonOptions.Default));
+    }
+
+    /// <summary>
     /// Creates a sub-issue via the hub's RequestCreateIssue method (requires an active job).
     /// </summary>
     public async Task<CreatedIssueResult> RequestCreateIssueAsync(string jobId, string title, string body, IReadOnlyList<string> labels)

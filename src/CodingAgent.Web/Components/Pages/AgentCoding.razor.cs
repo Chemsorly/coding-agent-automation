@@ -326,6 +326,22 @@ public partial class AgentCoding : IDisposable
         });
     }
 
+    private async Task ToggleTriageEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleTriageEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Triage {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleTriageEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
     private async Task ToggleHousekeepingEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleHousekeepingEnabledAsync(args.template, args.enabled);
@@ -371,7 +387,7 @@ public partial class AgentCoding : IDisposable
             : await PageService.AddTemplateAsync(_addForm);
         if (!success) { _errorMessage = error; return; }
         _showAddForm = false;
-        _successMessage = successMessage;
+        _successMessage = WithLoopNote(successMessage);
         _ = ClearSuccessAfterDelay();
     }
 
@@ -381,7 +397,7 @@ public partial class AgentCoding : IDisposable
         var (success, error, successMessage) = await PageService.RemoveTemplateAsync(_deletingTemplate);
         if (!success) { _errorMessage = error; return; }
         _showDeleteConfirm = false;
-        _successMessage = successMessage;
+        _successMessage = WithLoopNote(successMessage);
         _deletingTemplate = null;
         _ = ClearSuccessAfterDelay();
     }
@@ -390,8 +406,11 @@ public partial class AgentCoding : IDisposable
     {
         var (success, error, successMessage) = await PageService.MoveTemplateToProjectAsync(args.TemplateId, args.SourceProjectId, args.TargetProjectId);
         if (!success) { _errorMessage = error; return; }
-        if (successMessage != null) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
+        if (successMessage != null) { _successMessage = WithLoopNote(successMessage); _ = ClearSuccessAfterDelay(); }
     }
+
+    private string? WithLoopNote(string? message) =>
+        message is not null && LoopService.IsLoopActive ? $"{message} The running loop applies it from its next cycle." : message;
 
     // ── Loop Controls ──
 

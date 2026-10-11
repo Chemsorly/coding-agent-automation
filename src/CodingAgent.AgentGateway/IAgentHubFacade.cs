@@ -113,6 +113,18 @@ public interface IAgentHubFacade
     Task<IReadOnlyList<ChatEntry>> GetChatHistoryAsync(JobId jobId);
 
     /// <summary>
+    /// Appends one quality-gate report to the run's persistent history.
+    /// Delegates to the run service; in distributed mode writes to Redis.
+    /// </summary>
+    void AppendQualityGateReport(JobId jobId, QualityGateReport report);
+
+    /// <summary>
+    /// Returns the run's quality-gate history, oldest entries first.
+    /// Used by <c>SubscribeToRun</c> to seed <see cref="RunStateSnapshot.QualityGateHistory"/>.
+    /// </summary>
+    Task<IReadOnlyList<QualityGateReport>> GetQualityGateHistoryAsync(JobId jobId);
+
+    /// <summary>
     /// Removes a pipeline run from the active runs collection.
     /// </summary>
     void RemoveRun(JobId jobId);
@@ -136,6 +148,20 @@ public interface IAgentHubFacade
     /// The drain service will pick it up again on the next cycle.
     /// </summary>
     Task RequeueWorkItemAsync(JobId jobId, CancellationToken ct);
+
+    /// <summary>
+    /// Resolves the effective <c>BrainReadOnly</c> flag for the given job by applying the full
+    /// configuration resolution chain (global → project overrides → template overrides).
+    /// Used by <see cref="AgentTokenRefreshService"/> to vend a read-only token for the brain
+    /// when the resolved setting is true.
+    /// </summary>
+    /// <remarks>
+    /// Fails closed: returns <c>true</c> (read-only) when the job, project, or configuration
+    /// cannot be resolved, to prevent a misbehaving agent from obtaining write access.
+    /// GitLab and personal-access-token brains are unaffected — they keep their own token
+    /// regardless of this flag.
+    /// </remarks>
+    Task<bool> ResolveBrainReadOnlyAsync(JobId jobId, CancellationToken ct);
 
     /// <summary>
     /// Resolves provider config IDs from a WorkItem's payload (K8s mode fallback).

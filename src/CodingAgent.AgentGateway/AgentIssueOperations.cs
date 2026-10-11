@@ -96,6 +96,13 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     /// </summary>
     private async Task<(bool Posted, string? Url)> PostCommentOnIssueAsync(PipelineRun run, string body, CancellationToken ct)
     {
+        // An operator triage has no issue to comment on
+        if (TriageConstants.IsOperatorTriage(run.IssueProviderConfigId))
+        {
+            _logger.Debug("Skipping issue comment for operator triage {IssueIdentifier}", run.IssueIdentifier);
+            return (false, null);
+        }
+
         var issueConfig = await ProviderConfigResolver.TryResolveAsync(
             () => _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, ct),
             run.IssueProviderConfigId, ProviderKind.Issue, _logger);

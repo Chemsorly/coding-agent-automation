@@ -232,6 +232,39 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<LoopStatusCache>(sp =>
             new LoopStatusCache(sp.GetService<IRedisStore>(), sp.GetService<ILeaderElectionService>(), Log.Logger));
 
+        // ── Loop command relay infrastructure ─────────────────────────────────
+        // ILoopCommandExecutor: shared implementation of start/stop/resume, used by both the local
+        // path (leader or no-Redis) and the leader-side LoopCommandHandlerService.
+        services.AddSingleton<ILoopCommandExecutor, LoopCommandExecutor>();
+
+        // ILoopCommandRelay + LoopCommandHandlerService are only useful when Redis is configured
+        // (multi-replica mode). When Redis is absent, register a null-object relay that throws if
+        // called (the endpoint guard (store is null → local path) prevents it from ever being called).
+        if (!string.IsNullOrEmpty(redisCs))
+        {
+            services.AddSingleton<ILoopCommandRelay>(sp =>
+                new LoopCommandRelay(
+                    sp.GetRequiredService<IRedisStore>(),
+                    sp.GetService<ILeaderElectionService>()));
+
+            // Registered as a named singleton so integration tests can resolve it by concrete type.
+            services.AddSingleton<LoopCommandHandlerService>(sp =>
+                new LoopCommandHandlerService(
+                    sp.GetRequiredService<ILoopCommandExecutor>(),
+                    sp.GetRequiredService<IPipelineLoopService>(),
+                    sp.GetRequiredService<IPipelineApiConfigClient>(),
+                    sp.GetRequiredService<IRedisStore>(),
+                    sp.GetService<ILeaderElectionService>(),
+                    Log.Logger));
+            services.AddHostedService(sp => sp.GetRequiredService<LoopCommandHandlerService>());
+        }
+        else
+        {
+            // No Redis — NullLoopCommandRelay ensures ILoopCommandRelay is always resolvable from DI.
+            // The endpoint local-path guard (store is null) ensures SendAsync is never reached.
+            services.AddSingleton<ILoopCommandRelay, NullLoopCommandRelay>();
+        }
+
         // ── LoopWatchdogService — self-heals a dormant-but-leader loop ────────
         // Polls IsLoopActive every 2 minutes and calls StartLoopAsync() when the loop
         // is dormant, this pod is the leader, and ClosedLoopAutoStart=true in config.

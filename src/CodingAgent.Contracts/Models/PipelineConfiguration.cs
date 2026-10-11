@@ -573,6 +573,20 @@ public sealed record PipelineConfiguration
     [Range(0, 100)]
     public int MinIssueSlots { get; init; } = 1;
 
+    /// <summary>
+    /// The order in which pending work dispatches, by task type: the loop takes new work in this order, and the pending
+    /// queue goes to agents in this order. Within a type, higher priority weight goes first, then the oldest. One queue
+    /// serves all projects, so projects cannot override it. Default: Triage, Review, Decomposition, Implementation,
+    /// Consolidation. A stored order loads complete (see <see cref="WorkItemDispatchOrder.Normalize"/>).
+    /// </summary>
+    [Key(91)]
+    public IReadOnlyList<WorkItemTaskType> DispatchOrder
+    {
+        get => _dispatchOrder;
+        init => _dispatchOrder = WorkItemDispatchOrder.Normalize(value);
+    }
+    private readonly IReadOnlyList<WorkItemTaskType> _dispatchOrder = WorkItemDispatchOrder.Default;
+
     // ── Feedback comment outbox ────────────────────────────────────────────
     /// <summary>
     /// Maximum number of delivery attempts for a durable feedback comment before it is
@@ -583,4 +597,23 @@ public sealed record PipelineConfiguration
     [Range(1, 100)]
     public int FeedbackCommentOutboxMaxAttempts { get; init; } = PipelineConstants.DefaultFeedbackCommentOutboxMaxAttempts;
 
+    // Keys 86–88 are left for the automatic consolidation settings planned in #3591.
+
+    // ── Triage ─────────────────────────────────────────────────────────────
+    /// <summary>
+    /// When true, a triage's root cause analysis and drafts are reviewed by an isolated discriminator
+    /// agent, and refined when it finds problems, before the result is reported. Default: true.
+    /// </summary>
+    [Key(89)]
+    [ProjectOverridable(Order = 33)]
+    public bool TriageReviewEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Days a triage is kept after its last change (attempt, edit, issue creation). Created issues and
+    /// tracker comments are not affected. The retention sweep runs for the whole system, so projects
+    /// cannot override it. Default: 30. Valid range: 1–365.
+    /// </summary>
+    [Key(90)]
+    [Range(1, 365)]
+    public int TriageRetentionDays { get; init; } = PipelineConstants.DefaultTriageRetentionDays;
 }

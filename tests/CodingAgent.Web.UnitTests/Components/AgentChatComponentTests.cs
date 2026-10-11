@@ -55,7 +55,6 @@ internal static class AgentChatTestData
 public class AgentChatComponentTests : BunitContext
 {
     private readonly Mock<IConfigurationStore> _mockStore;
-    private readonly PipelineRunLifecycleService _lifecycle;
     private readonly AgentRegistryService _registry;
 
     public AgentChatComponentTests()
@@ -65,8 +64,6 @@ public class AgentChatComponentTests : BunitContext
         _mockStore = new Mock<IConfigurationStore>();
         var mockFactory = new Mock<IProviderFactory>();
         var mockValidator = new Mock<IQualityGateValidator>();
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
@@ -77,11 +74,8 @@ public class AgentChatComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
 
-        _lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
-
         _registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(_lifecycle);
         Services.AddSingleton(_registry);
         Services.AddSingleton<IAgentRegistryService>(_registry);
         Services.AddSingleton(_mockStore.Object);
@@ -263,9 +257,6 @@ public class AgentChatMcpConfigPathTests : BunitContext
         _mockDispatcher = new Mock<IChatJobDispatcher>();
         _mockHub = new Mock<IAgentHubConnection>();
 
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
@@ -293,10 +284,8 @@ public class AgentChatMcpConfigPathTests : BunitContext
             .Setup(c => c.AssignChatPromptAsync(It.IsAny<string>(), It.IsAny<ChatPromptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
         var registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(lifecycle);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(_mockStore.Object);
@@ -406,7 +395,7 @@ public class AgentChatMcpConfigPathTests : BunitContext
 
         var msg = await LaunchAndCapturePromptMessageAsync(agentConfig);
 
-        Assert.Equal("/home/ubuntu/.opencode/mcp.json", msg.McpConfigPath);
+        Assert.Equal("/home/ubuntu/.opencode/opencode.json", msg.McpConfigPath);
     }
 
     [Fact]
@@ -582,10 +571,6 @@ public class AgentChatHubStartTimingTests : BunitContext
         _mockDispatcher = new Mock<IChatJobDispatcher>();
         _mockHub = new Mock<IAgentHubConnection>();
 
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
@@ -617,10 +602,8 @@ public class AgentChatHubStartTimingTests : BunitContext
         _mockHub.Setup(h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>()))
             .Returns(Mock.Of<IDisposable>());
 
-        var lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
         var registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(lifecycle);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(mockStore.Object);
@@ -730,8 +713,6 @@ public class AgentChatAccessTests : BunitContext
     public AgentChatAccessTests()
     {
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<AgentProfile>());
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<ProviderConfig>());
@@ -741,7 +722,6 @@ public class AgentChatAccessTests : BunitContext
             new() { Id = "6f1c2a9e-0000-0000-0000-00000000000b", Name = "billing" },
         });
         var registry = new AgentRegistryService(mockLogger.Object);
-        Services.AddSingleton(new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object));
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(_mockStore.Object);
@@ -802,10 +782,6 @@ public class AgentChatLaunchErrorTests : BunitContext
         var mockStore = new Mock<IConfigurationStore>();
         _chatClient = new Mock<IPipelineApiChatClient>();
 
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
@@ -817,10 +793,8 @@ public class AgentChatLaunchErrorTests : BunitContext
         mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
 
-        var lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
         var registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(lifecycle);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(mockStore.Object);
@@ -948,10 +922,6 @@ public class AgentChatReconnectTests : BunitContext
         _mockHub = new Mock<IAgentHubConnection>();
         _mockAgentClient = new Mock<IPipelineApiAgentClient>();
 
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
@@ -987,10 +957,8 @@ public class AgentChatReconnectTests : BunitContext
             .Setup(c => c.AssignChatPromptAsync(It.IsAny<string>(), It.IsAny<ChatPromptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
         var registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(lifecycle);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(mockStore.Object);

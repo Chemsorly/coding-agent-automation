@@ -164,6 +164,7 @@ Templates within a project are ordered by name, ignoring case. There is no manua
 - **Poll sequence:** Templates are polled in this order within each project
 - **Cross-project ordering:** Projects are sorted by name with an ordinal comparison (uppercase letters sort before lowercase), then templates within each project by name, ignoring case
 - **Project epic executor:** The first enabled template with `DecompositionEnabled` runs the project's epics (the epics in its `EpicIssueProviderId` tracker). To choose it, rename it or enable decomposition only on that template
+- **Triage executor:** The first enabled template with `TriageEnabled` runs the `agent:triage` issues of the epic tracker. An operator triage runs on the template its form names in "Start looking in", else on the first enabled template (see [Triage](triage.md))
 
 ## Use Case: Mono-Repo (Grouping + Settings)
 
@@ -279,6 +280,10 @@ Both kinds of epic use the same flow; only their scope differs:
 - **Project epics:** With `EpicIssueProviderId`, the project also polls the centralized tracker. Project epics may create sub-issues in every template's tracker.
 
 See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) for the full comparison.
+
+### Triage
+
+A [triage](triage.md) always has the project's scope: the run clones every enabled repository of the project (the executor's with write access, the others read-only), gets the project's MCP servers and steering, and downloads the open issues of every enabled tracker. Its issue drafts may target any enabled repository of the project; people create them in the app, in the tracker of the chosen repository's template. A project with an epic tracker can collect bug reports there with `agent:triage`.
 
 ## UI Management
 

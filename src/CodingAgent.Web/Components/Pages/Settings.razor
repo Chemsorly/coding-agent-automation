@@ -128,6 +128,11 @@
                         ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.PipelineTriage:
+                    <PipelineTriageSection
+                        ConfigClient="ConfigClient"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
                 case SettingsNodes.PipelineAdvanced:
                     <PipelineAdvancedSection
                         ConfigClient="ConfigClient"
@@ -211,6 +216,7 @@
         section == SettingsNodes.PipelineCodeReview ||
         section == SettingsNodes.PipelineDecomposition ||
         section == SettingsNodes.PipelineConsolidation ||
+        section == SettingsNodes.PipelineTriage ||
         section == SettingsNodes.PipelineAdvanced ||
         section == SettingsNodes.AgentProfiles ||
         section == SettingsNodes.QualityGateConfigs ||

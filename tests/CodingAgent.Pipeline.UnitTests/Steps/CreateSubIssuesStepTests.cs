@@ -559,4 +559,123 @@ public class CreateSubIssuesStepTests : IDisposable
         // (agent:next + agent:generated + "backend") or explicit NotContain calls for other agent:* labels
         // would close the gap where a future buggy label could slip through undetected alongside "backend".
     }
+
+    // ── MaxDecompositionSubIssues clamp guard — Issue #3624 ───────────────────
+
+    /// <summary>
+    /// When MaxDecompositionSubIssues is 0 or negative, the step must clamp the cap to 1
+    /// and attempt at least one proposal rather than marking all as SkippedByCap.
+    ///
+    /// This test fails before the fix (all proposals are SkippedByCap, Attempted == 0)
+    /// and passes after it.
+    ///
+    /// Acceptance criterion 3: "No code path lets a 0 cap reach the proposals.Count > cap
+    /// comparison in CreateSubIssuesStep."
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-50)]
+    public async Task ExecuteAsync_WhenCapIsNonPositive_ClampsToOneAndAttemptsAtLeastOneProposal(int badCap)
+    {
+        // Write 3 sub-issue files; with cap=0 and no guard, all would be SkippedByCap
+        for (var i = 1; i <= 3; i++)
+            WriteSubIssueFile($"{i:D2}-issue-{i}.json", $"Issue {i}", $"Body {i}");
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "900", Url = "https://github.com/test/900" });
+
+        var run = CreateRun();
+        var context = new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp", MaxDecompositionSubIssues = badCap },
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = null,
+            ConfigStore = Mock.Of<IConfigurationStore>(),
+            Callbacks = _callbacks.Object,
+            IssueOps = _issueOps.Object,
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_logger),
+            Logger = _logger
+        };
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        run.DecompositionSubIssuesAttempted.Should().BeGreaterThanOrEqualTo(1,
+            $"cap={badCap} must be clamped to 1; at least one proposal must be attempted");
+        run.SubIssueResults.Should().Contain(r => !r.SkippedByCap,
+            "at least one result must not be SkippedByCap after clamping");
+    }
+
+    /// <summary>
+    /// When MaxDecompositionSubIssues is 0 or negative, a Warning must be logged at the step
+    /// so the misconfiguration is visible in run output even if the resolver already clamped it.
+    ///
+    /// Acceptance criterion 2: "A warning is logged when a 0 or negative
+    /// MaxDecompositionSubIssues is supplied."
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task ExecuteAsync_WhenCapIsNonPositive_LogsWarning(int badCap)
+    {
+        WriteSubIssueFile("01-issue.json", "Issue 1", "Body 1");
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "901", Url = "https://github.com/test/901" });
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        // TODO: The ForContext blanket stub returns the same mock for any child logger context.
+        // If the step moves the cap-clamp Warning call to a ForContext child logger rather than
+        // the injected context.Logger directly, the Verify below would still pass vacuously
+        // because all Warning calls on any ForContext child are captured on the same mock.
+        // Consider stubbing a separate child mock and verifying on that to make the coupling explicit.
+        // Serilog ILogger.ForContext<T>() is called by internal infrastructure; return the mock itself
+        // so that calls on the child logger are also captured on the same mock.
+        mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
+                  .Returns(mockLogger.Object);
+
+        var run = CreateRun();
+        var context = new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp", MaxDecompositionSubIssues = badCap },
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = null,
+            ConfigStore = Mock.Of<IConfigurationStore>(),
+            Callbacks = _callbacks.Object,
+            IssueOps = _issueOps.Object,
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(mockLogger.Object),
+            Logger = mockLogger.Object
+        };
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // TODO: The matcher It.IsAny<string>() is broader than needed — any Warning(string, int) call
+        // on the mock satisfies this verify, not just the cap-clamp warning. If a future change adds
+        // another Warning(template, someIntValue) call earlier in the step, this test would pass even
+        // if the cap-specific warning were removed. Tighten to:
+        // It.Is<string>(s => s.Contains("MaxDecompositionSubIssues"))
+        // Verify a Warning was logged with the bad cap value (int arg)
+        mockLogger.Verify(
+            l => l.Warning(It.IsAny<string>(), It.IsAny<int>()),
+            Times.AtLeastOnce,
+            $"a Warning must be logged when MaxDecompositionSubIssues={badCap}");
+    }
 }

@@ -38,11 +38,10 @@ public sealed class AgentCodingPage
         // RBAC resolution may still be in flight immediately after that.
         //
         // Wait for "button.btn-add" (the "+ Add Template" button rendered by TemplateTableSection
-        // when CanEdit=true AND IsLoopActive=false) to be interactive (have _blazorEvents_*).
-        // This button only receives a Blazor event handler after BOTH conditions are met:
-        //   1. Access.InitializeAsync() has resolved (CanEdit = IsAdmin = true), AND
-        //   2. The loop is not running (IsLoopActive = false).
-        // Both conditions are guaranteed at test navigation time (admin cookie + ResetAllAsync).
+        // when CanEdit=true) to be interactive (have _blazorEvents_*).
+        // This button only receives a Blazor event handler after:
+        //   Access.InitializeAsync() has resolved (CanEdit = IsAdmin = true).
+        // That condition is guaranteed at test navigation time (admin cookie + ResetAllAsync).
         // Using WaitForInteractiveAsync (not just WaitForSelectorAsync) is critical: the
         // prerendered DOM contains btn-add without _blazorEvents_*, and the first interactive
         // render briefly removes it while CanEdit=false (RBAC not yet resolved). Only the second

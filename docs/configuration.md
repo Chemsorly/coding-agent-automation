@@ -63,6 +63,7 @@ The pipeline loop polls for `agent:next` issues, PRs and epics and dispatches th
 | `closedLoopPollInterval` | 00:01:00 | 10 s–10 min | | How often the loop checks for new work when idle |
 | `closedLoopMaxRunsPerCycle` | 0 | 0–1000 | | Max dispatches per cycle; 0 = unlimited |
 | `minIssueSlots` | 1 | 0–100 | | Slots per cycle held back for implementation issues when PRs and other higher-priority work would take them all. Applies when `closedLoopMaxRunsPerCycle` is 0 or at least 2; 0 = strict priority |
+| `dispatchOrder` | Triage, Review, Decomposition, Implementation, Consolidation | | | Order in which work goes to agents, first type first, for all projects. Within a type, higher priority weight goes first, then the oldest. A stored list missing a type gets it appended in default order |
 | `closedLoopMaxPagesToFetch` | 10 | 1–100 | | Max pages of issues fetched per poll (100 issues per page) |
 | `closedLoopMaxConsecutivePollFailures` | 5 | 1–50 | | Consecutive poll failures before the circuit breaker pauses the loop |
 | `closedLoopCircuitBreakerCooldown` | 00:05:00 | 30 s–1 h | | Pause before the circuit breaker resumes polling |
@@ -126,6 +127,15 @@ Implementation runs review their changes before the pull request is opened. PR r
 | `harnessSuggestionsReviewEnabled` | true | | | Discriminator review of harness suggestions before they are stored; global, because harness suggestions belong to no project |
 | `hotspotAnalysisLookback` | 90.00:00:00 | 7–365 days | | Window of commits counted by the hotspot analysis of refactoring scans |
 | `refactoringOutcomeLookback` | 90.00:00:00 | 7–365 days | | Window of closed refactoring issues used as feedback |
+
+### Triage
+
+See [Triage](triage.md). Whether the loop picks up `agent:triage` issues is a template switch (`TriageEnabled`), not a setting.
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `triageReviewEnabled` | true | | ✓ | Discriminator review of a triage's root cause analysis and drafts before the result is reported |
+| `triageRetentionDays` | 30 | 1–365 | | Days a triage is kept after its last change; created issues and tracker comments are not affected |
 
 ### Advanced
 
@@ -219,7 +229,7 @@ Per-template controls (on `PipelineJobTemplate`):
 
 Pipeline Job Templates define which provider combination to use when polling for issues. Each template links an issue provider, repository provider, and optional brain/CI providers. Multiple templates enable round-robin polling across repositories.
 
-Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels. **Edit** changes a template in place; it keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project.
+Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels. **Edit** changes a template in place; it keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project. Templates can be added, edited, moved and removed while the loop runs; the loop applies the change from its next cycle.
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -231,6 +241,7 @@ Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-cod
 | ImplementationEnabled | No | Whether this template processes issues for implementation (default: true) |
 | ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
 | DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
+| TriageEnabled | No | Whether the loop triages `agent:triage` issues of this template's tracker; the project's first triage-enabled template also runs those of the epic tracker (default: false). Operator triages from the Triage page don't need it. See [Triage](triage.md) |
 | HousekeepingEnabled | No | Whether this template manages agent:done PRs for branch updates and stale cleanup (default: false) |
 | BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings: its runs do not write to the brain, and brain consolidation does not run from it. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
 
@@ -281,7 +292,6 @@ For full request/response examples, authentication details, and query parameters
 |----------|-------------|
 | `AGENT_API_KEY` | Master key for authenticating agent connections. Each agent Job receives its own key, HMAC(master_key, agent_id), from a per-Job Secret; agents never see the master key. |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
-| `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 0, range: 0–300). The API now owns `IOrchestratorRunService` and rehydrates independently, so the Orchestrator no longer needs a startup delay. Increase only when a rolling-restart race condition is observed. **Note:** `CodingAgent.Web` reads this via the IConfiguration keys `Orchestrator:PipelineLoopStartupDelaySeconds` or `Env:PipelineLoopStartupDelaySeconds`; the Helm-injected flat env var `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` does not map to either of those paths and is effectively ignored at present (the value is always 0 in Kubernetes). |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
 | `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
@@ -308,7 +318,7 @@ Every other `Auth__*` variable overrides the same setting in the file, for examp
 
 | Variable | Description |
 |----------|-------------|
-| `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (required when running multiple orchestrator replicas). Format: `host:port,password=xxx` |
+| `SignalR__Redis__ConnectionString` | Redis connection string. The Pipeline API uses it for the SignalR backplane and shared state (required with more than one API replica); the web host uses it only to share the Data Protection key ring (required with more than one web replica). Format: `host:port,password=xxx` |
 
 ### Database Maintenance
 
@@ -344,8 +354,8 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `AGENT_PROVIDER_TYPE` | Agent backend of a chat pod: the job template's `providerType` (`kiro`, `opencode`, `claude`); `KiroCli`, `OpenCode` and `ClaudeCode` are accepted too. When absent or empty, defaults to Kiro CLI. |
 | `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/home/ubuntu/.local/bin/kiro-cli`) |
 | `CLAUDE_CLI_PATH` | Override path for the Claude Code CLI executable (default: `/home/ubuntu/.local/bin/claude`) |
-| `AGENT_CLAUDE_API_KEY` | Anthropic API key for Claude Code agents, injected from the agent Secret key `claude-api-key`. Handed to the `claude` process only, as `ANTHROPIC_API_KEY`; stripped from every other child process. |
-| `AGENT_CLAUDE_OAUTH_TOKEN` | Subscription token (`claude setup-token`) for Claude Code agents, injected from the agent Secret key `claude-oauth-token`. Handed to the `claude` process only, as `CLAUDE_CODE_OAUTH_TOKEN`. |
+| `AGENT_CLAUDE_API_KEY` | Anthropic API key for Claude Code agents, injected from the agent Secret key `claude-api-key`. Handed to the `claude` process only, as `ANTHROPIC_API_KEY`; the agent's other child processes (quality gates, setup steps, git) do not get it. The CLI's own Bash tool, hooks and MCP servers inherit it from the CLI, an accepted risk: see [decisions](internals/decisions.md#repository-and-project-content-runs-next-to-the-agents-credentials). |
+| `AGENT_CLAUDE_OAUTH_TOKEN` | Subscription token (`claude setup-token`) for Claude Code agents, injected from the agent Secret key `claude-oauth-token`. Handed to the `claude` process only, as `CLAUDE_CODE_OAUTH_TOKEN`; as with the API key, the CLI's own tools inherit it. |
 | `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
 | `OPENCODE_SERVER_PASSWORD` | Password for OpenCode server authentication (required for OpenCode agents) |
@@ -402,10 +412,10 @@ Repository providers can include custom markdown steering content that is writte
 
 Configure via Settings → Providers → Repository → Steering Content field. The content is written to:
 - `.kiro/steering/pipeline-repo.md` for Kiro agents (repository-level steering)
-- `AGENTS.md` for OpenCode agents
+- `~/.opencode/pipeline-repo.md` for OpenCode agents — listed under `instructions` in `~/.opencode/opencode.json`, outside the workspace, so the repository's own `AGENTS.md` is never touched
 - `~/.claude/rules/pipeline-repo.md` for Claude Code agents — a user-level rule the CLI loads in every session, outside the workspace, so it is never committed and does not touch the repository's own `CLAUDE.md` or `.claude/rules/`
 
-Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents and `~/.claude/rules/pipeline-project.md` for Claude Code agents.
+Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents, `~/.opencode/pipeline-project.md` for OpenCode agents and `~/.claude/rules/pipeline-project.md` for Claude Code agents.
 
 Claude Code also loads what the repository itself provides — `CLAUDE.md`, `.claude/rules/`, `.claude/settings.json` (including hooks) and `.mcp.json` — because the workspace is its working directory.
 

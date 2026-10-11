@@ -48,6 +48,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     public void Reset()
     {
         Issues.Clear();
+        CreatedIssues.Clear();
         PostedComments.Clear();
         LabelChanges.Clear();
         UpdatedComments.Clear();

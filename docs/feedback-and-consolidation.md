@@ -21,6 +21,7 @@ Each run produces a `RunFeedback` record with two sections:
 ### Where Feedback Appears
 
 - **Run page** — Collapsible "Feedback (n)" section at the bottom of the run's page (`/runs/{id}`), showing all fields. The Runs list has a "Feedback only" filter
+- **Insights page** — the "Harness feedback" and "Issue feedback" cards rank the feedback categories of the selected project and time window by the number of runs that reported them. Each category opens to its runs, with one line of text each and a link to the run page.
 - **GitHub issue** — If issue feedback has a description, a comment is posted with the `<!-- agent:issue-feedback -->` marker
 - **Harness suggestions** — Accumulated feedback feeds into the consolidation loops (see below)
 
@@ -38,7 +39,7 @@ Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge 
 
 - **Trigger:** from the card of any template that uses the brain. The run uses that template's settings (its project's overrides and its repository's agent labels).
 - **One run per brain at a time:** templates that share a brain share its running state and its last run on the Consolidation page, and a second trigger for the same brain is rejected as already running.
-- **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain.
+- **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain. For GitHub App brain providers, runs get a read-only token (`contents: read`) when the brain is read-only, so a misbehaving agent cannot push to it even if it tries.
 
 It runs a six-step process:
 
@@ -76,7 +77,7 @@ The finding categories are one list from detection to issue (`RefactoringCategor
 **Execution flow (phased):**
 
 1. Clone code repo (+ brain repo for architectural context if configured)
-2. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days). Pipeline scratch space (`.agent/`, `.brain/`), Markdown files, lock files and deleted files are left out.
+2. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days). Pipeline scratch space (`.agent/`, `.brain/`), Markdown files, lock files and deleted files are left out. Commits that implement the scan's own issues are left out too, so a scan does not rank the files it just refactored.
 3. Query the open issues (up to 100, any label or age) for deduplication context. The scan's own issues are recognized by the footer sentence every one of them carries, not by a label.
 4. Query closed refactoring issues (within `RefactoringOutcomeLookback`, default 90 days) for outcome feedback — categorizes past proposals as implemented (`agent:done`) or rejected (`agent:wont-do`/`agent:cancelled`). The query uses `agent:generated`; the footer keeps decomposition sub-issues, which carry the same label, out. `agent:done` only means an agent completed the issue, so implemented items are not re-proposed rather than encouraged. For each of these issues, the latest issue-quality feedback comment (`<!-- agent:issue-feedback -->`) that the implementing agent posted is added as "Implementer Feedback", e.g. "partial scope: the outer catch was missed". Both contexts are also written to `.agent/refactoring-issue-context.md` for the review step.
 5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells. Inline TODO comments are not known debt: Agent B checks each of them. Phase 0 also prepares the tool evidence: it checks its available MCP tools for additional data sources, runs the project's own build, lint and analysis commands once (saving the output in `.agent/refactoring-tool-output/`), and lists both under `availableTools`. Consolidation runs get the MCP servers of their agent profile and project, like pipeline runs; no particular tool or service is required.

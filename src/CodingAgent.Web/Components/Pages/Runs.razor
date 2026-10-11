@@ -107,6 +107,7 @@
                                     <option value="Implementation">Implementation</option>
                                     <option value="Review">Review</option>
                                     <option value="Decomposition">Decomposition</option>
+                                    <option value="Triage">Triage</option>
                                 </select>
                             </th>
                             @* ── Initiated by column: filter only (not sortable) ────────────────── *@
@@ -124,6 +125,7 @@
                                     <option value="@InitiatedByConstants.LoopIssue">@InitiatedByConstants.LoopIssue</option>
                                     <option value="@InitiatedByConstants.LoopReview">@InitiatedByConstants.LoopReview</option>
                                     <option value="@InitiatedByConstants.LoopDecomposition">@InitiatedByConstants.LoopDecomposition</option>
+                                    <option value="@InitiatedByConstants.LoopTriage">@InitiatedByConstants.LoopTriage</option>
                                     <option value="@InitiatedByConstants.Manual">@InitiatedByConstants.Manual</option>
                                 </select>
                             </th>
@@ -171,6 +173,10 @@
                                     {
                                         <span class="run-type-badge run-type-consolidation" title="Consolidation"><Icon Name="refresh-cw" Size="14" /> Consolidation</span>
                                     }
+                                    else if (run.RunType == PipelineRunType.Triage)
+                                    {
+                                        <span class="run-type-badge run-type-triage" title="Triage"><Icon Name="stethoscope" Size="14" /> Triage</span>
+                                    }
                                     else
                                     {
                                         <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
@@ -189,7 +195,11 @@
                                    may not truncate and the Run column may still overflow at narrow viewports. Consider adding
                                    table-layout: fixed to .monitoring-table (or a scoped variant) with accurate colgroup widths. *@
                                 <td style="overflow: hidden; text-overflow: ellipsis; max-width: 0;">
-                                    <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
+                                    @* An operator triage has no issue: its identifier is the triage:{id} sentinel *@
+                                    @if (TriageConstants.TryParseTriageId(run.IssueIdentifier.Value) is null)
+                                    {
+                                        <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
+                                    }
                                     <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
                                 </td>
                                 <td>@Dur(run.StartedAtOffset, run.CompletedAtOffset)</td>
@@ -582,6 +592,7 @@
         PipelineRunType.Review => "Review",
         PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => "Decomposition",
         PipelineRunType.Consolidation => "Consolidation",
+        PipelineRunType.Triage => "Triage",
         _ => "Implementation"
     };
 

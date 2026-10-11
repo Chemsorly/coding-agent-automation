@@ -33,12 +33,13 @@ The rules a plausible change could break. Details are in the linked entries.
 - Reviewers run in isolated sessions. ([Isolated review](#code-review-always-uses-isolated-sessions-no-shared-mode))
 - Durable agent output gets an adversarial review step with its own switch. ([Adversarial review](#adversarial-review-is-a-default-pattern-for-all-durable-agent-outputs))
 - Only CRITICAL findings trigger another review round; non-compliant acceptance criteria count as CRITICAL. ([Review iteration](#code-review-iteration-critical-only-triggers-re-review-warnings-get-one-fix-pass), [Acceptance criteria](#noncompliant-acceptance-criteria-as-critical-hard-contract-retry-budget-bounds-cost))
-- Dispatch order is Review, Decomposition, Implementation, Consolidation; no urgency crosses a tier. ([Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation))
+- Dispatch follows one global order of task types, by default Triage, Review, Decomposition, Implementation, Consolidation; no urgency crosses a type. ([Dispatch priority](#dispatch-priority-one-configurable-order-by-task-type))
 - A work item stores identity only; config is resolved at assignment, and a failed enrichment returns 503. ([Payload](#workitemspayload-config-snapshot-must-be-at-dispatch-time-not-enqueue-time))
 - `AgentTimeout` is the only agent time limit; chat pods have their own. ([Timeouts](#agenttimeout-is-the-only-agent-time-limit))
 - An agent pod exits 0 exactly when its run's outcome is recorded and never reports SIGTERM; pod retries belong to the Kubernetes Job. ([Agent Jobs](#agent-jobs-kubernetes-retries-pods-the-agent-records-outcomes))
 - Merging is always a human action. ([Refactoring loop](#refactoring-consolidation-loop-autonomous-up-to-pr-creation-merge-is-human-gated))
 - Epics need human approval between the plan and the sub-issues. ([Epics](#epic-decomposition-two-phase-with-human-gate))
+- Agents never create issues from a triage; a person creates the reviewed drafts in the app. ([Triage](#triage-project-wide-investigation-issues-created-by-a-person-in-the-app))
 - One enabled template is one repository and one tracker; an epic's tracker decides where its sub-issues go. ([1:1:1](#111-template-binding-one-repo-one-tracker-per-enabled-template--intentional-constraint), [Epic scope](#epic-scope-tracker-of-record-determines-sub-issue-routing--intentional-same-rationale-as-111))
 - Every setting is read by code, shown on a settings page, documented and range-checked. ([Settings](#settings-are-read-offered-and-range-checked--one-record-four-scopes))
 - Context reaches agents as workspace files, and agents return structured output as files. ([Files](#filesystem-as-context-workspace-files-are-the-context-delivery-mechanism))
@@ -80,7 +81,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Dispatch loop belongs in a leader-elected controller, not the stateless API
 <!-- 2026-09-12; includes the 2026-08-14 leader-gating decisions -->
-**Rule:** Every background loop runs on exactly one elected leader: dispatch in the Scheduler, reconciliation in the JobController, maintenance sweeps triggered by the Scheduler, and the web app's pipeline loop only on its leader. The API holds no loops and no leases. Kubernetes Job creation stays in the API because that is where the RBAC lives.
+**Rule:** Every background loop runs on exactly one elected leader: dispatch in the Scheduler, reconciliation in the JobController, maintenance sweeps triggered by the Scheduler, and the pipeline loop in the Scheduler. The API and the web app hold no loops and no leases. Kubernetes Job creation stays in the API because that is where the RBAC lives.
 **Why:** Loops on every replica break per-selector concurrency caps (seen live: 4 pods for a cap of 3) and fire side effects such as branch updates twice. The pipeline loop resumes after a restart, so every replica would start polling.
 **Not:** gating only the calls that reach external APIs; dispatch on every API replica.
 **Revisit when:** never for the principle.
@@ -101,7 +102,7 @@ The rules a plausible change could break. Details are in the linked entries.
 ### Projects share the agents, their capacity and the namespace; the operator sizes them
 <!-- 2026-10-10 -->
 **Rule:** One deployment serves several teams, each with its own projects. The operator runs the deployment and owns the agents. Capacity is global: each job template's `maxConcurrent`, the decomposition cap and the loop's limits apply across all projects, with no quota or fair share per project. All agent pods run in the release's namespace, and the chart adds no network isolation between the pods of different projects.
-**Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation)); an agent pod reaches whatever the other projects' pods reach in the namespace.
+**Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-one-configurable-order-by-task-type)); an agent pod reaches whatever the other projects' pods reach in the namespace.
 **Not:** quotas or fair-share dispatch per project; a namespace or network policy per project.
 **Revisit when:** one project's work measurably starves another's, or a team must not share a network with another team's repositories.
 
@@ -147,7 +148,7 @@ The rules a plausible change could break. Details are in the linked entries.
 **Rule:** Agents can't set labels that mark a human approval (today only `agent:epic-approved`); the hub ignores such requests with a warning. Every new human-approval label joins this set.
 **Why:** An agent must not escalate its own privileges by setting its own transition label.
 **Not:** per-label gating config; webhook approval gates.
-**Revisit when:** a human gate needs something other than a label, such as a UI action.
+**Revisit when:** a human gate needs something other than a label. The first such gate is triage approval, an operator action in the app ([Triage](#triage-project-wide-investigation-issues-created-by-a-person-in-the-app)); agents can't reach it because the triage API is operator-tier and the hub refuses issue creation for triage runs.
 
 ### Repository and project content runs next to the agent's credentials
 <!-- 2026-10-10 -->
@@ -173,11 +174,11 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ## Dispatch and scheduling
 
-### Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation
-<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 -->
-**Rule:** Pending work dispatches by tier: Review, then Decomposition, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable. All projects share this one queue.
-**Why:** Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
-**Not:** configurable weights per run type; age-based promotion; round-robin; label-based priority; fair share between projects.
+### Dispatch priority: one configurable order by task type
+<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 (triage), 2026-10-11 (triage first; configurable) -->
+**Rule:** Pending work dispatches by task type in one global order, the `DispatchOrder` setting on the Pipeline Loop page. The default is Triage, then Review, then Decomposition, then Implementation, then Consolidation. Within a type, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The loop takes new work in the same order (consolidation has no turn there), and `MinIssueSlots` still reserves implementation slots. All projects share this one queue, so a project can't override the order. Triage has no concurrency cap of its own.
+**Why:** The default serves whoever waits first: a triage answers someone waiting on a problem, review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. Another deployment may weigh its work differently, so the operator can reorder the types. **Accepting:** lower types can starve; urgency never crosses a type; a burst of the first type delays every other. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
+**Not:** weights per run type; age-based promotion; round-robin; label-based priority; fair share between projects; an order per project.
 **Revisit when:** lower tiers or one project's work visibly starve in practice, or someone needs cross-tier urgency.
 
 ### MaxConcurrentDecompositions and MinIssueSlots: global-only
@@ -343,6 +344,20 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** auto-approval after a clean review (possible later); fully autonomous decomposition; a limit of 5 (fragments the work) or 20 and more (no evidence).
 **Revisit when:** outcomes from 50 or more sub-issues show errors rising with file count, or auto-approval is built.
 
+### Triage: project-wide investigation, issues created by a person in the app
+<!-- 2026-10-10 -->
+**Rule:** A triage run has the project's scope wherever the report came from: it reads every enabled repository of the project (the executor's writable, the others read-only clones), lists the issues of every enabled tracker, and its drafts may target any enabled repository. The agent only reports; it never creates issues (the hub refuses it). A person with `operator` on the triage's project reviews, edits and creates the drafts in the app, one by one or together, and the API creates them in the tracker of each draft's repository. Label triages are approved in the app too; there is no approval label.
+**Why:** A bug report rarely knows which repository holds the cause, so tying the scope to the reporting tracker (as the [epic scope](#epic-scope-tracker-of-record-determines-sub-issue-routing--intentional-same-rationale-as-111) does) would hide the cause; this is the epic scope's "Revisit when" case, solved with a new concept instead of loosening the tracker check. Creating issues from reviewed, editable drafts keeps a person between a guessed root cause and implementation runs, and an app action can't be set by an agent.
+**Not:** an `agent:triage-approved` label; a second agent run that writes the issues; auto-creating drafts after a clean review; per-template triage scope.
+**Revisit when:** reviewers routinely create every draft unchanged; then consider auto-creation behind a switch.
+
+### Triage: the agent writes what it investigated
+<!-- 2026-10-10 -->
+**Rule:** "What the agent investigated" (hypotheses, every check with where, why and result, and what it did not check) is part of the agent's result file and is shown as written. Checks per source are counted from that list.
+**Why:** People judge an RCA by whether the agent looked in the right places, and the agent knows why it ran each check. **Accepting:** the list can be incomplete or embellished; the adversarial review checks every entry for a source.
+**Not:** counting real tool calls from the agent CLI output (provider-specific and noisy).
+**Revisit when:** reviewers find investigated lists that don't match what the run did.
+
 ### Refactoring consolidation loop: autonomous up to PR creation, merge is human-gated
 <!-- 2026-07-25 -->
 **Rule:** The refactoring loop runs from proposal through review, issue creation, implementation and PR without human approval, and it may create up to `MaxRefactoringProposals` (at most 10) issues per scan. Merging stays a human action.
@@ -359,7 +374,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Refactoring proposal quality bar
 <!-- 2026-07-04 -->
-**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
+**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity, not counting commits of the scan's own issues), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
 **Why:** The bar must be high enough to avoid noise and low enough to catch real debt; outcome data (done vs. wont-do) should move it over time.
 **Not:** fixed complexity or duplication thresholds; filtering by scope only; leaving calibration entirely to the operator.
 **Revisit when:** more than 50% of proposals are wont-do over 90 days; the system is then too aggressive.
@@ -492,9 +507,9 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** agents still make conflicting changes, or recently closed context proves valuable.
 
 ### Brain: runs append, consolidation curates
-<!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29 -->
-**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental.
-**Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it.
+<!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29; token scope 2026-10-11 -->
+**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental. A read-only brain gets a read-only token where the provider allows it.
+**Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it. A GitLab or personal-access-token brain keeps its own token, so for those the pipeline's behaviour is the only guard; use a token without write access for a brain that should stay read-only.
 **Not:** a database store (loses git history and inspectability); expiry by age (drops rare but useful entries); periodic full resets; brain access per provider or per run.
 **Revisit when:** the feature becomes stable, brain size measurably slows runs, or consolidation keeps finding nothing to change.
 
