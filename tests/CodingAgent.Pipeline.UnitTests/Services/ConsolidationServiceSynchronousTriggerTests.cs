@@ -133,7 +133,8 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
                     r.RepoProviderConfigId == Template.RepoProviderId &&
                     r.BrainProviderConfigId == Template.BrainProviderId &&
                     r.ConsolidationRunType == ConsolidationRunType.BrainConsolidation &&
-                    r.ConsolidationTemplateId == Template.Id),
+                    r.ConsolidationTemplateId == Template.Id &&
+                    r.ConsolidationTemplateName == Template.Name),
                 It.IsAny<CancellationToken>()),
             Times.Once,
             "the JobDistributionRequest must carry correct consolidation-specific fields");

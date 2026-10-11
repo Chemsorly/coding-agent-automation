@@ -60,6 +60,7 @@ public static class PipelineRunFactory
             // always shows "Never run" even after a successful completion.
             consolidationRun.ConsolidationType = request.ConsolidationRunType;
             consolidationRun.ConsolidationTemplateId = request.ConsolidationTemplateId;
+            consolidationRun.ConsolidationTemplateName = request.ConsolidationTemplateName;
             return consolidationRun;
         }
 
