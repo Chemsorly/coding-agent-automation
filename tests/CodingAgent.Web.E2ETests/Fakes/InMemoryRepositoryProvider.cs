@@ -307,9 +307,9 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     /// <summary>
     /// Records <paramref name="branchName"/> in <see cref="DeletedBranches"/>. No-op otherwise.
     /// </summary>
-    public Task DeleteBranchAsync(string branchName, CancellationToken ct)
+    public Task DeleteBranchAsync(BranchName branchName, CancellationToken ct)
     {
-        DeletedBranches.Add(branchName);
+        DeletedBranches.Add(branchName.Value);
         return Task.CompletedTask;
     }
 

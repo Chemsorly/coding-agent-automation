@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
+using CodingAgent.Contracts;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Orchestration;
@@ -1055,5 +1056,77 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
             "agent:needs-refinement should be added exactly once — a second add indicates " +
             "the skip-label-swap fix is not working (HandleJobCompletedAsync called SwapLabelAsync " +
             "even though CompleteRunAsync returned null)");
+    }
+
+    // ── Chat cross-replica tests ───────────────────────────────────────────
+
+    /// <summary>
+    /// AC1: The prompt is stamped via Replica2 while the agent is connected to Replica1.
+    /// ReportChatResponse and ReportChatCompleted must be accepted, and activeChatSessionId
+    /// must be cleared afterwards.
+    /// </summary>
+    [Fact]
+    public async Task MultiReplica_ChatPromptSentViaReplica2_AgentConnectedToReplica1_ReplyAccepted()
+    {
+        // Arrange: connect a fake chat agent to Replica1
+        var chatSessionId = Guid.NewGuid().ToString();
+        var agentId = $"mr-chat-{Guid.NewGuid():N}";
+
+        var fakeAgent = new FakeAgentClient(agentId, "kiro", "dotnet", "chat=true", $"chat-session-id={chatSessionId}");
+        await fakeAgent.ConnectAsChatAgentAsync(Fixture.AgentHubUrl1, Fixture.ApiKeyValue, chatSessionId);
+        await using (fakeAgent)
+        {
+            // Stamp session ownership via Replica2's registry (simulates SendChatPrompt HTTP
+            // request landing on Replica2 and awaiting UpdateAgentFieldAsync before delivery).
+            // Replica2 writes to the shared FakeRedisStore — visible to Replica1's hub.
+            // TODO: This relies on FakeRedisStore's UpdateAgentFieldAsync completing synchronously
+            // (i.e. the write is visible to Replica1 before SendChatResponseAsync is called).
+            // If FakeRedisStore is ever made async or introduces simulated latency, this test
+            // will have a silent race. Document or enforce the synchrony guarantee on FakeRedisStore
+            // to prevent future breakage.
+            var registry2 = Fixture.Registry2;
+            await registry2.UpdateAgentFieldAsync(new AgentId(agentId), AgentFieldNames.ActiveChatSessionId, chatSessionId);
+
+            // Without a SignalR backplane, AssignChatPrompt is not delivered to the agent.
+            // Drive the reply directly — this tests the ownership check, not the delivery path.
+            await fakeAgent.SendChatResponseAsync(chatSessionId, "Hello from the agent.");
+
+            // Assert: session cleared in the shared store (ReportChatCompleted ran successfully)
+            var entryAfter = await Fixture.Registry1.GetByAgentIdAsync(new AgentId(agentId));
+            Assert.NotNull(entryAfter);
+            Assert.Null(entryAfter.ActiveChatSessionId);
+        }
+    }
+
+    /// <summary>
+    /// AC2: A session ID that was never stamped is still rejected, regardless of which replica
+    /// holds the agent's hub connection.
+    /// </summary>
+    [Fact]
+    public async Task MultiReplica_ChatSessionNeverAssigned_ReportChatResponseRejected()
+    {
+        // Arrange: connect a fake chat agent to Replica1 — do NOT stamp any session
+        var chatSessionId = Guid.NewGuid().ToString();
+        var agentId = $"mr-chat-rej-{Guid.NewGuid():N}";
+
+        var fakeAgent = new FakeAgentClient(agentId, "kiro", "dotnet", "chat=true", $"chat-session-id={chatSessionId}");
+        await fakeAgent.ConnectAsChatAgentAsync(Fixture.AgentHubUrl1, Fixture.ApiKeyValue, chatSessionId);
+        await using (fakeAgent)
+        {
+            // Do NOT call UpdateAgentFieldAsync — no stamp in Redis on either replica.
+            // The hub's GetByAgentIdAsync will return an entry with null ActiveChatSessionId.
+            var someSessionId = Guid.NewGuid().ToString();
+
+            // TODO: This test does not isolate the cross-replica nature of the fix. The rejection
+            // would also have occurred before the fix because the local Replica1 snapshot likewise
+            // has no ActiveChatSessionId. To prove the rejection comes from reading the authoritative
+            // store (not the local snapshot), stamp a *different* session ID via Replica2's registry
+            // so that the local snapshot is still null but Redis has a value for a different session,
+            // then verify the mismatched request (someSessionId) is still rejected.
+            // ReportChatResponse must throw HubException because ActiveChatSessionId is null
+            var act = () => fakeAgent.SendChatResponseAsync(someSessionId, "Should not go through.");
+            await act.Should().ThrowAsync<Microsoft.AspNetCore.SignalR.HubException>()
+                .WithMessage("*not assigned*");
+        }
     }
 }

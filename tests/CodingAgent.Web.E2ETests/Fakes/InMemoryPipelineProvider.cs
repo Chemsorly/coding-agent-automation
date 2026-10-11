@@ -18,8 +18,13 @@ public sealed class InMemoryPipelineProvider : IPipelineProvider
         SimulatedDelay = TimeSpan.Zero;
     }
 
-    public async Task<PipelineRunStatus> GetRunStatusAsync(string branchName, string? commitSha, CancellationToken ct)
+    public async Task<PipelineRunStatus> GetRunStatusAsync(BranchName branchName, string? commitSha, CancellationToken ct)
     {
+        // TODO [WARNING] (TestQualityReviewer): branchName.Value is never read in this fake, so an
+        // E2E test that inadvertently passes the wrong branch name (e.g. transposed with commitSha
+        // via the implicit string→BranchName conversion) would not be detected. If branch-name
+        // correctness needs to be validated in E2E tests, consider exposing a
+        // `LastBranchName` property or adding an assertion on branchName.Value.
         if (SimulatedDelay > TimeSpan.Zero)
             await Task.Delay(SimulatedDelay, ct);
 
@@ -38,7 +43,7 @@ public sealed class InMemoryPipelineProvider : IPipelineProvider
         };
     }
 
-    public async Task<PipelineRunStatus> WaitForCompletionAsync(string branchName, string? commitSha, TimeSpan timeout, CancellationToken ct)
+    public async Task<PipelineRunStatus> WaitForCompletionAsync(BranchName branchName, string? commitSha, TimeSpan timeout, CancellationToken ct)
     {
         if (SimulatedDelay > TimeSpan.Zero)
             await Task.Delay(SimulatedDelay, ct);

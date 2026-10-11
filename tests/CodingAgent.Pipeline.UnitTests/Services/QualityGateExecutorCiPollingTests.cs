@@ -83,7 +83,7 @@ public class QualityGateExecutorCiPollingTests
         var passed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = new List<PipelineJobResult>() };
 
         _mockPipelineProvider.SetupSequence(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(infraFailure)
             .ReturnsAsync(passed);
 
@@ -170,8 +170,8 @@ public class QualityGateExecutorCiPollingTests
         //   Call 3 (infra-retry poll)  → blocks via TCS.WaitAsync(token) until pollCt fires
         var waitCallCount = 0;
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns(async (string _, string? _, TimeSpan _, CancellationToken token) =>
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async (BranchName _, string? _, TimeSpan _, CancellationToken token) =>
             {
                 var callIndex = Interlocked.Increment(ref waitCallCount);
                 return callIndex switch
@@ -301,7 +301,7 @@ public class QualityGateExecutorCiPollingTests
         using var perPollCts = new CancellationTokenSource();
         perPollCts.Cancel();
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException(perPollCts.Token));
 
         var context = BuildContext(run);
@@ -428,9 +428,9 @@ public class QualityGateExecutorCiPollingTests
         _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("sha-head-abc");
         // GetRunStatusAsync must return non-Pending so WaitForCiRunsToAppearAsync passes through
-        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } } });
-        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = new List<PipelineJobResult>() });
     }
 
@@ -501,10 +501,10 @@ public class QualityGateExecutorGuardTests
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("sha-abc");
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] });
     }
 
@@ -522,7 +522,7 @@ public class QualityGateExecutorGuardTests
 
         result.Should().BeSameAs(report, "local gate failure should short-circuit before CI polling");
         _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -540,7 +540,7 @@ public class QualityGateExecutorGuardTests
 
         result.Should().BeSameAs(report, "local test failure should short-circuit before CI polling");
         _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -579,7 +579,7 @@ public class QualityGateExecutorGuardTests
 
         result.Should().BeSameAs(report, "null PipelineProvider should short-circuit without CI polling");
         _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -606,7 +606,7 @@ public class QualityGateExecutorGuardTests
         // ExternalCi gate should NOT be appended — CI was skipped
         result.ExternalCi.Should().BeNull("skip-ci-if-no-changes path should return report without ExternalCi gate");
         _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never);
         // Verify the skip message was emitted
         _mockCallbacks.Verify(c => c.EmitOutputLine(It.Is<string>(s => s.Contains("skipped"))), Times.Once);
@@ -768,12 +768,12 @@ public class QualityGateExecutorBranchMovedCancellationTests
 
         // CI appears immediately (Running → not the not-started path)
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunningStatus);
 
         // First poll (sha-original) → Cancelled; second poll (sha-moved) → Passed
         _mockPipelineProvider.SetupSequence(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CancelledStatus)
             .ReturnsAsync(PassedStatus);
 
@@ -836,18 +836,18 @@ public class QualityGateExecutorBranchMovedCancellationTests
         // GetRunStatusAsync: sha-original always Running (CI present from the start),
         // sha-moved returns Pending until the re-push fires, sha-repush always Running.
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.Is<string?>(sha => sha == "sha-original"), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.Is<string?>(sha => sha == "sha-original"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunningStatus);
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.Is<string?>(sha => sha == "sha-moved"), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.Is<string?>(sha => sha == "sha-moved"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => repushDone ? RunningStatus : PendingNoCiStatus);
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.Is<string?>(sha => sha == "sha-repush"), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.Is<string?>(sha => sha == "sha-repush"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunningStatus);
 
         // sha-original → Cancelled; sha-repush → Passed
         _mockPipelineProvider.SetupSequence(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CancelledStatus)  // sha-original
             .ReturnsAsync(PassedStatus);    // sha-repush
 
@@ -878,12 +878,12 @@ public class QualityGateExecutorBranchMovedCancellationTests
 
         // CI appears immediately (Running)
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunningStatus);
 
         // Poll → Cancelled (genuine pre-emption, HEAD didn't move)
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CancelledStatus);
 
         // MaxInfrastructureRetries = 0 so no infra retry loop runs; gate simply fails
@@ -925,10 +925,10 @@ public class QualityGateExecutorBranchMovedCancellationTests
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("sha-fixed");
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunningStatus);
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Cancelled,
@@ -993,12 +993,12 @@ public class QualityGateExecutorBranchMovedCancellationTests
 
         // Each new SHA has CI appearing immediately (Running)
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunningStatus);
 
         // Every poll returns Cancelled (branch keeps moving)
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CancelledStatus);
 
         var context = BuildContext(run, ciCancelledMoveMaxRetries: maxMoveRetries, maxInfraRetries: 0);
@@ -1133,12 +1133,12 @@ public class QualityGateExecutorCiNotStartedPriorShaTests
 
         // All SHA-specific queries return Pending — CI never started on the pushed commit
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.Is<string?>(s => s != null), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.Is<string?>(s => s != null), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = new List<PipelineJobResult>() });
 
         // Branch-wide query (SHA=null) returns Passed — CI ran on a prior SHA
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.Is<string?>(s => s == null), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.Is<string?>(s => s == null), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -1164,7 +1164,7 @@ public class QualityGateExecutorCiNotStartedPriorShaTests
 
         // WaitForCompletionAsync must never be called — the branch-wide Passed result is returned directly
         _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "WaitForCompletionAsync must not be called when CI already passed on a prior SHA");
 
@@ -1291,7 +1291,7 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
 
         // All GetRunStatusAsync calls (any SHA including null) return Pending — genuine outage
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = new List<PipelineJobResult>() });
 
         var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
@@ -1309,7 +1309,7 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
         // Before the fix, the exhaustion path fell through to WaitForCompletionAsync on a
         // re-trigger SHA that had no CI runs, blocking for the entire ExternalCiTimeout.
         _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "WaitForCompletionAsync must not be called on retry exhaustion — no CI will ever appear on the re-trigger SHA");
 
@@ -1389,7 +1389,7 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
         var run = CreateRun();
 
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
@@ -1474,7 +1474,7 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests
         // Arrange: CI appears to be running (so we reach WaitForCompletionAsync)
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -1484,7 +1484,7 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests
         // WaitForCompletionAsync throws a provider exception — the unhandled exception path
         _mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("provider communication error"));
 
         // Capture server-side events (issue #2979 migration)

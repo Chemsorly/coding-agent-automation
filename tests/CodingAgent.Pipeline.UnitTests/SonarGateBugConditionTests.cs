@@ -100,7 +100,7 @@ public partial class SonarGateBugConditionTests
             // Original 6 from bugfix.md §1.1-1.6
             ("tests/CodingAgent.Web.UnitTests/Components/UndoSnackbarComponentTests.cs",      61,  "UndoSnackbarComponentTests line 61 (UndoSnackbar_Dispose_CancelsPendingDismiss)"),
             ("tests/CodingAgent.Web.UnitTests/Components/UndoSnackbarComponentTests.cs",      97,  "UndoSnackbarComponentTests line 97 (UndoSnackbar_Dispose_WhenNeverShown)"),
-            ("tests/CodingAgent.Web.E2ETests/Tests/K8sChatIntegrationTests.cs",              124,  "K8sChatIntegrationTests line 124"),
+            ("tests/CodingAgent.Web.E2ETests/Tests/K8sChatIntegrationTests.cs",               89,  "K8sChatIntegrationTests line 89 (K8sChat_SendAndReceivePrompt_OneRoundTrip)"),
             ("tests/CodingAgent.Web.UnitTests/Dispatch/ChatJobDispatcherTests.cs",           637,  "ChatJobDispatcherTests line 637"),
             ("tests/CodingAgent.Infrastructure.UnitTests/Telemetry/SerilogOtlpExtensionsTests.cs", 170, "SerilogOtlpExtensionsTests line 170"),
             ("tests/CodingAgent.Agent.UnitTests/PipelineCleanupTests.cs",                196,  "PipelineCleanupTests line 196"),

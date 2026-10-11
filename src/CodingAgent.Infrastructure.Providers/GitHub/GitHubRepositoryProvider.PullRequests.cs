@@ -76,9 +76,13 @@ public partial class GitHubRepositoryProvider
     }
 
     /// <inheritdoc />
-    public async Task DeleteBranchAsync(string branchName, CancellationToken ct)
+    public async Task DeleteBranchAsync(BranchName branchName, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(branchName);
+        // NOTE (issue #3535): BranchName is a readonly record struct with a public primary
+        // constructor, so `new BranchName(null)` compiles and produces a value whose Value is null,
+        // bypassing the implicit-operator guard. The previous `ArgumentNullException.ThrowIfNull`
+        // guard was a no-op on a struct and was removed. All current call sites pass via implicit
+        // string→BranchName conversion. See BranchName.cs for the existing TODO.
         try
         {
             await ExecuteWithResilienceAsync(

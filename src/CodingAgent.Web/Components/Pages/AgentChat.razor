@@ -164,6 +164,8 @@
     // ── Hub event subscriptions ──────────────────────────────────────────────
     private IDisposable? _chatResponseSub;
     private IDisposable? _chatCompletedSub;
+    // Held so it can be detached from HubConnection.Reconnected in EndChat and DisposeAsync.
+    private Func<string?, Task>? _reconnectedHandler;
 
     // ── Project context (optional) ───────────────────────────────────────────
     private IReadOnlyList<PipelineProject> _projects = [];
@@ -467,6 +469,31 @@
             if (!string.IsNullOrEmpty(agentIdForKeepalive))
                 ChatDispatcher.SendClientKeepalive(agentIdForKeepalive);
         }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+
+        // Re-join the chat session group after every hub reconnect so in-flight responses
+        // keep arriving. Guarded by _isWaitingForResponse so we only re-subscribe when a
+        // reply is expected — between prompts _activeSessionId holds the previous session ID
+        // (HandleChatCompleted intentionally does not clear it) and we must not re-subscribe
+        // to a finished session. CancellationToken.None is intentional: this handler fires on
+        // a background thread and _cts may have been disposed by the time it runs.
+        // TODO: The guard reads _isWaitingForResponse and _activeSessionId directly from the
+        // SignalR reconnect callback thread without marshalling through InvokeAsync, unlike the
+        // RunPage handler which wraps its body. On weak-memory architectures (ARM) the reconnect
+        // thread may observe stale values for these fields, which are written on the Blazor sync
+        // context. Concrete risk: a stale _isWaitingForResponse == true after completion causes a
+        // redundant SubscribeToChatSession call to a finished session. Fix: wrap the entire
+        // handler body in InvokeAsync(async () => { ... }) so the reads happen on the sync
+        // context and observe the latest field values — consistent with the RunPage handler.
+        // TODO: The async lambda is invoked fire-and-forget by the SignalR event infrastructure.
+        // If HubConnection.InvokeAsync throws (e.g. transport closed during a rapid reconnect
+        // sequence), the exception becomes an unobserved task and TaskScheduler.UnobservedTaskException
+        // fires. Wrap the body in try/catch(Exception) and log the failure to make it observable.
+        _reconnectedHandler = async _ =>
+        {
+            if (!_isWaitingForResponse || string.IsNullOrEmpty(_activeSessionId)) return;
+            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None); // intentional: background-thread, _cts may be disposed
+        };
+        HubConnection.Reconnected += _reconnectedHandler;
     }
 
     // ── SendPrompt ────────────────────────────────────────────────────────────
@@ -556,6 +583,13 @@
         // Set inactive first to prevent concurrent DisposeAsync double-terminate
         _isChatActive = false;
 
+        // Detach the reconnect handler so it cannot fire after the session ends.
+        if (_reconnectedHandler is not null)
+        {
+            HubConnection.Reconnected -= _reconnectedHandler;
+            _reconnectedHandler = null;
+        }
+
         // Stop keepalive timer — pod is about to be terminated
         if (_keepaliveTimer is not null) { await _keepaliveTimer.DisposeAsync(); _keepaliveTimer = null; }
 
@@ -622,6 +656,14 @@
 
     public async ValueTask DisposeAsync()
     {
+        // Detach the reconnect handler first, before any CTS cancellation, so that a
+        // background-thread Reconnected event cannot fire after teardown begins.
+        if (_reconnectedHandler is not null)
+        {
+            HubConnection.Reconnected -= _reconnectedHandler;
+            _reconnectedHandler = null;
+        }
+
         PipelineLifecycle.OnChange -= HandleStateChange;
 
         _chatResponseSub?.Dispose();

@@ -1471,6 +1471,69 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.True(changeNotified);
     }
 
+    // ── Issue #3549: StartLoopAsync persists ClosedLoopAutoStart via UpdatePipelineConfigAsync ──
+
+    /// <summary>
+    /// Regression test for issue #3549: when ClosedLoopAutoStart is false, StartLoopAsync must
+    /// persist the flag using UpdatePipelineConfigAsync (atomic read-modify-write) rather than
+    /// SavePipelineConfigAsync (overwrites entire config with a potentially stale snapshot).
+    /// </summary>
+    // TODO: Add a complementary test for the ClosedLoopAutoStart=true branch asserting that
+    // UpdatePipelineConfigAsync is NOT called (Times.Never). This ensures a future regression that
+    // unconditionally calls UpdatePipelineConfigAsync regardless of the flag value is caught.
+    // Also: the result.Should().BeTrue() assertion below does not explicitly verify that the loop
+    // was not already active before the call. If a prior test left the service in an active state,
+    // this assertion could give a false negative. Consider adding an explicit pre-condition check
+    // that IsLoopActive is false before calling StartLoopAsync.
+    [Fact]
+    public async Task StartLoopAsync_WhenClosedLoopAutoStartIsFalse_CallsUpdatePipelineConfigAsync_NotSave()
+    {
+        // Arrange: config with ClosedLoopAutoStart=false so the persistence branch is entered
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { ClosedLoopAutoStart = false });
+
+        // Capture the transform delegate so we can assert its behaviour independently
+        Func<PipelineConfiguration, PipelineConfiguration>? capturedTransform = null;
+        _mockStore
+            .Setup(s => s.UpdatePipelineConfigAsync(
+                It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>(
+                (transform, _) => capturedTransform = transform)
+            .Returns(Task.CompletedTask);
+
+        var svc = CreateService();
+
+        // Act
+        var result = await svc.StartLoopAsync();
+
+        // Assert 1: loop started successfully
+        result.Should().BeTrue("loop must start even when ClosedLoopAutoStart was initially false");
+
+        // Assert 2: UpdatePipelineConfigAsync was called exactly once
+        _mockStore.Verify(
+            s => s.UpdatePipelineConfigAsync(
+                It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "StartLoopAsync must persist the flag via UpdatePipelineConfigAsync (atomic read-modify-write)");
+
+        // Assert 3: SavePipelineConfigAsync was NOT called — it overwrites the whole config
+        // with a potentially stale snapshot and must no longer be used for this purpose
+        _mockStore.Verify(
+            s => s.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "StartLoopAsync must NOT call SavePipelineConfigAsync — it could overwrite concurrent settings changes");
+
+        // Assert 4: the captured transform sets ClosedLoopAutoStart=true and leaves everything else unchanged
+        capturedTransform.Should().NotBeNull("the Callback must have been invoked before Verify");
+        var input = TestPipelineConfig.Default() with { ClosedLoopAutoStart = false, MaxRetries = 7, WorkspaceBaseDirectory = "/sentinel" };
+        var output = capturedTransform!(input);
+        output.ClosedLoopAutoStart.Should().BeTrue("the transform must set ClosedLoopAutoStart=true");
+        output.MaxRetries.Should().Be(7, "the transform must leave unrelated fields unchanged");
+        output.WorkspaceBaseDirectory.Should().Be("/sentinel", "the transform must leave unrelated fields unchanged");
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_loopService is not null)

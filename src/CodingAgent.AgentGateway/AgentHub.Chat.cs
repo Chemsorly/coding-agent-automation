@@ -50,20 +50,16 @@ public sealed partial class AgentHub
 
     /// <summary>
     /// Receives streamed chat response lines from an agent during interactive chat.
-    /// Validates that the calling agent owns the session before broadcasting to UI circuits.
+    /// Validates that the calling agent owns the session by reading <c>ActiveChatSessionId</c>
+    /// from the authoritative registry store (Redis in distributed mode, in-memory otherwise),
+    /// ensuring correct ownership validation across replicas regardless of which replica received
+    /// the original <c>POST /api/agents/{agentId}/chat-prompt</c> request.
     /// </summary>
     public async Task ReportChatResponse(ChatResponseMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var agent = _facade.GetByConnectionId(Context.ConnectionId);
-        var (isValid, agentId) = ValidateChatSessionOwnership(agent, message.SessionId);
-        if (!isValid)
-        {
-            _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), agentId);
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {agentId}");
-        }
+        var caller = await ValidateOwnershipAsync("ReportChatResponse", message.SessionId, Context.ConnectionAborted);
 
         // Broadcast to subscribed UI circuits
         await _uiContext.Clients.Group($"chat-session-{message.SessionId}")
@@ -74,8 +70,11 @@ public sealed partial class AgentHub
 
     /// <summary>
     /// Signals that a chat prompt execution has completed on the agent.
-    /// Validates session ownership, clears <see cref="AgentEntry.ActiveChatSessionId"/>,
-    /// and broadcasts the completion event to subscribed UI circuits.
+    /// Validates session ownership by reading <c>ActiveChatSessionId</c> from the authoritative
+    /// registry store (Redis in distributed mode, in-memory otherwise), clears it via
+    /// <see cref="IAgentHubFacade.UpdateAgentFieldAsync"/> (awaited before broadcast so the
+    /// session is always cleared before the UI re-enables input), then broadcasts the completion
+    /// event to subscribed UI circuits.
     ///
     /// Does NOT transition the agent to Idle — the chat session remains active
     /// until the orchestrator sends CancelChat (End Chat / navigate away).
@@ -84,25 +83,58 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var agent = _facade.GetByConnectionId(Context.ConnectionId);
-        var (isValid, agentId) = ValidateChatSessionOwnership(agent, message.SessionId);
-        if (!isValid)
-        {
-            _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), agentId);
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {agentId}");
-        }
+        var caller = await ValidateOwnershipAsync("ReportChatCompleted", message.SessionId, Context.ConnectionAborted);
 
-        agent!.ActiveChatSessionId = null; // Also write to registry for cross-replica visibility
-        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, AgentFieldNames.ActiveChatSessionId, null);
+        // Clear the session stamp in the authoritative store before broadcasting completion,
+        // so the UI input box is never re-enabled before the session is fully cleared.
+        await _facade.UpdateAgentFieldAsync(caller.AgentId, AgentFieldNames.ActiveChatSessionId, null);
 
         _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
-            message.SessionId, agent.AgentId, message.ExitCode);
+            message.SessionId, caller.AgentId, message.ExitCode);
 
         // Broadcast to subscribed UI circuits
         await _uiContext.Clients.Group($"chat-session-{message.SessionId}")
             .SendAsync(HubMethodNames.OnChatCompleted, message.SessionId, message.ExitCode, message.Error);
 
         _chatNotifier.NotifyChatCompleted(message.SessionId, message.ExitCode, message.Error);
+    }
+
+    /// <summary>
+    /// Validates that the calling connection owns the given chat session by performing three checks:
+    /// <list type="number">
+    ///   <item>The connection has a registered <see cref="AgentEntry"/> (not null).</item>
+    ///   <item>The authoritative registry entry for that agent exists in the backing store.</item>
+    ///   <item>The authoritative entry's <c>ActiveChatSessionId</c> matches <paramref name="sessionId"/>.</item>
+    /// </list>
+    /// Throws <see cref="HubException"/> on any check failure.
+    /// </summary>
+    /// <returns>The validated authoritative <see cref="AgentEntry"/> (the caller's registry record).</returns>
+    private async Task<AgentEntry> ValidateOwnershipAsync(string methodName, string sessionId, CancellationToken ct)
+    {
+        var caller = _facade.GetByConnectionId(Context.ConnectionId);
+        if (caller is null)
+        {
+            _logger.Warning("{Method} rejected — session {SessionId} not assigned to agent {AgentId}",
+                methodName, SanitizeForLog(sessionId), "unknown");
+            throw new HubException($"Session {SanitizeForLog(sessionId)} not assigned to agent unknown");
+        }
+
+        var authoritativeEntry = await _facade.GetByAgentIdAsync(caller.AgentId, ct);
+        if (authoritativeEntry is null)
+        {
+            _logger.Warning("{Method} rejected — session {SessionId} not assigned to agent {AgentId}",
+                methodName, SanitizeForLog(sessionId), caller.AgentId.Value);
+            throw new HubException($"Session {SanitizeForLog(sessionId)} not assigned to agent {caller.AgentId.Value}");
+        }
+
+        var (isValid, agentId) = ValidateChatSessionOwnership(authoritativeEntry, sessionId);
+        if (!isValid)
+        {
+            _logger.Warning("{Method} rejected — session {SessionId} not assigned to agent {AgentId}",
+                methodName, SanitizeForLog(sessionId), agentId);
+            throw new HubException($"Session {SanitizeForLog(sessionId)} not assigned to agent {agentId}");
+        }
+
+        return authoritativeEntry;
     }
 }

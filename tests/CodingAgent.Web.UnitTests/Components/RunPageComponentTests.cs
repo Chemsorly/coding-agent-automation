@@ -915,3 +915,287 @@ public class RunPageComponentTests : BunitContext
         cut.FindAll("[data-testid='redispatch-btn']").Should().ContainSingle();
     }
 }
+
+/// <summary>
+/// Tests that RunPage re-joins its run group after a hub reconnect and that
+/// the reconnect handler is removed on dispose.
+/// Issue #3551: hub group membership is lost on reconnect; IAgentHubConnection.Reconnected
+/// must be used to re-invoke SubscribeToRun so output lines keep arriving.
+/// </summary>
+public class RunPageReconnectTests : BunitContext
+{
+    public RunPageReconnectTests() => Services.AddTestAccess();
+
+    // ── Shared scaffolding ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a mock IAgentHubConnection whose State transitions to Connected after StartAsync,
+    /// matching the real behaviour. Returns the mock so tests can raise Reconnected and verify
+    /// InvokeAsync call counts.
+    /// </summary>
+    private static Mock<IAgentHubConnection> MakeConnectedHubMock()
+    {
+        var mockHub = new Mock<IAgentHubConnection>();
+        var connected = false;
+        mockHub.Setup(h => h.State)
+            .Returns(() => connected ? HubConnectionState.Connected : HubConnectionState.Disconnected);
+        mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => connected = true)
+            .Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>()))
+            .Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType>>()))
+            .Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType>>()))
+            .Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType, It.IsAnyType>>()))
+            .Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        return mockHub;
+    }
+
+    private void RegisterServices(PipelineRunSummary summary, Mock<IAgentHubConnection> mockHub)
+    {
+        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        mockRunHistory
+            .Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(summary);
+
+        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+
+        Services.AddSingleton(mockHub.Object);
+        Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
+        Services.AddSingleton(mockConfigClient.Object);
+        Services.AddSingleton(Mock.Of<IConfigurationStore>());
+        Services.AddSingleton(new CockpitState());
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// After a hub Reconnected event fires, RunPage must call SubscribeToRun again with the
+    /// same run ID so it rejoins the server-side group and resumes receiving live output.
+    /// </summary>
+    [Fact]
+    public async Task RunPage_ReconnectsToRunGroup_AfterReconnectedEvent()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockHub = MakeConnectedHubMock();
+        RegisterServices(MakeActiveSummary(runId), mockHub);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        // Wait until SubscribeLiveAsync has completed the initial SubscribeToRun round-trip
+        // (data-hub-subscribed flips to "true").
+        cut.WaitForAssertion(
+            () => Assert.Equal("true", cut.Find("[data-hub-subscribed]").GetAttribute("data-hub-subscribed")),
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Simulate hub reconnect
+        mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        // SubscribeToRun must be called a second time — once on init, once after reconnect
+        cut.WaitForAssertion(
+            () => mockHub.Verify(
+                h => h.InvokeAsync(HubMethodNames.SubscribeToRun, runId, It.IsAny<CancellationToken>()),
+                Times.Exactly(2),
+                "SubscribeToRun must be called twice: once on init, once after reconnect"),
+            timeout: TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// Output lines received before a reconnect must not be shown twice after the server
+    /// pushes the backlog again. The reconnect handler clears _liveOutput before calling
+    /// SubscribeToRun so the backlog replaces rather than appends to the existing lines.
+    /// </summary>
+    [Fact]
+    public async Task RunPage_DoesNotDuplicateOutputLines_AfterReconnect()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockHub = MakeConnectedHubMock();
+
+        // Capture the OnOutputLines handler so we can simulate server pushes directly.
+        Action<string, IReadOnlyList<string>>? capturedOutputHandler = null;
+        mockHub
+            .Setup(h => h.On<string, IReadOnlyList<string>>(
+                HubMethodNames.OnOutputLines, It.IsAny<Action<string, IReadOnlyList<string>>>()))
+            .Callback<string, Action<string, IReadOnlyList<string>>>((_, handler) => capturedOutputHandler = handler)
+            .Returns(Mock.Of<IDisposable>());
+
+        RegisterServices(MakeActiveSummary(runId), mockHub);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        // Wait for subscription to complete and the captured handler to be set
+        cut.WaitForAssertion(
+            () =>
+            {
+                Assert.Equal("true", cut.Find("[data-hub-subscribed]").GetAttribute("data-hub-subscribed"));
+                Assert.NotNull(capturedOutputHandler);
+            },
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Push initial lines (simulating the server's initial backlog)
+        await cut.InvokeAsync(() => capturedOutputHandler!(runId, ["line-a", "line-b"]));
+        cut.WaitForAssertion(
+            () => Assert.Contains("line-a", cut.Find("pre.run-live-log").TextContent),
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Simulate reconnect — the handler must clear _liveOutput and re-call SubscribeToRun
+        mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        // Push the same lines again as the backlog after reconnect
+        cut.WaitForAssertion(
+            () => mockHub.Verify(
+                h => h.InvokeAsync(HubMethodNames.SubscribeToRun, runId, It.IsAny<CancellationToken>()),
+                Times.Exactly(2)),
+            timeout: TimeSpan.FromSeconds(5));
+        await cut.InvokeAsync(() => capturedOutputHandler!(runId, ["line-a", "line-b"]));
+
+        // Assert each line appears exactly once — no duplication
+        cut.WaitForAssertion(() =>
+        {
+            var text = cut.Find("pre.run-live-log").TextContent;
+            var countLineA = text.Split("line-a").Length - 1;
+            var countLineB = text.Split("line-b").Length - 1;
+            Assert.Equal(1, countLineA);
+            Assert.Equal(1, countLineB);
+        }, timeout: TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// Once a run completes (_isLive = false), raising Reconnected must not call SubscribeToRun
+    /// again — there is nothing left to receive for a finished run.
+    /// </summary>
+    [Fact]
+    public async Task RunPage_DoesNotResubscribeAfterCompletion()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockHub = MakeConnectedHubMock();
+
+        // Capture the OnRunCompleted handler so we can simulate completion.
+        Action<string, JobCompletionPayload>? capturedCompletedHandler = null;
+        mockHub
+            .Setup(h => h.On<string, JobCompletionPayload>(
+                HubMethodNames.OnRunCompleted, It.IsAny<Action<string, JobCompletionPayload>>()))
+            .Callback<string, Action<string, JobCompletionPayload>>((_, handler) => capturedCompletedHandler = handler)
+            .Returns(Mock.Of<IDisposable>());
+
+        // ReloadCompletedRunAsync calls GetRunAsync again; return a terminal summary.
+        var activeSummary = MakeActiveSummary(runId);
+        var completedSummary = new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = activeSummary.IssueIdentifier,
+            IssueTitle = activeSummary.IssueTitle,
+            FinalStep = PipelineStep.Completed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = activeSummary.StartedAtOffset,
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+        };
+        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        // First call returns the active summary (page load); subsequent calls return completed.
+        mockRunHistory
+            .SetupSequence(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(activeSummary)
+            .ReturnsAsync(completedSummary);
+
+        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+
+        Services.AddSingleton(mockHub.Object);
+        Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
+        Services.AddSingleton(mockConfigClient.Object);
+        Services.AddSingleton(Mock.Of<IConfigurationStore>());
+        Services.AddSingleton(new CockpitState());
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        // Wait for initial subscription
+        cut.WaitForAssertion(
+            () =>
+            {
+                Assert.Equal("true", cut.Find("[data-hub-subscribed]").GetAttribute("data-hub-subscribed"));
+                Assert.NotNull(capturedCompletedHandler);
+            },
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Simulate the run completing — sets _isLive = false
+        await cut.InvokeAsync(() => capturedCompletedHandler!(runId, new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+        }));
+
+        // Wait for the page to transition to completed state (live output card gone)
+        cut.WaitForAssertion(
+            () => Assert.Empty(cut.FindAll("[data-hub-subscribed]")),
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Now raise Reconnected — the guard must prevent a second SubscribeToRun call
+        mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        // Brief wait then verify call count is still 1 (only the initial subscribe)
+        await Task.Delay(200);
+        mockHub.Verify(
+            h => h.InvokeAsync(HubMethodNames.SubscribeToRun, runId, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "SubscribeToRun must not be called again after run completion");
+    }
+
+    /// <summary>
+    /// After DisposeAsync, raising Reconnected must not trigger a second SubscribeToRun call —
+    /// the handler must have been detached from HubConnection.Reconnected.
+    /// </summary>
+    [Fact]
+    public async Task RunPage_RemovesReconnectedHandlerOnDispose()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockHub = MakeConnectedHubMock();
+        RegisterServices(MakeActiveSummary(runId), mockHub);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        // Wait for initial subscription
+        cut.WaitForAssertion(
+            () => Assert.Equal("true", cut.Find("[data-hub-subscribed]").GetAttribute("data-hub-subscribed")),
+            timeout: TimeSpan.FromSeconds(5));
+
+        // Dispose the component
+        await cut.Instance.DisposeAsync();
+
+        // Raise Reconnected after disposal — must not invoke SubscribeToRun again
+        mockHub.Raise(m => m.Reconnected += null, "conn-2");
+
+        await Task.Delay(200);
+        mockHub.Verify(
+            h => h.InvokeAsync(HubMethodNames.SubscribeToRun, runId, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "SubscribeToRun must not be called after the component is disposed");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    private static PipelineRunSummary MakeActiveSummary(string runId)
+        => new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = "3551",
+            IssueTitle = "Reconnect test run",
+            FinalStep = PipelineStep.AnalyzingCode,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = null,
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+        };
+}
