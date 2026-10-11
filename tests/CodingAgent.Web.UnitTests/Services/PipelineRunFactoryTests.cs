@@ -409,17 +409,36 @@ public sealed class PipelineRunFactoryTests
     }
 
     [Fact]
-    public void ConsolidationRun_ThreeResultFields_RoundTripThroughSummaryAndRedisHash()
+    public void CreateFromWorkItem_ConsolidationRun_CopiesTemplateName()
+    {
+        // Arrange
+        var request = CreateConsolidationRequest() with { ConsolidationTemplateId = "tpl-1", ConsolidationTemplateName = "my-template" };
+
+        // Act
+        var run = PipelineRunFactory.CreateFromWorkItem(Guid.NewGuid(), request)!;
+
+        // Assert
+        run.ConsolidationTemplateName.Should().Be("my-template");
+        // TODO: [WARNING] Add a complementary test case: a request with ConsolidationTemplateId = null
+        // and ConsolidationTemplateName = "my-template" should produce run.ConsolidationTemplateName == null.
+        // The factory copies the name as-is from the request; the null-guard lives in ConsolidationService
+        // (scope.TemplateIdValue is null ? null : scope.TemplateName). A factory bug that ignores that guard
+        // would not be caught by this test alone. See review-findings-testqualityreviewer.md.
+    }
+
+    [Fact]
+    public void ConsolidationRun_ResultFields_RoundTripThroughSummaryAndRedisHash()
     {
         // Arrange
         var workItemId = Guid.NewGuid();
         var request = CreateConsolidationRequest();
         var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
 
-        // Set the three result fields
+        // Set the result fields
         run.ConsolidationType = ConsolidationRunType.RefactoringDetection;
         run.ConsolidationTemplateId = "template-abc";
         run.ConsolidationResultSummary = "Created 3 refactoring issues.";
+        run.ConsolidationTemplateName = "my-template";
 
         // Act — SummaryJson round-trip
         var summary = run.ToSummary();
@@ -428,6 +447,7 @@ public sealed class PipelineRunFactoryTests
         summary.ConsolidationType.Should().Be(ConsolidationRunType.RefactoringDetection);
         summary.ConsolidationTemplateId.Should().Be("template-abc");
         summary.ConsolidationResultSummary.Should().Be("Created 3 refactoring issues.");
+        summary.ConsolidationTemplateName.Should().Be("my-template");
 
         // Act — Redis hash round-trip
         var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
@@ -439,6 +459,8 @@ public sealed class PipelineRunFactoryTests
             "ConsolidationTemplateId must survive the Redis hash round-trip");
         restored.ConsolidationResultSummary.Should().Be("Created 3 refactoring issues.",
             "ConsolidationResultSummary must survive the Redis hash round-trip");
+        restored.ConsolidationTemplateName.Should().Be("my-template",
+            "ConsolidationTemplateName must survive the Redis hash round-trip");
     }
 
     [Fact]
@@ -448,7 +470,11 @@ public sealed class PipelineRunFactoryTests
         var workItemId = Guid.NewGuid();
         var request = CreateConsolidationRequest();
         var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
-        // Leave ConsolidationType, ConsolidationTemplateId, ConsolidationResultSummary at null
+        // Leave ConsolidationType, ConsolidationTemplateId, ConsolidationResultSummary, ConsolidationTemplateName at null
+        // TODO: [WARNING] ConsolidationTemplateName is not asserted below. Add assertions for
+        // summary.ConsolidationTemplateName.Should().BeNull() and restored.ConsolidationTemplateName.Should().BeNull()
+        // to verify that the ToHashEntries ?? "" → OptionalString → null round-trip is correct for this field.
+        // See review-findings-testqualityreviewer.md.
 
         // Act
         var summary = run.ToSummary();
