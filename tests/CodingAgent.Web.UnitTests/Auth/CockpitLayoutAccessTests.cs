@@ -51,8 +51,7 @@ public class CockpitLayoutAccessTests : BunitContext
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
         Services.AddSingleton<NotificationService>();
         Services.AddSingleton(sp => new NotificationFaroBridge(sp.GetRequiredService<NotificationService>(), sp.GetRequiredService<IFaroService>()));
-        Services.AddSingleton(new InfrastructureHealthService(
-            new ServiceCollection().BuildServiceProvider(), new ConfigurationBuilder().Build(), Mock.Of<IPipelineApiHealthClient>()));
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new CodingAgent.Web.UnitTests.Components.FakeUiHealthClient());
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(new Mock<ILogger>().Object));
         Services.AddSingleton(_js.Object);
     }

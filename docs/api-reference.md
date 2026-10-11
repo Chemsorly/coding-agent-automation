@@ -500,6 +500,14 @@ Returns the user and the roles their token grants, with project names resolved.
 
 `known: false` means no project has that ID; the binding grants nothing usable.
 
+### GET /api/ui/health
+
+Database and Redis state of the answering API replica, for the web UI's sidebar. Any role. It reads cached state only (the database monitor behind `/readyz`, the Redis connection flag). `redisConnected` is `null` when the API runs without Redis.
+
+```json
+{ "databaseConnected": true, "redisConnected": true }
+```
+
 ---
 
 ## Health Probe Endpoints
@@ -563,5 +571,6 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |
 | GET | `/api/ui/me` | User token | The signed-in user and their roles |
+| GET | `/api/ui/health` | User token | Database and Redis state for the sidebar |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using AwesomeAssertions;
 using CodingAgent.Pipeline;
 using CodingAgent.Contracts.Auth;
+using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +21,7 @@ namespace CodingAgent.Api.IntegrationTests.Security;
 public sealed class UiSurfaceTests(ApiWebApplicationFactory factory)
 {
     private const string Me = "/api/ui/me";
+    private const string Health = "/api/ui/health";
 
     private static readonly System.Text.Json.JsonSerializerOptions Json = new(System.Text.Json.JsonSerializerDefaults.Web);
 
@@ -64,6 +67,36 @@ public sealed class UiSurfaceTests(ApiWebApplicationFactory factory)
         me!.Subject.Should().Be("local:admin");
         me.IdentitySource.Should().Be("local");
         me.GlobalRole.Should().Be("admin");
+    }
+
+    [Fact]
+    public async Task Health_ReportsTheApisDatabaseAndRedis_ToAProjectScopedUser()
+    {
+        var database = factory.Services.GetRequiredService<DatabaseHealthState>();
+        var scoped = new AccessGrant(AccessRole.None, new Dictionary<string, AccessRole> { [TestUserTokens.ProjectA] = AccessRole.ReadOnly }, []);
+        var client = Client(TestUserTokens.For(scoped));
+
+        try
+        {
+            database.MarkHealthy();
+            var healthy = await client.GetFromJsonAsync<UiHealthResponse>(Health, Json);
+            database.MarkUnhealthy();
+            var unhealthy = await client.GetFromJsonAsync<UiHealthResponse>(Health, Json);
+
+            healthy.Should().Be(new UiHealthResponse(DatabaseConnected: true, RedisConnected: null), "the test host runs without Redis");
+            unhealthy!.DatabaseConnected.Should().BeFalse();
+        }
+        finally
+        {
+            database.MarkHealthy();
+        }
+    }
+
+    [Fact]
+    public async Task Health_RejectsAnonymous_AndTheMasterKey()
+    {
+        (await Client().GetAsync(Health)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await Client(ApiWebApplicationFactory.ApiKey).GetAsync(Health)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     public static TheoryData<string, string> InvalidTokens => new()
