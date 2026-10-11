@@ -134,7 +134,7 @@ public class TriagePageComponentTests : BunitContext
             .ReturnsAsync(Detail(OperatorRecord(ShopProjectId, Attempt("wi-1", Inconclusive()), Attempt("wi-2")), "wi-2"));
         var cut = RenderPage();
 
-        cut.Find("#triage-answer-0").Change("The redirect back from the identity provider");
+        cut.Find("#triage-answer-0").Input("The redirect back from the identity provider");
         cut.Find("[data-testid='triage-rerun-answers']").Click();
 
         _triages.Verify(t => t.RerunAsync(TriageId,
@@ -261,5 +261,62 @@ public class TriagePageComponentTests : BunitContext
         cut.Find("[data-testid='triage-created-link']").GetAttribute("href").Should().Be("https://github.com/acme/payments-worker/issues/77");
         cut.FindAll("[data-testid='triage-draft-select']").Should().HaveCount(1);
         cut.Find("[data-testid='triage-create']").TextContent.Should().Contain("Create 1 issue");
+        cut.Find("[data-testid='triage-created-issues']").TextContent.Should().Contain("payments-worker #77");
+    }
+
+    [Fact]
+    public void TrackerTriage_Rerun_SaysTheLoopStartsIt_AndOffersNoSecondRequest()
+    {
+        // The loop starts a tracker triage's attempt from the issue's label, so the returned record shows no new attempt
+        var tracker = OperatorRecord(ShopProjectId, Attempt("wi-1", CauseFound(Draft("d1", "Fix")))) with
+        {
+            Source = TriageSource.Issue, IssueProviderConfigId = "ip-1", IssueIdentifier = "431", Request = null,
+        };
+        Returns(Detail(tracker));
+        _triages.Setup(t => t.RerunAsync(TriageId, It.IsAny<RerunTriageRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Detail(tracker));
+        var cut = RenderPage();
+
+        cut.Find("[data-testid='triage-rerun-open']").Click();
+        cut.Find("[data-testid='triage-feedback']").Input("Check the retry policy");
+        cut.Find("[data-testid='triage-rerun']").Click();
+
+        cut.Find("[data-testid='triage-notice']").TextContent.Should().Contain("issue #431").And.Contain("agent:triage");
+        cut.FindAll("[data-testid='triage-actions']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void NeedsInput_ReadOnlyUser_SeesTheQuestionsAsAList()
+    {
+        Returns(Detail(OperatorRecord(ShopProjectId, Attempt("wi-1", Inconclusive()))));
+
+        var cut = RenderPage(TestAccess.Scoped((ShopProjectId, AccessRole.ReadOnly)));
+
+        cut.Find("[data-testid='triage-report-questions']").TextContent.Should().Contain("Is the login page slow");
+        cut.FindAll("[data-testid='triage-questions']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void NeedsInput_Operator_SeesTheQuestionsOnlyAsTheForm()
+    {
+        Returns(Detail(OperatorRecord(ShopProjectId, Attempt("wi-1", Inconclusive()))));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-testid='triage-questions']");
+        cut.FindAll("[data-testid='triage-report-questions']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void LongDraftBody_IsCollapsedUntilExpanded()
+    {
+        var longDraft = Draft("d1", "Fix") with { Body = new string('x', 900) };
+        Returns(Detail(OperatorRecord(ShopProjectId, Attempt("wi-1", CauseFound(longDraft, Draft("d2", "Short"))))));
+        var cut = RenderPage();
+
+        cut.FindAll("[data-testid='triage-draft-expand']").Should().ContainSingle("only the long body is collapsed");
+        cut.Find("[data-testid='triage-draft-expand']").Click();
+
+        cut.FindAll("[data-testid='triage-draft-expand']").Should().BeEmpty();
     }
 }

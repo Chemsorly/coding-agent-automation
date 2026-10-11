@@ -140,7 +140,7 @@ public static class TriageResultValidator
                 Title = Cut(draft.Title.Trim(), MaxTitleChars),
                 Body = body,
                 Size = CutOrNull(draft.Size, MaxTitleChars),
-                Warning = warning,
+                Warning = warning ?? draft.Warning,
             });
         }
 

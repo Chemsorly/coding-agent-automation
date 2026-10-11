@@ -14,11 +14,16 @@ namespace CodingAgent.Pipeline.Services.Steps;
 public sealed class ReportTriageResultStep : IPipelineStep
 {
     private readonly bool _reportToTracker;
+    private readonly IReadOnlyDictionary<string, string> _extraSecrets;
 
     /// <param name="reportToTracker">True when the result is posted on a tracker issue.</param>
-    public ReportTriageResultStep(bool reportToTracker)
+    /// <param name="extraSecrets">
+    /// Secret values besides the injected project and repository secrets, such as the MCP servers' credentials.
+    /// </param>
+    public ReportTriageResultStep(bool reportToTracker, IReadOnlyDictionary<string, string>? extraSecrets = null)
     {
         _reportToTracker = reportToTracker;
+        _extraSecrets = extraSecrets ?? new Dictionary<string, string>();
     }
 
     public string StepName => "ReportTriageResult";
@@ -40,7 +45,13 @@ public sealed class ReportTriageResultStep : IPipelineStep
             return StepResult.Stop;
         }
 
-        var json = await File.ReadAllTextAsync(resultPath, ct);
+        // Mask the raw values first: sanitizing and cutting change the text, so a secret would no longer match
+        var secrets = new Dictionary<string, string>(_extraSecrets, StringComparer.Ordinal);
+        foreach (var (key, value) in context.InjectedSecrets ?? new Dictionary<string, string>())
+            secrets[key] = value;
+        var result = TriageSecretMasking.Mask(parsed.Result, secrets);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(result, TriageResultParser.WriteOptions);
         var reported = await context.TryCriticalAsync(
             () => context.IssueOps.ReportTriageResultAsync(json, ct), "Report the triage result", ct);
         if (reported == StepResult.Stop)
@@ -50,8 +61,8 @@ public sealed class ReportTriageResultStep : IPipelineStep
         if (!_reportToTracker)
             return StepResult.Continue;
 
-        var comment = TriageCommentRenderer.Render(parsed.Result);
-        if (context.InjectedSecrets is { Count: > 0 } secrets)
+        var comment = TriageCommentRenderer.Render(result);
+        if (secrets.Count > 0)
             comment = SecretMasker.Mask(comment, secrets);
 
         var posted = await context.TryCriticalAsync(async () =>

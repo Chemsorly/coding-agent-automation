@@ -49,10 +49,12 @@ public static class TriageEndpoints
     }
 
     /// <summary>Accepts the JSON name (<c>need_you</c>) and the member name (<c>NeedYou</c>) of a filter value.</summary>
-    internal static T? ParseEnum<T>(string? value) where T : struct, Enum =>
-        string.IsNullOrWhiteSpace(value)
-            ? null
-            : Enum.TryParse<T>(value.Replace("_", "", StringComparison.Ordinal), ignoreCase: true, out var parsed) ? parsed : null;
+    internal static T? ParseEnum<T>(string? value) where T : struct, Enum
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        return Enum.TryParse<T>(value.Replace("_", "", StringComparison.Ordinal), ignoreCase: true, out var parsed) ? parsed : null;
+    }
 
     internal static async Task<IResult> Similar(
         [FromQuery] string projectId, [FromQuery] string title, TriageService service, CancellationToken ct) =>

@@ -119,9 +119,10 @@
             <div class="triage-main">
                 @if (result is not null)
                 {
-                    <TriageReport Result="result">
+                    var answering = status == TriageStatus.NeedsInput && CanAct && !_rerunRequested;
+                    <TriageReport Result="result" ShowQuestions="!answering">
                         <AfterVerdict>
-                            @if (status == TriageStatus.NeedsInput && CanAct)
+                            @if (answering)
                             {
                                 <section class="cockpit-card" aria-label="Questions from the agent" data-testid="triage-questions" style="border-color: var(--warning-border);">
                                     <div class="cockpit-card-header"><h2>The agent needs from you</h2><span class="triage-hint">Your answers go into the next attempt</span></div>
@@ -138,7 +139,7 @@
                                                     <span class="triage-hint" style="overflow-wrap: anywhere;">@q.Why</span>
                                                 }
                                                 <textarea id="triage-answer-@i" class="triage-input" placeholder="Your answer" style="min-height: 64px;"
-                                                          value="@Answer(index)" @onchange="e => SetAnswer(index, e.Value as string)"></textarea>
+                                                          value="@Answer(index)" @oninput="e => SetAnswer(index, e.Value as string)"></textarea>
                                             </div>
                                         </div>
                                     }
@@ -146,7 +147,7 @@
                                         <span class="qi">+</span>
                                         <div class="qb">
                                             <label class="triage-label" for="triage-answer-else">Anything else</label>
-                                            <textarea id="triage-answer-else" class="triage-input" style="min-height: 64px;" placeholder="Corrections, links, things you already ruled out" @bind="_feedback"></textarea>
+                                            <textarea id="triage-answer-else" class="triage-input" style="min-height: 64px;" placeholder="Corrections, links, things you already ruled out" @bind="_feedback" @bind:event="oninput"></textarea>
                                         </div>
                                     </div>
                                     <div class="triage-panel" style="flex-direction: row; justify-content: space-between; align-items: center; flex-wrap: wrap;">
@@ -196,7 +197,16 @@
                                         }
                                     </div>
                                     <div class="triage-draft-title">@d.Title</div>
-                                    <div class="triage-draft-text">@d.Body</div>
+                                    @if (d.Body.Length > CollapsedBodyChars && !_expanded.Contains(d.Id))
+                                    {
+                                        <div class="triage-draft-text">@d.Body</div>
+                                        <button type="button" class="triage-btn is-quiet" style="min-height: 28px; padding: 0; align-self: flex-start;"
+                                                @onclick="() => _expanded.Add(d.Id)" data-testid="triage-draft-expand">Show the whole body</button>
+                                    }
+                                    else
+                                    {
+                                        <div class="triage-draft-text" style="max-height: none;">@d.Body</div>
+                                    }
                                     @if (!string.IsNullOrWhiteSpace(d.Warning))
                                     {
                                         <div class="triage-hint" style="color: var(--warning);">⚠ @d.Warning</div>
@@ -321,6 +331,27 @@
                     </ol>
                 </section>
 
+                @if (record.CreatedIssues.Count > 0)
+                {
+                    <section class="cockpit-card cockpit-card-pad" data-testid="triage-created-issues">
+                        <h2 style="margin: 0 0 4px; font-size: 15px;">Created issues</h2>
+                        @foreach (var issue in record.CreatedIssues)
+                        {
+                            <div class="triage-kv">
+                                @if (TriageDisplay.SafeLink(issue.Url) is { } issueLink)
+                                {
+                                    <a href="@issueLink" target="_blank" rel="noopener noreferrer">@issue.Repository #@issue.Identifier ↗</a>
+                                }
+                                else
+                                {
+                                    <span>@issue.Repository #@issue.Identifier</span>
+                                }
+                                <span class="triage-muted">@TriageDisplay.Ago(issue.CreatedAt, DateTimeOffset.UtcNow)</span>
+                            </div>
+                        }
+                    </section>
+                }
+
                 @if (result is not null && result.Investigated.Count > 0)
                 {
                     <section class="cockpit-card cockpit-card-pad" data-testid="triage-checks-by-source">
@@ -334,13 +365,13 @@
             </aside>
         </div>
 
-        @if (CanAct)
+        @if (CanAct && !_rerunRequested)
         {
             <div class="triage-actionbar" role="region" aria-label="Actions" data-testid="triage-actions">
                 <div class="triage-actionbar-group">
-                    @if (SelectableDrafts.Count > 0)
+                    @if (SelectableDrafts().Count > 0)
                     {
-                        <strong>@SelectedCount of @SelectableDrafts.Count drafts selected</strong>
+                        <strong>@SelectedCount of @SelectableDrafts().Count drafts selected</strong>
                         <label style="display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px;">
                             <input type="checkbox" class="triage-check" style="margin: 0;" @bind="_queue" data-testid="triage-queue" />
                             Queue for implementation <span class="sidebar-label label-agent-next">agent:next</span>
@@ -357,10 +388,10 @@
                         <button type="button" class="triage-btn is-quiet" disabled="@_busy" @onclick="() => TogglePanel(Panel.Dismiss)" data-testid="triage-dismiss-open">Dismiss</button>
                     }
                     <button type="button" class="triage-btn" disabled="@_busy" @onclick="() => TogglePanel(Panel.Rerun)" data-testid="triage-rerun-open">Re-run with feedback</button>
-                    @if (SelectableDrafts.Count > 0)
+                    @if (SelectableDrafts().Count > 0)
                     {
                         <button type="button" class="triage-btn is-primary" disabled="@(_busy || SelectedCount == 0)" @onclick="CreateIssuesAsync" data-testid="triage-create">
-                            @(_busy && _panel == Panel.None ? "Creating…" : $"Create {SelectedCount} issue{(SelectedCount == 1 ? "" : "s")}")
+                            @(_busy && _panel == Panel.None ? "Creating…" : $"Create {Issues(SelectedCount)}")
                         </button>
                     }
                 </div>
@@ -421,16 +452,27 @@
     private bool _editBusy;
     private string? _editError;
 
+    /// <summary>The triage the page state belongs to: navigating to another one starts clean.</summary>
+    private Guid _loadedId;
+
+    /// <summary>A tracker triage's re-run was asked for: the loop starts it, so nothing on the record shows it yet.</summary>
+    private bool _rerunRequested;
+
+    private const int CollapsedBodyChars = 400;
+    private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+
     private bool IsRunning => _detail?.Status is TriageStatus.Investigating or TriageStatus.New;
 
     /// <summary>Operator on the triage's stored project, and no attempt running.</summary>
     private bool CanAct => _detail is not null && !IsRunning && Access.CanOperate(_detail.Record.ProjectId);
 
-    private IReadOnlyList<TriageEditableDraft> SelectableDrafts => _detail is null
+    private List<TriageEditableDraft> SelectableDrafts() => _detail is null
         ? []
         : _detail.Record.Drafts.Where(d => _detail.Record.CreatedIssues.All(c => c.DraftId != d.Current.Id)).ToList();
 
-    private int SelectedCount => SelectableDrafts.Count(d => _selected.Contains(d.Current.Id));
+    private static string Issues(int count) => count == 1 ? "1 issue" : $"{count} issues";
+
+    private int SelectedCount =>SelectableDrafts().Count(d => _selected.Contains(d.Current.Id));
 
     private bool HasAnswers => _answers.Values.Any(a => !string.IsNullOrWhiteSpace(a)) || !string.IsNullOrWhiteSpace(_feedback);
 
@@ -440,10 +482,32 @@
 
     protected override async Task OnParametersSetAsync()
     {
+        if (Id != _loadedId)
+        {
+            _loadedId = Id;
+            _error = null;
+            _notice = null;
+            _panel = Panel.None;
+            _editing = null;
+            _editError = null;
+            _feedback = null;
+            _dismissReason = null;
+            _rerunRequested = false;
+            _selectionFor = null;
+            _selected.Clear();
+            _answers.Clear();
+            _expanded.Clear();
+        }
         _loading = true;
         await LoadAsync();
         _loading = false;
     }
+
+    /// <summary>
+    /// A request that ran out of time (the client's timeout) rather than one the page cancelled on leaving: the
+    /// action may have happened on the server.
+    /// </summary>
+    private const string TimedOut = "The request timed out; it may still have been carried out. Reload the page to see the current state.";
 
     private async Task LoadAsync()
     {
@@ -500,7 +564,7 @@
         if (key == _selectionFor) return;
         _selectionFor = key;
         _selected.Clear();
-        foreach (var d in SelectableDrafts)
+        foreach (var d in SelectableDrafts())
             _selected.Add(d.Current.Id);
         _answers.Clear();
     }
@@ -547,7 +611,8 @@
                 await body();
         }
         catch (TriageApiException ex) { _error = ex.Message; }
-        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { /* The page was left. */ }
+        catch (OperationCanceledException) { _error = TimedOut; }
         catch (Exception ex) { _error = $"The request failed: {ex.Message}"; }
         finally
         {
@@ -555,9 +620,24 @@
         }
     }
 
+    /// <summary>
+    /// After a re-run request: an operator triage's new attempt is on the returned record; a tracker triage's is
+    /// started by the loop from the issue's label, so the page says so and offers no second request.
+    /// </summary>
+    private void AfterRerun(TriageDetail detail)
+    {
+        _detail = detail;
+        if (detail.Record.Source == TriageSource.Issue && !IsRunning)
+        {
+            _rerunRequested = true;
+            _notice = $"The feedback is posted on issue #{detail.Record.IssueIdentifier} and its label is set to agent:triage. " +
+                      "The next attempt starts when the loop picks it up; this page shows it then.";
+        }
+    }
+
     private Task CreateIssuesAsync() => RunAsync("CreateTriageIssues", async () =>
     {
-        var ids = SelectableDrafts.Where(d => _selected.Contains(d.Current.Id)).Select(d => d.Current.Id).ToList();
+        var ids = SelectableDrafts().Where(d => _selected.Contains(d.Current.Id)).Select(d => d.Current.Id).ToList();
         if (ids.Count == 0) return;
         var created = await Triages.CreateIssuesAsync(Id, new CreateTriageIssuesRequest
         {
@@ -565,20 +645,20 @@
             Queue = _queue,
             CreatedBy = Access.Username ?? "unknown",
         }, _cts.Token);
+        var made = $"Created {Issues(created.Created.Count)}";
         _notice = created.Errors.Count == 0
-            ? $"Created {created.Created.Count} issue{(created.Created.Count == 1 ? "" : "s")}."
-            : $"Created {created.Created.Count} issue{(created.Created.Count == 1 ? "" : "s")}; {created.Errors.Count} failed: "
-                + string.Join("; ", created.Errors.Select(e => e.Message));
+            ? made + "."
+            : $"{made}; {created.Errors.Count} failed: " + string.Join("; ", created.Errors.Select(e => e.Message));
         await RefreshQuietAsync();
     });
 
     private Task RerunWithFeedbackAsync() => RunAsync("RerunTriage", async () =>
     {
-        _detail = await Triages.RerunAsync(Id, new RerunTriageRequest
+        AfterRerun(await Triages.RerunAsync(Id, new RerunTriageRequest
         {
             Feedback = _feedback?.Trim(),
             Author = Access.Username ?? "unknown",
-        }, _cts.Token);
+        }, _cts.Token));
         _feedback = null;
         _panel = Panel.None;
     });
@@ -590,12 +670,12 @@
             .Select((q, i) => new TriageAnswer { Question = q.Question, Answer = _answers.GetValueOrDefault(i, "").Trim() })
             .Where(a => a.Answer.Length > 0)
             .ToList();
-        _detail = await Triages.RerunAsync(Id, new RerunTriageRequest
+        AfterRerun(await Triages.RerunAsync(Id, new RerunTriageRequest
         {
             Answers = answers,
             Feedback = string.IsNullOrWhiteSpace(_feedback) ? null : _feedback.Trim(),
             Author = Access.Username ?? "unknown",
-        }, _cts.Token);
+        }, _cts.Token));
         _feedback = null;
         _answers.Clear();
     });
@@ -651,7 +731,8 @@
         }
         catch (AccessDeniedException) { _editError = AccessDeniedException.UserMessage; }
         catch (TriageApiException ex) { _editError = ex.Message; }
-        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { /* The page was left. */ }
+        catch (OperationCanceledException) { _editError = TimedOut; }
         catch (Exception ex) { _editError = $"Saving failed: {ex.Message}"; }
         finally
         {

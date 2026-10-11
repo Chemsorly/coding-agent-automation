@@ -157,9 +157,9 @@ public class TriageListAndFormComponentTests : BunitContext
         Services.AddTestAccess(TestAccess.Scoped((OtherProjectId, AccessRole.Operator)));
         var cut = Render<TriageNew>();
 
-        cut.Find("[data-testid='triage-title']").Change("Invoices missing");
-        cut.Find("[data-testid='triage-happened']").Change("No invoice mail");
-        cut.Find("[data-testid='triage-expected']").Change("A mail per order");
+        cut.Find("[data-testid='triage-title']").Input("Invoices missing");
+        cut.Find("[data-testid='triage-happened']").Input("No invoice mail");
+        cut.Find("[data-testid='triage-expected']").Input("A mail per order");
 
         cut.Find("[data-testid='triage-preview-problem']").TextContent.Should().Contain("no enabled template");
         cut.Find("[data-testid='triage-start-button']").HasAttribute("disabled").Should().BeTrue();
@@ -173,9 +173,9 @@ public class TriageListAndFormComponentTests : BunitContext
         Services.AddTestAccess(TestAccess.Scoped((ShopProjectId, AccessRole.Operator)));
         var cut = Render<TriageNew>();
 
-        cut.Find("[data-testid='triage-title']").Change("Checkout returns 502");
-        cut.Find("[data-testid='triage-happened']").Change("One in five checkouts fails");
-        cut.Find("[data-testid='triage-expected']").Change("Checkout completes");
+        cut.Find("[data-testid='triage-title']").Input("Checkout returns 502");
+        cut.Find("[data-testid='triage-happened']").Input("One in five checkouts fails");
+        cut.Find("[data-testid='triage-expected']").Input("Checkout completes");
         cut.Find("[data-testid='triage-start']").Change("t1");
         cut.Find("form").Submit();
 
@@ -197,7 +197,8 @@ public class TriageListAndFormComponentTests : BunitContext
         Services.AddTestAccess(TestAccess.Scoped((ShopProjectId, AccessRole.Operator)));
         var cut = Render<TriageNew>();
 
-        cut.Find("[data-testid='triage-title']").Change("Checkout returns 502");
+        cut.Find("[data-testid='triage-title']").Input("Checkout returns 502");
+        cut.Find("[data-testid='triage-title']").Blur();
 
         cut.Find("[data-testid='triage-similar']").TextContent.Should().Contain("Payment page timeout").And.Contain("Duplicate");
     }
@@ -210,9 +211,9 @@ public class TriageListAndFormComponentTests : BunitContext
         Services.AddTestAccess(TestAccess.Scoped((ShopProjectId, AccessRole.Operator)));
         var cut = Render<TriageNew>();
 
-        cut.Find("[data-testid='triage-title']").Change("t");
-        cut.Find("[data-testid='triage-happened']").Change("w");
-        cut.Find("[data-testid='triage-expected']").Change("e");
+        cut.Find("[data-testid='triage-title']").Input("t");
+        cut.Find("[data-testid='triage-happened']").Input("w");
+        cut.Find("[data-testid='triage-expected']").Input("e");
         cut.Find("form").Submit();
 
         cut.Find("[data-testid='triage-new-error']").TextContent.Should().Contain("not an enabled template");

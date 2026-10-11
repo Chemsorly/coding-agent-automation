@@ -61,7 +61,10 @@ public sealed class TriageIssueCreator
         var created = new List<TriageCreatedIssue>();
         var createdNow = 0;
         var errors = new List<TriageDraftError>();
-        var attemptNumber = triage.Attempts.Count(a => a.Result is not null);
+        // The attempt as the triage page numbers it: its position among all attempts
+        var draftsAttempt = triage.Attempts.ToList().FindIndex(a => a.WorkItemId == triage.DraftsFromWorkItemId);
+        var attemptNumber = draftsAttempt >= 0 ? draftsAttempt + 1 : triage.Attempts.Count;
+        var secrets = await TriageSecrets.LoadAsync(_config, project.Id, ct);
 
         foreach (var draftId in request.DraftIds.Distinct(StringComparer.Ordinal))
         {
@@ -89,9 +92,22 @@ public sealed class TriageIssueCreator
                 continue;
             }
 
+            ct.ThrowIfCancellationRequested();
+            CreatedIssueResult issue;
             try
             {
-                var issue = await CreateIssueAsync(triage, project, template, draft, attemptNumber, request.Queue, ct);
+                // Not cancellable from here on: an issue created on the tracker must also be recorded
+                issue = await CreateIssueAsync(triage, secrets, template, draft, attemptNumber, request.Queue, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Could not create the issue of draft {DraftId} of triage {TriageId}", draftId, triageId);
+                errors.Add(new TriageDraftError { DraftId = draftId, Message = $"The issue could not be created: {ex.Message}" });
+                continue;
+            }
+
+            try
+            {
                 var record = new TriageCreatedIssue
                 {
                     DraftId = draftId,
@@ -108,17 +124,22 @@ public sealed class TriageIssueCreator
                 {
                     CreatedIssues = [.. r.CreatedIssues, record],
                     State = TriageState.IssuesCreated,
-                }, ct) ?? triage;
+                }, CancellationToken.None) ?? triage;
                 created.Add(record);
                 createdNow++;
 
                 _logger.Information("Created issue {Identifier} in {Repository} from draft {DraftId} of triage {TriageId}",
                     issue.Identifier, template.Name, draftId, triageId);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex)
             {
-                _logger.Error(ex, "Could not create the issue of draft {DraftId} of triage {TriageId}", draftId, triageId);
-                errors.Add(new TriageDraftError { DraftId = draftId, Message = $"The issue could not be created: {ex.Message}" });
+                _logger.Error(ex, "Created issue {Identifier} from draft {DraftId} of triage {TriageId}, but could not record it",
+                    issue.Identifier, draftId, triageId);
+                errors.Add(new TriageDraftError
+                {
+                    DraftId = draftId,
+                    Message = $"Issue #{issue.Identifier} was created ({issue.Url}) but could not be recorded: do not create this draft again",
+                });
             }
         }
 
@@ -129,31 +150,26 @@ public sealed class TriageIssueCreator
     }
 
     private async Task<CreatedIssueResult> CreateIssueAsync(
-        TriageRecord triage, PipelineProject project, PipelineJobTemplate template, TriageDraft draft,
-        int attemptNumber, bool queue, CancellationToken ct)
+        TriageRecord triage, IReadOnlyCollection<KeyValuePair<string, string>> secrets, PipelineJobTemplate template,
+        TriageDraft draft, int attemptNumber, bool queue, CancellationToken ct)
     {
         var issueConfig = await _config.GetProviderConfigByIdAsync(template.IssueProviderId, ProviderKind.Issue, ct)
             ?? throw new InvalidOperationException($"The tracker of '{template.Name}' is not configured");
-        var repoConfig = await _config.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
 
+        // An operator triage's title is private text: the footer names it only by id. A tracker triage links its
+        // issue, which is already where the report was made.
         var footer = string.Format(CultureInfo.InvariantCulture,
-            "\n\n---\n_Proposed by the triage “{0}” (attempt {1}){2} and approved in Coding Agent._",
-            TextSanitizer.SanitizeMarkdown(triage.Title),
-            attemptNumber,
-            triage.IssueUrl is { } url ? $", reported in {url}" : "");
-        var body = TextSanitizer.SanitizeMarkdown(draft.Body) + footer;
+            "\n\n---\n_Proposed by {0} (attempt {1}) and approved in Coding Agent._",
+            triage.IssueUrl is { } url ? $"the triage of {url}" : $"Coding Agent triage {triage.Id.ToString("D")[..8]}",
+            attemptNumber);
 
-        var secrets = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var source in new[] { project.Secrets, repoConfig?.Secrets })
-            foreach (var (key, value) in source ?? [])
-                secrets[key] = value;
-        if (secrets.Count > 0)
-            body = SecretMasker.Mask(body, secrets);
+        // Mask the raw text first: sanitizing changes characters, so a secret would no longer match
+        var body = TextSanitizer.SanitizeMarkdown(SecretMasker.Mask(draft.Body, secrets)) + footer;
+        var title = TextSanitizer.SanitizeTitle(SecretMasker.Mask(draft.Title, secrets));
 
         IReadOnlyList<string> labels = queue ? [AgentLabels.Generated, AgentLabels.Next] : [AgentLabels.Generated];
 
         await using var provider = _providers.CreateIssueProvider(issueConfig);
-        var title = TextSanitizer.SanitizeTitle(secrets.Count > 0 ? SecretMasker.Mask(draft.Title, secrets) : draft.Title);
         return await provider.CreateIssueAsync(title, body, labels, ct);
     }
 }

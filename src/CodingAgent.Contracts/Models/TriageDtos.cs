@@ -27,7 +27,8 @@ public sealed record TriageListFacts
             Verdict = latest?.Verdict,
             Confidence = latest?.Confidence,
             DraftCount = record.Drafts.Count,
-            CreatedIssueCount = record.CreatedIssues.Count,
+            // Of the current drafts: issues created from an earlier attempt's drafts stay on the record, not in this count
+            CreatedIssueCount = record.CreatedIssues.Count(c => record.Drafts.Any(d => d.Current.Id == c.DraftId)),
             AttemptCount = record.Attempts.Count,
             LastAttemptHasResult = last?.Result is not null,
             LastAttemptOutcome = last?.Outcome,
@@ -97,6 +98,20 @@ public sealed record TriageResultReport
 
     public required DateTimeOffset StartedAt { get; init; }
     public required TriageResult Result { get; init; }
+}
+
+/// <summary>A tracker issue's triage attempt that was claimed by an agent, before it reports anything.</summary>
+public sealed record TriageAttemptStart
+{
+    /// <summary>The attempt's WorkItem (and run) id.</summary>
+    public required string WorkItemId { get; init; }
+
+    public required string ProjectId { get; init; }
+    public required string IssueProviderConfigId { get; init; }
+    public required string IssueIdentifier { get; init; }
+    public string? IssueTitle { get; init; }
+    public string? IssueUrl { get; init; }
+    public required DateTimeOffset StartedAt { get; init; }
 }
 
 /// <summary>A page of the triage list.</summary>

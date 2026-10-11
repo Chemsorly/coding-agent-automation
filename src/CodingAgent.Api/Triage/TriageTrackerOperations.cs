@@ -10,8 +10,8 @@ namespace CodingAgent.Api.Triage;
 /// <summary>
 /// What a tracker triage's issue gets when people act on the triage in the app: the feedback comment and
 /// <c>agent:triage</c> for a re-run, a summary comment and <c>agent:done</c> after issues were created, a short
-/// comment and <c>agent:wont-do</c> when it is dismissed. Values people or agents wrote are sanitized and the
-/// project's and repositories' secret values are masked.
+/// comment and <c>agent:wont-do</c> when it is dismissed. Values people or agents wrote are masked with the
+/// project's secrets (<see cref="TriageSecrets"/>), then sanitized.
 /// </summary>
 public class TriageTrackerOperations
 {
@@ -28,11 +28,16 @@ public class TriageTrackerOperations
         _logger = logger;
     }
 
+    // The comments never name the app user: usernames are often e-mail addresses, and the tracker may be public.
+
     /// <summary>Asks the loop for another attempt: the feedback goes on the issue, then <c>agent:triage</c>.</summary>
     public virtual async Task RequestRerunAsync(TriageRecord triage, TriageFeedback feedback, CancellationToken ct)
     {
+        var secrets = await TriageSecrets.LoadAsync(_config, triage.ProjectId, ct);
+        string V(string value) => Clean(value, secrets);
+
         var sb = new StringBuilder();
-        sb.AppendLine($"**Feedback from {V(feedback.Author ?? "a person")} via Coding Agent** for the next triage attempt:");
+        sb.AppendLine("**Feedback via Coding Agent** for the next triage attempt:");
         sb.AppendLine();
         if (!string.IsNullOrWhiteSpace(feedback.Text))
         {
@@ -46,7 +51,8 @@ public class TriageTrackerOperations
         }
 
         await PostCommentAsync(triage, sb.ToString(), critical: true, ct);
-        await SwapAsync(triage, AgentLabels.Triage, ct);
+        // Strict: if the label is not set, no attempt runs, and the caller must say so
+        await _labels.SwapLabelAsync(triage.IssueProviderConfigId!, triage.IssueIdentifier!, AgentLabels.Triage, LabelTargetKind.Issue, ct);
     }
 
     /// <summary>Lists the created issues on the triaged issue and ends its triage with <c>agent:done</c>.</summary>
@@ -57,7 +63,7 @@ public class TriageTrackerOperations
         sb.AppendLine("**Issues created from this triage:**");
         sb.AppendLine();
         foreach (var issue in created)
-            sb.AppendLine($"- {V(issue.Repository)}: {issue.Url ?? "#" + V(issue.Identifier)}");
+            sb.AppendLine($"- {Clean(issue.Repository, [])}: {issue.Url ?? "#" + Clean(issue.Identifier, [])}");
 
         await PostCommentAsync(triage, sb.ToString(), critical: false, ct);
         await SwapAsync(triage, AgentLabels.Done, ct);
@@ -66,8 +72,9 @@ public class TriageTrackerOperations
     /// <summary>Notes on the triaged issue that the triage was dismissed, and sets <c>agent:wont-do</c>.</summary>
     public virtual async Task ReportDismissedAsync(TriageRecord triage, CancellationToken ct)
     {
-        var reason = string.IsNullOrWhiteSpace(triage.DismissReason) ? "" : $": {V(triage.DismissReason)}";
-        await PostCommentAsync(triage, $"The triage was dismissed in Coding Agent by {V(triage.DismissedBy ?? "a person")}{reason}", critical: false, ct);
+        var secrets = await TriageSecrets.LoadAsync(_config, triage.ProjectId, ct);
+        var reason = string.IsNullOrWhiteSpace(triage.DismissReason) ? "" : $": {Clean(triage.DismissReason, secrets)}";
+        await PostCommentAsync(triage, $"The triage was dismissed in Coding Agent{reason}", critical: false, ct);
         await SwapAsync(triage, AgentLabels.WontDo, ct);
     }
 
@@ -77,11 +84,9 @@ public class TriageTrackerOperations
         {
             var config = await _config.GetProviderConfigByIdAsync(triage.IssueProviderConfigId!, ProviderKind.Issue, ct)
                 ?? throw new InvalidOperationException($"The tracker of triage {triage.Id} is not configured");
-            var project = await _config.GetProjectByIdAsync(triage.ProjectId, ct);
-            var masked = project?.Secrets is { Count: > 0 } secrets ? SecretMasker.Mask(body, secrets) : body;
 
             await using var provider = _providers.CreateIssueProvider(config);
-            await provider.PostCommentAsync(triage.IssueIdentifier!, masked, ct);
+            await provider.PostCommentAsync(triage.IssueIdentifier!, body, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException && !critical)
         {
@@ -89,10 +94,12 @@ public class TriageTrackerOperations
         }
     }
 
+    /// <summary>Masks the raw value, then sanitizes it: masking after sanitizing would miss changed secrets.</summary>
+    private static string Clean(string value, IReadOnlyCollection<KeyValuePair<string, string>> secrets) =>
+        TextSanitizer.SanitizeMarkdown(SecretMasker.Mask(value.Trim(), secrets));
+
     private Task SwapAsync(TriageRecord triage, string label, CancellationToken ct) =>
         _labels.TrySwapLabelAsync(
             triage.IssueProviderConfigId!, triage.IssueIdentifier!, label, LabelTargetKind.Issue, _logger,
             $"TriageTrackerOperations (triage {triage.Id})", ct);
-
-    private static string V(string value) => TextSanitizer.SanitizeMarkdown(value.Trim());
 }

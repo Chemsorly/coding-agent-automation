@@ -59,6 +59,16 @@ public sealed class HubTriageOperations : IHubTriageOperations
             throw new HubException($"The triage result of job {jobId.Value} could not be read: {parsed.Error}");
         }
 
+        // Validate again here: the agent pod's validation is not a boundary the stored record can rely on
+        var templates = (await _facade.LoadTemplatesForProjectAsync(projectId.ToString("D"), ct)).Where(t => t.Enabled).ToList();
+        var executor = templates.FirstOrDefault(t => t.RepoProviderId == record.RepoProviderConfigId)?.Name;
+        var validated = TriageResultValidator.Validate(parsed.Result, templates.Select(t => t.Name).ToList(), executor);
+        if (validated.Result is null)
+        {
+            _logger.Warning("ReportTriageResult refused for job {JobId}: {Error}", jobId.Value, validated.Error);
+            throw new HubException($"The triage result of job {jobId.Value} is not valid: {validated.Error}");
+        }
+
         var run = _facade.GetRun(jobId);
         var report = new TriageResultReport
         {
@@ -70,7 +80,7 @@ public sealed class HubTriageOperations : IHubTriageOperations
             IssueTitle = run?.IssueTitle,
             IssueUrl = run?.IssueUrl,
             StartedAt = run?.StartedAtOffset ?? DateTimeOffset.UtcNow,
-            Result = parsed.Result,
+            Result = validated.Result,
         };
 
         try
@@ -78,12 +88,12 @@ public sealed class HubTriageOperations : IHubTriageOperations
             var saved = await _store.RecordResultAsync(report, ct);
             _logger.Information(
                 "Recorded triage result for job {JobId} on triage {TriageId}: {Verdict}, {Checks} checks, {Drafts} drafts",
-                jobId.Value, saved.Id, parsed.Result.Verdict, parsed.Result.Investigated.Count, parsed.Result.Drafts.Count);
+                jobId.Value, saved.Id, validated.Result.Verdict, validated.Result.Investigated.Count, validated.Result.Drafts.Count);
         }
         catch (InvalidOperationException ex)
         {
             _logger.Error(ex, "ReportTriageResult failed for job {JobId}", jobId.Value);
-            throw new HubException($"The triage of job {jobId.Value} could not be found");
+            throw new HubException($"The triage of job {jobId.Value} could not be recorded: {ex.Message}");
         }
     }
 

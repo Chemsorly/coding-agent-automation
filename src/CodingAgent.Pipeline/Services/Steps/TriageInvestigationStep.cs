@@ -142,7 +142,7 @@ public sealed class TriageInvestigationStep : IPipelineStep
         }
         LogWarnings(context, validated.Warnings);
 
-        await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(validated.Result, PipelineJsonOptions.Default), ct);
+        await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(validated.Result, TriageResultParser.WriteOptions), ct);
         context.Callbacks.EmitOutputLine("✅ Triage investigation complete");
         return StepResult.Continue;
     }

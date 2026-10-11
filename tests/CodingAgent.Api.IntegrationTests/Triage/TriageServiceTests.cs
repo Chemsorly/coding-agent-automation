@@ -186,7 +186,89 @@ public sealed class TriageServiceTests
         (await db.WorkItems.CountAsync()).Should().Be(0, "the loop dispatches a tracker triage");
     }
 
+    [Fact]
+    public async Task Rerun_TrackerTriageWhoseIssueCannotBeUpdated_SaysNoAttemptWasQueued()
+    {
+        var triage = Tracker();
+        _records[triage.Id] = triage;
+        _tracker.Setup(t => t.RequestRerunAsync(It.IsAny<TriageRecord>(), It.IsAny<TriageFeedback>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+
+        var act = () => Service().RerunAsync(triage.Id, new RerunTriageRequest { Feedback = "f", Author = "ben" }, CancellationToken.None);
+
+        var ex = (await act.Should().ThrowAsync<TriageRequestException>()).Which;
+        ex.StatusCode.Should().Be(502);
+        ex.Message.Should().Contain("no attempt was queued").And.Contain("rate limited");
+    }
+
+    [Fact]
+    public async Task Rerun_FeedbackAndAnswersOverTheCommentBudget_AreRefused()
+    {
+        var triage = Tracker();
+        _records[triage.Id] = triage;
+
+        var act = () => Service().RerunAsync(triage.Id, new RerunTriageRequest
+        {
+            Feedback = new string('f', 20_000),
+            Answers = [new TriageAnswer { Question = "q", Answer = new string('a', 20_000) }],
+            Author = "ben",
+        }, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<TriageRequestException>()).Which.StatusCode.Should().Be(400);
+        _tracker.Verify(t => t.RequestRerunAsync(It.IsAny<TriageRecord>(), It.IsAny<TriageFeedback>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Rerun_KeepsAtMostTenAnswers()
+    {
+        var triage = Tracker();
+        _records[triage.Id] = triage;
+
+        await Service().RerunAsync(triage.Id, new RerunTriageRequest
+        {
+            Answers = Enumerable.Range(1, 12).Select(i => new TriageAnswer { Question = $"Q{i}", Answer = $"A{i}" }).ToList(),
+            Author = "ben",
+        }, CancellationToken.None);
+
+        _tracker.Verify(t => t.RequestRerunAsync(It.IsAny<TriageRecord>(), It.Is<TriageFeedback>(f => f.Answers.Count == 10),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Rerun_StartInTemplateNoLongerEnabled_RunsOnTheFirstTemplate()
+    {
+        // The form's "start looking in" is a hint once the triage exists: a repository that left the project
+        // must not make the triage impossible to re-run
+        var created = await Service().CreateAsync(Request(startIn: Web.Id), CancellationToken.None);
+        await CompleteAllWorkItemsAsync();
+        _records[created.Record.Id] = created.Record with
+        {
+            Request = created.Record.Request! with { StartInTemplateId = "tpl-disabled" },
+        };
+
+        var detail = await Service().RerunAsync(created.Record.Id, new RerunTriageRequest { Feedback = "f", Author = "ben" }, CancellationToken.None);
+
+        await using var db = new Factory(_db).CreateDbContext();
+        var rerun = await db.WorkItems.SingleAsync(w => w.Id.ToString() == detail.Record.Attempts[1].WorkItemId);
+        JsonSerializer.Deserialize<JobDistributionRequest>(rerun.Payload!, PipelineJsonOptions.Lenient)!
+            .RepoProviderConfigId.Should().Be("rp-api");
+    }
+
     // ── Drafts and dismissal ─────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(201, 10)]
+    [InlineData(10, TriageConstants.MaxDraftBodyChars + 1)]
+    public async Task UpdateDraft_OverTheSizeLimits_IsRefused(int titleChars, int bodyChars)
+    {
+        var triage = Operator() with { Drafts = [Editable("d1", "checkout-api")] };
+        _records[triage.Id] = triage;
+
+        var act = () => Service().UpdateDraftAsync(triage.Id, "d1",
+            Edit("checkout-api") with { Title = new string('t', titleChars), Body = new string('b', bodyChars) }, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<TriageRequestException>()).Which.StatusCode.Should().Be(400);
+    }
 
     [Fact]
     public async Task UpdateDraft_ToAnotherProjectRepository_IsSaved_ToAForeignOne_IsRefused()
@@ -246,7 +328,8 @@ public sealed class TriageServiceTests
 
         result.Errors.Should().BeEmpty();
         result.Created.Should().ContainSingle().Which.Repository.Should().Be("checkout-api");
-        created.Single().Body.Should().NotContain("hunter2-secret").And.Contain("Proposed by the triage");
+        created.Single().Body.Should().NotContain("hunter2-secret").And.Contain("Proposed by Coding Agent triage")
+            .And.NotContain(triage.Title, "an operator triage's title is private text");
         created.Single().Labels.Should().BeEquivalentTo(AgentLabels.Generated, AgentLabels.Next);
         _providers.Verify(p => p.CreateIssueProvider(It.Is<ProviderConfig>(c => c.Id == "t-api")), Times.Once);
         _records[triage.Id].CreatedIssues.Should().ContainSingle();
@@ -302,6 +385,44 @@ public sealed class TriageServiceTests
         await Creator().CreateAsync(triage.Id, new CreateTriageIssuesRequest { DraftIds = ["d1"], CreatedBy = "ben" }, CancellationToken.None);
 
         _tracker.Verify(t => t.ReportCreatedAsync(It.IsAny<TriageRecord>(), It.Is<IReadOnlyList<TriageCreatedIssue>>(c => c.Count == 1), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateIssues_FooterNamesTheTrackerIssue_AndTheAttemptTheDraftsCameFrom()
+    {
+        var triage = Tracker() with
+        {
+            Attempts = [Attempt("w1"), Attempt("w2"), Attempt("w3")],
+            DraftsFromWorkItemId = "w2",
+            Drafts = [Editable("a2-d1", "checkout-api")],
+        };
+        _records[triage.Id] = triage;
+        string? body = null;
+        _issues.Setup(i => i.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback((string _, string b, IReadOnlyList<string> _, CancellationToken _) => body = b)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "9", Url = "https://tracker/9" });
+
+        await Creator().CreateAsync(triage.Id, new CreateTriageIssuesRequest { DraftIds = ["a2-d1"], CreatedBy = "ben" }, CancellationToken.None);
+
+        body.Should().EndWith("_Proposed by the triage of https://tracker/431 (attempt 2) and approved in Coding Agent._")
+            .And.NotContain("ben", "the issue never names the app user");
+    }
+
+    [Fact]
+    public async Task CreateIssues_IssueCreatedButNotRecorded_SaysNotToCreateItAgain()
+    {
+        var triage = Operator() with { Drafts = [Editable("d1", "checkout-api")] };
+        _records[triage.Id] = triage;
+        _issues.Setup(i => i.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "9", Url = "https://tracker/9" });
+        _store.Setup(s => s.UpdateAsync(It.IsAny<Guid>(), It.IsAny<Func<TriageRecord, TriageRecord?>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("database down"));
+
+        var result = await Creator().CreateAsync(triage.Id, new CreateTriageIssuesRequest { DraftIds = ["d1"], CreatedBy = "ben" }, CancellationToken.None);
+
+        result.Created.Should().BeEmpty();
+        result.Errors.Should().ContainSingle().Which.Message.Should()
+            .Contain("#9 was created (https://tracker/9)").And.Contain("do not create this draft again");
     }
 
     [Fact]
@@ -371,6 +492,8 @@ public sealed class TriageServiceTests
         CreatedAt = DateTimeOffset.UtcNow,
         UpdatedAt = DateTimeOffset.UtcNow,
     };
+
+    private static TriageAttempt Attempt(string workItemId) => new() { WorkItemId = workItemId, StartedAt = DateTimeOffset.UtcNow };
 
     private static TriageEditableDraft Editable(string id, string repository, string body = "## Problem\nx")
     {

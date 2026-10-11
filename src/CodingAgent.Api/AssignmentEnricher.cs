@@ -301,6 +301,26 @@ public class AssignmentEnricher
         var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount) = core.Value;
 
+        // A tracker issue's triage attempt is recorded when it is claimed, so one that ends without a result still
+        // shows (an operator triage's attempt was recorded when it was started)
+        if (identity.TaskType == WorkItemTaskType.Triage && _triageStore is not null
+            && !TriageConstants.IsOperatorTriage(identity.IssueProviderConfigId) && identity.RunId is { } runId)
+        {
+            var recorded = await _triageStore.RecordAttemptStartAsync(new TriageAttemptStart
+            {
+                WorkItemId = runId,
+                ProjectId = project.Id,
+                IssueProviderConfigId = identity.IssueProviderConfigId,
+                IssueIdentifier = identity.IssueIdentifier,
+                IssueTitle = issueContext.IssueDetail.Title,
+                IssueUrl = issueContext.IssueDetail.Url,
+                StartedAt = DateTimeOffset.UtcNow,
+            }, ct);
+            if (recorded is null)
+                _logger.Warning("AssignmentEnricher: the triage of {IssueIdentifier} belongs to another project; this attempt is not recorded on it",
+                    identity.IssueIdentifier);
+        }
+
         // ── Step 4: Build enriched JobDistributionRequest from identity + fresh data ──
         return identity with
         {
@@ -372,11 +392,19 @@ public class AssignmentEnricher
         else
         {
             triage = await _triageStore.GetByIssueAsync(identity.IssueProviderConfigId, identity.IssueIdentifier, ct);
+            if (triage is not null && triage.ProjectId != project.Id)
+            {
+                // A tracker two projects poll: the earlier attempts belong to the other project and stay out of this run
+                _logger.Warning(
+                    "AssignmentEnricher: the triage of {IssueIdentifier} belongs to project {OtherProjectId}, not {ProjectId}; its earlier attempts are left out",
+                    identity.IssueIdentifier, triage.ProjectId, project.Id);
+                triage = null;
+            }
         }
 
+        // Every triage the project still has: the retention sweep bounds them to the retention window
         var others = await _triageStore.ListRecentAsync(
-            project.Id, DateTimeOffset.UtcNow.AddDays(-PipelineConstants.DefaultTriageRetentionDays),
-            TriageConstants.MaxHistoryContext, triage?.Id, ct);
+            project.Id, DateTimeOffset.MinValue, TriageConstants.MaxHistoryContext, triage?.Id, ct);
         var markdown = TriageContextRenderer.RenderContext(triage, identity.RunId, others, reportToTracker: !isOperatorTriage);
         return (projectContext, subject, markdown);
     }

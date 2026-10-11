@@ -40,9 +40,9 @@ public static class TriageCommentRenderer
         sb.AppendLine("## Triage: root cause analysis");
         sb.AppendLine();
 
-        var reproduced = result.Reproduced
-            ? "yes" + (result.Reproduction is { } how ? $" ({V(how)})" : "")
-            : "no";
+        var reproduced = "no";
+        if (result.Reproduced)
+            reproduced = result.Reproduction is { } how ? $"yes ({V(how)})" : "yes";
         sb.Append($"**Verdict:** {VerdictText(result.Verdict)}");
         if (result.Confidence is { } confidence)
             sb.Append($" · **Confidence:** {confidence.ToString().ToLowerInvariant()}");

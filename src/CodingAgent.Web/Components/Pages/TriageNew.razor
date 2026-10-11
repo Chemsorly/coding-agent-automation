@@ -12,6 +12,7 @@
 @inject CurrentAccess Access
 @inject IAccessGuard Guard
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 @*
     New triage — the operator form (spec 050, mock B2). Creates the triage and its Pending WorkItem in one
@@ -54,17 +55,17 @@
                     </div>
                     <div class="triage-field">
                         <label class="triage-label" for="triage-title">Title</label>
-                        <input id="triage-title" class="triage-input" type="text" maxlength="200" @bind="_title" @bind:after="LoadSimilarAsync"
+                        <input id="triage-title" class="triage-input" type="text" maxlength="200" @bind="_title" @bind:event="oninput" @onblur="LoadSimilarAsync"
                                placeholder="Checkout returns 502 after the 14:00 deploy" data-testid="triage-title" />
                     </div>
                     <div class="triage-field">
                         <label class="triage-label" for="triage-happened">What happened</label>
-                        <textarea id="triage-happened" class="triage-input" @bind="_whatHappened" data-testid="triage-happened"
+                        <textarea id="triage-happened" class="triage-input" @bind="_whatHappened" @bind:event="oninput" data-testid="triage-happened"
                                   placeholder="What you saw, how often, and for whom"></textarea>
                     </div>
                     <div class="triage-field">
                         <label class="triage-label" for="triage-expected">What did you expect</label>
-                        <textarea id="triage-expected" class="triage-input" style="min-height: 64px;" @bind="_expected" data-testid="triage-expected"></textarea>
+                        <textarea id="triage-expected" class="triage-input" style="min-height: 64px;" @bind="_expected" @bind:event="oninput" data-testid="triage-expected"></textarea>
                     </div>
 
                     <div class="triage-sec">
@@ -368,25 +369,40 @@
         }
     }
 
-    private void SetWhen(string key)
-    {
-        _when = key;
-        if (key == "custom" && _from is null)
-            _from = DateTime.Now.AddHours(-1);
-    }
+    private void SetWhen(string key) => _when = key;
 
-    /// <summary>The "when" range in UTC; presets end now (still happening).</summary>
-    private (DateTimeOffset? From, DateTimeOffset? Until) WhenRange()
+    /// <summary>
+    /// The "when" range in UTC; presets end now (still happening). "Today" and a custom range are the browser's
+    /// local time, converted in the browser: the server's time zone is not the user's.
+    /// </summary>
+    private async Task<(DateTimeOffset? From, DateTimeOffset? Until)> WhenRangeAsync()
     {
         var now = DateTimeOffset.UtcNow;
         return _when switch
         {
             "hour" => (now.AddHours(-1), null),
-            "today" => (new DateTimeOffset(DateTime.Today).ToUniversalTime(), null),
+            "today" => (await BrowserUtcAsync("startOfTodayUtcIso") ?? new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero), null),
             "week" => (now.AddDays(-7), null),
-            _ => (_from is { } f ? new DateTimeOffset(f).ToUniversalTime() : null,
-                  _until is { } u ? new DateTimeOffset(u).ToUniversalTime() : null)
+            _ => (await LocalToUtcAsync(_from), await LocalToUtcAsync(_until))
         };
+    }
+
+    private Task<DateTimeOffset?> LocalToUtcAsync(DateTime? local) => local is { } value
+        ? BrowserUtcAsync("localToUtcIso", value.ToString("yyyy-MM-ddTHH:mm", System.Globalization.CultureInfo.InvariantCulture))
+        : Task.FromResult<DateTimeOffset?>(null);
+
+    private async Task<DateTimeOffset?> BrowserUtcAsync(string function, params object[] args)
+    {
+        try
+        {
+            var iso = await JS.InvokeAsync<string?>(function, args);
+            return DateTimeOffset.TryParse(iso, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal, out var utc) ? utc.ToUniversalTime() : null;
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or InvalidOperationException or TaskCanceledException)
+        {
+            return null;
+        }
     }
 
     private async Task StartAsync()
@@ -397,7 +413,7 @@
         try
         {
             await Guard.DemandAsync(AccessRole.Operator, _projectId, "StartTriage");
-            var (from, until) = WhenRange();
+            var (from, until) = await WhenRangeAsync();
             var detail = await Triages.CreateAsync(new CreateTriageRequest
             {
                 ProjectId = _projectId,
@@ -421,7 +437,8 @@
         }
         catch (AccessDeniedException) { _error = AccessDeniedException.UserMessage; }
         catch (TriageApiException ex) { _error = ex.Message; }
-        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { /* The page was left. */ }
+        catch (OperationCanceledException) { _error = "The request timed out. Check the Triage list before starting it again."; }
         catch (Exception ex) { _error = $"Failed to start the triage: {ex.Message}"; }
         finally
         {

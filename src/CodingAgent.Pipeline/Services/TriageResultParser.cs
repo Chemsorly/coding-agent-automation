@@ -11,6 +11,16 @@ namespace CodingAgent.Pipeline.Services;
 /// </summary>
 public static class TriageResultParser
 {
+    /// <summary>
+    /// How the pipeline writes a result: compact, and without escaping non-ASCII or <c>&lt;&gt;&amp;</c>, so the
+    /// validated file never grows past <see cref="TriageConstants.MaxResultBytes"/> while the agent's own file fit.
+    /// </summary>
+    public static readonly JsonSerializerOptions WriteOptions = new(PipelineJsonOptions.Default)
+    {
+        WriteIndented = false,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     /// <summary>The parsed result, or the reason it could not be parsed, and what was defaulted.</summary>
     public sealed record ParseOutcome(TriageResult? Result, string? Error, IReadOnlyList<string> Warnings);
 
@@ -112,6 +122,7 @@ public static class TriageResultParser
                     Title = Text(o, "title") ?? "",
                     Body = Text(o, "body") ?? "",
                     Size = Text(o, "size"),
+                    Warning = Text(o, "warning"),
                 })
                 .ToList(),
         };

@@ -159,11 +159,17 @@
         return run.RetryCount > 0 ? $"Failed after {run.RetryCount} retries" : "Failed";
     }
 
-    private static string TriageSubline(TriageListItem t) => t.Status == TriageStatus.NeedsInput
-        ? "The agent has questions — answer them to re-run"
-        : t.Facts.DraftCount > 0
-            ? $"RCA ready — review {t.Facts.DraftCount} issue draft{(t.Facts.DraftCount == 1 ? "" : "s")}"
-            : "RCA ready — review it";
+    private static string TriageSubline(TriageListItem t)
+    {
+        if (t.Status == TriageStatus.NeedsInput)
+            return "The agent has questions — answer them to re-run";
+        return t.Facts.DraftCount switch
+        {
+            0 => "RCA ready — review it",
+            1 => "RCA ready — review 1 issue draft",
+            var n => $"RCA ready — review {n} issue drafts",
+        };
+    }
 
     private readonly CancellationTokenSource _cts = new();
     private bool _loading = true;

@@ -45,6 +45,25 @@
 
 @AfterVerdict
 
+@if (ShowQuestions && Result.Questions.Count > 0)
+{
+    <section class="cockpit-card" aria-label="The agent's questions" data-testid="triage-report-questions">
+        <div class="cockpit-card-header"><h2>The agent's questions</h2></div>
+        <ol style="margin: 0; padding: 14px 18px 14px 36px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px;">
+            @foreach (var q in Result.Questions)
+            {
+                <li style="overflow-wrap: anywhere;">
+                    <strong>@q.Question</strong>
+                    @if (!string.IsNullOrWhiteSpace(q.Why))
+                    {
+                        <div class="triage-hint">@q.Why</div>
+                    }
+                </li>
+            }
+        </ol>
+    </section>
+}
+
 @if (Result.CausalChain.Count > 0)
 {
     <section class="cockpit-card" aria-label="Causal chain" data-testid="triage-chain">
@@ -169,6 +188,9 @@
 
     /// <summary>Rendered right after the verdict card.</summary>
     [Parameter] public RenderFragment? AfterVerdict { get; set; }
+
+    /// <summary>Lists the agent's questions; off where the page shows them as a form to answer.</summary>
+    [Parameter] public bool ShowQuestions { get; set; } = true;
 
     private static string Short(string text, int max) => text.Length <= max ? text : text[..(max - 1)] + "…";
 }

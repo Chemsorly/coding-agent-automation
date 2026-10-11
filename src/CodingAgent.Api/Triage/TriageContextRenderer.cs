@@ -153,7 +153,9 @@ public static class TriageContextRenderer
                     ? " — created " + string.Join(", ", other.CreatedIssues.Select(i => i.Url ?? $"#{i.Identifier}"))
                     : "";
                 var source = other.Source == TriageSource.Issue && other.IssueUrl is not null ? $" ({other.IssueUrl})" : "";
-                sb.AppendLine($"- **{other.Title}**{source} · {Time(other.UpdatedAt)} · {verdict}{issues}");
+                // An operator triage's title is private text; a result posted on a tracker must not be able to quote it
+                var title = reportToTracker && other.Source == TriageSource.Operator ? "(an operator triage)" : other.Title;
+                sb.AppendLine($"- **{title}**{source} · {Time(other.UpdatedAt)} · {verdict}{issues}");
                 if (!reportToTracker && latest is not null)
                     sb.AppendLine($"  {Cut(latest.Summary)}");
             }

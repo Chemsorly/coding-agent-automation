@@ -21,7 +21,7 @@ public sealed partial class AgentHub
         if (_triageOps is null)
             throw new HubException("Triage results are not accepted by this host");
 
-        // TODO: Thread a SignalR connection-lifetime CancellationToken here instead of CancellationToken.None.
+        // Not tied to the connection: a result the agent sent is recorded even if it disconnects meanwhile
         return _triageOps.RecordResultAsync(jobId, resultJson, CancellationToken.None);
     }
 
@@ -31,18 +31,17 @@ public sealed partial class AgentHub
     /// </summary>
     private async Task RefuseIssueCreationForTriageAsync(JobId jobId)
     {
-        if (_triageOps is null)
-        {
-            // Without triage operations no triage runs exist on this host; only the in-memory run can tell.
-            if (_facade.GetRun(jobId) is { RunType: PipelineRunType.Triage })
-                throw new HubException($"Job {jobId.Value} is a triage run; triage runs may not create issues");
-            return;
-        }
-
-        if (await _triageOps.IsTriageRunAsync(jobId, CancellationToken.None))
+        if (await IsTriageRunAsync(jobId))
         {
             _logger.Warning("Issue creation refused for job {JobId}: triage runs may not create issues", jobId.Value);
             throw new HubException($"Job {jobId.Value} is a triage run; triage runs may not create issues");
         }
     }
+
+    /// <summary>Whether the job is a triage run; fails closed (true) when the run cannot be identified.</summary>
+    private async Task<bool> IsTriageRunAsync(JobId jobId) =>
+        _triageOps is null
+            // Without triage operations no triage runs exist on this host; only the in-memory run can tell.
+            ? _facade.GetRun(jobId) is { RunType: PipelineRunType.Triage }
+            : await _triageOps.IsTriageRunAsync(jobId, CancellationToken.None);
 }

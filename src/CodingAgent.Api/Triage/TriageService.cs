@@ -26,8 +26,15 @@ public sealed class TriageRequestException(int statusCode, string message) : Exc
 public sealed class TriageService
 {
     private const int MaxTextChars = 20_000;
+
+    /// <summary>The feedback goes into a tracker comment, which GitHub limits to 65,536 characters.</summary>
+    private const int MaxFeedbackChars = 40_000;
+
+    private const int MaxAnswers = 10;
+    private const int MaxDraftTitleChars = 200;
     private const int SimilarLookbackDays = 30;
     private const int MaxSimilar = 3;
+    private const string NotFound = "Triage not found";
 
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -173,7 +180,7 @@ public sealed class TriageService
     {
         ArgumentNullException.ThrowIfNull(request);
         var record = await _store.GetAsync(id, ct)
-            ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "Triage not found");
+            ?? throw new TriageRequestException(StatusCodes.Status404NotFound, NotFound);
         if (await _store.GetActiveWorkItemIdAsync(record, ct) is not null)
             throw new TriageRequestException(StatusCodes.Status409Conflict, "An attempt is already running");
 
@@ -182,21 +189,34 @@ public sealed class TriageService
             Text = Cut(request.Feedback),
             Answers = request.Answers
                 .Where(a => !string.IsNullOrWhiteSpace(a.Answer))
+                .Take(MaxAnswers)
                 .Select(a => new TriageAnswer { Question = Cut(a.Question) ?? "", Answer = Cut(a.Answer) ?? "" })
                 .ToList(),
             Author = request.Author,
             CreatedAt = DateTimeOffset.UtcNow,
         };
+        if ((feedback.Text?.Length ?? 0) + feedback.Answers.Sum(a => a.Question.Length + a.Answer.Length) > MaxFeedbackChars)
+            throw new TriageRequestException(StatusCodes.Status400BadRequest,
+                $"The feedback is too long (at most {MaxFeedbackChars} characters with the answers)");
 
         if (record.Source == TriageSource.Issue)
         {
-            await _tracker.RequestRerunAsync(record, feedback, ct);
+            try
+            {
+                await _tracker.RequestRerunAsync(record, feedback, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not TriageRequestException)
+            {
+                _logger.Warning(ex, "Re-run of triage {TriageId} could not update its issue", id);
+                throw new TriageRequestException(StatusCodes.Status502BadGateway,
+                    $"The issue could not be updated, so no attempt was queued: {ex.Message}");
+            }
             return await ToDetailAsync(record, ct);
         }
 
         var project = await _config.GetProjectByIdAsync(record.ProjectId, ct)
             ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "The triage's project no longer exists");
-        var executor = await ResolveExecutorAsync(project, record.Request?.StartInTemplateId, ct);
+        var executor = await ResolveExecutorAsync(project, record.Request?.StartInTemplateId, ct, startInIsHint: true);
         var workItemId = Guid.NewGuid();
         var distribution = await BuildDistributionRequestAsync(record, project, executor, workItemId, ct);
 
@@ -204,7 +224,7 @@ public sealed class TriageService
         await using (var db = await _dbFactory.CreateDbContextAsync(ct))
         {
             var entity = await db.Triages.FirstOrDefaultAsync(t => t.Id == id, ct)
-                ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "Triage not found");
+                ?? throw new TriageRequestException(StatusCodes.Status404NotFound, NotFound);
             var current = TriageEntityMapper.ToRecord(entity);
             updated = current with
             {
@@ -242,9 +262,12 @@ public sealed class TriageService
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Body))
             throw new TriageRequestException(StatusCodes.Status400BadRequest, "A draft needs a title and a body");
+        if (request.Title.Length > MaxDraftTitleChars || request.Body.Length > TriageConstants.MaxDraftBodyChars)
+            throw new TriageRequestException(StatusCodes.Status400BadRequest,
+                $"A draft's title has at most {MaxDraftTitleChars} and its body at most {TriageConstants.MaxDraftBodyChars} characters");
 
         var record = await _store.GetAsync(id, ct)
-            ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "Triage not found");
+            ?? throw new TriageRequestException(StatusCodes.Status404NotFound, NotFound);
         var repository = await ResolveRepositoryNameAsync(record.ProjectId, request.TargetRepository, ct);
 
         var saved = await _store.UpdateAsync(id, r =>
@@ -270,7 +293,7 @@ public sealed class TriageService
                 EditedAt = DateTimeOffset.UtcNow,
             };
             return r with { Drafts = drafts };
-        }, ct) ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "Triage not found");
+        }, ct) ?? throw new TriageRequestException(StatusCodes.Status404NotFound, NotFound);
 
         return await ToDetailAsync(saved, ct);
     }
@@ -285,7 +308,7 @@ public sealed class TriageService
                 throw new TriageRequestException(StatusCodes.Status404NotFound, "Draft not found");
             drafts[index] = drafts[index] with { Current = drafts[index].Original, EditedBy = null, EditedAt = null };
             return r with { Drafts = drafts };
-        }, ct) ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "Triage not found");
+        }, ct) ?? throw new TriageRequestException(StatusCodes.Status404NotFound, NotFound);
         return await ToDetailAsync(saved, ct);
     }
 
@@ -293,7 +316,7 @@ public sealed class TriageService
     {
         ArgumentNullException.ThrowIfNull(request);
         var record = await _store.GetAsync(id, ct)
-            ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "Triage not found");
+            ?? throw new TriageRequestException(StatusCodes.Status404NotFound, NotFound);
         if (await _store.GetActiveWorkItemIdAsync(record, ct) is not null)
             throw new TriageRequestException(StatusCodes.Status409Conflict, "An attempt is running; cancel it first");
 
@@ -302,7 +325,7 @@ public sealed class TriageService
             State = TriageState.Dismissed,
             DismissReason = Cut(request.Reason),
             DismissedBy = request.By,
-        }, ct) ?? throw new TriageRequestException(StatusCodes.Status404NotFound, "Triage not found");
+        }, ct) ?? throw new TriageRequestException(StatusCodes.Status404NotFound, NotFound);
 
         if (saved.Source == TriageSource.Issue)
             await _tracker.ReportDismissedAsync(saved, ct);
@@ -316,7 +339,12 @@ public sealed class TriageService
     /// The template that runs an operator triage: the "start looking in" template when it is an enabled template
     /// of the project, else the project's first enabled template by name.
     /// </summary>
-    internal async Task<PipelineJobTemplate> ResolveExecutorAsync(PipelineProject project, string? startInTemplateId, CancellationToken ct)
+    /// <param name="startInIsHint">
+    /// True for a re-run: the stored "start looking in" template may have been disabled since, and the triage falls
+    /// back to the first enabled template instead of failing.
+    /// </param>
+    internal async Task<PipelineJobTemplate> ResolveExecutorAsync(
+        PipelineProject project, string? startInTemplateId, CancellationToken ct, bool startInIsHint = false)
     {
         var enabled = (await _config.LoadTemplatesForProjectAsync(project.Id, ct)).Where(t => t.Enabled).ToList();
         if (enabled.Count == 0)
@@ -324,8 +352,11 @@ public sealed class TriageService
 
         if (!string.IsNullOrEmpty(startInTemplateId))
         {
-            return enabled.FirstOrDefault(t => t.Id == startInTemplateId)
-                ?? throw new TriageRequestException(StatusCodes.Status400BadRequest,
+            var startIn = enabled.FirstOrDefault(t => t.Id == startInTemplateId);
+            if (startIn is not null)
+                return startIn;
+            if (!startInIsHint)
+                throw new TriageRequestException(StatusCodes.Status400BadRequest,
                     "\"Start looking in\" must be an enabled repository of the triage's project");
         }
 
@@ -390,6 +421,22 @@ public sealed class TriageService
     {
         var activeId = await _store.GetActiveWorkItemIdAsync(record, ct);
         var runs = await LoadTokensAsync(record.Attempts.Select(a => a.WorkItemId), ct);
+
+        // How an attempt without a result ended is copied to the record by the hourly sweep; until then its run
+        // record tells (only shown, not stored)
+        if (activeId is null && record.Attempts.Count > 0 && record.Attempts[^1] is { Result: null, Outcome: null } last
+            && runs.TryGetValue(last.WorkItemId, out var run) && run.FinalStep is PipelineStep.Cancelled or PipelineStep.Failed)
+        {
+            record = record with
+            {
+                Attempts = [.. record.Attempts.Take(record.Attempts.Count - 1), last with
+                {
+                    Outcome = run.FinalStep == PipelineStep.Cancelled ? TriageAttemptOutcome.Cancelled : TriageAttemptOutcome.Failed,
+                    FailureReason = last.FailureReason ?? run.FailureReason,
+                }],
+            };
+        }
+
         return new TriageDetail
         {
             Record = record,
@@ -454,8 +501,12 @@ public sealed class TriageService
         };
     }
 
-    private static string? Cut(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Length <= MaxTextChars ? value.Trim() : value[..MaxTextChars];
+    private static string? Cut(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        return value.Length <= MaxTextChars ? value.Trim() : value[..MaxTextChars];
+    }
 
     private static HashSet<string> Words(string text) =>
         text.Split([' ', '-', '_', '.', ',', ':', ';', '/', '(', ')', '"', '\''], StringSplitOptions.RemoveEmptyEntries)

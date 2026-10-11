@@ -240,17 +240,17 @@ The [triage](triage.md) endpoints under `/api/triages`. All of them need the **O
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/triages` | List: `projectId` (omit for all projects), `tab` (`all`, `need_you`, `investigating`, `done`), `source` (`operator`, `issue`), `q` (title contains), `page`, `pageSize`. Returns `{ items, total }` |
-| GET | `/api/triages/similar` | Triages of `projectId` from the retention window whose titles share words with `title` (at most 3) |
+| GET | `/api/triages/similar` | Triages of `projectId` from the last 30 days whose titles share words with `title` (at most 3) |
 | GET | `/api/triages/by-run/{runId}` | `{ id }` of the triage a run belongs to, or `404` |
 | GET | `/api/triages/{id}` | The triage record with its status, the running attempt's WorkItem id and run facts per attempt |
 | POST | `/api/triages` | Start an operator triage: `{ projectId, requestedBy, request: { title, whatHappened, expected, from?, until?, environment?, where?, startInTemplateId?, version?, links?, alreadyTried? } }`. Writes the triage and its Pending WorkItem together. `201` |
-| POST | `/api/triages/{id}/rerun` | Start another attempt: `{ author, feedback?, answers?: [{ question, answer }] }`. For a label triage it posts the feedback on the issue and sets `agent:triage`. `202` |
-| PUT | `/api/triages/{id}/drafts/{draftId}` | Edit a draft: `{ kind, targetRepository, title, body, editedBy }` |
+| POST | `/api/triages/{id}/rerun` | Start another attempt: `{ author, feedback?, answers?: [{ question, answer }] }` (the first 10 answers are kept; feedback and answers together have at most 40,000 characters). For a label triage it posts the feedback on the issue and sets `agent:triage`; the loop then starts the attempt. `202` |
+| PUT | `/api/triages/{id}/drafts/{draftId}` | Edit a draft: `{ kind, targetRepository, title, body, editedBy }` (title at most 200, body at most 12,000 characters) |
 | POST | `/api/triages/{id}/drafts/{draftId}/reset` | Restore the agent's version of a draft |
 | POST | `/api/triages/{id}/create-issues` | Create issues from drafts: `{ draftIds, queue, createdBy }` → `{ created, errors }`. Drafts already created are skipped |
 | POST | `/api/triages/{id}/dismiss` | Dismiss: `{ by, reason? }` |
 
-**Status codes:** `400` invalid input (for example a repository or start-in template that is not an enabled template of the triage's project, or a project without an enabled template), `404` unknown triage, draft or project, `409` an attempt is running (re-run, create issues, dismiss), the draft's issue already exists, or the triage changed meanwhile.
+**Status codes:** `400` invalid input (for example a repository or start-in template that is not an enabled template of the triage's project, or a project without an enabled template), `404` unknown triage, draft or project, `409` an attempt is running (re-run, create issues, dismiss), the draft's issue already exists, or the triage changed meanwhile, `502` a label triage's issue could not be updated for a re-run (no attempt was queued).
 
 ---
 

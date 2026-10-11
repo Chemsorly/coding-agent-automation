@@ -116,7 +116,7 @@ internal static class AgentStepPipelineBuilder
             new WriteProjectContextStep(),
             new WriteTriageContextStep(job.TriageContextMarkdown),
             new TriageInvestigationStep(reportToTracker),
-            new ReportTriageResultStep(reportToTracker)
+            new ReportTriageResultStep(reportToTracker, TriageSecretMasking.McpSecrets(job.McpServers))
         ]);
         return steps;
     }

@@ -30,7 +30,7 @@ that was running, links and IDs (trace IDs, dashboards, a failed run, a ticket) 
 
 The side panel shows what the agent will use: the project's enabled repositories (the one that runs the job is
 marked), the MCP servers merged into the run (agent profile and project, by name), the context sources and the
-time limit. It also lists triages of the same project from the retention window whose titles share words with
+time limit. It also lists triages of the same project from the last 30 days whose titles share words with
 yours, so you can open one instead of starting a duplicate.
 
 The job runs on the "start looking in" repository's template when you pick one, otherwise on the project's first
@@ -45,6 +45,10 @@ epic tracker (`EpicIssueProviderId`), the loop also polls it, and the project's 
 project's epic tracker; either way the agent reads every repository of the project.
 
 Issues that also carry `agent:in-progress`, `agent:triage-review`, `agent:error` or `agent:done` are skipped.
+
+The triage appears in the app as soon as a job claims the issue, with its attempt marked as running; the RCA follows
+when the run reports. When two projects poll the same tracker, a triage belongs to the project that first ran it, and
+the other project's runs neither read nor write it.
 
 ## What the Agent Gets
 
@@ -86,9 +90,14 @@ are kept, a draft with an unknown repository moves to the executor's repository 
 dropped, an inconclusive result without questions gets a generic one, fields are cut to their size budgets, and a
 result file over 100 KB fails the run.
 
+Known secret values are masked in the whole result before it is stored or posted: the project's secrets, the
+secrets of every repository of the project, and the credentials of the MCP servers (header values and secret-looking
+environment variables). Masking runs on the raw text, before sanitizing, which would otherwise change characters of a
+secret so it no longer matches. The hub validates the reported result again before it stores it.
+
 For a label triage the pipeline posts (or updates) one comment on the issue with the same sections — the
-investigated list and the drafts collapsed, values sanitized and known secrets masked, at most 60,000 characters —
-and sets `agent:triage-review` for every verdict.
+investigated list and the drafts collapsed, values masked and sanitized, at most 60,000 characters — and sets
+`agent:triage-review` for every verdict.
 
 ## Reviewing and Creating Issues
 
@@ -98,17 +107,22 @@ On the triage page, a user with `operator` on the triage's project can:
   are marked; **Reset** restores the agent's version. The review does not run again on edits.
 - **Create issues** — select drafts, optionally **Queue for implementation** (`agent:next`), and create them. The
   API creates each issue in the tracker of the target repository's template, with `agent:generated`, a footer
-  naming the triage and attempt, and sanitized, masked text. Each issue is recorded as soon as it exists; a
-  per-triage lock and the record make retries and double clicks safe.
+  naming the triage and attempt, and masked, sanitized text. The footer links a label triage's issue; an operator
+  triage is named only by its short id, since its title is private text. Each issue is recorded as soon as it
+  exists; a per-triage lock and the record make retries and double clicks safe. If an issue was created but could
+  not be recorded, the error says so and names the issue, so nobody creates it again.
 - **Re-run with feedback** (any state but running) or **Re-run with answers** (inconclusive) — starts a new attempt
   that reads the earlier attempts and your feedback.
 - **Dismiss** with an optional reason. A dismissed triage keeps its history and can still be re-run.
 
 For a label triage the app also updates the issue: creating issues posts a summary comment and sets `agent:done`;
 dismissing posts a short comment and sets `agent:wont-do`; a re-run posts the feedback as a comment and sets
-`agent:triage`.
+`agent:triage`. These comments never name the app user (usernames are often e-mail addresses, and the tracker may be
+public). A re-run whose comment or label cannot be written is refused, and no attempt is queued. After a re-run request
+succeeds, the page says that the loop starts the next attempt from the label, and shows it once it runs.
 
-Agents never create issues during a triage run; the hub refuses it.
+Agents never create issues during a triage run: the hub refuses it, and a triage run's token refresh never includes
+issue write access.
 
 ## Labels
 
@@ -153,8 +167,9 @@ Viewing a triage needs `readonly` on its project; starting, editing, creating, r
 
 - The agent's write access is limited by the prompt, not enforced: the executor repository has a write token (as for
   decomposition) and MCP tools are used read-only by instruction.
-- Text posted to a tracker is sanitized and known secret values are masked, and the review checks for secrets and
-  personal data, but this is not airtight. Prefer links over pasted log lines in reports, and keep sensitive
+- Known secret values are masked and text posted to a tracker is sanitized, and the review checks for secrets and
+  personal data, but this is not airtight: a secret the configuration does not know (one the agent read from a log)
+  is not masked. Prefer links over pasted log lines in reports, and keep sensitive
   details out of label triages on public trackers.
 - Moving an operator triage to a tracker, triaging a failed run from its page, and links to the app in tracker
   comments are not supported yet.

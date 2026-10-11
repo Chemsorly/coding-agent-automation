@@ -26,6 +26,18 @@ public sealed class AgentHubTriageTests
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<ITriageStore> _store = new();
     private readonly Mock<ILogger> _logger = new();
+    private readonly Mock<IAgentTokenRefreshService> _tokens = new();
+
+    public AgentHubTriageTests()
+    {
+        _facade.Setup(f => f.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "tpl-api", Name = "api", RepoProviderId = "rp-1", IssueProviderId = "t-1", Enabled = true },
+                new() { Id = "tpl-web", Name = "web", RepoProviderId = "rp-2", IssueProviderId = "t-1", Enabled = true },
+                new() { Id = "tpl-old", Name = "old", RepoProviderId = "rp-3", IssueProviderId = "t-1", Enabled = false },
+            });
+    }
 
     private HubTriageOperations Ops() => new(_facade.Object, _store.Object, _logger.Object);
 
@@ -38,7 +50,7 @@ public sealed class AgentHubTriageTests
             ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
             IssueOps: Mock.Of<IHubIssueOperations>(),
             LifecycleService: Mock.Of<IAgentJobLifecycleService>(),
-            TokenRefreshService: Mock.Of<IAgentTokenRefreshService>(),
+            TokenRefreshService: _tokens.Object,
             Logger: _logger.Object,
             OrphanRecoveryService: Mock.Of<IAgentOrphanRecoveryService>(),
             UiContext: HubTestHelpers.CreateNoOpHubContext(),
@@ -57,6 +69,7 @@ public sealed class AgentHubTriageTests
                 TaskType = taskType,
                 IssueIdentifier = identifier,
                 IssueProviderConfigId = tracker,
+                RepoProviderConfigId = "rp-1",
                 ProjectId = projectId ?? ProjectId,
             });
 
@@ -155,6 +168,118 @@ public sealed class AgentHubTriageTests
 
         await act.Should().ThrowAsync<HubException>().WithMessage("*could not be read*");
     }
+
+    [Fact]
+    public async Task RecordResult_CauseWithoutChecks_IsRefusedByTheServersValidation()
+    {
+        // The agent pod validates too, but the hub is the boundary the stored record relies on
+        SetupRecord(WorkItemTaskType.Triage, "t-1", "431");
+
+        var act = () => Ops().RecordResultAsync(new JobId("job-1"),
+            """{ "verdict": "cause_found", "summary": "s", "investigated": [] }""", CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*is not valid*");
+        _store.Verify(s => s.RecordResultAsync(It.IsAny<TriageResultReport>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RecordResult_DraftForARepositoryOutsideTheProject_MovesToTheExecutorsRepository()
+    {
+        SetupRecord(WorkItemTaskType.Triage, "t-1", "431");
+        TriageResultReport? report = null;
+        _store.Setup(s => s.RecordResultAsync(It.IsAny<TriageResultReport>(), It.IsAny<CancellationToken>()))
+            .Callback<TriageResultReport, CancellationToken>((r, _) => report = r)
+            .ReturnsAsync(new TriageRecord
+            {
+                Id = Guid.NewGuid(), ProjectId = ProjectId.ToString(), Source = TriageSource.Issue, Title = "t",
+                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow,
+            });
+
+        await Ops().RecordResultAsync(new JobId("job-1"), """
+            {
+              "verdict": "cause_found", "summary": "s",
+              "investigated": [ { "check": "c", "where": "w", "result": "r" } ],
+              "drafts": [
+                { "id": "d1", "targetRepository": "web", "title": "Fix web", "body": "b" },
+                { "id": "d2", "targetRepository": "old", "title": "Fix old", "body": "b" }
+              ]
+            }
+            """, CancellationToken.None);
+
+        report!.Result.Drafts.Select(d => d.TargetRepository).Should().Equal("web", "api");
+        report.Result.Drafts[1].Warning.Should().NotBeNullOrEmpty("a disabled repository is not one of the project's");
+    }
+
+    [Fact]
+    public async Task RecordResult_RunWithoutProject_IsRefused()
+    {
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Triage, IssueIdentifier = "431", IssueProviderConfigId = "t-1", ProjectId = null,
+            });
+
+        var act = () => Ops().RecordResultAsync(new JobId("job-1"), ValidResult, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*has no project*");
+    }
+
+    [Fact]
+    public async Task RecordResult_StoreRefuses_IsReportedToTheAgent()
+    {
+        SetupRecord(WorkItemTaskType.Triage, "t-1", "431");
+        _store.Setup(s => s.RecordResultAsync(It.IsAny<TriageResultReport>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("belongs to another project"));
+
+        var act = () => Ops().RecordResultAsync(new JobId("job-1"), ValidResult, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*could not be recorded: belongs to another project");
+    }
+
+    [Fact]
+    public async Task IsTriageRun_UsesTheInMemoryRun_ThenTheWorkItem_AndFailsClosed()
+    {
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(Run(PipelineRunType.Implementation));
+        (await Ops().IsTriageRunAsync(new JobId("job-1"), CancellationToken.None)).Should().BeFalse();
+
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        SetupRecord(WorkItemTaskType.Implementation, "t-1", "431");
+        (await Ops().IsTriageRunAsync(new JobId("job-1"), CancellationToken.None)).Should().BeFalse();
+
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkItemRunRecord?)null);
+        (await Ops().IsTriageRunAsync(new JobId("job-1"), CancellationToken.None)).Should().BeTrue("an unknown job fails closed");
+    }
+
+    // ── Token refresh ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RequestTokenRefresh_ForATriageRun_NeverGrantsIssueWriteAccess()
+    {
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(Run(PipelineRunType.Triage));
+        SetupTokens();
+
+        await CreateHub(Ops()).RequestTokenRefresh(new JobId("job-1"), ProviderKind.Repository, includeIssuePermission: true);
+
+        _tokens.Verify(t => t.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>(), false), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RequestTokenRefresh_ForOtherRuns_PassesThePermissionThrough(bool includeIssuePermission)
+    {
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(Run(PipelineRunType.Implementation));
+        SetupTokens();
+
+        await CreateHub(Ops()).RequestTokenRefresh(new JobId("job-1"), ProviderKind.Repository, includeIssuePermission);
+
+        _tokens.Verify(t => t.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>(), includeIssuePermission), Times.Once);
+    }
+
+    private void SetupTokens() =>
+        _tokens.Setup(t => t.RefreshTokenAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new TokenRefreshResponse { Token = "tok", ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) });
 
     [Fact]
     public async Task ReportTriageResult_WithoutTriageOperations_IsRefused()

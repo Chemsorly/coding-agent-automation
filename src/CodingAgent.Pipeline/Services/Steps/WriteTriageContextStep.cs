@@ -93,12 +93,13 @@ public sealed class WriteTriageContextStep : IPipelineStep
             try
             {
                 var issues = new List<IssueSummary>();
-                for (var page = 1; issues.Count < maxPerTracker; page++)
+                var page = 1;
+                var more = true;
+                while (more && issues.Count < maxPerTracker)
                 {
-                    var result = await context.IssueOps.ListOpenIssuesForProviderAsync(trackerId, page, PageSize, null, ct);
+                    var result = await context.IssueOps.ListOpenIssuesForProviderAsync(trackerId, page++, PageSize, null, ct);
                     issues.AddRange(result.Items);
-                    if (!result.HasMore || result.Items.Count == 0)
-                        break;
+                    more = result.HasMore && result.Items.Count > 0;
                 }
 
                 foreach (var issue in issues.Take(maxPerTracker))

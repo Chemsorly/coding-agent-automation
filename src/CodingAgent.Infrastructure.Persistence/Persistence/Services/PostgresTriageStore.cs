@@ -81,19 +81,7 @@ public sealed class PostgresTriageStore : ITriageStore
         }
 
         if (!string.IsNullOrWhiteSpace(query.Search))
-        {
-            if (db.Database.IsNpgsql())
-            {
-                var pattern = "%" + EscapeLike(query.Search.Trim()) + "%";
-                triages = triages.Where(t => EF.Functions.ILike(t.Title, pattern, "\\"));
-            }
-            else
-            {
-                // The InMemory test database has no ILIKE
-                var search = query.Search.Trim().ToLowerInvariant();
-                triages = triages.Where(t => t.Title.ToLower().Contains(search));
-            }
-        }
+            triages = WhereTitleContains(db, triages, query.Search.Trim());
 
         // The list facts are small; the tab is decided by the resolved status, so it filters in memory.
         var rows = await triages
@@ -113,9 +101,9 @@ public sealed class PostgresTriageStore : ITriageStore
         foreach (var row in rows)
         {
             var facts = TriageEntityMapper.ReadFacts(row.Facts);
-            var state = TriageEntityMapper.ParseState(row.State);
             var status = TriageStatusResolver.Resolve(
-                state, row.IsActive, facts.AttemptCount > 0, facts.LastAttemptHasResult, facts.LastAttemptOutcome);
+                TriageEntityMapper.ParseState(row.State), row.IsActive, facts.AttemptCount > 0, facts.LastAttemptHasResult,
+                facts.LastAttemptOutcome);
             if (!TriageStatusResolver.IsInTab(status, query.Tab))
                 continue;
 
@@ -174,30 +162,43 @@ public sealed class PostgresTriageStore : ITriageStore
     {
         ArgumentNullException.ThrowIfNull(mutate);
 
-        for (var attempt = 1; ; attempt++)
+        // Retrying a version conflict is a backstop: the row lock serializes writers, so the check should not fail
+        return await RetryAsync<TriageRecord?, DbUpdateConcurrencyException>(() => InTransactionAsync<TriageRecord?>(async (db, token) =>
         {
+            var entity = await LockAsync(db, id, token);
+            if (entity is null)
+                return null;
+
+            var current = TriageEntityMapper.ToRecord(entity);
+            var changed = mutate(current);
+            if (changed is null)
+                return current;
+
+            changed = changed with { UpdatedAt = _time.GetUtcNow() };
+            TriageEntityMapper.CopyInto(changed, entity);
+            await db.SaveChangesAsync(token);
+            return changed;
+        }, ct));
+    }
+
+    /// <summary>
+    /// Runs <paramref name="action"/> again when it fails with <typeparamref name="TException"/>, up to
+    /// <see cref="MaxUpdateAttempts"/> times; the last failure is thrown.
+    /// </summary>
+    private static async Task<T> RetryAsync<T, TException>(Func<Task<T>> action)
+        where TException : Exception
+    {
+        var attempt = 0;
+        while (true)
+        {
+            attempt++;
             try
             {
-                return await InTransactionAsync<TriageRecord?>(async (db, token) =>
-                {
-                    var entity = await LockAsync(db, id, token);
-                    if (entity is null)
-                        return null;
-
-                    var current = TriageEntityMapper.ToRecord(entity);
-                    var changed = mutate(current);
-                    if (changed is null)
-                        return current;
-
-                    changed = changed with { UpdatedAt = _time.GetUtcNow() };
-                    TriageEntityMapper.CopyInto(changed, entity);
-                    await db.SaveChangesAsync(token);
-                    return changed;
-                }, ct);
+                return await action();
             }
-            catch (DbUpdateConcurrencyException) when (attempt < MaxUpdateAttempts)
+            catch (TException) when (attempt < MaxUpdateAttempts)
             {
-                // Backstop: the row lock serializes writers, so the version check should not fail.
+                // Run it again on the stored version
             }
         }
     }
@@ -253,58 +254,95 @@ public sealed class PostgresTriageStore : ITriageStore
     {
         ArgumentNullException.ThrowIfNull(report);
 
-        for (var attempt = 1; ; attempt++)
+        // A concurrent writer changed the row, or created the tracker issue's triage first: retry on the stored version
+        return await RetryAsync<TriageRecord, DbUpdateException>(() => InTransactionAsync(async (db, token) =>
         {
-            try
-            {
-                return await InTransactionAsync(async (db, token) =>
-                {
-                    var entity = await LockByKeyAsync(db, report.KeyProviderConfigId, report.KeyIdentifier, token);
+            var entity = await LockByKeyAsync(db, report.KeyProviderConfigId, report.KeyIdentifier, token);
+            var now = _time.GetUtcNow();
+            var updated = ApplyResult(ResultTarget(entity, report, now), report, now);
+            if (entity is null)
+                db.Triages.Add(TriageEntityMapper.ToEntity(updated));
+            else
+                TriageEntityMapper.CopyInto(updated, entity);
 
-                    var now = _time.GetUtcNow();
-                    TriageRecord current;
-                    if (entity is not null)
-                    {
-                        current = TriageEntityMapper.ToRecord(entity);
-                    }
-                    else if (report.Source == TriageSource.Issue)
-                    {
-                        // A tracker issue's first result creates its triage
-                        current = new TriageRecord
-                        {
-                            Id = Guid.NewGuid(),
-                            ProjectId = report.ProjectId,
-                            Source = TriageSource.Issue,
-                            IssueProviderConfigId = report.KeyProviderConfigId,
-                            IssueIdentifier = report.KeyIdentifier,
-                            IssueUrl = report.IssueUrl,
-                            Title = string.IsNullOrWhiteSpace(report.IssueTitle) ? $"#{report.KeyIdentifier}" : report.IssueTitle,
-                            CreatedAt = now,
-                            UpdatedAt = now,
-                        };
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"No triage exists for {report.KeyIdentifier}; an operator triage is created before its first run");
-                    }
+            await db.SaveChangesAsync(token);
+            return updated;
+        }, ct));
+    }
 
-                    var updated = ApplyResult(current, report, now);
-                    if (entity is null)
-                        db.Triages.Add(TriageEntityMapper.ToEntity(updated));
-                    else
-                        TriageEntityMapper.CopyInto(updated, entity);
-
-                    await db.SaveChangesAsync(token);
-                    return updated;
-                }, ct);
-            }
-            catch (DbUpdateException) when (attempt < MaxUpdateAttempts)
-            {
-                // A concurrent writer changed the row, or created the tracker issue's triage first: retry on
-                // the stored version.
-            }
+    /// <summary>The triage a result belongs to: the stored one, or a new one for a tracker issue's first result.</summary>
+    private static TriageRecord ResultTarget(TriageEntity? entity, TriageResultReport report, DateTimeOffset now)
+    {
+        if (entity is not null)
+        {
+            // A tracker two projects poll: never write one project's result into the other's triage
+            if (!string.Equals(entity.ProjectId.ToString("D"), report.ProjectId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"The triage of {report.KeyIdentifier} belongs to another project than the run that reported it");
+            return TriageEntityMapper.ToRecord(entity);
         }
+
+        if (report.Source != TriageSource.Issue)
+            throw new InvalidOperationException(
+                $"No triage exists for {report.KeyIdentifier}; an operator triage is created before its first run");
+
+        // A tracker issue's first result creates its triage
+        return NewIssueTriage(report.ProjectId, report.KeyProviderConfigId, report.KeyIdentifier, report.IssueTitle, report.IssueUrl, now);
+    }
+
+    private static TriageRecord NewIssueTriage(
+        string projectId, string providerConfigId, string identifier, string? title, string? url, DateTimeOffset now) => new()
+    {
+        Id = Guid.NewGuid(),
+        ProjectId = projectId,
+        Source = TriageSource.Issue,
+        IssueProviderConfigId = providerConfigId,
+        IssueIdentifier = identifier,
+        IssueUrl = url,
+        Title = string.IsNullOrWhiteSpace(title) ? $"#{identifier}" : title,
+        CreatedAt = now,
+        UpdatedAt = now,
+    };
+
+    /// <inheritdoc/>
+    public async Task<TriageRecord?> RecordAttemptStartAsync(TriageAttemptStart start, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(start);
+
+        // A concurrent result created the issue's triage first: retry on the stored version
+        return await RetryAsync<TriageRecord?, DbUpdateException>(() => InTransactionAsync<TriageRecord?>(async (db, token) =>
+        {
+            var entity = await LockByKeyAsync(db, start.IssueProviderConfigId, start.IssueIdentifier, token);
+            var now = _time.GetUtcNow();
+
+            TriageRecord current;
+            if (entity is null)
+            {
+                current = NewIssueTriage(start.ProjectId, start.IssueProviderConfigId, start.IssueIdentifier, start.IssueTitle, start.IssueUrl, now);
+            }
+            else
+            {
+                if (!string.Equals(entity.ProjectId.ToString("D"), start.ProjectId, StringComparison.OrdinalIgnoreCase))
+                    return null;
+                current = TriageEntityMapper.ToRecord(entity);
+                if (current.Attempts.Any(a => a.WorkItemId == start.WorkItemId))
+                    return current;
+            }
+
+            var updated = current with
+            {
+                Attempts = [.. current.Attempts, new TriageAttempt { WorkItemId = start.WorkItemId, StartedAt = start.StartedAt }],
+                IssueUrl = current.IssueUrl ?? start.IssueUrl,
+                UpdatedAt = now,
+            };
+            if (entity is null)
+                db.Triages.Add(TriageEntityMapper.ToEntity(updated));
+            else
+                TriageEntityMapper.CopyInto(updated, entity);
+
+            await db.SaveChangesAsync(token);
+            return updated;
+        }, ct));
     }
 
     /// <inheritdoc/>
@@ -316,62 +354,70 @@ public sealed class PostgresTriageStore : ITriageStore
         var changed = 0;
         foreach (var id in openIds)
         {
-            var openWorkItemIds = (await GetAsync(id, ct))?.Attempts
-                .Where(a => a.Result is null && a.Outcome is null)
-                .Select(a => Guid.TryParse(a.WorkItemId, out var w) ? w : Guid.Empty)
-                .ToList() ?? [];
-            if (openWorkItemIds.Count == 0)
+            if (await GetAsync(id, ct) is not { } record)
                 continue;
 
-            var workItems = await db.WorkItems.AsNoTracking()
+            var openWorkItemIds = record.Attempts
+                .Where(IsOpen)
+                .Select(a => Guid.TryParse(a.WorkItemId, out var w) ? w : Guid.Empty)
+                .ToList();
+            var runs = await db.WorkItems.AsNoTracking()
                 .Where(w => openWorkItemIds.Contains(w.Id))
-                .Select(w => new { w.Id, w.Status, w.CompletedAt, w.ErrorMessage })
+                .Select(w => new EndedRun(w.Id, w.Status, w.CompletedAt, w.ErrorMessage))
                 .ToDictionaryAsync(w => w.Id.ToString(), ct);
 
-            var didChange = false;
-            await UpdateAsync(id, record =>
-            {
-                var any = false;
-                var attempts = record.Attempts.Select(a =>
-                {
-                    if (a.Result is not null || a.Outcome is not null)
-                        return a;
+            if (CloseEndedAttempts(record, runs) is null)
+                continue;
 
-                    if (!workItems.TryGetValue(a.WorkItemId, out var workItem))
-                    {
-                        any = true;
-                        return a with { Outcome = TriageAttemptOutcome.Failed, FailureReason = a.FailureReason ?? "The run ended without reporting a result." };
-                    }
-
-                    var outcome = workItem.Status switch
-                    {
-                        WorkItemStatus.Cancelled => TriageAttemptOutcome.Cancelled,
-                        WorkItemStatus.Failed or WorkItemStatus.Succeeded => TriageAttemptOutcome.Failed,
-                        _ => (TriageAttemptOutcome?)null
-                    };
-                    if (outcome is null)
-                        return a;
-
-                    any = true;
-                    return a with
-                    {
-                        Outcome = outcome,
-                        CompletedAt = workItem.CompletedAt ?? a.CompletedAt,
-                        FailureReason = outcome == TriageAttemptOutcome.Failed
-                            ? workItem.ErrorMessage ?? "The run ended without reporting a result."
-                            : null,
-                    };
-                }).ToList();
-
-                didChange = any;
-                return any ? record with { Attempts = attempts } : null;
-            }, ct);
-
-            if (didChange)
-                changed++;
+            await UpdateAsync(id, current => CloseEndedAttempts(current, runs), ct);
+            changed++;
         }
 
         return changed;
+    }
+
+    private sealed record EndedRun(Guid Id, WorkItemStatus Status, DateTimeOffset? CompletedAt, string? ErrorMessage);
+
+    private static bool IsOpen(TriageAttempt attempt) => attempt.Result is null && attempt.Outcome is null;
+
+    /// <summary>
+    /// Copies how each open attempt's run ended into the attempt; an attempt whose run no longer exists failed.
+    /// Null when no attempt changed.
+    /// </summary>
+    private static TriageRecord? CloseEndedAttempts(TriageRecord record, Dictionary<string, EndedRun> runs)
+    {
+        const string NoResult = "The run ended without reporting a result.";
+        var any = false;
+        var attempts = record.Attempts.Select(a =>
+        {
+            if (!IsOpen(a))
+                return a;
+
+            if (!runs.TryGetValue(a.WorkItemId, out var run))
+            {
+                any = true;
+                return a with { Outcome = TriageAttemptOutcome.Failed, FailureReason = a.FailureReason ?? NoResult };
+            }
+
+            TriageAttemptOutcome? outcome = run.Status switch
+            {
+                WorkItemStatus.Cancelled => TriageAttemptOutcome.Cancelled,
+                WorkItemStatus.Failed or WorkItemStatus.Succeeded => TriageAttemptOutcome.Failed,
+                _ => null,
+            };
+            if (outcome is null)
+                return a;
+
+            any = true;
+            return a with
+            {
+                Outcome = outcome,
+                CompletedAt = run.CompletedAt ?? a.CompletedAt,
+                FailureReason = outcome == TriageAttemptOutcome.Failed ? run.ErrorMessage ?? NoResult : null,
+            };
+        }).ToList();
+
+        return any ? record with { Attempts = attempts } : null;
     }
 
     /// <inheritdoc/>
@@ -419,10 +465,14 @@ public sealed class PostgresTriageStore : ITriageStore
             });
         }
 
+        // Every attempt numbers its drafts d1, d2, ...: the attempt number keeps them apart from the drafts of earlier
+        // attempts, whose created issues are recorded by draft id
+        var attemptNumber = attempts.FindIndex(a => a.WorkItemId == report.WorkItemId) + 1;
         return record with
         {
             Attempts = attempts,
             Drafts = report.Result.Drafts
+                .Select(d => d with { Id = $"a{attemptNumber}-{d.Id}" })
                 .Select(d => new TriageEditableDraft { Current = d, Original = d })
                 .ToList(),
             DraftsFromWorkItemId = report.WorkItemId,
@@ -432,6 +482,19 @@ public sealed class PostgresTriageStore : ITriageStore
             DismissedBy = null,
             UpdatedAt = now,
         };
+    }
+
+    private static IQueryable<TriageEntity> WhereTitleContains(PipelineDbContext db, IQueryable<TriageEntity> triages, string search)
+    {
+        if (db.Database.IsNpgsql())
+        {
+            var pattern = "%" + EscapeLike(search) + "%";
+            return triages.Where(t => EF.Functions.ILike(t.Title, pattern, "\\"));
+        }
+
+        // The InMemory test database has no ILIKE
+        var lower = search.ToLowerInvariant();
+        return triages.Where(t => t.Title.ToLower().Contains(lower));
     }
 
     private static string EscapeLike(string value) =>

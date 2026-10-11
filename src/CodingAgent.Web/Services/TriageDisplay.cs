@@ -89,10 +89,12 @@ public static class TriageDisplay
     };
 
     /// <summary>"Operator · anna" or "Issue #431".</summary>
-    public static string SourceText(TriageSource source, string? requestedBy, string? issueIdentifier) =>
-        source == TriageSource.Issue
-            ? $"Issue #{issueIdentifier}"
-            : string.IsNullOrEmpty(requestedBy) ? "Operator" : $"Operator · {requestedBy}";
+    public static string SourceText(TriageSource source, string? requestedBy, string? issueIdentifier)
+    {
+        if (source == TriageSource.Issue)
+            return $"Issue #{issueIdentifier}";
+        return string.IsNullOrEmpty(requestedBy) ? "Operator" : $"Operator · {requestedBy}";
+    }
 
     /// <summary>
     /// Checks per source, derived from the agent's investigated list: the part of "where" before the first
@@ -143,14 +145,18 @@ public static class TriageDisplay
         return $"{Math.Max(0, (int)d.TotalSeconds)} s";
     }
 
-    /// <summary>The text shown for an operator's "when": "Oct 8 13:45 → now".</summary>
+    /// <summary>
+    /// The text shown for an operator's "when", in UTC as the agent gets it: "Oct 8 13:45 → now (UTC)". The server's
+    /// time zone is not the reader's, so a local time here would be wrong for someone.
+    /// </summary>
     public static string? WhenText(TriageRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.From is null && request.Until is null)
             return null;
-        var from = request.From is { } f ? f.ToLocalTime().ToString("MMM d HH:mm") : "?";
-        var until = request.Until is { } u ? u.ToLocalTime().ToString("MMM d HH:mm") : "now";
-        return $"{from} → {until}";
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var from = request.From is { } f ? f.ToUniversalTime().ToString("MMM d HH:mm", culture) : "?";
+        var until = request.Until is { } u ? u.ToUniversalTime().ToString("MMM d HH:mm", culture) : "now";
+        return $"{from} → {until} (UTC)";
     }
 }

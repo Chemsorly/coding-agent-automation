@@ -40,6 +40,13 @@ public interface ITriageStore
     Task<TriageRecord> RecordResultAsync(TriageResultReport report, CancellationToken ct = default);
 
     /// <summary>
+    /// Records that a tracker issue's triage attempt started: creates the issue's triage on its first attempt and
+    /// adds an open attempt, so an attempt that ends without a result still shows. Does nothing when the attempt is
+    /// already recorded. Returns null, and records nothing, when the issue's triage belongs to another project.
+    /// </summary>
+    Task<TriageRecord?> RecordAttemptStartAsync(TriageAttemptStart start, CancellationToken ct = default);
+
+    /// <summary>
     /// Copies the outcome of attempts that ended without a result from their WorkItems, before the
     /// WorkItems expire. An attempt whose WorkItem no longer exists is marked failed. Returns the number of
     /// triages changed.

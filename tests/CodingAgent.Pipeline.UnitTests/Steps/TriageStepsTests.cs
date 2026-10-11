@@ -253,6 +253,51 @@ public sealed class TriageStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task Report_McpCredentials_AreMaskedInTheReportedResultAndTheComment()
+    {
+        var context = Context();
+        var mcp = TriageSecretMasking.McpSecrets(
+        [
+            new McpServerConfig { Name = "grafana", Type = "http", Headers = new Dictionary<string, string> { ["Authorization"] = "Bearer glsa_live-token" } },
+        ]);
+        await File.WriteAllTextAsync(ResultPath, ValidResult.Replace("acks before", "acks (queried with glsa_live-token) before", StringComparison.Ordinal));
+        string? reported = null;
+        string? posted = null;
+        _issueOps.Setup(o => o.ReportTriageResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((json, _) => reported = json)
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => posted = body)
+            .ReturnsAsync("c1");
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await new ReportTriageResultStep(reportToTracker: true, mcp).ExecuteAsync(context, CancellationToken.None);
+
+        reported.Should().NotContain("glsa_live-token").And.Contain("queried with ***");
+        posted.Should().NotContain("glsa_live-token");
+    }
+
+    [Fact]
+    public async Task Report_SecretWithMarkdownCharacters_IsMaskedBeforeTheCommentIsSanitized()
+    {
+        // Sanitizing escapes characters such as | and @: masking afterwards would no longer find the value
+        var context = Context();
+        context.InjectedSecrets = new Dictionary<string, string> { ["API_KEY"] = "zq9|xv7@kk" };
+        await File.WriteAllTextAsync(ResultPath, ValidResult.Replace("acks before", "acks (key zq9|xv7@kk) before", StringComparison.Ordinal));
+        string? posted = null;
+        _issueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => posted = body)
+            .ReturnsAsync("c1");
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await new ReportTriageResultStep(reportToTracker: true).ExecuteAsync(context, CancellationToken.None);
+
+        posted.Should().NotContain("zq9").And.NotContain("xv7").And.Contain("key ***");
+    }
+
+    [Fact]
     public async Task Report_TrackerTriage_UpdatesTheExistingRcaComment()
     {
         var context = Context();

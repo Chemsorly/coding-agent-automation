@@ -400,11 +400,12 @@ public class DispatchInfrastructure
             parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
             var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
             // Cap at 50 comments per REQ-4.4 (the newest ones when asked: a triage needs the latest feedback)
-            issueComments = allComments.Count <= 50
-                ? allComments
-                : newestComments
-                    ? allComments.Skip(allComments.Count - 50).ToList().AsReadOnly()
-                    : allComments.Take(50).ToList().AsReadOnly();
+            if (allComments.Count <= 50)
+                issueComments = allComments;
+            else if (newestComments)
+                issueComments = allComments.Skip(allComments.Count - 50).ToList().AsReadOnly();
+            else
+                issueComments = allComments.Take(50).ToList().AsReadOnly();
         }
 
         // Extract images from body + comments (mirrors FetchIssueStep pattern).

@@ -137,6 +137,54 @@ public sealed class AssignmentEnricherTriageTests
     }
 
     [Fact]
+    public async Task TrackerTriage_RecordsItsAttemptWhenTheRunIsClaimed()
+    {
+        // A tracker triage has no record until its first result; the open attempt makes the run visible meanwhile
+        _store.Setup(s => s.ListRecentAsync(Project.Id, It.IsAny<DateTimeOffset>(), It.IsAny<int>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        await Enricher(_store.Object).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None);
+
+        _store.Verify(s => s.RecordAttemptStartAsync(It.Is<TriageAttemptStart>(a =>
+                a.WorkItemId == "run-2" && a.ProjectId == Project.Id && a.IssueProviderConfigId == "t-api"
+                && a.IssueIdentifier == "431" && a.IssueTitle == "From tracker"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OperatorTriage_RecordsNoAttemptStart_ItsAttemptExistsSinceItWasQueued()
+    {
+        var triage = OperatorTriage(new TriageAttempt { WorkItemId = "run-2", StartedAt = DateTimeOffset.UtcNow });
+        _store.Setup(s => s.GetAsync(triage.Id, It.IsAny<CancellationToken>())).ReturnsAsync(triage);
+        _store.Setup(s => s.ListRecentAsync(Project.Id, It.IsAny<DateTimeOffset>(), It.IsAny<int>(), triage.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        await Enricher(_store.Object).EnrichAsync(
+            Identity(TriageConstants.ProviderConfigId, TriageConstants.IssueIdentifierFor(triage.Id)), Project, CancellationToken.None);
+
+        _store.Verify(s => s.RecordAttemptStartAsync(It.IsAny<TriageAttemptStart>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TrackerTriageOfAnotherProject_IsNotPassedToTheAgent()
+    {
+        // Two projects can poll one tracker: the other project's triage history is not this run's to read
+        var foreign = OperatorTriage(new TriageAttempt
+        {
+            WorkItemId = "run-1", StartedAt = DateTimeOffset.UtcNow,
+            Result = new TriageResult { Verdict = TriageVerdict.CauseFound, Summary = "The other project's secret summary" },
+        }) with { ProjectId = Guid.NewGuid().ToString(), Source = TriageSource.Issue, IssueProviderConfigId = "t-api", IssueIdentifier = "431" };
+        _store.Setup(s => s.GetByIssueAsync("t-api", "431", It.IsAny<CancellationToken>())).ReturnsAsync(foreign);
+        _store.Setup(s => s.ListRecentAsync(Project.Id, It.IsAny<DateTimeOffset>(), It.IsAny<int>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var result = await Enricher(_store.Object).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None);
+
+        result!.TriageContextMarkdown.Should().NotContain("The other project's secret summary")
+            .And.Contain("None: this is the first attempt.");
+    }
+
+    [Fact]
     public async Task OperatorTriageThatNoLongerExists_CannotBeEnriched()
     {
         _store.Setup(s => s.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync((TriageRecord?)null);
@@ -169,7 +217,7 @@ public sealed class AssignmentEnricherTriageTests
     // ── TriageContextRenderer ────────────────────────────────────────────────
 
     [Fact]
-    public void Context_ForATracker_NamesOtherTriagesWithoutTheirSummaries()
+    public void Context_ForATracker_LeavesOutOperatorTriagesTitlesAndSummaries()
     {
         var other = OperatorTriage(new TriageAttempt
         {
@@ -180,7 +228,9 @@ public sealed class AssignmentEnricherTriageTests
         var tracker = TriageContextRenderer.RenderContext(null, "run-1", [other], reportToTracker: true);
         var app = TriageContextRenderer.RenderContext(null, "run-1", [other], reportToTracker: false);
 
-        tracker.Should().Contain("Login slow").And.NotContain("SECRET internal detail").And.Contain("Do not quote them");
+        tracker.Should().NotContain("Login slow", "an operator triage's title is private text").And.NotContain("SECRET internal detail")
+            .And.Contain("(an operator triage)").And.Contain("Do not quote them");
+        app.Should().Contain("Login slow");
         app.Should().Contain("SECRET internal detail");
     }
 
