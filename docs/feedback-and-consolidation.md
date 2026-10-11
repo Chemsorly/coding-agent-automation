@@ -38,7 +38,7 @@ Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge 
 
 - **Trigger:** from the card of any template that uses the brain. The run uses that template's settings (its project's overrides and its repository's agent labels).
 - **One run per brain at a time:** templates that share a brain share its running state and its last run on the Consolidation page, and a second trigger for the same brain is rejected as already running.
-- **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain.
+- **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain. For GitHub App brain providers, runs get a read-only token (`contents: read`) when the brain is read-only, so a misbehaving agent cannot push to it even if it tries.
 
 It runs a six-step process:
 

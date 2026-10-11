@@ -30,6 +30,13 @@ namespace CodingAgent.Web.UnitTests.Dispatch;
 /// 2. RunId consistent between PipelineRun and WorkItem
 /// 3. HeartbeatMonitor does not orphan dispatch-window runs
 /// </summary>
+// TODO [WARNING]: no tests here (or in AssignmentEnricherTests) cover the BrainReadOnly token
+// narrowing added in issue #3573. The issue spec requires: "Dispatch core path
+// (DispatchInfrastructure tests or the AssignmentEnricher tests): With BrainReadOnly true from
+// the global setting, from a project override and from the template switch, the brain config is
+// vended read-only. With BrainReadOnly false, it is vended as before." Without such tests, a
+// regression in DispatchInfrastructure (e.g. the BrainReadOnly check being omitted from one of
+// the two call sites) would not be caught by the test suite (issue #3573, TestQualityReviewer finding).
 public sealed class DispatchPipelineEndToEndTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
@@ -138,8 +145,8 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         mockRepoProvider.Setup(p => p.RepositoryFullName).Returns("org/test-repo");
         _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(mockRepoProvider.Object);
 
-        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((c, _, _, _) => Task.FromResult(c));
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>((c, _, _, _, _) => Task.FromResult(c));
     }
 
     private DispatchOrchestrationService CreateOrchestrationService()

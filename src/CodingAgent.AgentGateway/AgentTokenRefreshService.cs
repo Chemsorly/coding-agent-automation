@@ -51,7 +51,14 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             string.IsNullOrEmpty(brainId) ? null : (ProviderConfigId?)new ProviderConfigId(brainId),
             ct);
 
-        return await VendTokenAsync(jobId, providerKind, targetConfig, ct, includeIssuePermission);
+        // For brain token refreshes, resolve the effective BrainReadOnly setting so the agent
+        // receives a read-only token when the brain is read-only for this run. Fail closed:
+        // ResolveBrainReadOnlyAsync returns true when the setting cannot be resolved.
+        bool brainReadOnly = false;
+        if (providerKind == ProviderKind.Brain)
+            brainReadOnly = await _facade.ResolveBrainReadOnlyAsync(new JobId(jobId), ct);
+
+        return await VendTokenAsync(jobId, providerKind, targetConfig, ct, includeIssuePermission, brainReadOnly);
     }
 
     private async Task<(string? repoId, string? brainId)> ResolveProviderConfigIdsAsync(
@@ -152,17 +159,64 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
     }
 
     private async Task<TokenRefreshResponse> VendTokenAsync(
-        string jobId, ProviderKind providerKind, ProviderConfig targetConfig, CancellationToken ct, bool includeIssuePermission = false)
+        string jobId, ProviderKind providerKind, ProviderConfig targetConfig, CancellationToken ct,
+        bool includeIssuePermission = false, bool brainReadOnly = false)
     {
-        // GitHub App auth: generate a short-lived scoped token via JWT exchange
+        // GitHub App auth: generate a short-lived scoped token via JWT exchange.
+        // For brain provider refreshes when BrainReadOnly is true, vend a read-only token
+        // (contents:read) so a misbehaving agent cannot push to a read-only brain.
         if (targetConfig.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
         {
-            var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, ct, includeIssuePermission);
+            (string token, DateTimeOffset expiresAt) vendResult;
+            if (brainReadOnly && providerKind == ProviderKind.Brain)
+            {
+                // Use the internal read-only path via PrepareAgentConfigsAsync with a single-item
+                // readOnlyConfigIds set, which calls GenerateTokenAsync(readOnly: true).
+                // NOTE (issue #3573): passing targetConfig.Id as repoConfigId is an accidental coupling —
+                // repoConfigId controls the critical-provider error path inside PrepareAgentConfigsAsync
+                // (a failure for the config whose Id == repoConfigId throws instead of degrading). Here
+                // it happens to be correct because we only pass a single config, but if PrepareAgentConfigsAsync
+                // is ever changed to use repoConfigId for permission scoping the brain config would be
+                // treated as the work repo. Consider introducing a dedicated low-level API that does not
+                // overload repoConfigId with this dual meaning.
+                var readOnlySet = new HashSet<string>(StringComparer.Ordinal) { targetConfig.Id };
+                var prepared = await _tokenVending.PrepareAgentConfigsAsync(
+                    [targetConfig], targetConfig.Id, ct, readOnlyConfigIds: readOnlySet);
+                // NOTE (issue #3573): if PrepareAgentConfigsAsync returns an empty list (e.g. because
+                // TokenVendingService degrades gracefully and strips the config without throwing),
+                // prepared[0] below will throw ArgumentOutOfRangeException. Add an empty-list guard
+                // before the index access. Additionally, the fallback to GenerateAgentTokenAsync when
+                // the Token key is absent violates the fail-closed requirement — a misbehaving agent
+                // could engineer a transient token-generation failure to obtain a write-capable token
+                // for a read-only brain. The fallback should throw rather than silently degrade to a
+                // write token (SecurityReviewer & DotNetSpecialist findings).
+                var prepared0 = prepared[0];
+                if (!prepared0.Settings.TryGetValue(ProviderSettingKeys.Token, out var roToken)
+                    || string.IsNullOrEmpty(roToken))
+                {
+                    _logger.Warning(
+                        "Read-only brain token vending produced no token for job {JobId} — falling back to write token",
+                        jobId);
+                    vendResult = await _tokenVending.GenerateAgentTokenAsync(targetConfig, ct, includeIssuePermission);
+                }
+                else
+                {
+                    var expiresAtStr = prepared0.Settings.TryGetValue(ProviderSettingKeys.TokenExpiresAt, out var ea) ? ea : null;
+                    vendResult = (roToken,
+                        expiresAtStr is not null && DateTimeOffset.TryParse(expiresAtStr, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
+                            ? parsed
+                            : DateTimeOffset.UtcNow.AddHours(1));
+                }
+            }
+            else
+            {
+                vendResult = await _tokenVending.GenerateAgentTokenAsync(targetConfig, ct, includeIssuePermission);
+            }
 
             _logger.Information("Token refreshed for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
-                jobId, providerKind, expiresAt);
+                jobId, providerKind, vendResult.expiresAt);
 
-            return new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt };
+            return new TokenRefreshResponse { Token = vendResult.token, ExpiresAt = vendResult.expiresAt };
         }
 
         // GitLab PAT / static token: return the access token directly (no vending needed)

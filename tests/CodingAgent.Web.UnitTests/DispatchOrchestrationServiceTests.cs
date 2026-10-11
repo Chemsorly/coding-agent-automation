@@ -189,9 +189,10 @@ public class DispatchOrchestrationServiceTests
                 It.IsAny<IReadOnlyList<ProviderConfig>>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<bool>()))
-            .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => Task.FromResult(configs));
+                It.IsAny<bool>(),
+                It.IsAny<IReadOnlySet<string>?>()))
+            .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (configs, _, _, _, _) => Task.FromResult(configs));
     }
 
     [Fact]

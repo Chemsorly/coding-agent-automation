@@ -222,4 +222,191 @@ public class BrainTokenRefreshRegressionTests
         await act.Should().ThrowAsync<HubException>()
             .WithMessage("*Brain provider config ID not available*");
     }
+
+    // ── BrainReadOnly token narrowing ────────────────────────────────────────────
+
+    private ProviderConfig CreateBrainConfigWithPrivateKey(string id = "brain-repo-1") => new()
+    {
+        Id = id,
+        Kind = ProviderKind.Repository,
+        ProviderType = "GitHub",
+        DisplayName = "Brain Repo",
+        RepositoryRole = RepositoryRole.Brain,
+        Settings = new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+            [ProviderSettingKeys.ClientId] = "client-1",
+            [ProviderSettingKeys.InstallationId] = "12345",
+            [ProviderSettingKeys.Owner] = "org",
+            [ProviderSettingKeys.Repo] = "brain-repo"
+        }
+    };
+
+    private PipelineRun CreateRunWithBrain(string jobId = "job-1") => new()
+    {
+        RunId = jobId,
+        IssueIdentifier = "org/repo#42",
+        IssueTitle = "Test Issue",
+        IssueProviderConfigId = "issue-1",
+        RepoProviderConfigId = "work-repo-1",
+        BrainProviderConfigId = "brain-repo-1"
+    };
+
+    /// <summary>
+    /// When BrainReadOnly is true for the job, the token refresh for ProviderKind.Brain
+    /// must call PrepareAgentConfigsAsync with the brain config ID in readOnlyConfigIds.
+    /// </summary>
+    [Fact]
+    public async Task RefreshToken_BrainKind_BrainReadOnly_True_UsesPrepareAgentConfigsWithReadOnlySet()
+    {
+        var brainConfig = CreateBrainConfigWithPrivateKey();
+        var run = CreateRunWithBrain();
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(brainConfig);
+        // ResolveBrainReadOnlyAsync returns true → read-only token must be vended
+        _mockFacade.Setup(f => f.ResolveBrainReadOnlyAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        IReadOnlySet<string>? capturedReadOnlyIds = null;
+        _mockTokenVending
+            .Setup(t => t.PrepareAgentConfigsAsync(
+                It.IsAny<IReadOnlyList<ProviderConfig>>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(),
+                It.IsAny<IReadOnlySet<string>?>()))
+            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool, IReadOnlySet<string>?>(
+                (_, _, _, _, readOnlyIds) => capturedReadOnlyIds = readOnlyIds)
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new()
+                {
+                    Id = "brain-repo-1",
+                    Kind = ProviderKind.Repository,
+                    ProviderType = "GitHub",
+                    DisplayName = "Brain Repo",
+                    Settings = new Dictionary<string, string>
+                    {
+                        [ProviderSettingKeys.Token] = "ghs_read_token",
+                        [ProviderSettingKeys.TokenExpiresAt] = "2026-12-01T00:00:00Z"
+                    }
+                }
+            });
+
+        var service = CreateService();
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+
+        capturedReadOnlyIds.Should().NotBeNull("readOnlyConfigIds must be set when BrainReadOnly is true");
+        capturedReadOnlyIds!.Should().Contain("brain-repo-1",
+            "brain config ID must be in readOnlyConfigIds for read-only brain token refresh");
+        response.Token.Should().Be("ghs_read_token");
+    }
+
+    /// <summary>
+    /// When BrainReadOnly is false for the job, the token refresh uses GenerateAgentTokenAsync
+    /// (the standard write-token path), not PrepareAgentConfigsAsync.
+    /// </summary>
+    [Fact]
+    public async Task RefreshToken_BrainKind_BrainReadOnly_False_UsesGenerateAgentTokenAsync()
+    {
+        var brainConfig = CreateBrainConfigWithPrivateKey();
+        var run = CreateRunWithBrain();
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(brainConfig);
+        // ResolveBrainReadOnlyAsync returns false → write token path
+        _mockFacade.Setup(f => f.ResolveBrainReadOnlyAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        _mockTokenVending
+            .Setup(t => t.GenerateAgentTokenAsync(brainConfig, It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(("ghs_write_token", DateTimeOffset.UtcNow.AddHours(1)));
+
+        var service = CreateService();
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+
+        response.Token.Should().Be("ghs_write_token");
+        _mockTokenVending.Verify(
+            t => t.GenerateAgentTokenAsync(brainConfig, It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Once,
+            "writable brain must use GenerateAgentTokenAsync (write-token path)");
+    }
+
+    /// <summary>
+    /// When ResolveBrainReadOnlyAsync throws (e.g. config store unavailable), it fails closed:
+    /// the exception propagates rather than silently issuing a write token.
+    /// </summary>
+    [Fact]
+    public async Task RefreshToken_BrainKind_ResolveBrainReadOnlyThrows_FailsClosedByPropagating()
+    {
+        var brainConfig = CreateBrainConfigWithPrivateKey();
+        var run = CreateRunWithBrain();
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(brainConfig);
+        // ResolveBrainReadOnlyAsync itself returns true on internal failure (fail-closed in AgentHubFacade)
+        // but here we test that even if it throws an unexpected exception, the caller does not silently
+        // fall back to a write token.
+        _mockFacade.Setup(f => f.ResolveBrainReadOnlyAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("config store unavailable"));
+
+        var service = CreateService();
+        var act = () => service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*config store unavailable*");
+
+        // Write token must NOT have been issued
+        _mockTokenVending.Verify(
+            t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never,
+            "a failed ResolveBrainReadOnlyAsync must not silently fall back to a write token");
+    }
+
+    /// <summary>
+    /// Repository kind refreshes are unchanged by BrainReadOnly — they must still use
+    /// GenerateAgentTokenAsync and must NOT call ResolveBrainReadOnlyAsync.
+    /// </summary>
+    [Fact]
+    public async Task RefreshToken_RepositoryKind_BrainReadOnly_True_UnchangedPath()
+    {
+        var workConfig = new ProviderConfig
+        {
+            Id = "work-repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Work Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "99999",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "work-repo"
+            }
+        };
+        var run = CreateRunWithBrain();
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workConfig);
+
+        _mockTokenVending
+            .Setup(t => t.GenerateAgentTokenAsync(workConfig, It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(("ghs_work_token", DateTimeOffset.UtcNow.AddHours(1)));
+
+        var service = CreateService();
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
+
+        response.Token.Should().Be("ghs_work_token");
+        // ResolveBrainReadOnlyAsync must NOT be called for ProviderKind.Repository
+        _mockFacade.Verify(
+            f => f.ResolveBrainReadOnlyAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "repository token refresh must not call ResolveBrainReadOnlyAsync");
+    }
 }

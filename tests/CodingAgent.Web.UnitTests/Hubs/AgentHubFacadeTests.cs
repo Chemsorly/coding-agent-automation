@@ -282,4 +282,178 @@ public sealed class AgentHubFacadeTests
     }
 
     #endregion
+
+    #region ResolveBrainReadOnlyAsync
+
+    private AgentHubFacade CreateFacadeWithPipelineStore(
+        IPipelineConfigStore? pipelineConfigStore,
+        IProjectStore? projectStore = null)
+    {
+        return new AgentHubFacade(new AgentHubFacadeDependencies(
+            _registry,
+            _runService,
+            _mockHistory.Object,
+            _mockConfigStore.Object,
+            _mockProviderFactory.Object,
+            _facadeLogger,
+            ProjectStore: projectStore,
+            PipelineConfigStore: pipelineConfigStore));
+    }
+
+    /// <summary>
+    /// When the in-memory run has a valid repo provider ID and the resolved pipeline config
+    /// has BrainReadOnly = true, ResolveBrainReadOnlyAsync must return true.
+    /// </summary>
+    [Fact]
+    public async Task ResolveBrainReadOnlyAsync_JobWithRun_BrainReadOnlyTrue_ReturnsTrue()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1"
+        };
+        _runService.AddRun(run);
+
+        var mockPipelineStore = new Mock<IPipelineConfigStore>();
+        mockPipelineStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { BrainReadOnly = true });
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
+
+        var facade = CreateFacadeWithPipelineStore(mockPipelineStore.Object, mockProjectStore.Object);
+
+        var result = await facade.ResolveBrainReadOnlyAsync(new JobId("job-1"), CancellationToken.None);
+
+        result.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// When BrainReadOnly is false in the pipeline config, ResolveBrainReadOnlyAsync returns false.
+    /// </summary>
+    [Fact]
+    public async Task ResolveBrainReadOnlyAsync_JobWithRun_BrainReadOnlyFalse_ReturnsFalse()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "job-rw",
+            IssueIdentifier = "org/repo#2",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1"
+        };
+        _runService.AddRun(run);
+
+        var mockPipelineStore = new Mock<IPipelineConfigStore>();
+        mockPipelineStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { BrainReadOnly = false });
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
+
+        var facade = CreateFacadeWithPipelineStore(mockPipelineStore.Object, mockProjectStore.Object);
+
+        var result = await facade.ResolveBrainReadOnlyAsync(new JobId("job-rw"), CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// When IPipelineConfigStore is null (not wired), ResolveBrainReadOnlyAsync fails closed and returns true.
+    /// </summary>
+    [Fact]
+    public async Task ResolveBrainReadOnlyAsync_NoPipelineConfigStore_FailsClosedReturnsTrue()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "job-nc",
+            IssueIdentifier = "org/repo#3",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1"
+        };
+        _runService.AddRun(run);
+
+        // Facade without PipelineConfigStore — should fail closed
+        var result = await _facade.ResolveBrainReadOnlyAsync(new JobId("job-nc"), CancellationToken.None);
+
+        result.Should().BeTrue("missing PipelineConfigStore must fail closed to prevent write access");
+    }
+
+    /// <summary>
+    /// When no run exists and no WorkItem store is configured, ResolveBrainReadOnlyAsync fails closed.
+    /// </summary>
+    [Fact]
+    public async Task ResolveBrainReadOnlyAsync_NoRun_FailsClosedReturnsTrue()
+    {
+        var mockPipelineStore = new Mock<IPipelineConfigStore>();
+        mockPipelineStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { BrainReadOnly = false });
+
+        var facade = CreateFacadeWithPipelineStore(mockPipelineStore.Object);
+
+        // Job "unknown-job" has no in-memory run and no TransitionStore
+        var result = await facade.ResolveBrainReadOnlyAsync(new JobId("unknown-job"), CancellationToken.None);
+
+        result.Should().BeTrue("no run + no WorkItem store must fail closed");
+    }
+
+    /// <summary>
+    /// When template has BrainReadOnly = true (template override), resolution returns true
+    /// even when global config is false.
+    /// </summary>
+    [Fact]
+    public async Task ResolveBrainReadOnlyAsync_TemplateOverride_BrainReadOnlyTrue_ReturnsTrue()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "job-tmpl",
+            IssueIdentifier = "org/repo#4",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-tmpl"
+        };
+        _runService.AddRun(run);
+
+        var mockPipelineStore = new Mock<IPipelineConfigStore>();
+        // Global: BrainReadOnly = false
+        mockPipelineStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { BrainReadOnly = false });
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        // Template for repo-tmpl has BrainReadOnly = true — overrides global false
+        mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-tmpl", Name = "Template", IssueProviderId = "issue-1", RepoProviderId = "repo-tmpl", BrainReadOnly = true, Enabled = true }
+            });
+
+        var facade = CreateFacadeWithPipelineStore(mockPipelineStore.Object, mockProjectStore.Object);
+
+        var result = await facade.ResolveBrainReadOnlyAsync(new JobId("job-tmpl"), CancellationToken.None);
+
+        result.Should().BeTrue("template-level BrainReadOnly = true must override global false");
+    }
+
+    // TODO [WARNING]: missing test for project-level BrainReadOnly override in
+    // ResolveBrainReadOnlyAsync. The issue spec requires: "With BrainReadOnly true from …
+    // a project override … the brain config is vended read-only." The five existing tests cover
+    // global setting, template override, null store, no-run, and null store failure, but
+    // PipelineProject.BrainReadOnly = true (project-level override) is not exercised.
+    // A misconfiguration in ApplyProjectOverrides for BrainReadOnly would not be caught
+    // (issue #3573, TestQualityReviewer finding).
+
+    // TODO [WARNING]: missing tests for the K8s fallback path in ResolveBrainReadOnlyAsync
+    // (the _transitionStore.GetWorkItemProviderConfigIdsAsync branch). The existing
+    // ResolveBrainReadOnlyAsync_NoRun_FailsClosedReturnsTrue test covers the case where both
+    // run and transition store are absent, but the path where the transition store IS present
+    // and returns a repoProviderId is untested. This is the production path for K8s-mode agents
+    // (issue #3573, TestQualityReviewer finding).
+
+    #endregion
 }
