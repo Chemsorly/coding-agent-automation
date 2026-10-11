@@ -61,7 +61,9 @@ internal sealed class DispatchStateBuilder
             var pendingItems = await db.WorkItems
                 .Where(w => w.Status == WorkItemStatus.Pending)
                 .Where(taskTypeFilter)
-                .ApplyDispatchOrder()
+                // The default order: this builder has no production caller (removal tracked separately), so it does
+                // not load the configured DispatchOrder.
+                .ApplyDispatchOrder(WorkItemDispatchOrder.Default)
                 .Select(w => new PendingWorkItemProjection
                 {
                     Id = w.Id,

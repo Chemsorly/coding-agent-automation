@@ -63,6 +63,7 @@ The pipeline loop polls for `agent:next` issues, PRs and epics and dispatches th
 | `closedLoopPollInterval` | 00:01:00 | 10 s–10 min | | How often the loop checks for new work when idle |
 | `closedLoopMaxRunsPerCycle` | 0 | 0–1000 | | Max dispatches per cycle; 0 = unlimited |
 | `minIssueSlots` | 1 | 0–100 | | Slots per cycle held back for implementation issues when PRs and other higher-priority work would take them all. Applies when `closedLoopMaxRunsPerCycle` is 0 or at least 2; 0 = strict priority |
+| `dispatchOrder` | Triage, Review, Decomposition, Implementation, Consolidation | | | Order in which work goes to agents, first type first, for all projects. Within a type, higher priority weight goes first, then the oldest. A stored list missing a type gets it appended in default order |
 | `closedLoopMaxPagesToFetch` | 10 | 1–100 | | Max pages of issues fetched per poll (100 issues per page) |
 | `closedLoopMaxConsecutivePollFailures` | 5 | 1–50 | | Consecutive poll failures before the circuit breaker pauses the loop |
 | `closedLoopCircuitBreakerCooldown` | 00:05:00 | 30 s–1 h | | Pause before the circuit breaker resumes polling |

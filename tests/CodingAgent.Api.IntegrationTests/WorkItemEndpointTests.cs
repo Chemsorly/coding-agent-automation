@@ -1917,7 +1917,7 @@ public sealed class WorkItemEndpointTests
     /// AC: GET /api/work-items/pending applies RunType tier ordering as the primary sort:
     /// Triage &gt; Review &gt; Decomposition &gt; Implementation &gt; Consolidation, regardless of CreatedAt.
     /// Within the same tier, higher PriorityWeight comes first (secondary sort).
-    /// Decision: decisions.md "Dispatch priority: static ordering Triage > Review > Decomposition > Implementation > Consolidation"
+    /// Decision: decisions.md "Dispatch priority: one configurable order by task type"
     /// and "PriorityWeight: secondary sort key within RunType tier".
     /// </summary>
     [Fact]
@@ -1986,11 +1986,49 @@ public sealed class WorkItemEndpointTests
     }
 
     /// <summary>
+    /// GET /api/work-items/pending sorts by the configured <see cref="PipelineConfiguration.DispatchOrder"/>, not a
+    /// fixed order: with Implementation first, an implementation item comes before an older triage and review.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingWorkItems_FollowsTheConfiguredDispatchOrder()
+    {
+        var original = await _client.GetFromJsonAsync<PipelineConfiguration>("/api/config/pipeline", PipelineJsonOptions.Default);
+        var configured = original! with
+        {
+            DispatchOrder = [WorkItemTaskType.Implementation, WorkItemTaskType.Review, WorkItemTaskType.Triage]
+        };
+        (await _client.PutAsJsonAsync("/api/config/pipeline", configured, PipelineJsonOptions.Default))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        try
+        {
+            var prefix = $"configured-order-{Guid.NewGuid():N}";
+            var base_ = DateTimeOffset.UtcNow.AddMinutes(-30);
+            var triage = SeedEntity(WorkItemStatus.Pending, $"{prefix}-triage", WorkItemTaskType.Triage, createdAt: base_);
+            var review = SeedEntity(WorkItemStatus.Pending, $"{prefix}-review", WorkItemTaskType.Review, createdAt: base_.AddMinutes(1));
+            var implementation = SeedEntity(WorkItemStatus.Pending, $"{prefix}-implementation", WorkItemTaskType.Implementation,
+                createdAt: base_.AddMinutes(2));
+
+            var items = await _client.GetFromJsonAsync<List<PendingWorkItemDto>>(
+                "/api/work-items/pending?maxResults=500", PipelineJsonOptions.Default);
+
+            var fixtureIds = new[] { triage.Id, review.Id, implementation.Id };
+            items!.Where(i => fixtureIds.Contains(i.Id)).Select(i => i.Id)
+                .Should().Equal([implementation.Id, review.Id, triage.Id],
+                    "the configured order puts Implementation, then Review, then Triage first");
+        }
+        finally
+        {
+            (await _client.PutAsJsonAsync("/api/config/pipeline", original, PipelineJsonOptions.Default))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+    }
+
+    /// <summary>
     /// Starvation boundary: when 51 Review items are pending and maxResults=50, the Take(50)
     /// window fills entirely with Reviews and the single Implementation item is absent.
     /// This documents the intentional starvation contract: lower-tier items are invisible to
     /// the WorkItemDispatchLoop for that cycle whenever a higher tier has 50+ pending items.
-    /// Decision: decisions.md "Dispatch priority: static ordering Triage > Review > Decomposition > Implementation > Consolidation".
+    /// Decision: decisions.md "Dispatch priority: one configurable order by task type".
     /// </summary>
     [Fact]
     public async Task GetPendingWorkItems_HighTierBacklogFillsWindow_LowerTierItemAbsent()

@@ -1235,6 +1235,58 @@ select option { background: var(--surface); color: var(--text); }
     gap: 4px;
 }
 
+/* Pipeline Loop → Dispatch Order: one row per task type, reordered with the ↑/↓ buttons. */
+.dispatch-order-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 560px;
+}
+
+.dispatch-order-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-alt);
+}
+
+.dispatch-order-number {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 20px;
+}
+
+.dispatch-order-name {
+    font-weight: 600;
+    min-width: 120px;
+}
+
+.dispatch-order-hint {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.dispatch-order-actions {
+    display: flex;
+    gap: 4px;
+}
+
+/* Narrow screens: number, name and buttons on one line, the description on its own line below. */
+@media (max-width: 768px) {
+    .dispatch-order-row { flex-wrap: wrap; }
+    .dispatch-order-actions { margin-left: auto; }
+    .dispatch-order-hint { order: 1; flex-basis: 100%; padding-left: 28px; }
+}
+
 .setup-step-command-input {
     width: 100%;
     padding: 6px 10px;
