@@ -1,5 +1,9 @@
 using CodingAgent.Contracts.Auth;
+using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline.Interfaces;
+using Microsoft.AspNetCore.Mvc;
+using StackExchange.Redis;
 
 namespace CodingAgent.Api.Ui;
 
@@ -19,9 +23,17 @@ internal static class UiEndpoints
             .AddEndpointFilter<UiAccessDeniedFilter>();
 
         group.MapGet("/me", GetMe);
+        group.MapGet("/health", GetHealth);
 
         return app;
     }
+
+    /// <summary>
+    /// GET /api/ui/health — database and Redis state of this replica for the sidebar. Reads cached
+    /// state only (the background database monitor, the multiplexer's connection flag).
+    /// </summary>
+    internal static IResult GetHealth(DatabaseHealthState database, [FromServices] IConnectionMultiplexer? redis) =>
+        TypedResults.Ok(new UiHealthResponse(database.IsDatabaseHealthy, redis?.IsConnected));
 
     /// <summary>GET /api/ui/me — the user and grant from the token, with project names resolved.</summary>
     internal static async Task<IResult> GetMe(IUserAccess access, IProjectStore projects, CancellationToken ct)

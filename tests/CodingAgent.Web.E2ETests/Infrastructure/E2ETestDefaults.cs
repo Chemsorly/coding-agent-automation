@@ -39,6 +39,9 @@ internal static class E2ETestDefaults
     /// </summary>
     public const string UserTokenSigningKey = "e2e-user-token-signing-key-0123456789abcdef";
 
+    /// <summary>The web host's Data Protection key (spec 051 D10). The web host refuses to start without one.</summary>
+    public const string DataProtectionKey = "e2e-data-protection-key-0123456789abcdef";
+
     /// <summary>
     /// Applies the database settings both hosts need at startup.
     ///

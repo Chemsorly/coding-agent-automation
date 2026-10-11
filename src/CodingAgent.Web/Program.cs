@@ -86,6 +86,18 @@ catch (InvalidOperationException ex)
 
 builder.Services.AddUiClients(apiBaseUrl, userTokenSigningKey);
 
+// Spec 051 D10: the login cookie and antiforgery tokens are protected with one fixed key from the
+// same Secret, so every replica and every restart accepts them. No Redis, nothing written.
+try
+{
+    builder.Services.AddDataProtectionServices(builder.Configuration.GetValue<string>(DataProtectionRegistration.KeyConfigKey));
+}
+catch (InvalidOperationException ex)
+{
+    Log.Fatal(ex, "{Reason} Exiting.", ex.Message);
+    return;
+}
+
 var agentApiKey = builder.Configuration.GetValue<string>(AgentApiKeyConfigKey)
     ?? Environment.GetEnvironmentVariable(AgentApiKeyConfigKey)
     ?? "";
@@ -120,10 +132,6 @@ builder.Services.AddOrchestrationServices();
 builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
 
-// Infrastructure health aggregation — reads from IConnectionMultiplexer (Redis, optional).
-// DB health monitoring removed — monolith has no direct Postgres connection.
-builder.Services.AddSingleton<CodingAgent.Web.Services.InfrastructureHealthService>();
-
 // Frontend observability (Faro) — scoped so each Blazor circuit gets its own instance.
 // FaroService wraps IJSRuntime; NotificationFaroBridge forwards notifications to Faro.
 // Both silently no-op if Faro is not configured (Faro:CollectorUrl env var absent).
@@ -147,13 +155,7 @@ builder.Services.AddUserAuthentication(builder.Configuration);
 builder.Host.ConfigureSerilog();
 
 // Configure OpenTelemetry (tracing + metrics)
-var redisConnectionString = builder.Configuration.GetValue<string>("SignalR:Redis:ConnectionString");
-
-// ── Data Protection — shared key ring across replicas ─────────────────────
-// See DataProtectionRegistration.cs for the full explanation.
-// Uses the same SignalR:Redis:ConnectionString config key — no additional Helm values needed.
-builder.Services.AddDataProtectionServices(DataProtectionRegistration.CreateMultiplexerFactory(redisConnectionString));
-builder.Services.AddApplicationTelemetry(redisConnectionString);
+builder.Services.AddApplicationTelemetry();
 
 var app = builder.Build();
 

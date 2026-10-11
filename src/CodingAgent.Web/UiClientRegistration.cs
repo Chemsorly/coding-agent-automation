@@ -17,6 +17,7 @@ internal static class UiClientRegistration
         services.AddScoped<IUiAccessTokenSource, UserTokenProvider>();
 
         services.AddHttpClient<IUiMeClient, UiMeClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+        services.AddHttpClient<IUiHealthClient, UiHealthClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
 
         return services;
     }

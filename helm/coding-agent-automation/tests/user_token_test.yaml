@@ -6,6 +6,7 @@
 #   2. userToken.existingSecret skips that and is used instead
 #   3. UserToken__SigningKey reaches the web and API pods only
 #   4. The hook Role may read the user-token Secret it manages
+#   5. DataProtection__Key reaches the web pod only, and the web pod has no Redis env (D10)
 
 suite: user token
 
@@ -88,6 +89,56 @@ tests:
               secretKeyRef:
                 name: my-user-token
                 key: signing-key
+
+  - it: the web pod gets the Data Protection key (spec 051 D10)
+    template: templates/web-deployment.yaml
+    release:
+      name: rel
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+            valueFrom:
+              secretKeyRef:
+                name: rel-coding-agent-automation-web-user-token
+                key: data-protection-key
+
+  - it: the web pod has no Redis connection, even when Redis is configured
+    template: templates/web-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SignalR__Redis__ConnectionString
+          any: true
+
+  - it: the API pod does not get the Data Protection key
+    template: templates/api-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+          any: true
+
+  - it: the scheduler pod gets neither key
+    template: templates/scheduler-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+          any: true
+
+  - it: the job controller pod gets neither key
+    template: templates/jobcontroller-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+          any: true
 
   - it: the scheduler pod does not get the signing key
     template: templates/scheduler-deployment.yaml
