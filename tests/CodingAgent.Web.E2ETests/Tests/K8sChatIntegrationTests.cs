@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Kubernetes;
@@ -104,9 +105,13 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
 
             var sessionId = Guid.NewGuid().ToString();
 
-            // Mirror AgentChat.razor: set ActiveChatSessionId before AssignChatPrompt so hub
+            // Mirror AgentChat.razor / AgentEndpoints.SendChatPrompt: stamp ActiveChatSessionId
+            // in the registry (via UpdateAgentFieldAsync) before AssignChatPrompt so hub
             // ownership validation in ReportChatResponse / ReportChatCompleted passes.
-            entry.ActiveChatSessionId = sessionId;
+            // Direct mutation (entry.ActiveChatSessionId = sessionId) is no longer correct:
+            // AgentRegistryService.UpdateAgentFieldAsync replaces the entry via AddOrUpdate
+            // (a record with-expression), so the local entry reference becomes stale.
+            await _registry.UpdateAgentFieldAsync(agentId, AgentFieldNames.ActiveChatSessionId, sessionId);
 
             // Send prompt to agent via hub
             await hubContext.Clients.Client(entry.ConnectionId)
@@ -123,12 +128,15 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
                 .WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal("What is 2+2?", prompt.Prompt);
 
-            // Agent sends response back (hub validates ownership via ActiveChatSessionId)
+            // Agent sends response back (hub validates ownership via ActiveChatSessionId in registry)
             await fakeAgent.SendChatResponseAsync(sessionId, "The answer is 4.");
 
-            // Assert: ReportChatCompleted clears ActiveChatSessionId — confirms full round-trip
-            // completed and the hub processed both ReportChatResponse and ReportChatCompleted.
-            Assert.Null(entry.ActiveChatSessionId);
+            // Assert: ReportChatCompleted cleared ActiveChatSessionId in the registry —
+            // confirms full round-trip completed and the hub processed both
+            // ReportChatResponse and ReportChatCompleted.
+            // Read the live entry from the registry (not the stale local reference) because
+            // UpdateAgentFieldAsync replaces the stored record.
+            Assert.Null(_registry.GetByAgentId(agentId)!.ActiveChatSessionId);
         }
     }
 

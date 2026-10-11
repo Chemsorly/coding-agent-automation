@@ -188,25 +188,25 @@ public sealed class HubConsolidationOperationsTests
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
-    // ── CompleteModelFetchRequest ─────────────────────────────────────────
+    // ── CompleteModelFetchRequestAsync ────────────────────────────────────
 
     [Fact]
-    public void CompleteModelFetchRequest_NullResponse_Throws()
+    public async Task CompleteModelFetchRequestAsync_NullResponse_Throws()
     {
         var sut = CreateSut();
-        var act = () => sut.CompleteModelFetchRequest(null!);
-        act.Should().Throw<ArgumentNullException>();
+        var act = async () => await sut.CompleteModelFetchRequestAsync(null!);
+        await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
     [Fact]
-    public void CompleteModelFetchRequest_UnknownRequestId_DoesNotThrow()
+    public async Task CompleteModelFetchRequestAsync_UnknownRequestId_DoesNotThrow()
     {
         // No pending request with this ID — ModelFetchService logs a warning and moves on
         var response = new FetchModelsResponse { RequestId = "unknown-req-id", Models = [] };
         var sut = CreateSut();
 
-        var act = () => sut.CompleteModelFetchRequest(response);
-        act.Should().NotThrow("unknown request IDs are handled gracefully with a warning log");
+        var act = async () => await sut.CompleteModelFetchRequestAsync(response);
+        await act.Should().NotThrowAsync("unknown request IDs are handled gracefully with a warning log");
     }
 
     // ── HandleConsolidationCompleteAsync — null result guard ─────────────

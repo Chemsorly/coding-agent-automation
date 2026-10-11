@@ -210,7 +210,7 @@ public class WaitForCiSpanTests : IDisposable
 
         // GetRunStatusAsync returns Running so runs "appear" and WaitForCiRunsToAppearAsync succeeds.
         _pipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -219,7 +219,7 @@ public class WaitForCiSpanTests : IDisposable
 
         // WaitForCompletionAsync throws — this propagates to RunExternalCiPollAsync's catch block.
         _pipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("transient CI infrastructure failure"));
 
         // Act: AppendExternalCiIfNeededAsync catches the rethrow and converts it to a gate result.
@@ -349,7 +349,7 @@ public class WaitForCiSpanTests : IDisposable
     private void SetupCiPass()
     {
         _pipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -357,7 +357,7 @@ public class WaitForCiSpanTests : IDisposable
             });
 
         _pipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -368,7 +368,7 @@ public class WaitForCiSpanTests : IDisposable
     private void SetupCiFail()
     {
         _pipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -376,7 +376,7 @@ public class WaitForCiSpanTests : IDisposable
             });
 
         _pipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Failed,

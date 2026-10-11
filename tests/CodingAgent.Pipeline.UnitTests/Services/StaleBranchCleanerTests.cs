@@ -216,7 +216,13 @@ public class StaleBranchCleanerTests
         // Pass the open PR in agentDonePrs — this is the branch protection source
         await RunAsync(cleaner, repo, issues, agentDonePrs: [openPr]);
 
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        // TODO [WARNING] (TestQualityReviewer): This Verify uses It.IsAny<BranchName>() which
+        // would not catch an accidental transposition of arguments passed to DeleteBranchAsync.
+        // The positive deletion test (RunIfDueAsync_BranchWithDoneIssueNoPr_Deleted) uses a
+        // specific branch value, which is the correct approach. Consider using a specific value
+        // in Times.Never assertions too, e.g. repo.Verify(p => p.DeleteBranchAsync(agentBranch, ...))
+        // to ensure the right branch (and not some other string) is being guarded.
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never,
             "branch has an open PR in agentDonePrs — must not be deleted");
     }
 
@@ -238,7 +244,7 @@ public class StaleBranchCleanerTests
 
         await RunAsync(cleaner, repo, issues, agentDonePrs: Array.Empty<PullRequestSummary>());
 
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never,
             "issue has agent:next — must not delete branch");
     }
 
@@ -258,7 +264,7 @@ public class StaleBranchCleanerTests
 
         await RunAsync(cleaner, repo, issues, agentDonePrs: Array.Empty<PullRequestSummary>());
 
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never,
             "issue has agent:epic-review — awaiting human review, must not delete branch");
     }
 
@@ -340,7 +346,7 @@ public class StaleBranchCleanerTests
                 wasInputTruncated: true));
 
         ex.Should().BeNull("truncated input must not propagate an exception");
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never,
             "cleanup must be skipped entirely when input was truncated");
         // ListAgentBranchesAsync must NOT even be called — we short-circuit before that
         repo.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Never,
@@ -394,7 +400,7 @@ public class StaleBranchCleanerTests
         var ex = await Record.ExceptionAsync(() => RunAsync(cleaner, repo, issues));
 
         ex.Should().BeNull("ListAgentBranches failure must be swallowed");
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Open PR not in agentDonePrs (truncation path) ────────────────────────
@@ -424,7 +430,7 @@ public class StaleBranchCleanerTests
             agentDonePrs: Array.Empty<PullRequestSummary>(),
             wasInputTruncated: true);
 
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never,
             "cleanup must be skipped when input is truncated — no branch deletion allowed");
     }
 
@@ -452,7 +458,7 @@ public class StaleBranchCleanerTests
             agentDonePrs: [openPr],
             wasInputTruncated: false);
 
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never,
             "branch with open PR present in agentDonePrs must not be deleted");
     }
 
@@ -487,7 +493,7 @@ public class StaleBranchCleanerTests
 
         await RunAsync(cleaner, repo, issues, agentDonePrs: Array.Empty<PullRequestSummary>());
 
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never,
             "mixed-case Agent:In-Progress must be treated as active — must not delete branch");
         // TODO: Also verify GetIssueAsync was called exactly once to pin the test to the intended code path;
         // a future guard that short-circuits before the issue fetch would let this test pass vacuously

@@ -43,7 +43,7 @@ public class QualityGateExecutorCiGateBuilderTests
         var (executor, context, mockPipelineProvider, _) = BuildPollingFixture();
         mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ciStatus);
 
         var result = await executor.AppendExternalCiIfNeededAsync(
@@ -72,7 +72,7 @@ public class QualityGateExecutorCiGateBuilderTests
         var (executor, context, mockPipelineProvider, _) = BuildPollingFixture();
         mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ciStatus);
 
         var result = await executor.AppendExternalCiIfNeededAsync(
@@ -107,7 +107,7 @@ public class QualityGateExecutorCiGateBuilderTests
         // Simulate the inner timeout token firing (not the outer cancellation token)
         mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException(innerCts.Token));
 
         var result = await executor.AppendExternalCiIfNeededAsync(
@@ -129,7 +129,7 @@ public class QualityGateExecutorCiGateBuilderTests
         var (executor, context, mockPipelineProvider, _) = BuildPollingFixture();
         mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException(errorMessage));
 
         var result = await executor.AppendExternalCiIfNeededAsync(
@@ -171,7 +171,7 @@ public class QualityGateExecutorCiGateBuilderTests
         // Sequence: pre-PR CI passes (call #1), cleanup CI skipped (no-changes), post-PR CI → our status
         mockPipelineProvider
             .SetupSequence(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] })  // pre-PR CI
             .ReturnsAsync(postPrCiStatus);                                                         // post-PR CI
 
@@ -210,7 +210,7 @@ public class QualityGateExecutorCiGateBuilderTests
         // Sequence: pre-PR CI passes (call #1), cleanup CI skipped (no-changes), post-PR CI → passes
         mockPipelineProvider
             .SetupSequence(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] })  // pre-PR CI
             .ReturnsAsync(postPrCiStatus);                                                         // post-PR CI
 
@@ -242,7 +242,7 @@ public class QualityGateExecutorCiGateBuilderTests
         // Sequence: pre-PR CI passes (call #1), cleanup skipped, post-PR CI → inner timeout
         mockPipelineProvider
             .SetupSequence(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] })  // pre-PR CI
             .ThrowsAsync(new OperationCanceledException(innerCts.Token));                          // post-PR CI times out
 
@@ -269,7 +269,7 @@ public class QualityGateExecutorCiGateBuilderTests
         // Sequence: pre-PR CI passes (call #1), post-PR CI → generic exception
         mockPipelineProvider
             .SetupSequence(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] })  // pre-PR CI
             .ThrowsAsync(new HttpRequestException(errorMessage));                                  // post-PR CI error
 
@@ -316,7 +316,7 @@ public class QualityGateExecutorCiGateBuilderTests
 
         // GetRunStatusAsync returns Running so WaitForCiRunsToAppearAsync passes through immediately
         mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -417,7 +417,7 @@ public class QualityGateExecutorCiGateBuilderTests
 
         // GetRunStatusAsync returns Running so WaitForCiRunsToAppearAsync passes through
         mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -678,7 +678,7 @@ public class QualityGateExecutorTerminalReportTests
 
         // CI never starts
         mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // PR is conflicted — triggers BuildConflictRestartReport
@@ -717,7 +717,7 @@ public class QualityGateExecutorTerminalReportTests
 
         // CI never starts
         mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // PR is merged — triggers BuildPrMergedReport
@@ -756,7 +756,7 @@ public class QualityGateExecutorTerminalReportTests
 
         // CI never starts
         mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // PR is closed — triggers BuildPrClosedReport

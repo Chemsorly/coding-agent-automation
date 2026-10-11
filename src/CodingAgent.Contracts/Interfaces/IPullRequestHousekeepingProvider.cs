@@ -57,7 +57,7 @@ public interface IPullRequestHousekeepingProvider : IAsyncDisposable
     /// Deletes a remote branch by name. No-op if the branch does not exist.
     /// Default throws <see cref="NotSupportedException"/>.
     /// </summary>
-    Task DeleteBranchAsync(string branchName, CancellationToken ct)
+    Task DeleteBranchAsync(BranchName branchName, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support DeleteBranchAsync.");
 

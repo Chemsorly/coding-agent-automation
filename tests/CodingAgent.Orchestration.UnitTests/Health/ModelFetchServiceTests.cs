@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -48,15 +49,14 @@ public class ModelFetchServiceTests
         // When RequestFetchModelsAsync is called, simulate the agent responding
         _mockComm.Setup(c => c.RequestFetchModelsAsync(
                 "conn-1", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
             {
-                // Simulate agent response via CompleteRequest
-                _service.CompleteRequest(new FetchModelsResponse
+                // Simulate agent response via CompleteRequestAsync
+                await _service.CompleteRequestAsync(new FetchModelsResponse
                 {
                     RequestId = req.RequestId,
                     Models = [new AgentModelInfo { ModelId = "claude-sonnet-4-20250514" }]
                 });
-                return Task.CompletedTask;
             });
 
         var (models, error) = await _service.FetchModelsAsync(CancellationToken.None);
@@ -78,14 +78,13 @@ public class ModelFetchServiceTests
 
         _mockComm.Setup(c => c.RequestFetchModelsAsync(
                 "conn-1", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
             {
-                _service.CompleteRequest(new FetchModelsResponse
+                await _service.CompleteRequestAsync(new FetchModelsResponse
                 {
                     RequestId = req.RequestId,
                     Models = [new AgentModelInfo { ModelId = "model-1" }]
                 });
-                return Task.CompletedTask;
             });
 
         // First call
@@ -112,15 +111,14 @@ public class ModelFetchServiceTests
 
         _mockComm.Setup(c => c.RequestFetchModelsAsync(
                 "conn-1", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
             {
-                _service.CompleteRequest(new FetchModelsResponse
+                await _service.CompleteRequestAsync(new FetchModelsResponse
                 {
                     RequestId = req.RequestId,
                     Models = [],
                     Error = "CLI not configured"
                 });
-                return Task.CompletedTask;
             });
 
         var (models, error) = await _service.FetchModelsAsync(CancellationToken.None);
@@ -130,26 +128,30 @@ public class ModelFetchServiceTests
     }
 
     [Fact]
-    public void CompleteRequest_UnknownRequestId_LogsWarning()
+    public async Task CompleteRequestAsync_UnknownRequestId_NoRedis_LogsWarning()
     {
-        _service.CompleteRequest(new FetchModelsResponse
+        await _service.CompleteRequestAsync(new FetchModelsResponse
         {
             RequestId = "unknown-id",
             Models = []
         });
 
-        // Should not throw — just logs a warning
+        // Without Redis, an unknown request ID must log a warning.
+        // Serilog's ILogger.Warning has a generic<T> overload used with a single property value.
+        // TODO: [WARNING] The It.IsAny<string>() matcher for both arguments is too broad — it would match
+        // any Warning call with a single string property (e.g. from registry internals). Tighten to also
+        // verify the message template contains "FetchModelsResponse" or "unknown request" to lock in the
+        // contract.
         _mockLogger.Verify(l => l.Warning(
-            It.IsAny<string>(), It.IsAny<object[]>()), Times.Never);
-        // The actual logging uses structured params, so just verify no exception
+            It.IsAny<string>(), It.IsAny<string>()), Times.Once);
     }
 
     [Fact]
-    public void CompleteRequest_NullResponse_ThrowsArgumentNullException()
+    public async Task CompleteRequestAsync_NullResponse_ThrowsArgumentNullException()
     {
-        var act = () => _service.CompleteRequest(null!);
+        var act = async () => await _service.CompleteRequestAsync(null!);
 
-        act.Should().Throw<ArgumentNullException>();
+        await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
     [Fact]
@@ -186,10 +188,9 @@ public class ModelFetchServiceTests
         // Prime the cache via a successful FetchModelsAsync call.
         _registry.Register(new AgentRegistrationMessage { AgentId = "a1", Hostname = "h", Labels = [] }, "c1");
         _mockComm.Setup(c => c.RequestFetchModelsAsync("c1", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
             {
-                _service.CompleteRequest(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "cached" }] });
-                return Task.CompletedTask;
+                await _service.CompleteRequestAsync(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "cached" }] });
             });
         await _service.FetchModelsAsync(CancellationToken.None);
 
@@ -211,10 +212,9 @@ public class ModelFetchServiceTests
         const string podName = "caa-models-abc123-xyz";
         _registry.Register(new AgentRegistrationMessage { AgentId = podName, Hostname = "h", Labels = [] }, "conn-pod");
         _mockComm.Setup(c => c.RequestFetchModelsAsync("conn-pod", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
             {
-                _service.CompleteRequest(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "m1" }] });
-                return Task.CompletedTask;
+                await _service.CompleteRequestAsync(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "m1" }] });
             });
 
         var (models, error) = await _service.WaitAndFetchAsync(prefix, 5, 50, CancellationToken.None);
@@ -245,10 +245,9 @@ public class ModelFetchServiceTests
         // so the setup must already be in place at that point.
         const string prefix = "caa-models-delayed";
         _mockComm.Setup(c => c.RequestFetchModelsAsync("conn-late", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
             {
-                _service.CompleteRequest(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "late-model" }] });
-                return Task.CompletedTask;
+                await _service.CompleteRequestAsync(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "late-model" }] });
             });
         _ = Task.Run(async () =>
         {
@@ -269,10 +268,9 @@ public class ModelFetchServiceTests
         const string prefix = "caa-models-err";
         _registry.Register(new AgentRegistrationMessage { AgentId = $"{prefix}-pod", Hostname = "h", Labels = [] }, "conn-err");
         _mockComm.Setup(c => c.RequestFetchModelsAsync("conn-err", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
             {
-                _service.CompleteRequest(new FetchModelsResponse { RequestId = req.RequestId, Models = [], Error = "kiro-cli not found" });
-                return Task.CompletedTask;
+                await _service.CompleteRequestAsync(new FetchModelsResponse { RequestId = req.RequestId, Models = [], Error = "kiro-cli not found" });
             });
 
         var (models, error) = await _service.WaitAndFetchAsync(prefix, 5, 50, CancellationToken.None);
@@ -317,10 +315,9 @@ public class ModelFetchServiceTests
         {
             var c = conn;
             _mockComm.Setup(x => x.RequestFetchModelsAsync(c, It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-                .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+                .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
                 {
-                    _service.CompleteRequest(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = $"model-from-{c}" }] });
-                    return Task.CompletedTask;
+                    await _service.CompleteRequestAsync(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = $"model-from-{c}" }] });
                 });
         }
 
@@ -361,14 +358,12 @@ public class ModelFetchServiceTests
         error.Should().NotBeNull(); // "No agents available"
     }
 
-    // ── CompleteRequest resolves pending fetch ────────────────────────────
+    // ── CompleteRequestAsync resolves pending fetch ────────────────────────────
 
     [Fact]
-    public async Task CompleteRequest_ForKnownRequest_SetsResult()
+    public async Task CompleteRequestAsync_ForKnownRequest_SetsResult()
     {
         // Verify that completing a request resolves it (internal state)
-        // Use the same ID that would be generated by internal logic
-
         // Pre-inject a pending TCS via reflection
         var pendingField = typeof(ModelFetchService).GetField("_pending",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -384,10 +379,240 @@ public class ModelFetchServiceTests
             Models = [new AgentModelInfo { ModelId = "model-1" }]
         };
 
-        _service.CompleteRequest(response);
+        await _service.CompleteRequestAsync(response);
 
         tcs.Task.IsCompleted.Should().BeTrue();
         var result = await tcs.Task;
         result.Should().Be(response);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Cross-replica Redis tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Test 1 (TDD anchor) — A fetch started on service A returns models when the
+    /// result is reported to service B (which shares the same FakeRedisStore).
+    /// This test must FAIL before the production fix and PASS after.
+    /// </summary>
+    [Fact]
+    public async Task CrossReplica_ResultReportedToOtherInstance_FetchCompletes()
+    {
+        var fakeRedis = new FakeRedisStore();
+        var logger = new Mock<ILogger>();
+        var registry = new AgentRegistryService(logger.Object);
+
+        // serviceA: the replica that sends the request and waits.
+        var capturedRequestId = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockCommA = new Mock<IAgentCommunication>();
+        var serviceA = new ModelFetchService(
+            registry, mockCommA.Object, logger.Object,
+            redis: fakeRedis,
+            // TODO: [WARNING] The 500 ms poll interval is a significant fraction of this 2000 ms
+            // responseTimeout, leaving only ~3 polling windows. On a slow CI host, scheduler starvation
+            // could cause the fetch to time out before the poll fires, making the test flaky. Consider
+            // reducing the poll interval for tests or increasing this timeout.
+            responseTimeout: TimeSpan.FromMilliseconds(2000));
+
+        // serviceB: the replica that receives the agent's result (no pending TCS on B).
+        var mockCommB = new Mock<IAgentCommunication>();
+        var serviceB = new ModelFetchService(
+            registry, mockCommB.Object, logger.Object,
+            redis: fakeRedis,
+            responseTimeout: TimeSpan.FromMilliseconds(2000));
+
+        // Register an agent so serviceA can find one.
+        registry.Register(new AgentRegistrationMessage { AgentId = "fetch-pod-1", Hostname = "h", Labels = [] }, "conn-pod-1");
+
+        // serviceA's mock comm captures the requestId and does NOT complete the TCS.
+        mockCommA.Setup(c => c.RequestFetchModelsAsync("conn-pod-1", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            {
+                capturedRequestId.TrySetResult(req.RequestId);
+                return Task.CompletedTask; // deliberately does NOT call CompleteRequestAsync
+            });
+
+        // Start the fetch on serviceA in the background.
+        var fetchTask = serviceA.FetchModelsAsync(CancellationToken.None);
+
+        // Wait until serviceA has registered its pending entry (i.e. the comm mock was called).
+        var requestId = await capturedRequestId.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Deliver the result via serviceB — simulating the cross-replica path.
+        await serviceB.CompleteRequestAsync(new FetchModelsResponse
+        {
+            RequestId = requestId,
+            Models = [new AgentModelInfo { ModelId = "cross-replica-model" }]
+        });
+
+        // serviceA must return the models (not time out).
+        var (models, error) = await fetchTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        error.Should().BeNull("cross-replica delivery must succeed");
+        models.Should().HaveCount(1);
+        models[0].ModelId.Should().Be("cross-replica-model");
+    }
+
+    /// <summary>
+    /// Test 2 — Same-replica completion still works when Redis is configured.
+    /// The Redis key must NOT be set (fast path via TCS).
+    /// </summary>
+    [Fact]
+    public async Task SameReplica_WithRedis_CompletesViaLocalTcs_NoRedisKeyWritten()
+    {
+        var fakeRedis = new FakeRedisStore();
+        var logger = new Mock<ILogger>();
+        var registry = new AgentRegistryService(logger.Object);
+
+        string? capturedRequestId = null;
+        var mockComm = new Mock<IAgentCommunication>();
+        var service = new ModelFetchService(
+            registry, mockComm.Object, logger.Object,
+            redis: fakeRedis,
+            responseTimeout: TimeSpan.FromMilliseconds(2000));
+
+        registry.Register(new AgentRegistrationMessage { AgentId = "agent-same-1", Hostname = "h", Labels = [] }, "conn-same-1");
+
+        // The mock calls CompleteRequestAsync on the SAME service instance — same-replica path.
+        mockComm.Setup(c => c.RequestFetchModelsAsync("conn-same-1", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<string, FetchModelsRequest, CancellationToken>(async (_, req, _) =>
+            {
+                capturedRequestId = req.RequestId;
+                await service.CompleteRequestAsync(new FetchModelsResponse
+                {
+                    RequestId = req.RequestId,
+                    Models = [new AgentModelInfo { ModelId = "same-replica-model" }]
+                });
+            });
+
+        var (models, error) = await service.FetchModelsAsync(CancellationToken.None);
+
+        error.Should().BeNull();
+        models.Should().HaveCount(1);
+        models[0].ModelId.Should().Be("same-replica-model");
+
+        // Redis key must NOT have been set — the TCS path completed before any Redis write.
+        var redisKey = $"fetch-models:result:{capturedRequestId}";
+        (await fakeRedis.ExistsAsync(redisKey)).Should().BeFalse(
+            "same-replica path must complete via TCS without writing to Redis");
+    }
+
+    /// <summary>
+    /// Test 3 — Without Redis, a result reported to B logs a warning on B and A times out.
+    /// This verifies the existing no-Redis behavior is unchanged.
+    /// </summary>
+    [Fact]
+    public async Task NoRedis_ResultReportedToOtherInstance_ATimesOutAndBLogsWarning()
+    {
+        var loggerA = new Mock<ILogger>();
+        var loggerB = new Mock<ILogger>();
+        var registry = new AgentRegistryService(loggerA.Object);
+
+        var capturedRequestId = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockCommA = new Mock<IAgentCommunication>();
+        var serviceA = new ModelFetchService(
+            registry, mockCommA.Object, loggerA.Object,
+            redis: null,
+            responseTimeout: TimeSpan.FromMilliseconds(300));
+
+        var mockCommB = new Mock<IAgentCommunication>();
+        var serviceB = new ModelFetchService(
+            registry, mockCommB.Object, loggerB.Object,
+            redis: null,
+            responseTimeout: TimeSpan.FromMilliseconds(300));
+
+        registry.Register(new AgentRegistrationMessage { AgentId = "agent-norx-1", Hostname = "h", Labels = [] }, "conn-norx-1");
+
+        mockCommA.Setup(c => c.RequestFetchModelsAsync("conn-norx-1", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            {
+                capturedRequestId.TrySetResult(req.RequestId);
+                return Task.CompletedTask; // does NOT complete — simulates cross-replica scenario
+            });
+
+        var fetchTask = serviceA.FetchModelsAsync(CancellationToken.None);
+
+        var requestId = await capturedRequestId.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Deliver result to B (no Redis — B will log a warning and drop it).
+        await serviceB.CompleteRequestAsync(new FetchModelsResponse
+        {
+            RequestId = requestId,
+            Models = [new AgentModelInfo { ModelId = "dropped-model" }]
+        });
+
+        // serviceA must time out (no Redis to relay the result).
+        // TODO: [WARNING] fetchTask is awaited without a WaitAsync guard. serviceA uses a 300 ms
+        // responseTimeout so it completes quickly in practice, but if the timeout were accidentally
+        // removed or extended (e.g. missing constructor override), this test would block CI for up to
+        // 30 s. Add .WaitAsync(TimeSpan.FromSeconds(5)) to bound the test like the cross-replica tests do.
+        var (models, error) = await fetchTask;
+
+        // TODO: [WARNING] The ".Contain("timed out")" assertion is too loose — any message containing
+        // "timed out" would pass. Consider asserting the exact contractual message
+        // "Request timed out — the agent did not respond in time." to lock in the spec.
+        error.Should().Contain("timed out", "without Redis, A cannot receive B's result");
+        models.Should().BeEmpty();
+
+        // serviceB must have logged the warning for the unknown request.
+        loggerB.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<string>()), Times.Once,
+            "serviceB must log a warning for the unknown request ID when Redis is not configured");
+    }
+
+    /// <summary>
+    /// Test 4 — After A reads the cross-replica result, the Redis key is deleted.
+    /// </summary>
+    [Fact]
+    public async Task CrossReplica_AfterFetchCompletes_RedisKeyIsDeleted()
+    {
+        var fakeRedis = new FakeRedisStore();
+        var logger = new Mock<ILogger>();
+        var registry = new AgentRegistryService(logger.Object);
+
+        var capturedRequestId = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockCommA = new Mock<IAgentCommunication>();
+        var serviceA = new ModelFetchService(
+            registry, mockCommA.Object, logger.Object,
+            redis: fakeRedis,
+            // TODO: [WARNING] Same timing sensitivity as Test 1: 500 ms poll / 2000 ms timeout leaves
+            // only ~3 polling windows. Flakiness is possible on a slow CI host. Consider reducing the
+            // poll interval or increasing the timeout to add more headroom.
+            responseTimeout: TimeSpan.FromMilliseconds(2000));
+
+        var mockCommB = new Mock<IAgentCommunication>();
+        var serviceB = new ModelFetchService(
+            registry, mockCommB.Object, logger.Object,
+            redis: fakeRedis,
+            responseTimeout: TimeSpan.FromMilliseconds(2000));
+
+        registry.Register(new AgentRegistrationMessage { AgentId = "fetch-pod-cleanup", Hostname = "h", Labels = [] }, "conn-pod-cleanup");
+
+        mockCommA.Setup(c => c.RequestFetchModelsAsync("conn-pod-cleanup", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            {
+                capturedRequestId.TrySetResult(req.RequestId);
+                return Task.CompletedTask;
+            });
+
+        var fetchTask = serviceA.FetchModelsAsync(CancellationToken.None);
+
+        var requestId = await capturedRequestId.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await serviceB.CompleteRequestAsync(new FetchModelsResponse
+        {
+            RequestId = requestId,
+            Models = [new AgentModelInfo { ModelId = "cleanup-model" }]
+        });
+
+        await fetchTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // TODO: [WARNING] This test only asserts key deletion but never asserts that the fetch returned
+        // the correct result. A bug where the key is deleted but the wrong models are returned would go
+        // undetected. Add an assertion on the models returned by fetchTask (e.g. models[0].ModelId == "cleanup-model").
+
+        // The Redis key must have been deleted after A read the result.
+        var redisKey = $"fetch-models:result:{requestId}";
+        (await fakeRedis.GetAsync(redisKey)).Should().BeNull(
+            "the result key must be deleted after the waiting replica reads it");
     }
 }

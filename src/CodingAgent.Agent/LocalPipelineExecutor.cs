@@ -178,8 +178,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             // (they exit at PostingFindings/PostPlan), so the absence of a brain provider is expected there.
             WarnIfNoBrainProvider(job);
 
-            // Merge provider-specific paths into configurable blacklist AND store for hardcoded enforcement
-            config = PipelineConfigurationResolver.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
+            // Provider paths are enforced at commit time on their own terms (only new files there are left
+            // out), not added to the configured blacklist, which would leave out the repository's edits too.
             config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
 
             result = await ExecutePipelineStepsAsync(new ExecutePipelineStepsRequest(
