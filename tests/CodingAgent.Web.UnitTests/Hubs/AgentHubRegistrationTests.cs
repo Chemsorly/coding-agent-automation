@@ -352,6 +352,65 @@ public sealed class AgentHubRegistrationTests
         aborted.Should().BeFalse("operator connections must not be aborted");
     }
 
+    // ── OnConnectedAsync — null HttpContext (non-HTTP transport) ─────────
+
+    /// <summary>
+    /// When <c>GetHttpContext()</c> returns null (e.g. non-HTTP transport or missing feature),
+    /// the null-conditional <c>?.</c> on the changed line propagates null through.
+    /// The result is treated as a missing agentId, so the connection is aborted
+    /// (same behavior as an absent agentId with no operator claim).
+    /// </summary>
+    [Fact]
+    public async Task OnConnectedAsync_NullHttpContext_AbortsConnection()
+    {
+        // Use an empty FeatureCollection so GetHttpContext() returns null.
+        var features = new FeatureCollection(); // no IHttpContextFeature registered
+        var aborted = false;
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-no-http");
+        mockCtx.Setup(c => c.Features).Returns(features);
+        mockCtx.Setup(c => c.User).Returns(new System.Security.Claims.ClaimsPrincipal());
+        mockCtx.Setup(c => c.Abort()).Callback(() => aborted = true);
+
+        var hub = CreateHub(mockCtx.Object);
+        await hub.OnConnectedAsync();
+
+        aborted.Should().BeTrue("connection with null HttpContext has no agentId and must be aborted");
+    }
+
+    // ── RegisterAgent — null HttpContext (non-HTTP transport) ─────────────
+
+    /// <summary>
+    /// When <c>GetHttpContext()</c> returns null, the null-conditional <c>?.</c> on
+    /// <c>ValidateRegistrationIdentity</c> propagates null for <c>queryAgentId</c>.
+    /// The message agentId cannot match null, so registration is rejected.
+    /// </summary>
+    [Fact]
+    public async Task RegisterAgent_NullHttpContext_ThrowsHubException()
+    {
+        // Use an empty FeatureCollection so GetHttpContext() returns null.
+        var features = new FeatureCollection(); // no IHttpContextFeature registered
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-no-http");
+        mockCtx.Setup(c => c.Features).Returns(features);
+
+        var hub = CreateHub(mockCtx.Object);
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = []
+        };
+
+        var act = () => hub.RegisterAgent(message);
+        await act.Should().ThrowAsync<HubException>(
+            "with no HttpContext the query param cannot be read, so agentId validation fails");
+    }
+
     // ── OnConnectedAsync — duplicate agentId query params ────────────────
 
     /// <summary>

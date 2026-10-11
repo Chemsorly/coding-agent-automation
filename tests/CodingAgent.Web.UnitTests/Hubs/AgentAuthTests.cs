@@ -775,6 +775,39 @@ public class AgentAuthorizationFilterRedisFallbackTests
             "filter must resolve the first agentId value ('a') from a duplicate-param query string and allow the call");
     }
 
+    // ── Null HttpContext (non-HTTP transport) ─────────────────────────────
+
+    /// <summary>
+    /// When the cold-pod Redis fallback path reads the agentId query parameter via
+    /// <c>GetHttpContext()?.Request.Query["agentId"].FirstOrDefault()</c>, and
+    /// <c>GetHttpContext()</c> returns null (e.g. non-HTTP transport), the null-conditional
+    /// <c>?.</c> propagates null. The fallback finds no agentId → agent remains null → rejects.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_NullHttpContext_Throws()
+    {
+        const string connectionId = "conn-no-http";
+
+        // Cold pod: in-process index misses.
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+
+        // Use an empty FeatureCollection (Features is not null, but IHttpContextFeature is absent).
+        // GetHttpContext() returns null → queryAgentId becomes null → agent stays null → reject.
+        var features = new FeatureCollection();
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns(connectionId);
+        mockCtx.Setup(c => c.Features).Returns(features);
+
+        var hub = CreateHub(mockCtx.Object);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(mockCtx.Object, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = () => _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>(
+            "with null HttpContext the agentId cannot be read, so the cold-pod fallback finds nothing and rejects the call");
+    }
+
     // ── Inner helper for IHttpContextFeature ─────────────────────────────
 
     private sealed class TestHttpContextFeature : IHttpContextFeature

@@ -48,6 +48,41 @@ public sealed class AgentHubLogSanitizationTests
         _logger.Verify(l => l.Warning(It.IsAny<string>(), EscapedAgentId, jobId), Times.Once);
     }
 
+    // ── SubscribeToRun — null HttpContext (non-HTTP transport) ───────────
+
+    /// <summary>
+    /// When <c>GetHttpContext()</c> returns null, the null-conditional <c>?.</c> on the
+    /// changed line propagates null for <c>callerAgentId</c>.
+    /// An empty/null <c>callerAgentId</c> means no per-agent ownership check is applied
+    /// (operator/UI connections have no agentId), so the subscription proceeds.
+    /// </summary>
+    [Fact]
+    public async Task SubscribeToRun_NullHttpContext_AllowsSubscription()
+    {
+        var jobId = Guid.NewGuid().ToString();
+        // GetRun is not needed for ownership (callerAgentId is null → skips ownership block).
+        // Return null to also skip the snapshot push block.
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetOutputBacklogAsync(It.IsAny<JobId>()))
+            .ReturnsAsync((IReadOnlyList<string>)Array.Empty<string>());
+
+        // Use an empty FeatureCollection so GetHttpContext() returns null.
+        var features = new FeatureCollection(); // no IHttpContextFeature registered
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-no-http");
+        mockCtx.Setup(c => c.Features).Returns(features);
+
+        var hub = CreateHub(mockCtx.Object);
+        var mockGroups = new Mock<IGroupManager>();
+        mockGroups.Setup(g => g.AddToGroupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        hub.Groups = mockGroups.Object;
+
+        var act = () => hub.SubscribeToRun(jobId);
+        await act.Should().NotThrowAsync(
+            "null HttpContext means no agentId, so no ownership check is applied and the subscription is allowed");
+    }
+
     // ── SubscribeToRun — duplicate agentId query params ──────────────────
 
     /// <summary>
