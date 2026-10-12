@@ -46,6 +46,8 @@ namespace CodingAgent.Web.Ui;
 [JsonSerializable(typeof(IReadOnlyDictionary<string, DependencyCheckResult>))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(IReadOnlyList<UiActiveIssue>))]
+[JsonSerializable(typeof(IReadOnlyList<AgentEntryDto>))]
+[JsonSerializable(typeof(CredentialPoolStatus))]
 [JsonSerializable(typeof(UiConsolidationOverview))]
 [JsonSerializable(typeof(UiRefactoringScanSettings))]
 [JsonSerializable(typeof(UiConsolidationTriggerRequest))]

@@ -576,6 +576,13 @@ The answer is `200` with the message to show, as a JSON string. The work item is
 | `POST …/pull-requests/{number}/dispatch` | An open pull request of the template's repository, for review. |
 | `POST …/epics/{issueIdentifier}/dispatch` | An epic of the epic tracker (the project's, otherwise the template's own): for analysis, or for decomposition once it carries `agent:epic-approved`. |
 
+### Agents
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/agents` | The agent registry, in the same shape as `GET /api/agents`. A global reader gets every agent. A project-scoped user gets only the agents running work of their projects, so idle agents and other projects' runs are not shown to them. |
+| `GET /api/ui/agents/credential-pool` | `{ total, available, claimed }` for the Kiro credential pool. `total` is `0` when pooling is not configured. Needs a global role. |
+
 ### Consolidation (global)
 
 The Consolidation page's API. Several templates and projects can share one brain, so a project role is not enough: reading needs a global role and triggering the global `operator` role. The page lists consolidation runs with `GET /api/ui/runs?runType=Consolidation` and cancels a queued one with `POST /api/ui/work-items/{id}/cancel`.
@@ -691,6 +698,8 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/backlog` | User token | Open provider issues with their dispatch readiness (per project) |
 | GET | `/api/ui/templates/{templateId}/…` | User token, read on the template's project | The drawers' issues, readiness, labels, pull requests, epics and active work |
 | POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |
+| GET | `/api/ui/agents` | User token | Agents (all for global readers; those running their projects' work for scoped users) |
+| GET | `/api/ui/agents/credential-pool` | User token, global read | Kiro credential pool usage |
 | GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |
 | POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation, refactoring scan or harness suggestions run |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |

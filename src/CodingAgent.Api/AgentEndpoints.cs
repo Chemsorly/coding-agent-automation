@@ -96,21 +96,31 @@ public static class AgentEndpoints
         IAgentRegistryService registry,
         IOrchestratorRunService runService)
     {
+        var dtos = ListAgents(registry, runService).Select(a => a.Agent).ToArray();
+        return TypedResults.Ok<IReadOnlyList<AgentEntryDto>>(dtos);
+    }
+
+    /// <summary>
+    /// Every registered agent, enriched from its active run, with the project of that run (null for an
+    /// agent without one). <c>GET /api/ui/agents</c> filters on the project.
+    /// </summary>
+    internal static IEnumerable<(AgentEntryDto Agent, string? ProjectId)> ListAgents(
+        IAgentRegistryService registry,
+        IOrchestratorRunService runService)
+    {
         // Single round-trip to get all active runs, then O(1) per-agent lookup.
         var activeRuns = runService.GetActiveRuns()
             .ToDictionary(r => r.RunId, r => r, StringComparer.OrdinalIgnoreCase);
 
-        var dtos = registry.GetAllAgents()
+        return registry.GetAllAgents()
             .Select(entry =>
             {
                 PipelineRun? run = null;
                 if (!string.IsNullOrEmpty(entry.ActiveJobId))
                     activeRuns.TryGetValue(entry.ActiveJobId, out run);
-                return AgentEntryDtoFactory.From(entry, run);
+                return (AgentEntryDtoFactory.From(entry, run), run?.ProjectId);
             })
             .ToArray();
-
-        return TypedResults.Ok<IReadOnlyList<AgentEntryDto>>(dtos);
     }
 
     // ── POST /api/agents/{agentId}/chat-prompt ─────────────────────────────

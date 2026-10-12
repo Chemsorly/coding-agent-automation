@@ -8,6 +8,7 @@ using CodingAgent.Web.Components.Shared;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -105,7 +106,7 @@ public class BasepathNavigationTests : BunitContext
         mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 

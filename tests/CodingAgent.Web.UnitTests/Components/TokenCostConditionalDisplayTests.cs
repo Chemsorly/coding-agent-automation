@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -99,7 +100,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
 
     private void RegisterOverviewServices(
         Mock<CodingAgent.Web.Ui.IUiRunClient> mockRunHistory,
-        Mock<IPipelineApiAgentClient>? mockAgents = null,
+        Mock<IUiAgentClient>? mockAgents = null,
         Mock<CodingAgent.Web.Ui.IUiWorkItemClient>? mockWorkItems = null)
     {
         mockAgents ??= BuildEmptyAgentsMock();
@@ -115,9 +116,9 @@ public class TokenCostConditionalDisplayTests : BunitContext
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
-    private static Mock<IPipelineApiAgentClient> BuildEmptyAgentsMock()
+    private static Mock<IUiAgentClient> BuildEmptyAgentsMock()
     {
-        var mock = new Mock<IPipelineApiAgentClient>();
+        var mock = new Mock<IUiAgentClient>();
         mock.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
         return mock;
