@@ -680,6 +680,11 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
         services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
 
+        // ── Browse (spec 051 2.3b) ─────────────────────────────────────────────
+        // The pages' provider browsing runs here with the stored credentials.
+        services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
+        services.AddSingleton<CodingAgent.Api.Browse.BacklogService>();
+
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
         // can delegate template-ownership resolution to it (issue #2914), eliminating the

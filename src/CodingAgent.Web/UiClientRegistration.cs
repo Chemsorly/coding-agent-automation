@@ -22,6 +22,12 @@ internal static class UiClientRegistration
         services.AddHttpClient<IUiSettingsClient, UiSettingsClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiRunClient, UiRunClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiWorkItemClient, UiWorkItemClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+        // The backlog pages through every enabled issue provider and checks each issue's dependencies.
+        services.AddHttpClient<IUiBrowseClient, UiBrowseClient>(client =>
+        {
+            client.BaseAddress = new Uri(apiBaseUrl);
+            client.Timeout = TimeSpan.FromMinutes(2);
+        });
         // Provider checks call GitHub or GitLab from the API, and fetching models runs a Job there.
         services.AddHttpClient<IUiProviderClient, UiProviderClient>(client =>
         {

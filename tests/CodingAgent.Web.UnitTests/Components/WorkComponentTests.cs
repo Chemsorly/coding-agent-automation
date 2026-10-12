@@ -24,9 +24,7 @@ public class WorkComponentTests : BunitContext
 {
     private readonly Mock<IPipelineApiWorkItemClient> _mockWorkItems = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiWorkItemClient> _mockLists = new();
-    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
-    private readonly Mock<IProviderFactory> _mockProviderFactory = new();
-    private readonly Mock<IDependencyChecker> _mockDependencyChecker = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiBrowseClient> _mockBrowse = new();
 
     // Static label arrays reused across multiple tests. Using static readonly avoids allocating a
     // new array per test invocation (CA1861).
@@ -60,21 +58,15 @@ public class WorkComponentTests : BunitContext
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        // IPipelineApiConfigClient — needed by BlockedIssuesService (sealed, no interface).
-        // Returning empty templates makes GetBacklogAsync a no-op, keeping test setup minimal.
-        _mockConfigClient
-            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        _mockConfigClient
-            .Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ProviderConfig>());
+        // Spec 051 2.3b: the API computes the backlog; an empty one keeps the setup minimal.
+        _mockBrowse
+            .Setup(b => b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BacklogResult([], IsTruncated: false));
 
         Services.AddSingleton<IPipelineApiWorkItemClient>(_mockWorkItems.Object);
         Services.AddSingleton(_mockLists.Object);
-        Services.AddSingleton<IPipelineApiConfigClient>(_mockConfigClient.Object);
-        Services.AddSingleton(_mockProviderFactory.Object);
-        Services.AddSingleton(_mockDependencyChecker.Object);
-        // BlockedIssuesService is sealed — let DI construct the real instance from the mocks above.
+        Services.AddSingleton(_mockBrowse.Object);
+        // BlockedIssuesService is sealed — let DI construct the real instance over the browse client.
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
@@ -642,48 +634,25 @@ public class WorkComponentTests : BunitContext
 
     // ── Provider backlog card (issue #2487) ───────────────────────────────────
 
-    /// <summary>
-    /// Sets up config+provider+dep mocks so GetBacklogAsync returns the given issues
-    /// with HasMore=false (not truncated).
-    /// </summary>
-    private void SetupBacklogProvider(IReadOnlyList<IssueSummary> issues)
+    /// <summary>Labels the API treats as not ready (BacklogService.NotReadyLabels).</summary>
+    private static readonly HashSet<string> s_notReadyLabels = new(StringComparer.OrdinalIgnoreCase)
     {
-        var template = new PipelineJobTemplate
-        {
-            Id = "t1",
-            Name = "T",
-            IssueProviderId = "prov1",
-            RepoProviderId = "repo1",
-            Enabled = true
-        };
-        _mockConfigClient
-            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { template });
-        _mockConfigClient
-            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+        AgentLabels.Done, AgentLabels.Error, AgentLabels.NeedsRefinement, AgentLabels.WontDo, AgentLabels.Cancelled,
+        AgentLabels.InProgress, AgentLabels.Next, AgentLabels.Epic, AgentLabels.EpicApproved, AgentLabels.EpicReview, "backlog",
+    };
 
-        var pagedResult = new PagedResult<IssueSummary>
-        {
-            Items = issues,
-            Page = 1,
-            PageSize = 50,
-            HasMore = false
-        };
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(pagedResult);
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(pagedResult);
-
-        _mockProviderFactory
-            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockProvider.Object);
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+    /// <summary>
+    /// Makes GetBacklogAsync return the given issues as the API computes them: no open dependencies,
+    /// so an issue is ready unless a lifecycle label rules it out.
+    /// </summary>
+    private void SetupBacklogProvider(IReadOnlyList<IssueSummary> issues, bool isTruncated = false)
+    {
+        var backlog = issues
+            .Select(i => new BacklogIssue(i.Identifier, i.Title, i.Url, !(i.Labels ?? []).Any(s_notReadyLabels.Contains), [], i.Labels, i.LabelColors))
+            .ToList();
+        _mockBrowse
+            .Setup(b => b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BacklogResult(backlog, isTruncated));
     }
 
     [Fact]
@@ -719,58 +688,19 @@ public class WorkComponentTests : BunitContext
     [Fact]
     public async Task BacklogCard_ShowsTruncationIndicator_WhenResultIsTruncated()
     {
-        // Set up provider to always return HasMore=true (service hits MaxIssuesPerProvider cap).
-        var template = new PipelineJobTemplate
-        {
-            Id = "t1",
-            Name = "T",
-            IssueProviderId = "prov1",
-            RepoProviderId = "repo1",
-            Enabled = true
-        };
-        _mockConfigClient
-            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { template });
-        _mockConfigClient
-            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
-
-        // Derive page content from the 'page' argument so both overloads produce the same
-        // deterministic result without a shared mutable counter that could be double-incremented
-        // when both the 3-arg and 4-arg Moq setups are live simultaneously.
-        PagedResult<IssueSummary> MakeInfinitePage(int pageArg) => new PagedResult<IssueSummary>
-        {
-            Items = Enumerable.Range((pageArg - 1) * 50 + 1, 50)
+        // The API stopped at its per-provider cap while more pages existed.
+        SetupBacklogProvider(
+            Enumerable.Range(1, 200)
                 .Select(i => new IssueSummary { Identifier = i.ToString(), Title = $"I{i}", Labels = Array.Empty<string>(), Description = "", Url = null })
-                .ToArray(),
-            Page = pageArg,
-            PageSize = 50,
-            HasMore = true
-        };
-
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider
-            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((int pg, int _, CancellationToken _) => MakeInfinitePage(pg));
-        mockProvider
-            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((int pg, int _, IReadOnlyList<string>? _, CancellationToken _) => MakeInfinitePage(pg));
-
-        _mockProviderFactory
-            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockProvider.Object);
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+                .ToList(),
+            isTruncated: true);
 
         var cut = Render<Work>();
 
         // Wait for the backlog to finish loading (OnAfterRenderAsync sets _backlogLoading=false).
         await cut.WaitForStateAsync(
             () => !cut.Markup.Contains("checking…"),
-            TimeSpan.FromSeconds(30)); // 200 dep-check calls are mocked but may take time
+            TimeSpan.FromSeconds(5));
 
         var headerSpan = cut.FindAll(".cockpit-card-header span").Last();
         // Header should contain a "+" to indicate truncation.
@@ -784,9 +714,7 @@ public class WorkComponentTests : BunitContext
     [Fact]
     public async Task BacklogCard_ShowsEmptyMessage_WhenNoIssuesFound()
     {
-        // Default config setup: empty templates → GetBacklogAsync returns empty Issues, IsTruncated=false.
-        // The constructor already stubs GetAllTemplatesAsync with empty templates; this confirms the
-        // empty-state div is shown.
+        // The constructor stubs an empty backlog; this confirms the empty-state div is shown.
         var cut = Render<Work>();
 
         // Wait for the backlog to finish loading.
@@ -803,14 +731,9 @@ public class WorkComponentTests : BunitContext
     [Fact]
     public async Task BacklogCard_IssueWithInProgressLabel_ShowsInProgressBadge_NotReady()
     {
-        // An issue with agent:in-progress must NOT show "Ready" — BlockedIssuesService sets IsReady=false.
-        // TODO: [WARNING] This test verifies rendering given the IsReady flag computed by the real
-        //   BlockedIssuesService (wired through DI via SetupBacklogProvider). If BlockedIssuesService
-        //   stopped setting IsReady=false for agent:in-progress but the component still read the label
-        //   directly and rendered "In progress", the NotContain(">Ready<") assertion would still pass
-        //   for the wrong reason. Consider adding an assertion on the BacklogIssue.IsReady value
-        //   (or a dedicated BlockedIssuesService unit test for this label) to pin the intermediate
-        //   computation — which already exists in BlockedIssuesServiceTests.GetBacklogAsync_IssueWithInProgressLabel_IsNotReady.
+        // An issue with agent:in-progress must NOT show "Ready". The API's BacklogService sets IsReady=false
+        // for it (BacklogServiceTests.GetBacklogAsync_IssueWithInProgressLabel_IsNotReady pins that);
+        // SetupBacklogProvider mirrors the rule, so this test covers the rendering given that flag.
         SetupBacklogProvider(new[]
         {
             new IssueSummary { Identifier = "42", Title = "Running issue", Labels = s_inProgressLabels, Description = "", Url = null },

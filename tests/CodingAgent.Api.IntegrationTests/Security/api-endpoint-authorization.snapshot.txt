@@ -42,6 +42,7 @@ POST /api/triages/{id:guid}/dismiss -> Service: OperatorApiKey
 PUT /api/triages/{id:guid}/drafts/{draftId} -> Service: OperatorApiKey
 POST /api/triages/{id:guid}/drafts/{draftId}/reset -> Service: OperatorApiKey
 POST /api/triages/{id:guid}/rerun -> Service: OperatorApiKey
+GET /api/ui/backlog -> Ui: Ui.AnyAccess
 GET /api/ui/health -> Ui: Ui.AnyAccess
 GET /api/ui/me -> Ui: Ui.AnyAccess
 GET /api/ui/pipeline-settings -> Ui: Ui.AnyAccess

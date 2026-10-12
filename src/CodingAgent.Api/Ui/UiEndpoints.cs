@@ -26,6 +26,7 @@ internal static class UiEndpoints
         group.MapGet("/health", GetHealth);
         group.MapUiConfigEndpoints();
         group.MapUiRunEndpoints();
+        group.MapUiBrowseEndpoints();
         group.MapUiSettingsEndpoints();
 
         return app;

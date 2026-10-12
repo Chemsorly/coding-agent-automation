@@ -155,8 +155,8 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiWorkItemClient>()); // cancel and priority
         Services.AddSingleton(mockConfigClient.Object);
-        Services.AddSingleton(Mock.Of<IProviderFactory>());
-        Services.AddSingleton(Mock.Of<IDependencyChecker>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiBrowseClient>(b =>
+            b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()) == Task.FromResult(new BacklogResult(Array.Empty<BacklogIssue>(), false))));
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
@@ -195,8 +195,8 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockConfigClient.Object);
-        Services.AddSingleton(Mock.Of<IProviderFactory>());
-        Services.AddSingleton(Mock.Of<IDependencyChecker>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiBrowseClient>(b =>
+            b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()) == Task.FromResult(new BacklogResult(Array.Empty<BacklogIssue>(), false))));
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
