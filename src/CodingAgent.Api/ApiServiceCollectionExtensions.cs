@@ -658,8 +658,8 @@ public static class ApiServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the dispatch subsystem: resolvers, infrastructure, enricher, and
-    /// the synchronous dispatch services used by POST /api/work-items/dispatch.
+    /// Registers the dispatch subsystem: resolvers, infrastructure, enricher, the queue, manual
+    /// dispatch, and the services POST /api/work-items/{id}/dispatch uses to start a Pending item.
     /// </summary>
     private static void AddDispatch(IServiceCollection services)
     {
@@ -697,7 +697,7 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IProviderConfigStore>(),
                 sp.GetRequiredService<IPipelineConfigStore>()),
             Log.Logger));
-        services.AddSingleton<CodingAgent.Api.Dispatch.TemplateDispatchService>();
+        services.AddSingleton<CodingAgent.Api.Dispatch.ManualDispatchService>();
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
@@ -718,7 +718,7 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IHarnessSuggestionStore>()),
             sp.GetRequiredService<ITriageStore>()));
 
-        // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
+        // ── Pending dispatch services (POST /api/work-items/{id}/dispatch) ───────────────────
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
         // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
         // Used by WorkItemDispatchLoop (Scheduler) via POST /api/work-items/{id}/dispatch.
@@ -729,8 +729,8 @@ public static class ApiServiceCollectionExtensions
             if (jobClient is null)
                 throw new InvalidOperationException(
                     "API: IKubernetesJobClient is not registered. " +
-                    "POST /api/work-items/dispatch requires a Kubernetes client. " +
-                    "Register IKubernetesJobClient in DI or disable the synchronous dispatch endpoint.");
+                    "POST /api/work-items/{id}/dispatch requires a Kubernetes client. " +
+                    "Register IKubernetesJobClient in DI.");
             return new CodingAgent.Api.Dispatch.DispatchLifecycleService(
                 jobClient,
                 sp.GetRequiredService<WorkItemTransitionService>(),
@@ -742,9 +742,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<JobTemplateStore>()));
 
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
-        // Shared helpers for the two synchronous dispatch handlers (DispatchWorkItem and
-        // DispatchPendingWorkItem): concurrency-snapshot query, gate block, entity factory,
-        // and unique-violation fallback. Singleton — stateless, depends only on JobTemplateStore.
+        // The dispatch of a Pending item (DispatchPendingWorkItem): concurrency-snapshot query,
+        // gate block and lifecycle. Singleton — stateless, depends only on JobTemplateStore.
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchWorkItemService>(sp =>
             new CodingAgent.Api.Dispatch.DispatchWorkItemService(
                 sp.GetRequiredService<JobTemplateStore>()));

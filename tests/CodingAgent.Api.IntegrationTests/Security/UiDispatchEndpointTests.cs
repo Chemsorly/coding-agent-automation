@@ -35,9 +35,10 @@ public sealed class DispatchApiFactory : ApiWebApplicationFactory
 }
 
 /// <summary>
-/// Spec 051 2.3c: manual dispatch on the UI surface, by template and issue or pull request number. It
-/// needs operator on the template's project, and the web's real <see cref="UiDispatchClient"/> drives it,
-/// so this doubles as its contract test. TemplateDispatchServiceTests cover the dispatch rules.
+/// Spec 051 2.3c: manual dispatch on the UI surface, by template and issue or pull request number, and
+/// the re-dispatch of a run. Each needs operator on the project of the template or run, and the web's real
+/// <see cref="UiDispatchClient"/> and <see cref="UiRunClient"/> drive them, so this doubles as their
+/// contract test. ManualDispatchServiceTests cover the dispatch rules.
 /// </summary>
 [Collection(UiDispatchCollection.Name)]
 public sealed class UiDispatchEndpointTests
@@ -200,5 +201,72 @@ public sealed class UiDispatchEndpointTests
         var epic = () => Dispatch(TestUserTokens.Global(AccessRole.Operator)).DispatchEpicAsync(TemplateT, "30");
 
         (await epic.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Be("Failed to load issue #30: rate limited");
+    }
+
+    // ── Re-dispatch (POST /api/ui/runs/{runId}/redispatch) ──────────────────
+
+    private async Task<PipelineRunSummary> SeedRunAsync(string projectId, PipelineStep finalStep = PipelineStep.Failed)
+    {
+        var run = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "77",
+            IssueTitle = "Re-dispatch me",
+            FinalStep = finalStep,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            ProjectId = projectId,
+            IssueProviderConfigId = IssueProviderT,
+            RepoProviderConfigId = RepoProviderT,
+        };
+        using var scope = _factory.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IPipelineRunHistoryService>().AddRunSummaryAsync(run, CancellationToken.None);
+        return run;
+    }
+
+    private UiRunClient Runs(AccessGrant grant) => new(_factory.CreateClient(), new FixedToken(TestUserTokens.For(grant)));
+
+    [Fact]
+    public async Task Redispatch_NeedsOperatorOnTheRunsProject()
+    {
+        await SeedTemplatesAsync();
+        var runOfT = await SeedRunAsync(ProjectT);
+        var runOfU = await SeedRunAsync(ProjectU);
+
+        (await Http(TestUserTokens.Scoped(ProjectT, AccessRole.ReadOnly)).PostAsync($"/api/ui/runs/{runOfT.RunId}/redispatch", null))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await Http(TestUserTokens.Scoped(ProjectT, AccessRole.Operator)).PostAsync($"/api/ui/runs/{runOfU.RunId}/redispatch", null))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await Http(TestUserTokens.Scoped(ProjectT, AccessRole.Operator)).PostAsync($"/api/ui/runs/{Guid.NewGuid()}/redispatch", null))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        _factory.Orchestration.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Redispatch_QueuesTheRunsIssue_ThroughTheClient()
+    {
+        await SeedTemplatesAsync();
+        var run = await SeedRunAsync(ProjectT);
+
+        var message = await Runs(TestUserTokens.Scoped(ProjectT, AccessRole.Operator)).RedispatchAsync(Guid.Parse(run.RunId));
+
+        message.Should().Be("⏳ Queued #77 — the job controller will start an agent pod for it");
+        _factory.Orchestration.Verify(o => o.PrepareDistributionRequestAsync(It.Is<ImplementationDispatchOrchestrationRequest>(r =>
+            r.IssueIdentifier.Value == "77" && r.IssueProviderId.Value == IssueProviderT && r.RepoProviderId.Value == RepoProviderT
+            && r.Project.Id == ProjectT), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Redispatch_OfACompletedRun_IsRefusedWithTheReason()
+    {
+        await SeedTemplatesAsync();
+        var run = await SeedRunAsync(ProjectT, PipelineStep.Completed);
+
+        var act = () => Runs(TestUserTokens.Global(AccessRole.Operator)).RedispatchAsync(Guid.Parse(run.RunId));
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Be("Only a failed, cancelled or conflicted implementation run can be re-dispatched.");
+        _factory.Orchestration.VerifyNoOtherCalls();
     }
 }

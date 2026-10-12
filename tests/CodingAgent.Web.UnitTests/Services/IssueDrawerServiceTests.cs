@@ -12,7 +12,7 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// Each test constructs IssueDrawerService with only its own dependencies (no IPipelineLoopService,
 /// IProjectStore, or IConfigurationStore), verifying independent testability. Since spec 051 2.3b and
 /// 2.3c the API browses the providers and dispatches (<see cref="IUiBrowseClient"/>,
-/// <see cref="IUiDispatchClient"/>); its TemplateBrowseServiceTests and TemplateDispatchServiceTests cover that.
+/// <see cref="IUiDispatchClient"/>); its TemplateBrowseServiceTests and ManualDispatchServiceTests cover that.
 /// </summary>
 public class IssueDrawerServiceTests
 {

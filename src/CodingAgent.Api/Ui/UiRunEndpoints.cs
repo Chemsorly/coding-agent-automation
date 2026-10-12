@@ -1,3 +1,4 @@
+using CodingAgent.Api.Dispatch;
 using CodingAgent.Contracts.Auth;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -9,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 namespace CodingAgent.Api.Ui;
 
 /// <summary>
-/// Spec 051 2.2a/2.2b: run history, the work-item lists and the work-item actions. Lists follow D3
+/// Spec 051 2.2a/2.2b/2.3c: run history, the work-item lists, the work-item actions and redispatch. Lists follow D3
 /// rule 3 (<see cref="IUserAccess.DemandList"/>): without a project the user needs global read; a
 /// scoped user always has a project selected. A run's detail and the actions are checked against
 /// the stored project of the run or work item, never one the client sends. The handlers reuse the
@@ -21,6 +22,7 @@ internal static class UiRunEndpoints
     {
         group.MapGet("/runs", GetRuns);
         group.MapGet("/runs/{runId:guid}", GetRun);
+        group.MapPost("/runs/{runId:guid}/redispatch", RedispatchRun).RequireAuthorization(UiPolicies.AnyOperator);
         group.MapGet("/work-items/pending", GetPendingWorkItems);
         group.MapGet("/work-items/active", GetActiveWorkItems);
         group.MapPost("/work-items/{id:guid}/cancel", CancelWorkItem).RequireAuthorization(UiPolicies.AnyOperator);
@@ -53,6 +55,32 @@ internal static class UiRunEndpoints
             ? await providers.GetProviderConfigByIdAsync(providerId, ProviderKind.Agent, ct)
             : null;
         return TypedResults.Ok(new UiRunDetail(run, agentProvider?.DisplayName));
+    }
+
+    /// <summary>
+    /// POST /api/ui/runs/{runId}/redispatch — queues a new implementation run for the issue of a failed,
+    /// cancelled or conflicted implementation run (2.3c, D5). Operator on the run's stored project.
+    /// 200 carries the message to show; a run that cannot be re-dispatched is 409 with the reason.
+    /// The dispatch runs with <see cref="CancellationToken.None"/>, like the drawers'.
+    /// </summary>
+    internal static async Task<IResult> RedispatchRun(
+        Guid runId, IUserAccess access,
+        IPipelineRunHistoryService history, IOrchestratorRunService runService,
+        ManualDispatchService dispatch, CancellationToken ct)
+    {
+        var run = await PipelineRunEndpoints.FindRunAsync(runId, history, runService, ct);
+        if (run is null)
+            return TypedResults.NotFound();
+        access.DemandOperate(run.ProjectId);
+
+        try
+        {
+            return TypedResults.Ok(await dispatch.RedispatchRunAsync(run, CancellationToken.None));
+        }
+        catch (DispatchRefusedException ex)
+        {
+            return TypedResults.Json(ex.Message, statusCode: StatusCodes.Status409Conflict);
+        }
     }
 
     /// <summary>GET /api/ui/work-items/pending — the queue, in dispatch order.</summary>

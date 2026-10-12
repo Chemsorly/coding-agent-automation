@@ -15,10 +15,8 @@ public static class DispatchServiceRegistration
     /// All poll-based dispatch has been removed. Regular work item dispatch
     /// (<c>DispatchService</c> / <c>DispatchLoop</c>) was removed in issue #2322.
     /// Consolidation dispatch (<c>ConsolidationDispatchService</c> / <c>ConsolidationDispatchLoop</c>)
-    /// was removed in issue #2323. Both were already no-ops in production: consolidation items
-    /// are dispatched synchronously via <c>POST /api/work-items/dispatch</c>
-    /// (<c>KubernetesWorkDistributor</c>) which atomically creates the K8s Job and transitions
-    /// the WorkItem to <c>Dispatched</c> without passing through the <c>Pending</c> queue.
+    /// was removed in issue #2323. Work items now wait in the <c>Pending</c> queue until the
+    /// Scheduler's dispatch loop starts them through <c>POST /api/work-items/{id}/dispatch</c>.
     /// </para>
     /// <para>
     /// The only active Job Controller service is <c>ReconciliationService</c> (post-dispatch

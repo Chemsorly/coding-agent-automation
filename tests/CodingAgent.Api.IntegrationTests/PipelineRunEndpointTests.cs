@@ -428,7 +428,7 @@ public sealed class PipelineRunEndpointTests
     // AddRun, bypassing the production codepath (POST /api/work-items → CreateWorkItem).
     // If CreateWorkItem ever regressed and stopped calling AddRun for Dispatched items, this
     // test would still pass. Consider replacing the manual setup with a dispatch-API call
-    // (or using the production DispatchWorkItem path) to mirror how the Pending exclusion
+    // to mirror how the Pending exclusion
     // test exercises the real end-to-end path. Same applies to RunningWorkItem_IsIncluded
     // and the dispatched half of MixedPendingAndDispatched_OnlyDispatchedAppears.
     [Fact]

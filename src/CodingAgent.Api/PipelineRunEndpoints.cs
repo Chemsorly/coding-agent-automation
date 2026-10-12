@@ -88,8 +88,8 @@ public static class PipelineRunEndpoints
         var activeRuns = runService.GetActiveRuns();
 
         // Resolve WorkItem status for active runs to exclude Pending (queued) items from the
-        // merge. RunId == WorkItem.Id.ToString() by contract (enforced in CreateWorkItem and
-        // DispatchWorkItem). Runs with no matching WorkItem row (rehydrated/orphaned) are
+        // merge. RunId == WorkItem.Id.ToString() by contract (enforced in CreateWorkItem).
+        // Runs with no matching WorkItem row (rehydrated/orphaned) are
         // treated conservatively as non-Pending and included. See issue #2528.
         // TODO [WARNING]: The LINQ chain below parses each GUID string twice — once in the
         // Where predicate (result discarded) and once in the Select projection. Consider

@@ -540,6 +540,12 @@ The actions on one work item need the `operator` role on the work item's stored 
 | `POST /api/ui/work-items/{id}/cancel` | Cancels a queued item or an in-flight run. Returns `204` when it had already ended. |
 | `PUT /api/ui/work-items/{id}/priority` | Sets the dispatch weight of a queued item from `{ priorityWeight }` (0–1000). Returns `400` outside that range and `409` once the item has left the queue. |
 
+Re-dispatch needs the `operator` role on the run's stored project, with the same `403` and `404` rules.
+
+| Path | Does |
+|---|---|
+| `POST /api/ui/runs/{runId}/redispatch` | Queues a new implementation run for the issue of a failed, cancelled or conflicted implementation run, with the run's providers and project. Returns `200` with the message to show, as a JSON string. Any other run, or an issue that already has queued or running work, is refused with `409` and the reason. Blocking labels such as `agent:error` are not cleared. |
+
 ### Backlog (any role)
 
 `GET /api/ui/backlog?projectId=` returns the open issues of the enabled templates' issue providers, as `{ issues, isTruncated }`. Each issue says whether it is ready to dispatch. It is not ready when it has open dependencies (`blockedBy`, `blockedByUrls`) or carries a lifecycle label such as `agent:in-progress` or `backlog`. The API calls the providers with the stored credentials. `isTruncated` is set when a provider had more than 200 open issues. The `projectId` rule is the same as for the lists above.
@@ -671,6 +677,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/runs`, `/api/ui/runs/{runId}` | User token | Run history and run detail (per project) |
 | GET | `/api/ui/work-items/pending`, `/api/ui/work-items/active` | User token | Queue and in-flight work items (per project) |
 | POST, PUT | `/api/ui/work-items/{id}/cancel`, `/api/ui/work-items/{id}/priority` | User token, operator of the item's project | Cancel a run or queued item; set queue priority |
+| POST | `/api/ui/runs/{runId}/redispatch` | User token, operator of the run's project | Queue a failed run's issue again |
 | GET | `/api/ui/backlog` | User token | Open provider issues with their dispatch readiness (per project) |
 | GET | `/api/ui/templates/{templateId}/…` | User token, read on the template's project | The drawers' issues, readiness, labels, pull requests, epics and active work |
 | POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |

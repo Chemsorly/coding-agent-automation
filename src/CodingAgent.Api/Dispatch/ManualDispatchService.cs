@@ -1,4 +1,5 @@
 using CodingAgent.Api.Browse;
+using CodingAgent.Contracts.Auth;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -7,17 +8,19 @@ using Serilog;
 namespace CodingAgent.Api.Dispatch;
 
 /// <summary>A dispatch the API refused. The message is shown to the user as it is.</summary>
-public sealed class TemplateDispatchException(string message) : Exception(message);
+public sealed class DispatchRefusedException(string message) : Exception(message);
 
 /// <summary>
-/// Manual dispatch from the AgentCoding drawers (spec 051 2.3c, moved from the web host's drawer
-/// services). A request names only the template and the issue or pull request. The API reads the item
-/// from the template's providers with the stored credentials, so its labels and description come from
-/// the tracker, not the browser. It then enqueues the item through <see cref="IDispatchOrchestrationService"/>
-/// and the in-process distributor. Each call returns the message the drawer shows. A refusal throws
-/// <see cref="TemplateDispatchException"/>; a provider that fails throws <see cref="TemplateBrowseException"/>.
+/// Manual dispatch (spec 051 2.3c): from the AgentCoding drawers, moved from the web host's drawer
+/// services, and the RunPage's re-dispatch. A drawer request names only the template and the issue or
+/// pull request. The API reads the item from the template's providers with the stored credentials, so
+/// its labels and description come from the tracker, not the browser. Every dispatch is enqueued through
+/// <see cref="IDispatchOrchestrationService"/> and the in-process distributor, and waits as Pending for
+/// the Scheduler's dispatch loop. Each call returns the message the page shows. A refusal throws
+/// <see cref="DispatchRefusedException"/>; a provider that fails throws <see cref="TemplateBrowseException"/>.
 /// </summary>
-internal sealed class TemplateDispatchService(
+internal sealed class ManualDispatchService(
+    IProjectStore projects,
     IProviderConfigStore providerConfigs,
     IProviderFactory providerFactory,
     IDependencyChecker dependencyChecker,
@@ -34,7 +37,7 @@ internal sealed class TemplateDispatchService(
         var template = target.Template;
         var trackerConfig = await providerConfigs.GetProviderConfigByIdAsync(template.IssueProviderId, ProviderKind.Issue, ct);
         if (trackerConfig is null || !await ExistsAsync(template.RepoProviderId, ProviderKind.Repository, ct))
-            throw new TemplateDispatchException(ProvidersGone);
+            throw new DispatchRefusedException(ProvidersGone);
 
         await using var tracker = providerFactory.CreateIssueProvider(trackerConfig);
         var issue = await LoadIssueAsync(tracker, issueIdentifier, ct);
@@ -51,7 +54,7 @@ internal sealed class TemplateDispatchService(
         if (!dependencies.IsReady)
         {
             var blockedBy = dependencies.BlockedBy.Select(n => $"#{n}").Concat(dependencies.BlockedByUrls ?? []);
-            throw new TemplateDispatchException($"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", blockedBy)}");
+            throw new DispatchRefusedException($"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", blockedBy)}");
         }
 
         // EpicReview is a terminal state in the epic decomposition workflow. Unlike other terminal
@@ -61,7 +64,7 @@ internal sealed class TemplateDispatchService(
         // implementation job would bypass the approval gate entirely. Reject early so the UI shows
         // a clean error rather than a confusing 409 from the database unique-index constraint.
         if (issue.Labels.Any(l => StringComparer.OrdinalIgnoreCase.Equals(l, AgentLabels.EpicReview)))
-            throw new TemplateDispatchException($"Cannot dispatch — issue is in state '{AgentLabels.EpicReview}' which requires human approval before it can proceed. Use the epic approval workflow instead.");
+            throw new DispatchRefusedException($"Cannot dispatch — issue is in state '{AgentLabels.EpicReview}' which requires human approval before it can proceed. Use the epic approval workflow instead.");
 
         await ClearBlockingLabelAsync(tracker, issue, ct);
 
@@ -84,11 +87,11 @@ internal sealed class TemplateDispatchService(
     {
         var template = target.Template;
         var repositoryConfig = await providerConfigs.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct)
-            ?? throw new TemplateDispatchException(ProvidersGone);
+            ?? throw new DispatchRefusedException(ProvidersGone);
 
         await using var repository = providerFactory.CreateRepositoryProvider(repositoryConfig);
         var pr = await TemplateBrowseService.CallAsync(() => repository.GetOpenPullRequestAsync(number, ct), $"Failed to load PR #{number}")
-            ?? throw new TemplateDispatchException($"PR #{number} is not open.");
+            ?? throw new DispatchRefusedException($"PR #{number} is not open.");
 
         var request = await orchestration.PrepareReviewDistributionRequestAsync(new ReviewDispatchRequest
         {
@@ -117,11 +120,11 @@ internal sealed class TemplateDispatchService(
     {
         var template = target.Template;
         if (!await ExistsAsync(template.IssueProviderId, ProviderKind.Issue, ct) || !await ExistsAsync(template.RepoProviderId, ProviderKind.Repository, ct))
-            throw new TemplateDispatchException(ProvidersGone);
+            throw new DispatchRefusedException(ProvidersGone);
 
         var epicTrackerId = TemplateBrowseService.EpicTrackerOf(target);
         var trackerConfig = await providerConfigs.GetProviderConfigByIdAsync(epicTrackerId, ProviderKind.Issue, ct)
-            ?? throw new TemplateDispatchException("The project's epic issue provider no longer exists.");
+            ?? throw new DispatchRefusedException("The project's epic issue provider no longer exists.");
 
         await using var tracker = providerFactory.CreateIssueProvider(trackerConfig);
         var epic = await LoadIssueAsync(tracker, issueIdentifier, ct);
@@ -146,6 +149,48 @@ internal sealed class TemplateDispatchService(
     }
 
     /// <summary>
+    /// Queues a new implementation run for the issue of a failed, cancelled or conflicted implementation
+    /// run (the RunPage's re-dispatch, D5). It uses the run's providers and project. Unlike the drawers,
+    /// it does not clear a blocking label first, as before. Redispatch used to create the work item
+    /// directly as Dispatched through <c>POST /api/work-items/dispatch</c>; it now waits in the queue
+    /// like every other dispatch.
+    /// </summary>
+    public async Task<string> RedispatchRunAsync(PipelineRunSummary run, CancellationToken ct)
+    {
+        if (!CanRedispatch(run))
+            throw new DispatchRefusedException("Only a failed, cancelled or conflicted implementation run can be re-dispatched.");
+
+        var projectId = ProjectIds.Normalize(run.ProjectId);
+        var project = projectId is null
+            ? null
+            : (await projects.LoadProjectsAsync(ct)).FirstOrDefault(p => ProjectIds.Normalize(p.Id) == projectId);
+
+        var request = await orchestration.PrepareDistributionRequestAsync(new ImplementationDispatchOrchestrationRequest
+        {
+            IssueIdentifier = run.IssueIdentifier,
+            IssueProviderId = run.IssueProviderConfigId!,
+            RepoProviderId = run.RepoProviderConfigId!,
+            BrainProviderId = run.BrainProviderConfigId,
+            PipelineProviderId = run.PipelineProviderConfigId,
+            InitiatedBy = InitiatedByConstants.Manual,
+            Project = OrUnnamed(project)
+        }, ct);
+        // Unlike the drawers, a re-dispatch of an issue that already has live work is refused: the
+        // operator asked for a new run, and none was created.
+        var outcome = await DistributeAsync(request, "Could not dispatch — distribution failed.", ct);
+        if (outcome.AlreadyExists)
+            throw new DispatchRefusedException($"Issue #{run.IssueIdentifier} already has queued or running work.");
+        return $"⏳ Queued #{run.IssueIdentifier} — the job controller will start an agent pod for it";
+    }
+
+    /// <summary>Whether a run can be re-dispatched: a failed, cancelled or conflicted implementation run whose providers are known.</summary>
+    internal static bool CanRedispatch(PipelineRunSummary run) =>
+        run.RunType == PipelineRunType.Implementation
+        && run.FinalStep is PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.ConflictRestart
+        && !string.IsNullOrEmpty(run.IssueProviderConfigId)
+        && !string.IsNullOrEmpty(run.RepoProviderConfigId);
+
+    /// <summary>
     /// Manual dispatch is an explicit force-requeue: clear any blocking labels and set agent:next
     /// before creating the WorkItem. Without this, DispatchLoop would see the blocking label,
     /// cancel the WorkItem, and re-stamp the same label — a self-reinforcing cancellation loop.
@@ -166,7 +211,7 @@ internal sealed class TemplateDispatchService(
         try
         {
             Log.Information(
-                "TemplateDispatchService: manual dispatch — clearing blocking label {BlockingLabel} and setting agent:next on issue {IssueIdentifier}",
+                "ManualDispatchService: manual dispatch — clearing blocking label {BlockingLabel} and setting agent:next on issue {IssueIdentifier}",
                 blockingLabel, issue.Identifier);
             await AgentLabelOperations.SwapAsync(
                 removeLabel: (label, c) => tracker.RemoveLabelAsync(issue.Identifier, label, c),
@@ -182,25 +227,28 @@ internal sealed class TemplateDispatchService(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Error(ex,
-                "TemplateDispatchService: failed to clear blocking label {BlockingLabel} on issue {IssueIdentifier} before dispatch",
+                "ManualDispatchService: failed to clear blocking label {BlockingLabel} on issue {IssueIdentifier} before dispatch",
                 blockingLabel, issue.Identifier);
-            throw new TemplateDispatchException($"Could not clear blocking label '{blockingLabel}' before dispatch — {ex.Message}");
+            throw new DispatchRefusedException($"Could not clear blocking label '{blockingLabel}' before dispatch — {ex.Message}");
         }
     }
 
-    private async Task DistributeAsync(JobDistributionRequest? request, string distributionFailed, CancellationToken ct)
+    private async Task<DispatchOutcome> DistributeAsync(JobDistributionRequest? request, string distributionFailed, CancellationToken ct)
     {
         if (request is null)
-            throw new TemplateDispatchException("Could not dispatch — orchestration preparation failed (check logs for details).");
+            throw new DispatchRefusedException("Could not dispatch — orchestration preparation failed (check logs for details).");
 
         // The in-process distributor only enqueues, so a successful dispatch is always "queued".
         var outcome = await orchestration.DistributeAndFinalizeAsync(request, ct);
         if (!outcome.Success)
-            throw new TemplateDispatchException(distributionFailed);
+            throw new DispatchRefusedException(distributionFailed);
+        return outcome;
     }
 
     /// <summary>The orchestration needs a project; a template of no project dispatches under an unnamed one.</summary>
-    private static PipelineProject ProjectOf(BrowseTemplate target) => target.Project ?? new PipelineProject { Id = "", Name = "Unknown" };
+    private static PipelineProject ProjectOf(BrowseTemplate target) => OrUnnamed(target.Project);
+
+    private static PipelineProject OrUnnamed(PipelineProject? project) => project ?? new PipelineProject { Id = "", Name = "Unknown" };
 
     private async Task<bool> ExistsAsync(string providerId, ProviderKind kind, CancellationToken ct) =>
         await providerConfigs.GetProviderConfigByIdAsync(providerId, kind, ct) is not null;

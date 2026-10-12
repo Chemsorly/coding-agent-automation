@@ -10,7 +10,6 @@
 @using CodingAgent.Web.Services
 @using Microsoft.AspNetCore.SignalR.Client
 @inject IUiRunClient RunHistory
-@inject IPipelineApiWorkItemClient WorkItems
 @inject IUiWorkItemClient WorkItemActions
 @inject IUiConfigClient UiConfig
 @inject IPipelineApiTriageClient Triages
@@ -268,7 +267,7 @@
                     @if (_redispatchSuccess)
                     {
                         <div class="agent-detail-confirm" style="background: var(--success-bg); border-color: var(--success);">
-                            <span style="color: var(--success);">✓ Re-dispatched successfully.</span>
+                            <span style="color: var(--success);" data-testid="redispatch-success">@_redispatchMessage</span>
                             <a href="work" style="margin-left: 8px; font-size: 13px;">View work queue →</a>
                         </div>
                     }
@@ -307,7 +306,7 @@
                                     <button class="btn-save" data-testid="redispatch-confirm-btn"
                                             @onclick="RedispatchAsync"
                                             disabled="@_redispatchInProgress">
-                                        @if (_redispatchInProgress) { <span>Dispatching…</span> } else { <span>Confirm re-dispatch</span> }
+                                        @if (_redispatchInProgress) { <span>Queueing…</span> } else { <span>Confirm re-dispatch</span> }
                                     </button>
                                     <button class="btn-cancel" @onclick="() => _showRedispatchConfirm = false"
                                             disabled="@_redispatchInProgress">Cancel</button>
@@ -358,6 +357,7 @@
     private bool _redispatchInProgress;
     private bool _redispatchSuccess;
     private string? _redispatchError;
+    private string? _redispatchMessage;
 
     // Cancel state — mirrors the re-dispatch confirm pattern
     // TODO: [WARNING] No double-submit guard: if the sidebar's confirmation is re-opened and
@@ -681,11 +681,9 @@
         && !string.IsNullOrEmpty(run.IssueProviderConfigId)
         && !string.IsNullOrEmpty(run.RepoProviderConfigId);
 
-    // Dispatches a new Implementation work item for the same issue.
-    // Uses PayloadSchemaVersion = 1 (minimal identity payload) so AssignmentEnricher fetches
-    // fresh config (template, quality gates, reviewers) at assignment time — the same path
-    // used by the existing dispatch drawers after issue #2171.
-    // Note: this does NOT clear provider labels (e.g. agent:failed). The confirmation dialog
+    // Queues a new Implementation work item for the same issue (spec 051 D5): the API prepares it the
+    // way the dispatch drawers do, and it waits in the queue until the dispatch loop starts it.
+    // Note: this does NOT clear provider labels (e.g. agent:error). The confirmation dialog
     // informs the operator to clear them manually if needed.
     private async Task RedispatchAsync()
     {
@@ -701,26 +699,7 @@
         try
         {
             await Guard.DemandAsync(AccessRole.Operator, _run.ProjectId, "RedispatchRun");
-            // TODO: [WARNING] _run is captured by field reference below. In Blazor's single-threaded
-            // renderer this is safe in practice, but a concurrent hub update that sets _run = null
-            // between the CanRedispatch guard above and the property accesses here would produce a
-            // NullReferenceException. Consider capturing `var run = _run` before the guard and using
-            // that local throughout this method to avoid the fragile re-read of the field.
-            var request = new JobDistributionRequest
-            {
-                IssueIdentifier = _run.IssueIdentifier,
-                IssueProviderConfigId = _run.IssueProviderConfigId!,
-                RepoProviderConfigId = _run.RepoProviderConfigId!,
-                BrainProviderConfigId = _run.BrainProviderConfigId,
-                PipelineProviderConfigId = _run.PipelineProviderConfigId,
-                InitiatedBy = InitiatedByConstants.Manual,
-                TaskType = WorkItemTaskType.Implementation,
-                AgentSelector = "",
-                TimeoutSeconds = 0,
-                RunType = PipelineRunType.Implementation,
-                PayloadSchemaVersion = 1,
-            };
-            await WorkItems.DispatchAsync(request, _cts.Token);
+            _redispatchMessage = await RunHistory.RedispatchAsync(Guid.Parse(_run.RunId), _cts.Token);
             _redispatchSuccess = true;
             _showRedispatchConfirm = false;
         }
