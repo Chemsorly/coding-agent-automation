@@ -122,12 +122,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             // Replace IQualityGateValidator with a mock (prevents real dotnet build/test)
             ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
 
-            // Replace IConsolidationService with a mock to prevent real consolidation dispatch
-            // during startup. CleanupOrphanedRunsAsync was removed from IConsolidationService in
-            // issue #3030 (ConsolidationRehydrationExtensions deleted; Program.cs no longer calls it).
-            var consolidationMock = new Mock<IConsolidationService>();
-            ReplaceService<IConsolidationService>(services, consolidationMock.Object);
-
             // Replace JobTemplateStore with an empty store so AgentChat.razor does not try to
             // load /app/config/job-templates.yaml, which does not exist in the test environment.
             services.RemoveAll<CodingAgent.Kubernetes.JobTemplateStore>();

@@ -576,6 +576,16 @@ The answer is `200` with the message to show, as a JSON string. The work item is
 | `POST …/pull-requests/{number}/dispatch` | An open pull request of the template's repository, for review. |
 | `POST …/epics/{issueIdentifier}/dispatch` | An epic of the epic tracker (the project's, otherwise the template's own): for analysis, or for decomposition once it carries `agent:epic-approved`. |
 
+### Consolidation (global)
+
+The Consolidation page's API. Several templates and projects can share one brain, so a project role is not enough: reading needs a global role and triggering the global `operator` role. The page lists consolidation runs with `GET /api/ui/runs?runType=Consolidation` and cancels a queued one with `POST /api/ui/work-items/{id}/cancel`.
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/consolidation` | `{ templates, brainProviderByTemplate, harnessSuggestions }`. `templates` lists the enabled templates of enabled projects, by project name, as `{ id, name, supportsBrainConsolidation, supportsRefactoringDetection, brainReadOnly }`. `brainProviderByTemplate` maps every template that has a brain to its brain provider. `harnessSuggestions` is `null` until suggestions have been generated. |
+| `GET /api/ui/consolidation/templates/{templateId}/refactoring-scan` | `{ maxProposals, maxProposalsIsProjectOverride, hotspotLookbackDays, reviewEnabled, reviewEnabledIsProjectOverride }`: the values a refactoring scan of the template runs with, which are the global settings with the template's project overrides. |
+| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch }`. `type` is `BrainConsolidation`, `RefactoringDetection` or `HarnessSuggestions`. `templateId` is `null` for harness suggestions. `autoDispatch` labels a refactoring scan's issues `agent:next`. Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
+
 ### Settings (admin)
 
 `/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
@@ -681,6 +691,8 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/backlog` | User token | Open provider issues with their dispatch readiness (per project) |
 | GET | `/api/ui/templates/{templateId}/…` | User token, read on the template's project | The drawers' issues, readiness, labels, pull requests, epics and active work |
 | POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |
+| GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |
+| POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation, refactoring scan or harness suggestions run |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

@@ -188,13 +188,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiHarnessSuggestionClient>();
             services.AddSingleton(harnessMock.Object);
 
-            // Replace IConsolidationService with a mock to prevent real consolidation dispatch
-            // during startup. CleanupOrphanedRunsAsync was removed from IConsolidationService in
-            // issue #3030 (ConsolidationRehydrationExtensions deleted; Program.cs no longer calls it).
-            var consolidationMock = new Mock<IConsolidationService>();
-            services.RemoveAll<IConsolidationService>();
-            services.AddSingleton(consolidationMock.Object);
-
             // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
             // (mounted from the job-templates ConfigMap). ChatJobDispatcher takes it as a
             // dependency, so without an in-memory substitute resolving IChatJobDispatcher throws

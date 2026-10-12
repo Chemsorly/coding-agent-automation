@@ -2,7 +2,8 @@ using CodingAgent.Web.UnitTests.Auth;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
-using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Web.Ui;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.AgentGateway;
 using CodingAgent.Web.Components.Pages;
@@ -15,29 +16,20 @@ namespace CodingAgent.Web.UnitTests.Components;
 
 /// <summary>
 /// Tests for Consolidation Run History Actions column visibility (issue #2939).
-/// After issue #3028, the page reads from IPipelineApiRunHistoryClient (not IConsolidationService).
+/// The page reads the run history from IUiRunClient (spec 051 2.4b).
 /// A run is cancellable when WorkItemId.HasValue &amp;&amp; CompletedAtOffset == null.
 /// </summary>
 public class ConsolidationActionsColumnTests : BunitContext
 {
-    private readonly Mock<IConsolidationService> _mockService = new(MockBehavior.Strict);
-    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
-    private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
+    private readonly Mock<IUiConsolidationClient> _mockConsolidationClient = new();
+    private readonly Mock<IUiRunClient> _mockRunHistoryClient = new();
     private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
 
     public ConsolidationActionsColumnTests()
     {
         Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
-        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineProject>());
-        _mockConfigClient.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-
-        // Strict mock: only GetHarnessSuggestionsAsync is allowed (GetRunHistoryAsync and GetLastRunAsync must not be called)
-        _mockService.Setup(s => s.GetHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync((HarnessSuggestions?)null);
+        _mockConsolidationClient.Setup(s => s.GetOverviewAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiConsolidationOverview([], new Dictionary<string, string>(), null));
 
         // Hub mock: return a no-op disposable for event subscription
         _mockHubConnection
@@ -53,11 +45,10 @@ public class ConsolidationActionsColumnTests : BunitContext
                 Items = Array.Empty<PipelineRunSummary>().ToList(), Page = 1, PageSize = 200, HasMore = false
             });
 
-        Services.AddSingleton<IConsolidationService>(_mockService.Object);
-        Services.AddSingleton(_mockConfigClient.Object);
-        Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
+        Services.AddSingleton(_mockConsolidationClient.Object);
+        Services.AddSingleton(_mockRunHistoryClient.Object);
         Services.AddSingleton<IAgentHubConnection>(_mockHubConnection.Object);
-        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
+        Services.AddSingleton(new Mock<IUiWorkItemClient>().Object);
     }
 
     /// <summary>

@@ -459,11 +459,11 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IChatNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
 
         // ── IConsolidationService ────────────────────────────────────────────
-        // Spec 051 2.4a: the same full form as the web host's AddConsolidationServices. Until then the
-        // API only saved harness suggestions for the hub and had no IWorkDistributor, so it registered
-        // a form that could not trigger. A trigger now enqueues through ApiWorkDistributor (AddDispatch)
-        // and reads the saved settings from IPipelineConfigStore; the empty configuration is only the
-        // fallback for a host without that store.
+        // Spec 051 2.4: the API triggers consolidation for the Consolidation page. Before 2.4a it only
+        // saved harness suggestions for the hub and had no IWorkDistributor, so it registered a form
+        // that could not trigger. A trigger enqueues through ApiWorkDistributor (AddDispatch) and reads
+        // the saved settings from IPipelineConfigStore; the empty configuration is only the fallback for
+        // a host without that store.
         services.AddSingleton<IConsolidationSelectorResolver>(sp => new ConsolidationSelectorResolver(
             sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IPipelineConfigStore>()));
@@ -699,6 +699,10 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineConfigStore>()),
             Log.Logger));
         services.AddSingleton<CodingAgent.Api.Dispatch.ManualDispatchService>();
+
+        // ── Consolidation page (spec 051 2.4b) ───────────────────────────────
+        // Reads the cards and triggers through IConsolidationService (AddLifecycleAndConsolidation).
+        services.AddSingleton<CodingAgent.Api.Consolidation.ConsolidationPageService>();
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
