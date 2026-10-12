@@ -7,6 +7,7 @@
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
 @inject IPipelineApiWorkItemClient WorkItems
+@inject IUiWorkItemClient WorkItemLists
 @inject BlockedIssuesService BlockedIssues
 @inject CockpitState State
 @inject NavigationManager Nav
@@ -15,7 +16,7 @@
 
 @*
     Work — the app-side work queue (see docs/frontend-redesign-handoff.md).
-    Data: IPipelineApiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight).
+    Data: IUiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight), from /api/ui/work-items.
     Browsing the provider's issue backlog with dependency-based readiness + dispatch is the
     dispatch-drawer flow (Pipelines → Browse Issues) — linked, not duplicated here.
 *@
@@ -431,8 +432,8 @@
     {
         try
         {
-            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
-            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _active = await WorkItemLists.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItemLists.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
@@ -512,8 +513,8 @@
     {
         try
         {
-            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
-            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _active = await WorkItemLists.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItemLists.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
             _error = null;
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }

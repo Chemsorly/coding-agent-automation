@@ -30,6 +30,12 @@ public interface IUserAccess
     /// 404 when they cannot even read it, 403 when they can read but not operate.
     /// </summary>
     void DemandOperate(string? projectId);
+
+    /// <summary>
+    /// D3 rule 3, for lists: without a project the user needs global read (403 otherwise, so a scoped
+    /// user learns to pass one); with a project, read on it (404 otherwise).
+    /// </summary>
+    void DemandList(string? projectId);
 }
 
 /// <summary>Reads the user and grant from the request's user-token principal.</summary>
@@ -64,6 +70,14 @@ public sealed class UserAccess(IHttpContextAccessor httpContextAccessor) : IUser
     {
         DemandRead(projectId);
         if (!CanOperate(projectId))
+            throw new UiAccessDeniedException(StatusCodes.Status403Forbidden);
+    }
+
+    public void DemandList(string? projectId)
+    {
+        if (ProjectIds.Normalize(projectId) is not null)
+            DemandRead(projectId);
+        else if (Grant.GlobalRole < AccessRole.ReadOnly)
             throw new UiAccessDeniedException(StatusCodes.Status403Forbidden);
     }
 }

@@ -518,6 +518,21 @@ These return slim views of the configuration for pages outside Settings. They ne
 | `GET /api/ui/projects/{projectId}/templates` | The project's job templates as `{ id, name, enabled }`. `404` when the user cannot read the project or it does not exist. |
 | `GET /api/ui/pipeline-settings` | `{ maxRetries, triageRetentionDays }`: global values, without project overrides. |
 
+### Runs and work items (any role)
+
+The lists take an optional `projectId`:
+- Without it, the user needs global read; a project-scoped user gets `403`.
+- With it, the user needs read on that project; otherwise `404`.
+
+The run detail is checked against the run's own project. A run the user cannot read is `404`, like a missing one.
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/runs` | Run history, newest first. It has the same query parameters as `GET /api/pipeline-runs`: `page`, `pageSize`, `feedbackOnly`, `includeActive`, `finalStep`, `projectId`, `since` and `runType`. |
+| `GET /api/ui/runs/{runId}` | `{ run, agentProviderName }`: the run, and the display name of the agent provider it ran with. |
+| `GET /api/ui/work-items/pending?maxResults=&projectId=` | The queue, in dispatch order. |
+| `GET /api/ui/work-items/active?olderThanSeconds=&projectId=` | Dispatched and running work items. |
+
 ### Settings (admin)
 
 `/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
@@ -616,6 +631,8 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/projects` | User token | Projects the user can read |
 | GET | `/api/ui/projects/{projectId}/templates` | User token | Templates of a readable project |
 | GET | `/api/ui/pipeline-settings` | User token | Global settings pages outside Settings show |
+| GET | `/api/ui/runs`, `/api/ui/runs/{runId}` | User token | Run history and run detail (per project) |
+| GET | `/api/ui/work-items/pending`, `/api/ui/work-items/active` | User token | Queue and in-flight work items (per project) |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

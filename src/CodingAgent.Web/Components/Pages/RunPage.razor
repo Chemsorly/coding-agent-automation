@@ -9,11 +9,10 @@
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
 @using Microsoft.AspNetCore.SignalR.Client
-@inject IPipelineApiRunHistoryClient RunHistory
+@inject IUiRunClient RunHistory
 @inject IPipelineApiWorkItemClient WorkItems
 @inject IUiConfigClient UiConfig
 @inject IPipelineApiTriageClient Triages
-@inject IConfigurationStore ConfigStore
 @inject IAgentHubConnection HubConnection
 @inject NavigationManager Nav
 @inject CurrentAccess Access
@@ -21,7 +20,7 @@
 
 @*
     Run Page — the deep-linkable run detail (see docs/frontend-redesign-handoff.md).
-    Data: IPipelineApiRunHistoryClient.GetRunAsync(Guid) → PipelineRunSummary.
+    Data: IUiRunClient.GetRunAsync(Guid) → UiRunDetail (the run and its agent provider's name).
     Every field shown is a real property on the summary (tokens, cost, cache, phase
     breakdown, review findings, feedback). This page replaced the old run-detail modal and
     hosts the live PipelineSidebar step ladder for active runs.
@@ -391,15 +390,13 @@
 
         try
         {
-            _run = await RunHistory.GetRunAsync(id, _cts.Token);
             // Spec 049 Req 8.5: a run of a project the user cannot read looks exactly like a missing one.
-            if (_run is not null && !Access.CanRead(_run.ProjectId))
-                _run = null;
-            if (_run?.AgentProviderConfigId is not null)
+            // The API answers 404 for it (051 D3); the page checks the run's project as well.
+            var detail = await RunHistory.GetRunAsync(id, _cts.Token);
+            if (detail is not null && Access.CanRead(detail.Run.ProjectId))
             {
-                var cfg = await ConfigStore.GetProviderConfigByIdAsync(
-                    _run.AgentProviderConfigId, ProviderKind.Agent, _cts.Token);
-                _resolvedAgentName = cfg?.DisplayName;
+                _run = detail.Run;
+                _resolvedAgentName = detail.AgentProviderName;
             }
             if (_run?.RunType == PipelineRunType.Triage)
             {
@@ -599,7 +596,7 @@
         if (!Guid.TryParse(RunId, out var id)) return;
         try
         {
-            _run = await RunHistory.GetRunAsync(id, _cts.Token);
+            _run = (await RunHistory.GetRunAsync(id, _cts.Token))?.Run;
             if (_run is not null && _model is not null)
             {
                 _model.CurrentStep = _run.FinalStep;

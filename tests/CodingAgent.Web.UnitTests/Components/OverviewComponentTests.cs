@@ -44,8 +44,8 @@ public class OverviewComponentTests : BunitContext
     /// </summary>
     private void RegisterOverviewServices(
         Mock<IPipelineApiAgentClient> mockAgents,
-        Mock<IPipelineApiRunHistoryClient>? mockRunHistory = null,
-        Mock<IPipelineApiWorkItemClient>? mockWorkItems = null)
+        Mock<CodingAgent.Web.Ui.IUiRunClient>? mockRunHistory = null,
+        Mock<CodingAgent.Web.Ui.IUiWorkItemClient>? mockWorkItems = null)
     {
         mockRunHistory ??= BuildEmptyRunHistoryMock();
         mockWorkItems ??= BuildEmptyWorkItemsMock();
@@ -60,17 +60,17 @@ public class OverviewComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
-    private static Mock<IPipelineApiRunHistoryClient> BuildEmptyRunHistoryMock()
+    private static Mock<CodingAgent.Web.Ui.IUiRunClient> BuildEmptyRunHistoryMock()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
         return mock;
     }
 
-    private static Mock<IPipelineApiWorkItemClient> BuildEmptyWorkItemsMock()
+    private static Mock<CodingAgent.Web.Ui.IUiWorkItemClient> BuildEmptyWorkItemsMock()
     {
-        var mock = new Mock<IPipelineApiWorkItemClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiWorkItemClient>();
         mock.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>());
         mock.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -226,7 +226,7 @@ public class OverviewComponentTests : BunitContext
             MakeFailedRun(issueId, now,               "latest failure"),
         };
 
-        var mockHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
@@ -283,7 +283,7 @@ public class OverviewComponentTests : BunitContext
             },
         };
 
-        var mockHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
@@ -367,9 +367,9 @@ public class OverviewComponentTests : BunitContext
         StartedAtOffset = startedAt,
     };
 
-    private static Mock<IPipelineApiRunHistoryClient> HistoryMock(List<PipelineRunSummary> runs)
+    private static Mock<CodingAgent.Web.Ui.IUiRunClient> HistoryMock(List<PipelineRunSummary> runs)
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runs, Page = 1, PageSize = 100, HasMore = false });
         return mock;

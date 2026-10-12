@@ -37,5 +37,17 @@ public static class UiClientStubs
         providers.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ProviderConfig>());
         services.RemoveAll<IUiProviderClient>();
         services.AddSingleton(providers.Object);
+
+        var runs = new Mock<IUiRunClient>();
+        runs.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 50, HasMore = false });
+        services.RemoveAll<IUiRunClient>();
+        services.AddSingleton(runs.Object);
+
+        var workItems = new Mock<IUiWorkItemClient>();
+        workItems.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+        workItems.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ActiveWorkItemDto>());
+        services.RemoveAll<IUiWorkItemClient>();
+        services.AddSingleton(workItems.Object);
     }
 }

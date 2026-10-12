@@ -27,7 +27,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class RunsPageComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistory = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiRunClient> _mockRunHistory = new();
     private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
 
     private static PipelineRunSummary MakeSummary(

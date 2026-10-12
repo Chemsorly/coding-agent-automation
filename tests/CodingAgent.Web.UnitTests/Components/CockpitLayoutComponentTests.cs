@@ -27,7 +27,7 @@ public class CockpitLayoutComponentTests : BunitContext
     private readonly Mock<IJSRuntime> _mockJs = new();
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly Mock<IUiConfigClient> _mockUiConfig = new();
-    private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistory = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiRunClient> _mockRunHistory = new();
     private readonly CockpitState _state = new();
 
     public CockpitLayoutComponentTests()

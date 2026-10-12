@@ -35,4 +35,8 @@ namespace CodingAgent.Web.Ui;
 [JsonSerializable(typeof(UiProviderCheck))]
 [JsonSerializable(typeof(IReadOnlyList<UiRepository>))]
 [JsonSerializable(typeof(IReadOnlyList<AgentModelInfo>))]
+[JsonSerializable(typeof(PagedResult<PipelineRunSummary>))]
+[JsonSerializable(typeof(UiRunDetail))]
+[JsonSerializable(typeof(IReadOnlyList<PendingWorkItemDto>))]
+[JsonSerializable(typeof(IReadOnlyList<ActiveWorkItemDto>))]
 internal sealed partial class UiJsonContext : JsonSerializerContext;
