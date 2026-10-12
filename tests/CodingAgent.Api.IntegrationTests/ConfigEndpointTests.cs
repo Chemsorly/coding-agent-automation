@@ -28,6 +28,7 @@ public sealed class ConfigEndpointTests
     };
     private readonly ApiWebApplicationFactory _factory;
     private readonly HttpClient _client;
+    private readonly HttpClient _admin;
 
     public ConfigEndpointTests(ApiWebApplicationFactory factory)
     {
@@ -36,6 +37,10 @@ public sealed class ConfigEndpointTests
         // Operator auth: master key, no agentId query parameter
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", ApiWebApplicationFactory.ApiKey);
+        // Spec 051: Settings writes, import and export moved to the UI surface (/api/ui/settings, admin).
+        _admin = factory.CreateClient();
+        _admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", Security.TestUserTokens.For(Security.TestUserTokens.Global(CodingAgent.Contracts.Auth.AccessRole.Admin)));
     }
 
     // ── AgentProfiles ─────────────────────────────────────────────────────────────
@@ -52,64 +57,21 @@ public sealed class ConfigEndpointTests
         };
 
         // Two PUTs with the same Id
-        var r1 = await _client.PutAsJsonAsync("/api/config/agent-profiles", profile, PipelineJsonOptions.Default);
+        var r1 = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default);
         r1.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var profileUpdated = profile with { DisplayName = "Updated Agent" };
-        var r2 = await _client.PutAsJsonAsync("/api/config/agent-profiles", profileUpdated, PipelineJsonOptions.Default);
+        var r2 = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profileUpdated, PipelineJsonOptions.Default);
         r2.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // GET should return the profile (upsert — only one row)
-        var response = await _client.GetAsync("/api/config/agent-profiles");
+        var response = await _admin.GetAsync("/api/ui/settings/agent-profiles");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var profiles = await response.Content.ReadFromJsonAsync<List<AgentProfile>>(PipelineJsonOptions.Default);
         profiles.Should().NotBeNull();
         profiles!.Where(p => p.Id == profileId).Should().HaveCount(1,
             "two PUTs with the same ID must produce exactly one row (upsert semantics)");
-    }
-
-    // ── Key-value ─────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task KeyValue_GetPutGetRoundTrip()
-    {
-        var key = $"test-key-{Guid.NewGuid():N}";
-        const string value = "hello-world";
-
-        // Initially returns 200 (unset key is not an error — no Warning log noise)
-        var get1 = await _client.GetAsync($"/api/config/key-value/{key}");
-        get1.StatusCode.Should().Be(HttpStatusCode.OK);
-        // Assert the body is JSON null (not an object wrapper) — locks in the server contract
-        // so the typed client's `content == "null"` path is verifiable end-to-end.
-        var unsetBody = (await get1.Content.ReadAsStringAsync()).Trim();
-        unsetBody.Should().Be("null");
-
-        // PUT
-        var put = await _client.PutAsJsonAsync($"/api/config/key-value/{key}",
-            new { value }, PipelineJsonOptions.Default);
-        put.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // GET again — should return bare JSON string (not an object wrapper).
-        // Exact equality verifies the latent-bug fix: the old Ok(new { key, value }) object
-        // wrapper would fail this assertion; only TypedResults.Ok<string?>(value) passes.
-        var get2 = await _client.GetAsync($"/api/config/key-value/{key}");
-        get2.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await get2.Content.ReadAsStringAsync();
-        body.Should().Be($"\"{value}\"");
-    }
-
-    [Fact]
-    public async Task KeyValue_TypedClientSetThenGet_RoundTrips()
-    {
-        // The typed client must send the body the endpoint binds (KeyValueSetRequest). A bare
-        // JSON string fails binding with 400, which crashed the first-run banner's Dismiss.
-        var configClient = new PipelineApiConfigClient(_client);
-        var key = $"test-key-{Guid.NewGuid():N}";
-
-        await configClient.SetKeyValueAsync(key, "true");
-
-        (await configClient.GetKeyValueAsync(key)).Should().Be("true");
     }
 
     // ── ProviderConfigs ───────────────────────────────────────────────────────────
@@ -193,7 +155,7 @@ public sealed class ConfigEndpointTests
     public async Task ConfigEndpoint_SucceedsWithMasterKey_NoAgentId()
     {
         // Master key with no agentId → auth_kind=operator → OperatorApiKey passes
-        var response = await _client.GetAsync("/api/config/agent-profiles");
+        var response = await _admin.GetAsync("/api/ui/settings/agent-profiles");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
@@ -723,15 +685,15 @@ public sealed class ConfigEndpointTests
             Enabled = true
         };
 
-        var put = await _client.PutAsJsonAsync("/api/config/quality-gate-configs", config, PipelineJsonOptions.Default);
+        var put = await _admin.PutAsJsonAsync("/api/ui/settings/quality-gate-configs", config, PipelineJsonOptions.Default);
         put.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var get = await _client.GetAsync("/api/config/quality-gate-configs");
+        var get = await _admin.GetAsync("/api/ui/settings/quality-gate-configs");
         get.StatusCode.Should().Be(HttpStatusCode.OK);
         var configs = await get.Content.ReadFromJsonAsync<List<QualityGateConfiguration>>(PipelineJsonOptions.Default);
         configs!.Should().Contain(c => c.Id == config.Id);
 
-        var delete = await _client.DeleteAsync($"/api/config/quality-gate-configs/{config.Id}");
+        var delete = await _admin.DeleteAsync($"/api/ui/settings/quality-gate-configs/{config.Id}");
         delete.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
@@ -748,22 +710,22 @@ public sealed class ConfigEndpointTests
             Enabled = true
         };
 
-        var put = await _client.PutAsJsonAsync("/api/config/reviewer-configs", config, PipelineJsonOptions.Default);
+        var put = await _admin.PutAsJsonAsync("/api/ui/settings/reviewer-configs", config, PipelineJsonOptions.Default);
         put.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var get = await _client.GetAsync("/api/config/reviewer-configs");
+        var get = await _admin.GetAsync("/api/ui/settings/reviewer-configs");
         get.StatusCode.Should().Be(HttpStatusCode.OK);
         var configs = await get.Content.ReadFromJsonAsync<List<ReviewerConfiguration>>(PipelineJsonOptions.Default);
         configs!.Should().Contain(c => c.Id == config.Id);
 
-        var delete = await _client.DeleteAsync($"/api/config/reviewer-configs/{config.Id}");
+        var delete = await _admin.DeleteAsync($"/api/ui/settings/reviewer-configs/{config.Id}");
         delete.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
     public async Task ReviewerConfigs_ResetToDefaults_Returns200()
     {
-        var response = await _client.PostAsync("/api/config/reviewer-configs/reset-to-defaults", null);
+        var response = await _admin.PostAsync("/api/ui/settings/reviewer-configs/reset-to-defaults", null);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
@@ -780,27 +742,27 @@ public sealed class ConfigEndpointTests
             Enabled = true
         };
 
-        var put = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var put = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
         put.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var getAll = await _client.GetAsync("/api/config/projects");
+        var getAll = await _admin.GetAsync("/api/ui/settings/projects");
         getAll.StatusCode.Should().Be(HttpStatusCode.OK);
         var projects = await getAll.Content.ReadFromJsonAsync<List<PipelineProject>>(PipelineJsonOptions.Default);
         projects!.Should().Contain(p => p.Id == project.Id);
 
-        var getById = await _client.GetAsync($"/api/config/projects/{project.Id}");
+        var getById = await _admin.GetAsync($"/api/ui/settings/projects/{project.Id}");
         getById.StatusCode.Should().Be(HttpStatusCode.OK);
         var fetched = await getById.Content.ReadFromJsonAsync<PipelineProject>(PipelineJsonOptions.Default);
         fetched!.Name.Should().Be(project.Name);
 
-        var delete = await _client.DeleteAsync($"/api/config/projects/{project.Id}");
+        var delete = await _admin.DeleteAsync($"/api/ui/settings/projects/{project.Id}");
         delete.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
     public async Task GetProjectById_Returns404_WhenNotFound()
     {
-        var response = await _client.GetAsync($"/api/config/projects/{Guid.NewGuid()}");
+        var response = await _admin.GetAsync($"/api/ui/settings/projects/{Guid.NewGuid()}");
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
@@ -884,7 +846,7 @@ public sealed class ConfigEndpointTests
         (await PutTemplateAsync(home, template)).StatusCode.Should().Be(HttpStatusCode.OK);
 
         var claim = new PipelineProject { Id = other, Name = "Other", TemplateIds = [template.Id] };
-        (await _client.PutAsJsonAsync("/api/config/projects", claim, PipelineJsonOptions.Default))
+        (await _admin.PutAsJsonAsync("/api/ui/settings/projects", claim, PipelineJsonOptions.Default))
             .StatusCode.Should().Be(HttpStatusCode.OK);
 
         (await GetProjectAsync(home)).TemplateIds.Should().Equal(template.Id);
@@ -894,14 +856,14 @@ public sealed class ConfigEndpointTests
     private async Task<string> CreateProjectAsync(string name)
     {
         var project = new PipelineProject { Id = Guid.NewGuid().ToString(), Name = name, Enabled = true };
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         return project.Id;
     }
 
     private async Task<PipelineProject> GetProjectAsync(string id)
     {
-        var project = await _client.GetFromJsonAsync<PipelineProject>($"/api/config/projects/{id}", PipelineJsonOptions.Default);
+        var project = await _admin.GetFromJsonAsync<PipelineProject>($"/api/ui/settings/projects/{id}", PipelineJsonOptions.Default);
         return project!;
     }
 
@@ -934,9 +896,9 @@ public sealed class ConfigEndpointTests
             DisplayName = "Profile To Delete",
             AgentProviderConfigId = "prov-delete-test"
         };
-        await _client.PutAsJsonAsync("/api/config/agent-profiles", profile, PipelineJsonOptions.Default);
+        await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default);
 
-        var delete = await _client.DeleteAsync($"/api/config/agent-profiles/{profileId}");
+        var delete = await _admin.DeleteAsync($"/api/ui/settings/agent-profiles/{profileId}");
         delete.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
@@ -1059,7 +1021,7 @@ public sealed class ConfigEndpointTests
             AgentTimeout = TimeSpan.FromSeconds(30)
         };
 
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             "a project-level AgentTimeout below 60s must be rejected to prevent the same silent bypass");
@@ -1083,7 +1045,7 @@ public sealed class ConfigEndpointTests
             AgentTimeout = TimeSpan.FromSeconds(60)
         };
 
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK,
             "AgentTimeout of exactly 60s is the minimum acceptable value and must not be rejected for projects");
@@ -1103,7 +1065,7 @@ public sealed class ConfigEndpointTests
             AgentTimeout = null
         };
 
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK,
             "a project with no AgentTimeout override must be accepted — null means inherit the global timeout");
@@ -1147,7 +1109,7 @@ public sealed class ConfigEndpointTests
             },
         };
 
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await response.Content.ReadAsStringAsync();
@@ -1167,7 +1129,7 @@ public sealed class ConfigEndpointTests
             CodeReview = new CodeReviewOverrides { MaxIterations = 0 },
         };
 
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
@@ -1214,7 +1176,7 @@ public sealed class ConfigEndpointTests
         var response = await _client.PostAsync("/api/config/import", content);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var project = await _client.GetFromJsonAsync<PipelineProject>($"/api/config/projects/{projectId}", PipelineJsonOptions.Default);
+        var project = await _admin.GetFromJsonAsync<PipelineProject>($"/api/ui/settings/projects/{projectId}", PipelineJsonOptions.Default);
         project.Should().NotBeNull();
         project!.MaxRetries.Should().Be(5);
         project.MaxDecompositionSubIssues.Should().Be(12);
@@ -1419,7 +1381,7 @@ public sealed class ConfigEndpointTests
     {
         var project = new PipelineProject { Id = "proj-platform", Name = "Platform" };
 
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a bad ID is the caller's mistake, not a server failure");
         (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid project ID: proj-platform");

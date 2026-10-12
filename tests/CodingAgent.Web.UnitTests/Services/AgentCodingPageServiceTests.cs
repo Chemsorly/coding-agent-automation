@@ -359,7 +359,6 @@ public class AgentCodingPageServiceTests
         _mockConfigClient.Verify(s => s.MoveTemplateAsync(
             It.Is<ProjectId>(p => p.Value == "proj-src"), It.Is<ProjectId>(p => p.Value == "proj-tgt"), "t-1", It.IsAny<CancellationToken>()),
             Times.Once);
-        _mockConfigClient.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

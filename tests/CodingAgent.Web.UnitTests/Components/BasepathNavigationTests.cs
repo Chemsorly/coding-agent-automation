@@ -294,10 +294,6 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(mockUiConfig.Object);
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
-        mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
-        mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
 
         var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
         mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))

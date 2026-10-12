@@ -88,18 +88,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         return result ?? [];
     }
 
-    public async Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct = default)
-    {
-        var response = await _http.PutAsJsonAsync("/api/config/agent-profiles", profile, PipelineJsonOptions.Default, ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task DeleteAgentProfileAsync(string id, CancellationToken ct = default)
-    {
-        var response = await _http.DeleteAsync($"/api/config/agent-profiles/{Uri.EscapeDataString(id)}", ct);
-        response.EnsureSuccessStatusCode();
-    }
-
     public async Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default)
     {
         var result = await _http.GetFromJsonAsync<List<QualityGateConfiguration>>(
@@ -109,18 +97,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         return result ?? [];
     }
 
-    public async Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct = default)
-    {
-        var response = await _http.PutAsJsonAsync("/api/config/quality-gate-configs", config, PipelineJsonOptions.Default, ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task DeleteQualityGateConfigAsync(string id, CancellationToken ct = default)
-    {
-        var response = await _http.DeleteAsync($"/api/config/quality-gate-configs/{Uri.EscapeDataString(id)}", ct);
-        response.EnsureSuccessStatusCode();
-    }
-
     public async Task<IReadOnlyList<ReviewerConfiguration>> GetReviewerConfigsAsync(CancellationToken ct = default)
     {
         var result = await _http.GetFromJsonAsync<List<ReviewerConfiguration>>(
@@ -128,24 +104,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             PipelineJsonOptions.Default,
             ct);
         return result ?? [];
-    }
-
-    public async Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct = default)
-    {
-        var response = await _http.PutAsJsonAsync("/api/config/reviewer-configs", config, PipelineJsonOptions.Default, ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task DeleteReviewerConfigAsync(string id, CancellationToken ct = default)
-    {
-        var response = await _http.DeleteAsync($"/api/config/reviewer-configs/{Uri.EscapeDataString(id)}", ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct = default)
-    {
-        var response = await _http.PostAsync("/api/config/reviewer-configs/reset-to-defaults", null, ct);
-        response.EnsureSuccessStatusCode();
     }
 
     public async Task<IReadOnlyList<PipelineProject>> GetProjectsAsync(CancellationToken ct = default)
@@ -164,25 +122,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             return null;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<PipelineProject>(PipelineJsonOptions.Default, ct);
-    }
-
-    public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct = default)
-    {
-        var response = await _http.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default, ct);
-        await EnsureAcceptedAsync(response, ct);
-    }
-
-    public async Task DeleteProjectAsync(string id, CancellationToken ct = default)
-    {
-        var response = await _http.DeleteAsync($"/api/config/projects/{Uri.EscapeDataString(id)}", ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task<bool> HasEnabledTemplatesAsync(CancellationToken ct = default)
-    {
-        var response = await _http.GetAsync("/api/config/projects/has-enabled-templates", ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<bool>(cancellationToken: ct);
     }
 
     public async Task<IReadOnlyList<PipelineJobTemplate>> GetAllTemplatesAsync(CancellationToken ct = default)
@@ -245,70 +184,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(reason) ? $"The API returned {(int)response.StatusCode}." : reason);
         }
 
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task<string?> GetKeyValueAsync(string key, CancellationToken ct = default)
-    {
-        var response = await _http.GetAsync($"/api/config/key-value/{Uri.EscapeDataString(key)}", ct);
-        // TODO: EnsureSuccessStatusCode throws HttpRequestException without reading/disposing
-        // the response body, which may hold a socket open until GC on large error payloads.
-        // This was the same pattern as the previous code and is not a regression, but if
-        // connection-pool exhaustion under heavy error traffic becomes a concern, wrap the
-        // response in `await using` or read-and-discard the content before throwing.
-        response.EnsureSuccessStatusCode();
-        // NOTE: ASP.NET Core serialises null via System.Text.Json as the 4-byte literal `null`
-        // (not an empty body), because ConfigureHttpJsonOptions does not set
-        // DefaultIgnoreCondition = WhenWritingNull. The real production path for an unset key
-        // is the `content == "null"` arm. The empty-body guard (string.IsNullOrEmpty) is a
-        // defensive fallback only. If WhenWritingNull is ever added to the server options, the
-        // empty-body path would become the primary path — update this comment accordingly.
-        // TODO: The `content == "null"` comparison has no whitespace tolerance. If a reverse
-        // proxy or response middleware appends a newline (producing "null\n"), the guard falls
-        // through to JsonSerializer.Deserialize<string>, which will throw a JsonException.
-        // The integration test trims the raw body before asserting, which demonstrates the
-        // sensitivity. Mitigate by using `content.Trim() == "null"` or by deserialising
-        // unconditionally via `JsonSerializer.Deserialize<string?>(content)`.
-        var content = await response.Content.ReadAsStringAsync(ct);
-        if (string.IsNullOrEmpty(content) || content == "null")
-            return null;
-        return System.Text.Json.JsonSerializer.Deserialize<string>(content, PipelineJsonOptions.Default);
-    }
-
-    public async Task SetKeyValueAsync(string key, string value, CancellationToken ct = default)
-    {
-        // The endpoint binds KeyValueSetRequest { value }; a bare JSON string fails binding with 400.
-        var body = new { value };
-        var response = await _http.PutAsJsonAsync(
-            $"/api/config/key-value/{Uri.EscapeDataString(key)}",
-            body,
-            PipelineJsonOptions.Default,
-            ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task DeleteKeyValueAsync(string key, CancellationToken ct = default)
-    {
-        var response = await _http.DeleteAsync($"/api/config/key-value/{Uri.EscapeDataString(key)}", ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    /// <inheritdoc/>
-    public async Task<byte[]> ExportConfigAsync(CancellationToken ct = default)
-    {
-        var response = await _http.GetAsync("/api/config/export", ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsByteArrayAsync(ct);
-    }
-
-    /// <inheritdoc/>
-    public async Task ImportConfigAsync(Stream jsonStream, string fileName, CancellationToken ct = default)
-    {
-        using var content = new MultipartFormDataContent();
-        var fileContent = new StreamContent(jsonStream);
-        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        content.Add(fileContent, "file", fileName);
-        var response = await _http.PostAsync("/api/config/import", content, ct);
         response.EnsureSuccessStatusCode();
     }
 
