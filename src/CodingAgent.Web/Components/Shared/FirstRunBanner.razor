@@ -1,6 +1,5 @@
-@using CodingAgent.Api.Client
 @using Serilog
-@inject IPipelineApiConfigClient ConfigClient
+@inject IUiSettingsClient Settings
 @inject NavigationManager Navigation
 @inject IAccessGuard Guard
 
@@ -27,9 +26,20 @@
 
     private async Task EvaluateAsync()
     {
-        var hasEnabled = await ConfigClient.HasEnabledTemplatesAsync(CancellationToken.None);
-        var dismissedValue = await ConfigClient.GetKeyValueAsync("first_run_banner_dismissed", CancellationToken.None);
-        _dismissed = dismissedValue == "true";
+        UiFirstRunState state;
+        try
+        {
+            state = await Settings.GetFirstRunStateAsync(CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            // The banner is a hint; an unreachable API must not break the page it sits on.
+            Log.Warning(ex, "FirstRunBanner: failed to load the first-run state");
+            _show = false;
+            return;
+        }
+        var hasEnabled = state.HasEnabledTemplates;
+        _dismissed = state.BannerDismissed;
 
         var currentPath = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
         // Suppress the banner when the user is already on the Pipelines page.
@@ -53,7 +63,7 @@
         catch (AccessDeniedException) { return; }
         try
         {
-            await ConfigClient.SetKeyValueAsync("first_run_banner_dismissed", "true", CancellationToken.None);
+            await Settings.DismissFirstRunBannerAsync(CancellationToken.None);
         }
         catch (Exception ex)
         {

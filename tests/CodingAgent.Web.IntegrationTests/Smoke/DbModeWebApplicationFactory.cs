@@ -161,6 +161,9 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);
 
+            // Spec 051: the /api/ui clients call the API as the signed-in user; there is no API here.
+            CodingAgent.Web.IntegrationTests.Helpers.UiClientStubs.Replace(services);
+
             // KubernetesWorkDistributor is now a pure Pipeline API client — its dedup and status
             // reads go through IPipelineApiWorkItemClient, which would otherwise dial the
             // localhost:9999 stub URL. Mock it for the same reason as the config client above.

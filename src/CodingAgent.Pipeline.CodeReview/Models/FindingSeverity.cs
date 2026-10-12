@@ -7,7 +7,7 @@ namespace CodingAgent.Pipeline.CodeReview.Models;
 /// Higher numeric value = more severe. Natural >= comparison for threshold filtering:
 /// a finding is eligible when its value >= the configured threshold value.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(JsonStringEnumConverter<FindingSeverity>))]
 public enum FindingSeverity
 {
     /// <summary>Low-priority improvement suggestion.</summary>

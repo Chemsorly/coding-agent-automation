@@ -14,6 +14,7 @@
 @using CodingAgent.Web.Components.Shared
 @using Serilog
 @inject IPipelineApiConfigClient ConfigClient
+@inject IUiSettingsClient SettingsClient
 @inject GitHubValidationService GitHubValidator
 @inject GitLabValidationService GitLabValidator
 @inject IProviderFactory ProviderFactory
@@ -40,7 +41,7 @@
                 var projectId = _selectedNode[$"{SettingsNodes.ProjectDetail}:".Length..];
                 <ProjectDetailSection
                     ProjectId="@projectId"
-                    ConfigClient="ConfigClient"
+                    ConfigClient="SettingsClient"
                     OnProjectSaved="RefreshTreeNavProjects"
                     OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
             }
@@ -48,7 +49,7 @@
             {
                 case SettingsNodes.Projects:
                     <ProjectsListSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnNavigateToProject="NavigateToProjectDetail"
                         OnProjectsChanged="RefreshTreeNavProjects"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
@@ -95,64 +96,64 @@
                     break;
                 case SettingsNodes.PipelineGeneral:
                     <PipelineGeneralSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineLoop:
                     <PipelineLoopSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelinePrompts:
                     <PipelinePromptsSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineCi:
                     <PipelineCiSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineCodeReview:
                     <PipelineCodeReviewSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineDecomposition:
                     <PipelineDecompositionSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineConsolidation:
                     <PipelineConsolidationSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineTriage:
                     <PipelineTriageSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineAdvanced:
                     <PipelineAdvancedSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.AgentProfiles:
                     <AgentProfileSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         AgentProviders="_agentProviders"
                         IsKubernetesMode="true"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.QualityGateConfigs:
                     <QualityGateConfigSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ReviewerConfigs:
                     <ReviewerConfigSection
-                        ConfigClient="ConfigClient"
+                        ConfigClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ConfigImportExport:

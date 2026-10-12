@@ -14,3 +14,9 @@ public sealed record UiTemplate(string Id, string Name, bool Enabled);
 /// Global values; project overrides are not applied.
 /// </summary>
 public sealed record UiPipelineSettings(int MaxRetries, int TriageRetentionDays);
+
+/// <summary>Body of <c>POST /api/ui/settings/templates/move</c>.</summary>
+public sealed record UiMoveTemplateRequest(string SourceProjectId, string TargetProjectId, string TemplateId);
+
+/// <summary>What the first-run banner needs (<c>GET /api/ui/settings/first-run</c>, admin).</summary>
+public sealed record UiFirstRunState(bool HasEnabledTemplates, bool BannerDismissed);

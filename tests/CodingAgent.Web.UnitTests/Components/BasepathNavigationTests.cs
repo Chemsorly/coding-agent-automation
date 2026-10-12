@@ -314,6 +314,8 @@ public class BasepathNavigationTests : BunitContext
             sp.GetRequiredService<IFaroService>()));
 
         Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new FakeUiHealthClient());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
+            s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(true, false))));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
@@ -342,12 +344,8 @@ public class BasepathNavigationTests : BunitContext
     public void FirstRunBanner_SettingsLink_UsesRelativeHref()
     {
         // No enabled templates — banner will be shown
-        var configClient = new Mock<IPipelineApiConfigClient>();
-        configClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-        configClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
-        Services.AddSingleton(configClient.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
+            s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(false, false))));
 
         // Current route is home so the banner is visible
         var nav = Services.GetRequiredService<NavigationManager>();

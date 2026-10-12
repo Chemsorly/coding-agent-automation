@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using CodingAgent.Web.Ui;
 using AngleSharp.Dom;
 using AwesomeAssertions;
 using Bunit;
@@ -25,11 +27,13 @@ public class SettingsCoverageTests : BunitContext
         nameof(PipelineConfiguration.WorkspaceBaseDirectory),
     ];
 
-    private readonly Mock<IPipelineApiConfigClient> _configClient = new();
+    private readonly Mock<IUiSettingsClient> _configClient = new();
+    private readonly Mock<CodingAgent.Api.Client.IPipelineApiConfigClient> _providerClient = new();
 
     public SettingsCoverageTests()
     {
         _configClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
+        _providerClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
     }
 
     [Fact]
@@ -59,7 +63,8 @@ public class SettingsCoverageTests : BunitContext
     {
         var project = new PipelineProject { Id = "p-1", Name = "Product" };
         _configClient.Setup(c => c.GetProjectByIdAsync("p-1", It.IsAny<CancellationToken>())).ReturnsAsync(project);
-        _configClient.Setup(c => c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>())).ReturnsAsync(new List<ProviderConfig>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Api.Client.IPipelineApiConfigClient>(c =>
+            c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
         _configClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineJobTemplate>());
         _configClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineProject> { project });
 
@@ -89,7 +94,7 @@ public class SettingsCoverageTests : BunitContext
     {
         var cut = Render<AgentProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _configClient.Object)
+            .Add(s => s.ConfigClient, _providerClient.Object)
             .Add(s => s.IsKubernetesMode, true));
         cut.Find(".btn-add").Click();
 
