@@ -23,8 +23,9 @@ public static partial class ServiceCollectionExtensions
     public static IServiceCollection AddInfrastructureServices(
         this IServiceCollection services)
     {
-        // The drawers still call providers from here until spec 051 2.3; Settings' provider checks
-        // (GitHub/GitLab validation) run in the API since 2.1c.
+        // Only the label service still takes it: the drawers browse and dispatch through the API since
+        // spec 051 2.3, and Settings' provider checks since 2.1c. Both go with the orchestration
+        // services in 4.1.
         services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
         return services;
@@ -46,8 +47,7 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers multi-agent orchestration services: agent registry, job dispatch,
-    /// token vending, and dispatch infrastructure.
+    /// Registers multi-agent orchestration services: agent registry and token vending.
     /// HeartbeatMonitorService was deleted at Spec 041–045 arc close — agent timeouts
     /// are enforced by ReconciliationService in JobController.
     /// </summary>
@@ -61,9 +61,6 @@ public static partial class ServiceCollectionExtensions
 
         // ── Background Services ────────────────────────────────────────────
         RegisterOrchestrationBackgroundServices(services);
-
-        // ── Job Dispatching ────────────────────────────────────────────────
-        RegisterJobDispatching(services);
 
         return services;
     }

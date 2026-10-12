@@ -105,7 +105,7 @@ public class AgentCodingStopPendingTests : BunitContext
         // Spec 051 2.3b: the drawers browse through the API; this page test never opens one.
         Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ProviderBackedBrowseClient.Empty().Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
-        Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiDispatchClient>().Object);
 
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
@@ -426,8 +426,6 @@ public class AgentCodingStopPendingTests : BunitContext
     private void SetupConfigClientMocks()
     {
         _mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
-        _mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
         _mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadPipelineConfigAsync(ct));

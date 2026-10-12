@@ -130,11 +130,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             // Register a no-op IDatabaseProbe so DatabaseStartupService skips real SQL connectivity check
             services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
 
-            // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
-            // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.
-            // Register a mock to satisfy DI validation.
-            services.AddSingleton(new Mock<IDispatchOrchestrationService>().Object);
-
             // Spec 045: IPipelineApiConfigClient is registered by AddPipelineApiClient() and points
             // to localhost:9999 (stub URL set above). Replace it with a mock to prevent real HTTP
             // calls during test startup (ConsolidationRehydrationExtensions calls LoadPipelineConfigAsync).

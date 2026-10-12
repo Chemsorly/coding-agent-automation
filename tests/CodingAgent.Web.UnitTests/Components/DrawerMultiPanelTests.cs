@@ -73,10 +73,6 @@ public class DrawerMultiPanelTests : BunitContext
         var mockConfigClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
         mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
-        // AgentCodingPageService feeds the dispatch path, so it reads the with-secrets form
-        // (live tokens/base URLs) rather than the "****" masked one. Same backing store.
-        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
         mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadPipelineConfigAsync(ct));
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -110,7 +106,7 @@ public class DrawerMultiPanelTests : BunitContext
         // Spec 051 2.3b: the drawers browse through the API; it answers from the provider mocks below.
         Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ProviderBackedBrowseClient.Create(() => _mockIssueProvider.Object, () => _mockRepoProvider.Object).Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
-        Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiDispatchClient>().Object);
 
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();

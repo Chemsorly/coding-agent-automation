@@ -27,6 +27,7 @@ internal static class UiEndpoints
         group.MapUiConfigEndpoints();
         group.MapUiRunEndpoints();
         group.MapUiBrowseEndpoints();
+        group.MapUiDispatchEndpoints();
         group.MapUiSettingsEndpoints();
 
         return app;

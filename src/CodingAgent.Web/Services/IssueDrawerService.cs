@@ -1,43 +1,26 @@
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.Ui;
-using Serilog;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Web.Services;
 
 /// <summary>
 /// Manages the issue dispatch drawer lifecycle: loading issues, dependency checking,
 /// label filtering, pagination, active-issue tracking, and dispatch. The API browses the providers
-/// (spec 051 2.3b, <see cref="IUiBrowseClient"/>); dispatch still runs here until 2.3c.
+/// and dispatches (spec 051 2.3b and 2.3c, <see cref="IUiBrowseClient"/> and <see cref="IUiDispatchClient"/>).
 /// Owns and constructs the underlying DrawerStateService&lt;IssueSummary&gt;.
 /// Registered as Scoped (one instance per Blazor circuit).
 /// </summary>
 public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 {
-    private static readonly ILogger Logger = Log.ForContext<IssueDrawerService>();
-
-    private readonly IProviderFactory _providerFactory;
-    private readonly IDependencyChecker _dependencyChecker;
-    private readonly IWorkDistributor _workDistributor;
     private readonly IUiBrowseClient _browse;
-    private readonly IDispatchOrchestrationService _dispatchOrchestration;
+    private readonly IUiDispatchClient _dispatch;
 
     private readonly DrawerStateService<IssueSummary> _issueDrawer;
 
-    public IssueDrawerService(
-        IProviderFactory providerFactory,
-        IDependencyChecker dependencyChecker,
-        IWorkDistributor workDistributor,
-        IDispatchOrchestrationService dispatchOrchestration,
-        IUiBrowseClient browse)
+    public IssueDrawerService(IUiBrowseClient browse, IUiDispatchClient dispatch)
     {
-        _providerFactory = providerFactory;
-        _dependencyChecker = dependencyChecker;
-        _workDistributor = workDistributor;
         _browse = browse;
-        _dispatchOrchestration = dispatchOrchestration;
+        _dispatch = dispatch;
 
         _issueDrawer = new DrawerStateService<IssueSummary>(
             LoadDrawerIssuesCallbackAsync,
@@ -168,119 +151,8 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     // ── Dispatch ──
 
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(
-        IssueSummary issue,
-        PipelineJobTemplate template,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject)
-    {
-        if (!issueProviders.Any(p => p.Id == template.IssueProviderId) || !repoProviders.Any(p => p.Id == template.RepoProviderId))
-            return (false, "Template references providers that no longer exist.", null);
-
-        var depProviderConfig = issueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-        if (depProviderConfig != null)
-        {
-            await using var issueProvider = _providerFactory.CreateIssueProvider(depProviderConfig);
-            // TODO: The single-provider CheckAsync overload is used here. It forwards to the
-            // cross-tracker overload with empty allProviders/providerUrlPrefixes, which means
-            // any URL-based cross-tracker dependency (e.g. "Depends on https://github.com/acme/api/issues/40"
-            // written by the decomposition step) will always be logged as "No configured issue
-            // provider matches URL dependency" and treated as unresolved — permanently blocking
-            // dispatch from the drawer even after the dependency closes. Fix: pass all configured
-            // issue providers and their URL prefixes (derived from issueProviders) to the full
-            // cross-tracker overload so URL deps are resolved correctly here too.
-            var depResult = await _dependencyChecker.CheckAsync(issue.Identifier, issue.Description, issueProvider, new Dictionary<int, bool>(), CancellationToken.None);
-            if (!depResult.IsReady)
-            {
-                var allBlocked = depResult.BlockedBy.Select(n => $"#{n}")
-                    .Concat(depResult.BlockedByUrls ?? []);
-                return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", allBlocked)}", null);
-            }
-        }
-
-        // EpicReview is a terminal state in the epic decomposition workflow. Unlike other terminal
-        // labels (agent:done, agent:cancelled, etc.) which represent completed or aborted
-        // implementation runs and can be force-requeued via manual dispatch, agent:epic-review marks
-        // an issue that is awaiting human approval of the epic plan. Re-dispatching it as an
-        // implementation job would bypass the approval gate entirely. Reject early so the UI shows
-        // a clean error rather than a confusing 409 from the database unique-index constraint.
-        if (issue.Labels.Any(l => StringComparer.OrdinalIgnoreCase.Equals(l, AgentLabels.EpicReview)))
-            return (false, $"Cannot dispatch — issue is in state '{AgentLabels.EpicReview}' which requires human approval before it can proceed. Use the epic approval workflow instead.", null);
-
-        // Manual dispatch is an explicit force-requeue: clear any blocking labels and set agent:next
-        // before creating the WorkItem. Without this, DispatchLoop would see the blocking label,
-        // cancel the WorkItem, and re-stamp the same label — a self-reinforcing cancellation loop.
-        // Only fires when the issue actually carries a blocking label (no-op for clean issues).
-        //
-        // Note on multiple blocking labels: FirstOrDefault picks the first one as expectedCurrentLabel
-        // for LabelStateMachine logging. AgentLabelOperations.SwapAsync iterates AgentLabels.All and
-        // removes every agent label except agent:next, so ALL blocking labels are cleared regardless
-        // of which one is passed as expectedCurrentLabel. The pipeline invariant is that at most one
-        // agent:* label should be present at a time; additional blocking labels from partial-swap
-        // failures are still removed by the full sweep.
-        var blockingLabel = issue.Labels.FirstOrDefault(l => AgentLabels.DispatchIneligibleLabels.Contains(l));
-        if (blockingLabel != null)
-        {
-            if (depProviderConfig == null)
-            {
-                // The template's issue provider is absent from the caller's provider list.
-                // The WorkItem will be created but DispatchLoop will fail-open (not cancel) on the
-                // missing config — the job will never start. Log a warning so this is visible in
-                // the operator UI rather than a silent no-dispatch.
-                Logger.Warning(
-                    "IssueDrawerService: manual dispatch on issue {IssueIdentifier} has blocking label {BlockingLabel} " +
-                    "but issue provider config for template {TemplateId} is not available — cannot clear label before dispatch. " +
-                    "The WorkItem will be created but the job may not start until the label is cleared manually.",
-                    issue.Identifier, blockingLabel, template.Id);
-            }
-            else
-            {
-                try
-                {
-                    await using var issueProvider = _providerFactory.CreateIssueProvider(depProviderConfig);
-                    Logger.Information(
-                        "IssueDrawerService: manual dispatch — clearing blocking label {BlockingLabel} and setting agent:next on issue {IssueIdentifier}",
-                        blockingLabel, issue.Identifier);
-                    await AgentLabelOperations.SwapAsync(
-                        removeLabel: (label, ct) => issueProvider.RemoveLabelAsync(issue.Identifier, label, ct),
-                        addLabel: (label, ct) => issueProvider.AddLabelAsync(issue.Identifier, label, ct),
-                        newLabel: AgentLabels.Next,
-                        ct: CancellationToken.None,
-                        options: new LabelSwapOptions
-                        {
-                            ExpectedCurrentLabel = blockingLabel,
-                            Identifier = issue.Identifier
-                        });
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    Logger.Error(ex,
-                        "IssueDrawerService: failed to clear blocking label {BlockingLabel} on issue {IssueIdentifier} before dispatch",
-                        blockingLabel, issue.Identifier);
-                    return (false, $"Could not clear blocking label '{blockingLabel}' before dispatch — {ex.Message}", null);
-                }
-            }
-        }
-
-        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-            _dispatchOrchestration,
-            project => _dispatchOrchestration.PrepareDistributionRequestAsync(
-                new ImplementationDispatchOrchestrationRequest
-                {
-                    IssueIdentifier = issue.Identifier,
-                    IssueProviderId = template.IssueProviderId,
-                    RepoProviderId = template.RepoProviderId,
-                    BrainProviderId = template.BrainProviderId,
-                    PipelineProviderId = template.PipelineProviderId,
-                    InitiatedBy = DrawerDispatchHelper.ManualInitiator,
-                    Project = project
-                }, CancellationToken.None),
-            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-            "Could not dispatch — distribution failed.",
-            $"⏳ Queued #{issue.Identifier} — the job controller will start an agent pod for it",
-            $"✅ Dispatched #{issue.Identifier}");
-    }
+    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(IssueSummary issue, PipelineJobTemplate template)
+        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchIssueAsync(template.Id, issue.Identifier, CancellationToken.None));
 
     // ── Drawer orchestration ──
 
@@ -318,11 +190,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
             });
     }
 
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(
-        IssueSummary issue,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject)
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
     {
         _issueDrawer.IsDispatching = true;
         try
@@ -330,7 +198,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
             if (_issueDrawer.Template == null)
                 return (false, "No template selected. Please select a template first.", null);
 
-            var (success, error, successMessage) = await DispatchIssueAsync(issue, _issueDrawer.Template, issueProviders, repoProviders, parentProject);
+            var (success, error, successMessage) = await DispatchIssueAsync(issue, _issueDrawer.Template);
             if (success)
                 _issueDrawer.Close();
             return (success, error, successMessage);
@@ -366,9 +234,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     public bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => ActiveIssues.ContainsKey((issueIdentifier, issueProviderConfigId));
-
-    public Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-        => _workDistributor.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId, CancellationToken.None);
 
     // ── Cross-drawer coordination ──
 

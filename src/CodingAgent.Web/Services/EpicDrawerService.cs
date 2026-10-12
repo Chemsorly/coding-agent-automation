@@ -1,4 +1,3 @@
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Ui;
 using Serilog;
@@ -8,8 +7,8 @@ namespace CodingAgent.Web.Services;
 
 /// <summary>
 /// Manages the epic dispatch drawer lifecycle: loading epics with deduplication,
-/// label filtering, pagination, and decomposition dispatch. The API browses the epic tracker
-/// (spec 051 2.3b, <see cref="IUiBrowseClient"/>); dispatch still runs here until 2.3c.
+/// label filtering, pagination, and decomposition dispatch. The API browses the epic tracker and
+/// dispatches (spec 051 2.3b and 2.3c, <see cref="IUiBrowseClient"/> and <see cref="IUiDispatchClient"/>).
 /// Owns and constructs the underlying DrawerStateService&lt;IssueSummary&gt; for epic items.
 /// Registered as Scoped (one instance per Blazor circuit).
 /// </summary>
@@ -18,16 +17,14 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     private static readonly ILogger Logger = Log.ForContext<EpicDrawerService>();
 
     private readonly IUiBrowseClient _browse;
-    private readonly IDispatchOrchestrationService _dispatchOrchestration;
+    private readonly IUiDispatchClient _dispatch;
 
     private readonly DrawerStateService<IssueSummary> _epicDrawer;
 
-    public EpicDrawerService(
-        IUiBrowseClient browse,
-        IDispatchOrchestrationService dispatchOrchestration)
+    public EpicDrawerService(IUiBrowseClient browse, IUiDispatchClient dispatch)
     {
         _browse = browse;
-        _dispatchOrchestration = dispatchOrchestration;
+        _dispatch = dispatch;
 
         _epicDrawer = new DrawerStateService<IssueSummary>(
             t => LoadEpicDrawerIssuesAsync(t, 1),
@@ -99,54 +96,14 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
         _epicDrawer.SelectedLabels.Clear();
     }
 
-    /// <summary>
-    /// The tracker the drawer lists epics from: the project's epic tracker when it has one, otherwise the
-    /// template's own tracker. Dispatch binds the run to the same tracker; the template executes the epic.
-    /// </summary>
-    private static string EpicTrackerFor(PipelineJobTemplate template, PipelineProject? parentProject)
-        => !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId)
-            ? parentProject.EpicIssueProviderId
-            : template.IssueProviderId;
-
     // ── Dispatch ──
 
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(
-        IssueSummary issue,
-        PipelineJobTemplate template,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject)
-    {
-        if (!issueProviders.Any(p => p.Id == template.IssueProviderId) || !repoProviders.Any(p => p.Id == template.RepoProviderId))
-            return (false, "Template references providers that no longer exist.", null);
-
-        var epicProviderId = EpicTrackerFor(template, parentProject);
-        if (!issueProviders.Any(p => p.Id == epicProviderId))
-            return (false, "The project's epic issue provider no longer exists.", null);
-
-        var phaseType = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase)
-            ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
-        var phaseLabel = phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-
-        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-            _dispatchOrchestration,
-            project => _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
-                new DecompositionDispatchOrchestrationRequest
-                {
-                    EpicIdentifier = issue.Identifier,
-                    EpicTitle = issue.Title ?? "",
-                    PhaseType = phaseType,
-                    IssueProviderId = epicProviderId,
-                    RepoProviderId = template.RepoProviderId,
-                    BrainProviderId = template.BrainProviderId,
-                    InitiatedBy = DrawerDispatchHelper.ManualInitiator,
-                    Project = project
-                }, CancellationToken.None),
-            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-            "Could not dispatch — epic is already being processed or queued, or no agents are available.",
-            $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — the job controller will start an agent pod for it",
-            $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
-    }
+    /// <summary>
+    /// Dispatches the epic for analysis, or for decomposition once it is approved. The API binds the run to
+    /// the tracker the drawer lists epics from: the project's epic tracker, otherwise the template's own.
+    /// </summary>
+    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(IssueSummary issue, PipelineJobTemplate template)
+        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchEpicAsync(template.Id, issue.Identifier, CancellationToken.None));
 
     // ── Drawer orchestration ──
 
@@ -177,11 +134,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
             });
     }
 
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(
-        IssueSummary issue,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject)
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
     {
         _epicDrawer.IsDispatching = true;
         try
@@ -189,7 +142,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
             if (_epicDrawer.Template == null)
                 return (false, "No template selected. Please select a template first.", null);
 
-            var (success, error, successMessage) = await DispatchDecompositionAsync(issue, _epicDrawer.Template, issueProviders, repoProviders, parentProject);
+            var (success, error, successMessage) = await DispatchDecompositionAsync(issue, _epicDrawer.Template);
             if (success)
                 _epicDrawer.Close();
             return (success, error, successMessage);

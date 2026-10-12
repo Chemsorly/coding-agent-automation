@@ -136,7 +136,7 @@ internal sealed class TemplateBrowseService(
         return providerFactory.CreateIssueProvider(config);
     }
 
-    private static async Task<T> CallAsync<T>(Func<Task<T>> call, string failure)
+    internal static async Task<T> CallAsync<T>(Func<Task<T>> call, string failure)
     {
         try
         {

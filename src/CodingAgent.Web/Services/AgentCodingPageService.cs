@@ -2,7 +2,6 @@ using System.Runtime.CompilerServices;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web.Services;
@@ -12,7 +11,9 @@ namespace CodingAgent.Web.Services;
 /// forwards drawer operations to the focused drawer services.
 /// The Blazor component delegates to this service and retains only UI state.
 /// Registered as Scoped because it holds per-page mutable state.
-/// Config and project data are loaded via <see cref="IPipelineApiConfigClient"/>.
+/// Config and project data are loaded via <see cref="IPipelineApiConfigClient"/>. The provider lists
+/// are read without secrets: the template table only shows their names and labels, and dispatch runs
+/// in the API (spec 051 2.3c).
 /// </summary>
 public class AgentCodingPageService
 {
@@ -126,9 +127,9 @@ public class AgentCodingPageService
         try
         {
             await _access.InitializeAsync();
-            IssueProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-            var allRepoProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            PipelineProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
+            IssueProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+            var allRepoProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+            PipelineProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
             BrainProviders = allRepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
             RepoProviders = allRepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
 
@@ -412,13 +413,6 @@ public class AgentCodingPageService
     public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _issueDrawerService.GetIssueWorkItemStatus(issueIdentifier, issueProviderConfigId);
 
-    /// <summary>
-    /// Checks if an issue is currently distributed (Pending, Dispatched, or Running).
-    /// Used by drawer components to show processing status.
-    /// </summary>
-    public Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-        => _issueDrawerService.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId);
-
     // ── Cross-drawer coordination ──
 
     private void HideOtherDrawers(string keepOpen)
@@ -459,7 +453,7 @@ public class AgentCodingPageService
         var templateId = _issueDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
         if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
-        return await _issueDrawerService.DispatchFromIssueDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
+        return await _issueDrawerService.DispatchFromIssueDrawerAsync(issue);
     }
 
     // ── PR drawer orchestration ──
@@ -495,7 +489,7 @@ public class AgentCodingPageService
         var templateId = _prReviewDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
         if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
-        return await _prReviewDrawerService.DispatchFromPrDrawerAsync(pr, IssueProviders, RepoProviders, parentProject);
+        return await _prReviewDrawerService.DispatchFromPrDrawerAsync(pr);
     }
 
     // ── Epic drawer orchestration ──
@@ -522,7 +516,7 @@ public class AgentCodingPageService
         var templateId = _epicDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
         if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
-        return await _epicDrawerService.DispatchFromEpicDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
+        return await _epicDrawerService.DispatchFromEpicDrawerAsync(issue);
     }
 
     // ── Helpers ──

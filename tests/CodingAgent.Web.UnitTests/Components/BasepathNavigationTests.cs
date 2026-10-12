@@ -149,7 +149,7 @@ public class BasepathNavigationTests : BunitContext
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         Services.AddSingleton(mockWorkItems.Object);
@@ -189,7 +189,7 @@ public class BasepathNavigationTests : BunitContext
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         Services.AddSingleton(mockRunHistory.Object);
@@ -243,7 +243,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(Array.Empty<AgentProfile>());
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();

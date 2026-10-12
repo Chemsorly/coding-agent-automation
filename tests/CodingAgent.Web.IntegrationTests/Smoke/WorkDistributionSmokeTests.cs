@@ -20,18 +20,15 @@ public class WorkDistributionSmokeTests : IClassFixture<DbModeWebApplicationFact
     }
 
     /// <summary>
-    /// IDispatchOrchestrationService must resolve — the drawer services constructor-inject it.
-    ///
-    /// The previous version of this test was named <c>..._IsNotRegistered_AfterSpec045Task8</c>
-    /// and asserted <c>NotNull</c>, which contradicted its own name and could not fail: the test
-    /// factory substitutes a mock, so the assertion said nothing about production wiring. The
-    /// production container does register it (ServiceCollectionExtensions.PipelineBackgroundServices).
+    /// Spec 051 2.3c: manual dispatch runs in the Pipeline API, so the web host no longer registers
+    /// IDispatchOrchestrationService. The test factories stopped substituting a mock for it, so this
+    /// checks the production wiring.
     /// </summary>
     [Fact]
-    public void IDispatchOrchestrationService_Resolves()
+    public void IDispatchOrchestrationService_IsNotRegistered()
     {
         var service = _factory.Services.GetService<IDispatchOrchestrationService>();
-        Assert.NotNull(service);
+        Assert.Null(service);
     }
 
     /// <summary>

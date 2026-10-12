@@ -1,4 +1,3 @@
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Ui;
 using Serilog;
@@ -8,8 +7,8 @@ namespace CodingAgent.Web.Services;
 
 /// <summary>
 /// Manages the PR review dispatch drawer lifecycle: loading pull requests,
-/// label filtering, pagination, and dispatch. The API browses the repository (spec 051 2.3b,
-/// <see cref="IUiBrowseClient"/>); dispatch still runs here until 2.3c.
+/// label filtering, pagination, and dispatch. The API browses the repository and dispatches
+/// (spec 051 2.3b and 2.3c, <see cref="IUiBrowseClient"/> and <see cref="IUiDispatchClient"/>).
 /// Owns and constructs the underlying DrawerStateService&lt;PullRequestSummary&gt;.
 /// Registered as Scoped (one instance per Blazor circuit).
 /// </summary>
@@ -18,16 +17,14 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     private static readonly ILogger Logger = Log.ForContext<PrReviewDrawerService>();
 
     private readonly IUiBrowseClient _browse;
-    private readonly IDispatchOrchestrationService _dispatchOrchestration;
+    private readonly IUiDispatchClient _dispatch;
 
     private readonly DrawerStateService<PullRequestSummary> _prDrawer;
 
-    public PrReviewDrawerService(
-        IUiBrowseClient browse,
-        IDispatchOrchestrationService dispatchOrchestration)
+    public PrReviewDrawerService(IUiBrowseClient browse, IUiDispatchClient dispatch)
     {
         _browse = browse;
-        _dispatchOrchestration = dispatchOrchestration;
+        _dispatch = dispatch;
 
         _prDrawer = new DrawerStateService<PullRequestSummary>(
             t => LoadPrDrawerPageAsync(t, 1),
@@ -101,40 +98,8 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
 
     // ── Dispatch ──
 
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(
-        PullRequestSummary pr,
-        PipelineJobTemplate template,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject)
-    {
-        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-            _dispatchOrchestration,
-            project =>
-            {
-                var reviewRequest = new ReviewDispatchRequest
-                {
-                    PrIdentifier = pr.Identifier,
-                    PrNumber = pr.Number,
-                    PrBranchName = pr.BranchName,
-                    PrTitle = pr.Title ?? "",
-                    PrUrl = pr.Url,
-                    PrTargetBranch = pr.TargetBranch,
-                    PrDescription = pr.Description,
-                    PrAuthor = pr.Author,
-                    IssueProviderId = template.IssueProviderId,
-                    RepoProviderId = template.RepoProviderId,
-                    BrainProviderId = template.BrainProviderId,
-                    InitiatedBy = DrawerDispatchHelper.ManualInitiator
-                };
-                return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
-                    reviewRequest, project, CancellationToken.None);
-            },
-            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-            $"PR #{pr.Identifier} is already being processed or queued.",
-            $"⏳ Queued PR #{pr.Identifier} for review — the job controller will start an agent pod for it",
-            $"PR #{pr.Identifier} dispatched for review.");
-    }
+    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(PullRequestSummary pr, PipelineJobTemplate template)
+        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchPullRequestAsync(template.Id, pr.Number, CancellationToken.None));
 
     // ── Drawer orchestration ──
 
@@ -165,11 +130,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
             });
     }
 
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(
-        PullRequestSummary pr,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject)
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
     {
         _prDrawer.IsDispatching = true;
         try
@@ -177,7 +138,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
             if (_prDrawer.Template == null)
                 return (false, "No template selected. Please select a template first.", null);
 
-            return await DispatchPrReviewAsync(pr, _prDrawer.Template, issueProviders, repoProviders, parentProject);
+            return await DispatchPrReviewAsync(pr, _prDrawer.Template);
         }
         finally { _prDrawer.IsDispatching = false; }
     }

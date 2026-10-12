@@ -21,10 +21,7 @@ public interface IPrReviewDrawerService
 
     Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(
         PullRequestSummary pr,
-        PipelineJobTemplate template,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+        PipelineJobTemplate template);
 
     // ── Drawer orchestration ──
 
@@ -41,10 +38,7 @@ public interface IPrReviewDrawerService
         Func<Task>? notifyStateChanged = null);
 
     Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(
-        PullRequestSummary pr,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+        PullRequestSummary pr);
 
     // ── Cross-drawer coordination ──
 
