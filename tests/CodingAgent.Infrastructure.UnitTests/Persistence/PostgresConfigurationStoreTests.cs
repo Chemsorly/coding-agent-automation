@@ -388,6 +388,51 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ResetDefaults_CanBeEditedAndDeleted()
+    {
+        await _store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+        var defaults = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
+        var first = defaults.Single(c => c.Id == PipelineConfigurationDefaults.DefaultReviewerConfigurationId);
+
+        await _store.SaveReviewerConfigAsync(first with { DisplayName = "Edited" }, CancellationToken.None);
+        (await _store.LoadReviewerConfigsAsync(CancellationToken.None))
+            .Should().ContainSingle(c => c.Id == first.Id).Which.DisplayName.Should().Be("Edited");
+
+        await _store.DeleteReviewerConfigAsync(first.Id, CancellationToken.None);
+        (await _store.LoadReviewerConfigsAsync(CancellationToken.None)).Should().NotContain(c => c.Id == first.Id);
+    }
+
+    [Fact]
+    public async Task ARowSeededWithTheFormerNonGuidId_LoadsUnderItsKey_AndCanBeSavedAndDeleted()
+    {
+        // Before the defaults had GUID IDs, seeding stored "default-reviewers" in the JSON under a
+        // random key, so the loaded ID could neither be saved nor deleted.
+        var key = Guid.NewGuid();
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.ReviewerConfigs.Add(new ReviewerConfigEntity
+            {
+                Id = key,
+                Name = "Default Reviewers",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(
+                    new ReviewerConfiguration { Id = "default-reviewers", DisplayName = "Default Reviewers", Agents = [] },
+                    PipelineJsonOptions.Default),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var loaded = (await _store.LoadReviewerConfigsAsync(CancellationToken.None)).Should().ContainSingle().Subject;
+        loaded.Id.Should().Be(key.ToString());
+
+        await _store.SaveReviewerConfigAsync(loaded with { DisplayName = "Edited" }, CancellationToken.None);
+        (await _store.LoadReviewerConfigsAsync(CancellationToken.None)).Should().ContainSingle()
+            .Which.DisplayName.Should().Be("Edited", "the save updates the existing row instead of failing or adding one");
+
+        await _store.DeleteReviewerConfigAsync(loaded.Id, CancellationToken.None);
+        (await _store.LoadReviewerConfigsAsync(CancellationToken.None)).Should().BeEmpty();
+    }
+
     // ── Project CRUD ───────────────────────────────────────────────────
 
     [Fact]
