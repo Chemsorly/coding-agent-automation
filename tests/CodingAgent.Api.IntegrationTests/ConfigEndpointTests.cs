@@ -103,7 +103,7 @@ public sealed class ConfigEndpointTests
         };
 
         // PUT with real values
-        var put = await _client.PutAsJsonAsync("/api/config/provider-configs", config, PipelineJsonOptions.Default);
+        var put = await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", config, PipelineJsonOptions.Default);
         put.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // GET should return redacted values ("****")
@@ -560,7 +560,7 @@ public sealed class ConfigEndpointTests
             Settings = [],
             Secrets = []
         };
-        var seedResponse = await _client.PutAsJsonAsync("/api/config/provider-configs", originalConfig, PipelineJsonOptions.Default);
+        var seedResponse = await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", originalConfig, PipelineJsonOptions.Default);
         seedResponse.StatusCode.Should().Be(HttpStatusCode.OK, "seeding original provider must succeed");
 
         // Verify original exists before import
@@ -916,7 +916,7 @@ public sealed class ConfigEndpointTests
             ProviderType = "github",
             Secrets = new Dictionary<string, string> { ["token"] = "real-token" }
         };
-        await _client.PutAsJsonAsync("/api/config/provider-configs", config, PipelineJsonOptions.Default);
+        await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", config, PipelineJsonOptions.Default);
 
         var response = await _client.GetAsync($"/api/config/provider-configs/{configId}?kind=Issue&includeSecrets=true");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -1370,7 +1370,7 @@ public sealed class ConfigEndpointTests
     {
         var config = new ProviderConfig { Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Web repo" };
 
-        var response = await _client.PutAsJsonAsync("/api/config/provider-configs", config, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", config, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a bad ID is the caller's mistake, not a server failure");
         (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid provider config ID: repo-web");

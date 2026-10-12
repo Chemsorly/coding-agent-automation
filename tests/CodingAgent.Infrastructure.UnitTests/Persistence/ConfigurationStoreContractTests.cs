@@ -23,6 +23,10 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     /// <summary>Create a fresh store instance for isolation between tests.</summary>
     protected abstract IConfigurationStore CreateStore();
 
+    /// <summary>Stores a provider config the way the implementation receives one; the API-backed store only reads.</summary>
+    protected virtual Task SeedProviderConfigAsync(IConfigurationStore store, ProviderConfig config, CancellationToken ct) =>
+        store.SaveProviderConfigAsync(config, ct);
+
     /// <summary>Cleanup resources after each test.</summary>
     public virtual void Dispose()
     {
@@ -114,7 +118,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
             Settings = new Dictionary<string, string> { ["owner"] = "test-org" }
         };
 
-        await store.SaveProviderConfigAsync(config, CancellationToken.None);
+        await SeedProviderConfigAsync(store, config, CancellationToken.None);
         var loaded = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
 
         loaded.Should().Contain(c => c.Id == id);
@@ -138,7 +142,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
             Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet" }
         };
 
-        await store.SaveProviderConfigAsync(config, CancellationToken.None);
+        await SeedProviderConfigAsync(store, config, CancellationToken.None);
         var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Agent, CancellationToken.None);
 
         loaded.Should().NotBeNull();
@@ -157,7 +161,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     }
 
     [Fact]
-    public async Task ProviderConfig_Delete_RemovesFromStore()
+    public virtual async Task ProviderConfig_Delete_RemovesFromStore()
     {
         var store = CreateStore();
         var id = Guid.NewGuid().ToString();
@@ -170,7 +174,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
             Settings = new Dictionary<string, string>()
         };
 
-        await store.SaveProviderConfigAsync(config, CancellationToken.None);
+        await SeedProviderConfigAsync(store, config, CancellationToken.None);
         await store.DeleteProviderConfigAsync(id, ProviderKind.Repository, CancellationToken.None);
 
         var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Repository, CancellationToken.None);
@@ -184,14 +188,14 @@ public abstract class ConfigurationStoreContractTests : IDisposable
         var repoId = Guid.NewGuid().ToString();
         var agentId = Guid.NewGuid().ToString();
 
-        await store.SaveProviderConfigAsync(new ProviderConfig
+        await SeedProviderConfigAsync(store, new ProviderConfig
         {
             Id = repoId, Kind = ProviderKind.Repository,
             ProviderType = "GitHub", DisplayName = "Repo",
             Settings = new Dictionary<string, string>()
         }, CancellationToken.None);
 
-        await store.SaveProviderConfigAsync(new ProviderConfig
+        await SeedProviderConfigAsync(store, new ProviderConfig
         {
             Id = agentId, Kind = ProviderKind.Agent,
             ProviderType = "KiroCli", DisplayName = "Agent",
@@ -221,7 +225,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
             Settings = new Dictionary<string, string> { ["owner"] = "org1" }
         };
 
-        await store.SaveProviderConfigAsync(original, CancellationToken.None);
+        await SeedProviderConfigAsync(store, original, CancellationToken.None);
 
         var updated = new ProviderConfig
         {
@@ -231,7 +235,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
             DisplayName = "Updated Name",
             Settings = new Dictionary<string, string> { ["owner"] = "org2" }
         };
-        await store.SaveProviderConfigAsync(updated, CancellationToken.None);
+        await SeedProviderConfigAsync(store, updated, CancellationToken.None);
 
         var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Repository, CancellationToken.None);
         loaded!.DisplayName.Should().Be("Updated Name");
@@ -314,6 +318,29 @@ public sealed class ApiConfigurationStoreContractTests : ConfigurationStoreContr
         return BuildStore(_client);
     }
 
+    /// <summary>Spec 051: provider configs are written through /api/ui/settings; here they appear on the API side.</summary>
+    protected override Task SeedProviderConfigAsync(IConfigurationStore store, ProviderConfig config, CancellationToken ct)
+    {
+        _providerConfigs[config.Id] = config;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The API-backed store only reads: a delete is refused rather than sent with the API key.</summary>
+    [Fact]
+    public override async Task ProviderConfig_Delete_RemovesFromStore()
+    {
+        var store = CreateStore();
+        var config = new ProviderConfig { Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Kept" };
+        await SeedProviderConfigAsync(store, config, CancellationToken.None);
+
+        var delete = () => store.DeleteProviderConfigAsync(config.Id, ProviderKind.Repository, CancellationToken.None);
+        var save = () => store.SaveProviderConfigAsync(config, CancellationToken.None);
+
+        await delete.Should().ThrowAsync<NotSupportedException>().WithMessage("*/api/ui/settings*");
+        await save.Should().ThrowAsync<NotSupportedException>();
+        (await store.GetProviderConfigByIdAsync(config.Id, ProviderKind.Repository, CancellationToken.None)).Should().NotBeNull();
+    }
+
     // ── Mock client that simulates real in-memory persistence ────────────────
 
     private Mock<IPipelineApiConfigClient> BuildClient()
@@ -340,14 +367,6 @@ public sealed class ApiConfigurationStoreContractTests : ConfigurationStoreContr
         mock.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderKind kind, CancellationToken _) =>
                 (IReadOnlyList<ProviderConfig>)_providerConfigs.Values.Where(p => p.Kind == kind).ToList());
-
-        mock.Setup(c => c.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderConfig, CancellationToken>((cfg, _) => _providerConfigs[cfg.Id] = cfg)
-            .Returns(Task.CompletedTask);
-
-        mock.Setup(c => c.DeleteProviderConfigAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .Callback<string, ProviderKind, CancellationToken>((id, _, __) => _providerConfigs.Remove(id))
-            .Returns(Task.CompletedTask);
 
         // Stubs for the other sub-interfaces the composite store wraps
         mock.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))

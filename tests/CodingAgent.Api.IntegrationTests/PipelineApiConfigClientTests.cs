@@ -241,51 +241,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         queryString.Should().Contain("includeSecrets=True");
     }
 
-    // ── SaveProviderConfigAsync ────────────────────────────────────────────────
-
-    [Fact]
-    public async Task SaveProviderConfigAsync_SendsPutWithBody()
-    {
-        StubPut("/api/config/provider-configs");
-
-        var config = new ProviderConfig { Id = "p1", Kind = ProviderKind.Issue, DisplayName = "Test", ProviderType = "github" };
-        await _client.SaveProviderConfigAsync(config);
-
-        var entry = _server.LogEntries.First(e =>
-            e.RequestMessage!.Method == "PUT" &&
-            e.RequestMessage.Path == "/api/config/provider-configs");
-        entry.RequestMessage!.Body.Should().Contain("p1");
-    }
-
-    // ── DeleteProviderConfigAsync ──────────────────────────────────────────────
-
-    [Fact]
-    public async Task DeleteProviderConfigAsync_SendsDeleteToCorrectPath()
-    {
-        _server.Given(Request.Create()
-                .WithPath("/api/config/provider-configs/my-provider-id")
-                .UsingDelete())
-            .RespondWith(Response.Create().WithStatusCode(200));
-
-        await _client.DeleteProviderConfigAsync("my-provider-id", ProviderKind.Issue);
-
-        _server.LogEntries.Should().Contain(e =>
-            e.RequestMessage!.Method == "DELETE" &&
-            e.RequestMessage.Path!.Contains("my-provider-id"));
-    }
-
-    [Fact]
-    public async Task DeleteProviderConfigAsync_SendsDeleteWithEscapedId()
-    {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => Empty();
-
-        await client.DeleteProviderConfigAsync("my id/with slash", ProviderKind.Issue);
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Delete);
-        handler.LastRequest.RequestUri!.PathAndQuery.Should().Contain("my%20id%2Fwith%20slash");
-    }
-
     // ── GetAgentProfilesAsync ──────────────────────────────────────────────────
 
     [Fact]
@@ -432,86 +387,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         result[0].Id.Should().Be("tmpl1");
     }
 
-    // ── GetKeyValueAsync ───────────────────────────────────────────────────────
-
-    // ── HasEnabledTemplatesAsync ───────────────────────────────────────────────
-
-    // ── GetModelsAsync ─────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task GetModelsAsync_Success_ReturnsList()
-    {
-        var models = new List<AgentModelInfo>
-        {
-            new() { ModelId = "gpt-4o", Description = "GPT-4o model" }
-        };
-        StubGet("/api/config/models", models);
-
-        var (result, error) = await _client.GetModelsAsync();
-
-        result.Should().HaveCount(1);
-        result[0].ModelId.Should().Be("gpt-4o");
-        error.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetModelsAsync_Failure_ReturnsEmptyListWithError()
-    {
-        _server.Given(Request.Create().WithPath("/api/config/models").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(500)
-                .WithBody("Internal Server Error"));
-
-        var (result, error) = await _client.GetModelsAsync();
-
-        result.Should().BeEmpty();
-        error.Should().NotBeNullOrEmpty();
-    }
-
-    [Fact]
-    public async Task GetModelsAsync_NullApiResponse_ReturnsEmptyList()
-    {
-        _server.Given(Request.Create().WithPath("/api/config/models").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("null"));
-
-        var (result, error) = await _client.GetModelsAsync();
-
-        result.Should().BeEmpty();
-        error.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetModelsAsync_OnFailure_ReturnsErrorString()
-    {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
-        {
-            Content = new StringContent("service down")
-        };
-
-        var (result, error) = await client.GetModelsAsync();
-
-        result.Should().BeEmpty();
-        error.Should().Be("service down");
-    }
-
-    // ── ExportConfigAsync ──────────────────────────────────────────────────────
-
-    // ── SaveAgentProfileAsync ──────────────────────────────────────────────────
-
-    // ── DeleteAgentProfileAsync ────────────────────────────────────────────────
-
-    // ── ResetReviewerConfigsToDefaultAsync ────────────────────────────────────
-
-    // ── SaveProjectAsync ───────────────────────────────────────────────────────
-
-    // ── SetKeyValueAsync ───────────────────────────────────────────────────────
-
-    // ── DeleteKeyValueAsync ────────────────────────────────────────────────────
-
     // ── UpdatePipelineConfigAsync ──────────────
 
     [Fact]
@@ -645,12 +520,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
 
         result.Should().BeEmpty();
     }
-
-    // ── Quality gate configs ──────────────────────────────────────────────
-
-    // ── Projects ──────────────────────────────────────────────────────────
-
-    // ── Export / Import ───────────────────────────────────────────────────
 
     // ── Stub handler ──────────────────────────────────────────────────────
 

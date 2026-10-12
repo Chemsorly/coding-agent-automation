@@ -98,24 +98,6 @@ public sealed class ApiBackedConfigStoresTests
     }
 
     [Fact]
-    public async Task ApiProviderConfigStore_SaveInvalidatesEveryKind()
-    {
-        var client = ClientReturningOnePerKind();
-        var store = new ApiProviderConfigStore(client.Object) { CacheTtlSeconds = 600 };
-
-        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        await store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
-
-        await store.SaveProviderConfigAsync(Provider("new", ProviderKind.Agent), CancellationToken.None);
-
-        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        await store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
-
-        client.Verify(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()), Times.Exactly(2));
-        client.Verify(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()), Times.Exactly(2));
-    }
-
-    [Fact]
     public async Task ApiProviderConfigStore_ZeroTtl_AlwaysRefetches()
     {
         var client = ClientReturningOnePerKind();
@@ -128,29 +110,6 @@ public sealed class ApiBackedConfigStoresTests
             c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()),
             Times.Exactly(2),
             "a zero TTL disables caching");
-    }
-
-    [Fact]
-    public async Task ApiProviderConfigStore_DeleteProviderConfig_CallsClientAndInvalidatesCache()
-    {
-        var client = EmptyClient();
-        var store = new ApiProviderConfigStore(client.Object) { CacheTtlSeconds = 600 };
-
-        // Pre-populate cache for Issue kind
-        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-
-        await store.DeleteProviderConfigAsync("config-id", ProviderKind.Issue, CancellationToken.None);
-
-        client.Verify(c => c.DeleteProviderConfigAsync("config-id", ProviderKind.Issue,
-            It.IsAny<CancellationToken>()), Times.Once);
-
-        // Verify cache is cleared: next load must call the API
-        var loadCallCount = 0;
-        client.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => { loadCallCount++; return Array.Empty<ProviderConfig>(); });
-
-        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        loadCallCount.Should().Be(1, "cache cleared by DeleteProviderConfigAsync");
     }
 
     [Fact]
@@ -717,6 +676,8 @@ public sealed class ApiBackedConfigStoresTests
             () => store.SaveProjectAsync(new PipelineProject { Id = "p", Name = "P" }, CancellationToken.None),
             () => store.DeleteProjectAsync("p", CancellationToken.None),
             () => store.HasEnabledTemplatesAsync(CancellationToken.None),
+            () => store.SaveProviderConfigAsync(Provider("i", ProviderKind.Issue), CancellationToken.None),
+            () => store.DeleteProviderConfigAsync("i", ProviderKind.Issue, CancellationToken.None),
         };
 
         foreach (var write in writes)

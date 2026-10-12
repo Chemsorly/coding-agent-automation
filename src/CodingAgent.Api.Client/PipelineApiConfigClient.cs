@@ -67,18 +67,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         return result ?? [];
     }
 
-    public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct = default)
-    {
-        var response = await _http.PutAsJsonAsync("/api/config/provider-configs", config, PipelineJsonOptions.Default, ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct = default)
-    {
-        var response = await _http.DeleteAsync($"/api/config/provider-configs/{Uri.EscapeDataString(id)}?kind={kind}", ct);
-        response.EnsureSuccessStatusCode();
-    }
-
     public async Task<IReadOnlyList<AgentProfile>> GetAgentProfilesAsync(CancellationToken ct = default)
     {
         var result = await _http.GetFromJsonAsync<List<AgentProfile>>(
@@ -185,20 +173,5 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         }
 
         response.EnsureSuccessStatusCode();
-    }
-
-    /// <inheritdoc/>
-    /// Delegates to GET /api/config/models, which dispatches a one-shot K8s Job on the API
-    /// to query available models from the Kiro CLI via a one-shot K8s Job.
-    public async Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> GetModelsAsync(CancellationToken ct = default)
-    {
-        var response = await _http.GetAsync("/api/config/models", ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            var problem = await response.Content.ReadAsStringAsync(ct);
-            return ([], problem);
-        }
-        var models = await response.Content.ReadFromJsonAsync<List<AgentModelInfo>>(PipelineJsonOptions.Default, ct);
-        return (models ?? [], null);
     }
 }

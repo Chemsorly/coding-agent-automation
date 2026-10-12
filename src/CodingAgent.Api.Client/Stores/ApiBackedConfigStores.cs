@@ -80,17 +80,11 @@ public sealed class ApiProviderConfigStore : IProviderConfigStore
         return all.FirstOrDefault(p => p.Id == id);
     }
 
-    public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
-    {
-        await _client.SaveProviderConfigAsync(config, ct);
-        lock (_cacheLock) _providerCache.Clear();
-    }
+    public Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
+        => SettingsWrites.NotHere("Saving a provider config");
 
-    public async Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
-    {
-        await _client.DeleteProviderConfigAsync(id, kind, ct);
-        lock (_cacheLock) _providerCache.Clear();
-    }
+    public Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
+        => SettingsWrites.NotHere("Deleting a provider config");
 }
 
 /// <summary>

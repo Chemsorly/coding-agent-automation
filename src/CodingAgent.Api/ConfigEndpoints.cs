@@ -3,7 +3,6 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -37,9 +36,9 @@ public static class ConfigEndpoints
     /// </summary>
     public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
     {
-        // Spec 051: Settings writes and the first-run state are not mapped here; the web host makes
-        // them as the signed-in admin through /api/ui/settings (UiSettingsEndpoints), which reuses
-        // these handlers. What stays is what the Scheduler and the web host still read or write with
+        // Spec 051: Settings writes (provider configs included), the model fetch and the first-run
+        // state are not mapped here; the web host makes them as the signed-in admin through
+        // /api/ui/settings (UiSettingsEndpoints, UiProviderEndpoints), which reuses these handlers. What stays is what the Scheduler and the web host still read or write with
         // the API key, plus export and import, which operators script with the key (docs/bootstrap.md).
         var group = app.MapGroup("/api/config")
             .RequireAuthorization(ApiAuthPolicies.Operator);
@@ -49,9 +48,6 @@ public static class ConfigEndpoints
         group.MapPost("/import", ImportConfigAsync)
             .DisableAntiforgery();
 
-        // ── Model fetch — passthrough to ModelFetchJobService
-        group.MapGet("/models", GetModels);
-
         // ── Pipeline config ─────────────────────────────────────────────
         group.MapGet("/pipeline", GetPipelineConfig);
         group.MapPut("/pipeline", SavePipelineConfig);
@@ -59,8 +55,6 @@ public static class ConfigEndpoints
         // ── Provider configs ────────────────────────────────────────────
         group.MapGet("/provider-configs", GetProviderConfigs);
         group.MapGet("/provider-configs/{id}", GetProviderConfigById);
-        group.MapPut("/provider-configs", SaveProviderConfig);
-        group.MapDelete("/provider-configs/{id}", DeleteProviderConfig);
 
         // ── Agent profiles ──────────────────────────────────────────────
         group.MapGet("/agent-profiles", GetAgentProfiles);
@@ -160,10 +154,7 @@ public static class ConfigEndpoints
         return TypedResults.Ok(includeSecrets ? config : RedactProviderConfig(config));
     }
 
-    /// <summary>
-    /// PUT /api/config/provider-configs
-    /// Accepts the full config with real secret values (write-only credential pattern).
-    /// </summary>
+    /// <summary>Saves the config as given; the UI handler restores masked credentials first (<c>UiProviderEndpoints</c>).</summary>
     internal static async Task<IResult> SaveProviderConfig(
         [FromBody] ProviderConfig config,
         IProviderConfigStore store,
@@ -422,24 +413,6 @@ public static class ConfigEndpoints
         var templates = await store.LoadAllTemplatesAsync(ct);
         var projects = await store.LoadProjectsAsync(ct);
         return TemplateBindingRules.Validate(template, projectId, templates, projects);
-    }
-
-    // ── Model fetch ────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Delegates to <see cref="ModelFetchJobService"/> to dispatch a one-shot K8s Job
-    /// that queries available models from the Kiro CLI. Results are returned via the
-    /// normal agent hub protocol — no pod log reads required.
-    /// Option A passthrough: Settings.razor calls this instead of injecting ModelFetchJobService directly.
-    /// </summary>
-    internal static async Task<IResult> GetModels(
-        ModelFetchJobService fetchService,
-        CancellationToken ct)
-    {
-        var (models, error) = await fetchService.FetchModelsAsync(JobTemplateProviderType.Kiro, ct);
-        if (error is not null)
-            return TypedResults.Problem(error, statusCode: 502);
-        return TypedResults.Ok(models);
     }
 
     // ── Config import/export ───────────────────────────────────────────────
