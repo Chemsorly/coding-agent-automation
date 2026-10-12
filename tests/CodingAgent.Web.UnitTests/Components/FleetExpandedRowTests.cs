@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,7 +16,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class FleetExpandedRowTests : BunitContext
 {
-    private readonly Mock<IPipelineApiAgentClient> _mockAgents = new();
+    private readonly Mock<IUiAgentClient> _mockAgents = new();
 
     private static AgentEntryDto MakeAgent(string id = "agent-abc") => new()
     {

@@ -23,6 +23,7 @@ internal static class UiClientRegistration
         services.AddHttpClient<IUiRunClient, UiRunClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiWorkItemClient, UiWorkItemClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiConsolidationClient, UiConsolidationClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+        services.AddHttpClient<IUiAgentClient, UiAgentClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         // The backlog pages through every enabled issue provider and checks each issue's dependencies.
         services.AddHttpClient<IUiBrowseClient, UiBrowseClient>(client =>
         {

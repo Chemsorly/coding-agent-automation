@@ -4,6 +4,7 @@ using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,7 +44,7 @@ public class OverviewComponentTests : BunitContext
     /// <see cref="Render{Overview}"/> does not throw a DI exception.
     /// </summary>
     private void RegisterOverviewServices(
-        Mock<IPipelineApiAgentClient> mockAgents,
+        Mock<IUiAgentClient> mockAgents,
         Mock<CodingAgent.Web.Ui.IUiRunClient>? mockRunHistory = null,
         Mock<CodingAgent.Web.Ui.IUiWorkItemClient>? mockWorkItems = null)
     {
@@ -88,7 +89,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void AgentsStatCard_WhenOneAgentConnected_ShowsOnlyOnlineCountWithoutDenominator()
     {
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto> { MakeConnectedAgent() });
 
@@ -125,7 +126,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void Header_HasTheSharedRefreshBarWithAPersistedInterval()
     {
-        RegisterOverviewServices(new Mock<IPipelineApiAgentClient>());
+        RegisterOverviewServices(new Mock<IUiAgentClient>());
 
         var cut = Render<Overview>();
 
@@ -148,7 +149,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void AgentsStatCard_WhenNoAgentsRegistered_ShowsZeroWithoutDenominator()
     {
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -182,7 +183,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void SuccessRateStatCard_ShowsLastHundredLabel()
     {
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -236,7 +237,7 @@ public class OverviewComponentTests : BunitContext
                 HasMore = false
             });
 
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -293,7 +294,7 @@ public class OverviewComponentTests : BunitContext
                 HasMore = false
             });
 
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -375,9 +376,9 @@ public class OverviewComponentTests : BunitContext
         return mock;
     }
 
-    private static Mock<IPipelineApiAgentClient> EmptyAgentsMock()
+    private static Mock<IUiAgentClient> EmptyAgentsMock()
     {
-        var mock = new Mock<IPipelineApiAgentClient>();
+        var mock = new Mock<IUiAgentClient>();
         mock.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<AgentEntryDto>());
         return mock;
     }
@@ -440,7 +441,7 @@ public class OverviewComponentTests : BunitContext
     public void Access_ScopedUser_SeesNoLoopCardAndNoAgents()
     {
         Services.AddTestAccess(TestAccess.Scoped(("6f1c2a9e-0000-0000-0000-00000000000a", AccessRole.ReadOnly)));
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         RegisterOverviewServices(mockAgents);
 
         var cut = Render<Overview>();
