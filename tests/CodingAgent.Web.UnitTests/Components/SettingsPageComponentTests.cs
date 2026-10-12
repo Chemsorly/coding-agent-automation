@@ -34,6 +34,13 @@ public class SettingsPageComponentTests : BunitContext
         _mockProviderFactory = new Mock<IProviderFactory>();
         SetupDefaults();
         Services.AddSingleton(_mockStore.Object);
+        // Spec 051 2.1b: Settings sections other than the provider ones use the /api/ui/settings client.
+        var settings = new Mock<CodingAgent.Web.Ui.IUiSettingsClient>();
+        settings.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
+        settings.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        settings.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineProject>());
+        Services.AddSingleton(settings.Object);
         Services.AddSingleton(new CodingAgent.Infrastructure.GitHub.GitHubValidationService());
         Services.AddSingleton(new CodingAgent.Infrastructure.GitLab.GitLabValidationService());
         Services.AddSingleton(_mockProviderFactory.Object);

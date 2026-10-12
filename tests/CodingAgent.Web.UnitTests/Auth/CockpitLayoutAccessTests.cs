@@ -56,6 +56,8 @@ public class CockpitLayoutAccessTests : BunitContext
         Services.AddSingleton<NotificationService>();
         Services.AddSingleton(sp => new NotificationFaroBridge(sp.GetRequiredService<NotificationService>(), sp.GetRequiredService<IFaroService>()));
         Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new CodingAgent.Web.UnitTests.Components.FakeUiHealthClient());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
+            s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(true, false))));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(new Mock<ILogger>().Object));
         Services.AddSingleton(_js.Object);
     }

@@ -63,6 +63,28 @@ GET /api/ui/me -> Ui: Ui.AnyAccess
 GET /api/ui/pipeline-settings -> Ui: Ui.AnyAccess
 GET /api/ui/projects -> Ui: Ui.AnyAccess
 GET /api/ui/projects/{projectId}/templates -> Ui: Ui.AnyAccess
+GET /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
+DELETE /api/ui/settings/agent-profiles/{id} -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/export -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/first-run -> Ui: Ui.Admin, Ui.AnyAccess
+POST /api/ui/settings/first-run/dismiss -> Ui: Ui.Admin, Ui.AnyAccess
+POST /api/ui/settings/import -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/pipeline -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/pipeline -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/projects -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/projects -> Ui: Ui.Admin, Ui.AnyAccess
+DELETE /api/ui/settings/projects/{id} -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/projects/{id} -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/quality-gate-configs -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/quality-gate-configs -> Ui: Ui.Admin, Ui.AnyAccess
+DELETE /api/ui/settings/quality-gate-configs/{id} -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/reviewer-configs -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/reviewer-configs -> Ui: Ui.Admin, Ui.AnyAccess
+POST /api/ui/settings/reviewer-configs/reset-to-defaults -> Ui: Ui.Admin, Ui.AnyAccess
+DELETE /api/ui/settings/reviewer-configs/{id} -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/templates -> Ui: Ui.Admin, Ui.AnyAccess
+POST /api/ui/settings/templates/move -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/work-items/ -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/active -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/active-decomposition-count -> Service: AgentApiKey, OperatorApiKey

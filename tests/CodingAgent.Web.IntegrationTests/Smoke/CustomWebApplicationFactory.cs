@@ -182,15 +182,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.AddSingleton(runHistoryMock.Object);
 
             // Spec 051: the /api/ui clients call the API as the signed-in user; there is no API here.
-            var uiConfig = new Mock<CodingAgent.Web.Ui.IUiConfigClient>();
-            uiConfig.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<CodingAgent.Contracts.Ui.UiProject>());
-            uiConfig.Setup(c => c.GetTemplatesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<CodingAgent.Contracts.Ui.UiTemplate>());
-            uiConfig.Setup(c => c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30));
-            services.RemoveAll<CodingAgent.Web.Ui.IUiConfigClient>();
-            services.AddSingleton(uiConfig.Object);
+            CodingAgent.Web.IntegrationTests.Helpers.UiClientStubs.Replace(services);
 
             RegisteredServices = services.ToList();
         });

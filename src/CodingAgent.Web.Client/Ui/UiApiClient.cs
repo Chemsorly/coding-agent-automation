@@ -1,5 +1,7 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
 namespace CodingAgent.Web.Ui;
@@ -22,11 +24,54 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
             ?? throw new InvalidOperationException($"GET {path} returned no content.");
     }
 
+    /// <summary>GET that answers null for a 404.</summary>
+    protected async Task<T?> FindAsync<T>(string path, JsonTypeInfo<T> type, CancellationToken ct) where T : class
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        using var response = await SendAsync(request, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync(type, ct);
+    }
+
+    /// <summary>Sends <paramref name="body"/> as JSON; a refusal (400, 404) throws with the API's reason.</summary>
+    protected async Task SendJsonAsync<T>(HttpMethod method, string path, T body, JsonTypeInfo<T> type, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, path) { Content = JsonContent.Create(body, type) };
+        using var response = await SendAsync(request, ct);
+        await EnsureAcceptedAsync(response, ct);
+    }
+
+    /// <summary>Sends a request without a body; a refusal (400, 404) throws with the API's reason.</summary>
+    protected async Task SendAsync(HttpMethod method, string path, CancellationToken ct, HttpContent? content = null)
+    {
+        using var request = new HttpRequestMessage(method, path) { Content = content };
+        using var response = await SendAsync(request, ct);
+        await EnsureAcceptedAsync(response, ct);
+    }
+
     protected async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var token = await tokens.GetTokenAsync(ct);
         if (token is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return await http.SendAsync(request, ct);
+    }
+
+    /// <summary>
+    /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/>, but a refusal (400 or 404)
+    /// throws <see cref="InvalidOperationException"/> with the API's reason, so the page can show it.
+    /// </summary>
+    private static async Task EnsureAcceptedAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var reason = body.StartsWith('"') ? JsonSerializer.Deserialize(body, UiJsonContext.Default.String) : body;
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(reason) ? $"The API returned {(int)response.StatusCode}." : reason);
+        }
+
+        response.EnsureSuccessStatusCode();
     }
 }

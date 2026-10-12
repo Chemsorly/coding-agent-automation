@@ -67,6 +67,8 @@ public class CockpitLayoutComponentTests : BunitContext
 
         // SidebarHealthIndicators dependencies.
         Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new FakeUiHealthClient());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
+            s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(true, false))));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
 
         // JS runtime — shared mock; configure per-test for specific return values.

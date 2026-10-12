@@ -19,6 +19,7 @@ internal static class UiClientRegistration
         services.AddHttpClient<IUiMeClient, UiMeClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiHealthClient, UiHealthClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiConfigClient, UiConfigClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+        services.AddHttpClient<IUiSettingsClient, UiSettingsClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
 
         return services;
     }

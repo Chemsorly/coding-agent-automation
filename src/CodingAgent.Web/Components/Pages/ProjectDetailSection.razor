@@ -3,6 +3,8 @@
 @using CodingAgent.Pipeline.Models
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
+@* Spec 051: provider configs move to the UI surface in 2.1c, together with the provider operations. *@
+@inject IPipelineApiConfigClient ProviderConfigs
 
 <section class="settings-section">
     <h2>@_project.Name</h2>
@@ -63,7 +65,7 @@
     private const string TabReview = "review";
 
     [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
-    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
+    [Parameter, EditorRequired] public IUiSettingsClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback OnProjectSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
@@ -146,7 +148,7 @@
             _project = project;
         }
         _globalConfig = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
-        _issueProviders = (await ConfigClient.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+        _issueProviders = (await ProviderConfigs.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
         _allTemplates = (await ConfigClient.GetAllTemplatesAsync(CancellationToken.None)).ToList();
         _allProjects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
 

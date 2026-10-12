@@ -518,6 +518,16 @@ These return slim views of the configuration for pages outside Settings. They ne
 | `GET /api/ui/projects/{projectId}/templates` | The project's job templates as `{ id, name, enabled }`. `404` when the user cannot read the project or it does not exist. |
 | `GET /api/ui/pipeline-settings` | `{ maxRetries, triageRetentionDays }`: global values, without project overrides. |
 
+### Settings (admin)
+
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface. Provider configs follow in a later version.
+
+Secrets never leave the API here, not even for an admin:
+- Project secrets and every MCP server env value and header (in projects and agent profiles) come back as `****`.
+- Saving `****` keeps the stored value under the same key (MCP servers are matched by name). A key that is left out is removed.
+- A `****` with no stored value behind it, for example after renaming an MCP server, is refused with `400` and the key named. Enter the value again.
+- The only exception is `GET /api/ui/settings/export`: the backup file contains live credentials, so treat it as a secret.
+
 ---
 
 ## Health Probe Endpoints
@@ -585,5 +595,6 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/projects` | User token | Projects the user can read |
 | GET | `/api/ui/projects/{projectId}/templates` | User token | Templates of a readable project |
 | GET | `/api/ui/pipeline-settings` | User token | Global settings pages outside Settings show |
+| GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

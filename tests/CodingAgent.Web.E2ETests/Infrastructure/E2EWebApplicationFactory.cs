@@ -205,6 +205,10 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // store. Back the client with the same in-memory store so seeding still reaches the UI
             // (and so startup does not retry against an unreachable API for ten minutes).
             ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
+            // Spec 051: Settings goes through /api/ui/settings. Back it with the same store for the
+            // same reason; the API host's template listing, export and import read its database.
+            services.RemoveAll<CodingAgent.Web.Ui.IUiSettingsClient>();
+            services.AddSingleton<CodingAgent.Web.Ui.IUiSettingsClient>(new CodingAgent.Web.E2ETests.Fakes.InMemoryUiSettingsClient(ApiConfigClient));
 
             // Replace GitLabValidationService with a no-op fake so provider form saves with dummy
             // credentials succeed without making real HTTP calls to gitlab.com. The Settings page

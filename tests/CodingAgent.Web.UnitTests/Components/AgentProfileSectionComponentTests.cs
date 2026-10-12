@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using Bunit;
 using Moq;
 using CodingAgent.Api.Client;
@@ -13,12 +14,12 @@ public class AgentProfileSectionComponentTests : BunitContext
 {
     private static readonly string[] s_dotnetMatchLabels = ["dotnet"];
 
-    private readonly Mock<IPipelineApiConfigClient> _mockClient;
+    private readonly Mock<IUiSettingsClient> _mockClient;
     private readonly List<ProviderConfig> _agentProviders;
 
     public AgentProfileSectionComponentTests()
     {
-        _mockClient = new Mock<IPipelineApiConfigClient>();
+        _mockClient = new Mock<IUiSettingsClient>();
         _agentProviders = new List<ProviderConfig>
         {
             new() { Id = "ap-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent" }
