@@ -99,7 +99,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     // ── Dispatch ──
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(PullRequestSummary pr, PipelineJobTemplate template)
-        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchPullRequestAsync(template.Id, pr.Number));
+        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchPullRequestAsync(template.Id, pr.Number, CancellationToken.None));
 
     // ── Drawer orchestration ──
 

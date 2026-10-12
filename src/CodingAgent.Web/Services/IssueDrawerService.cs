@@ -152,7 +152,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     // ── Dispatch ──
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(IssueSummary issue, PipelineJobTemplate template)
-        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchIssueAsync(template.Id, issue.Identifier));
+        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchIssueAsync(template.Id, issue.Identifier, CancellationToken.None));
 
     // ── Drawer orchestration ──
 

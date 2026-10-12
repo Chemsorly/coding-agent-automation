@@ -103,7 +103,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     /// the tracker the drawer lists epics from: the project's epic tracker, otherwise the template's own.
     /// </summary>
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(IssueSummary issue, PipelineJobTemplate template)
-        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchEpicAsync(template.Id, issue.Identifier));
+        => DrawerDispatchHelper.DispatchAsync(() => _dispatch.DispatchEpicAsync(template.Id, issue.Identifier, CancellationToken.None));
 
     // ── Drawer orchestration ──
 
