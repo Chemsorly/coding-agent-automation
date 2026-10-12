@@ -13,7 +13,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// <summary>
 /// bUnit component tests for <see cref="FirstRunBanner"/>.
 /// Verifies the show/hide logic:
-///   show = noEnabledTemplates AND route != "/pipelines" AND route != "/agent-coding" AND (notDismissed OR noEnabledTemplates)
+///   show = noEnabledTemplates AND route != "/pipelines" AND route != "/agent-coding" AND notDismissed
 /// </summary>
 public class FirstRunBannerComponentTests : BunitContext
 {
@@ -32,6 +32,7 @@ public class FirstRunBannerComponentTests : BunitContext
             .ReturnsAsync(() => new CodingAgent.Contracts.Ui.UiFirstRunState(_hasEnabled, _dismissed));
         _configClient
             .Setup(s => s.DismissFirstRunBannerAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => _dismissed = true)
             .Returns(Task.CompletedTask);
     }
 
@@ -124,43 +125,16 @@ public class FirstRunBannerComponentTests : BunitContext
     }
 
     [Fact]
-    public async Task Banner_IsHidden_WhenDismissed_AndTemplatesExist()
+    public void Banner_IsHidden_WhenDismissed_EvenWithNoTemplates()
     {
-        // Arrange: templates exist and dismissed flag is set
-        _hasEnabled = true;
+        // Dismiss used to have no effect: the banner only shows without templates, and the old rule
+        // kept it visible then regardless of the dismissal.
         _dismissed = true;
         SetCurrentUrl("http://localhost/");
 
         var cut = Render<FirstRunBanner>();
 
         Assert.DoesNotContain("No job templates configured", cut.Markup);
-
-        // TODO [WARNING]: This test covers dismissed=true AND templates=true. The banner being
-        // hidden here is entirely explained by templates=true alone (already covered by
-        // Banner_IsHidden_WhenEnabledTemplatesExist). This case adds no additional signal about
-        // dismissal behaviour. Consider replacing or augmenting with dismissed=true AND
-        // templates=false to specifically verify the dismiss flag's effect when templates is
-        // not independently hiding the banner (that path is covered by
-        // Banner_StaysVisible_WhenDismissed_ButNoTemplates_BecauseNoTemplatesOverridesDismissal,
-        // but an explicit "dismissed=true hides when templates exist" vs
-        // "dismissed=true has no effect when templates absent" contrast would clarify the logic).
-        await Task.CompletedTask; // satisfy async signature
-    }
-
-    [Fact]
-    public async Task Banner_StaysVisible_WhenDismissed_ButNoTemplates_BecauseNoTemplatesOverridesDismissal()
-    {
-        // Spec Req 8.2: "notDismissed OR noEnabledTemplates" means when noEnabledTemplates is true,
-        // the third clause is always true — dismissal does not suppress the banner with no templates.
-        _dismissed = true;
-        SetCurrentUrl("http://localhost/");
-
-        // noEnabledTemplates = true, notDismissed = false, noEnabledTemplates = true
-        // show = true AND true AND (false OR true) = true
-        var cut = Render<FirstRunBanner>();
-
-        Assert.Contains("No job templates configured", cut.Markup);
-        await Task.CompletedTask;
     }
 
     [Fact]
@@ -175,10 +149,11 @@ public class FirstRunBannerComponentTests : BunitContext
         var dismissButton = cut.Find(".first-run-banner-dismiss");
         await cut.InvokeAsync(() => dismissButton.Click());
 
-        // Assert: the dismissal was saved
+        // Assert: the dismissal was saved, and the banner is gone
         _configClient.Verify(
             s => s.DismissFirstRunBannerAsync(It.IsAny<CancellationToken>()),
             Times.Once);
+        Assert.DoesNotContain("No job templates configured", cut.Markup);
     }
 
     [Fact]
