@@ -42,43 +42,43 @@ internal static class UiBrowseEndpoints
     internal static Task<IResult> GetIssues(
         string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct,
         int page = 1, [FromQuery] string[]? labels = null) =>
-        BrowseAsync(templateId, access, browse, ct, template => browse.ListIssuesAsync(template, page, labels, ct));
+        BrowseAsync(templateId, access, browse, template => browse.ListIssuesAsync(template, page, labels, ct), ct);
 
     /// <summary>GET …/issues/readiness?page=&amp;labels= — the dependency readiness of that page's issues, by identifier.</summary>
     internal static Task<IResult> GetIssueReadiness(
         string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct,
         int page = 1, [FromQuery] string[]? labels = null) =>
-        BrowseAsync(templateId, access, browse, ct, template => browse.CheckReadinessAsync(template, page, labels, ct));
+        BrowseAsync(templateId, access, browse, template => browse.CheckReadinessAsync(template, page, labels, ct), ct);
 
     /// <summary>GET …/labels — the template tracker's labels.</summary>
     internal static Task<IResult> GetLabels(string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct) =>
-        BrowseAsync(templateId, access, browse, ct, template => browse.ListLabelsAsync(template, ct));
+        BrowseAsync(templateId, access, browse, template => browse.ListLabelsAsync(template, ct), ct);
 
     /// <summary>GET …/pull-requests?page=&amp;labels= — a page of the template repository's open pull requests.</summary>
     internal static Task<IResult> GetPullRequests(
         string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct,
         int page = 1, [FromQuery] string[]? labels = null) =>
-        BrowseAsync(templateId, access, browse, ct, template => browse.ListPullRequestsAsync(template, page, labels, ct));
+        BrowseAsync(templateId, access, browse, template => browse.ListPullRequestsAsync(template, page, labels, ct), ct);
 
     /// <summary>GET …/epics?page=&amp;labels= — the new and the approved epics of the epic tracker.</summary>
     internal static Task<IResult> GetEpics(
         string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct,
         int page = 1, [FromQuery] string[]? labels = null) =>
-        BrowseAsync(templateId, access, browse, ct, template => browse.ListEpicsAsync(template, page, labels, ct));
+        BrowseAsync(templateId, access, browse, template => browse.ListEpicsAsync(template, page, labels, ct), ct);
 
     /// <summary>GET …/epic-labels — the epic tracker's labels, without the epic workflow labels.</summary>
     internal static Task<IResult> GetEpicLabels(string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct) =>
-        BrowseAsync(templateId, access, browse, ct, template => browse.ListEpicLabelsAsync(template, ct));
+        BrowseAsync(templateId, access, browse, template => browse.ListEpicLabelsAsync(template, ct), ct);
 
     /// <summary>GET …/active-issues — the issues and pull requests of the template's providers that already have work.</summary>
     internal static Task<IResult> GetActiveIssues(string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct) =>
-        BrowseAsync(templateId, access, browse, ct, async template =>
+        BrowseAsync(templateId, access, browse, async template =>
             (IReadOnlyList<UiActiveIssue>)(await browse.GetActiveIssuesAsync(template, ct))
                 .Select(a => new UiActiveIssue(a.IssueIdentifier, a.IssueProviderConfigId, a.Status))
-                .ToList());
+                .ToList(), ct);
 
     private static async Task<IResult> BrowseAsync<T>(
-        string templateId, IUserAccess access, TemplateBrowseService browse, CancellationToken ct, Func<BrowseTemplate, Task<T>> read)
+        string templateId, IUserAccess access, TemplateBrowseService browse, Func<BrowseTemplate, Task<T>> read, CancellationToken ct)
     {
         var template = await browse.FindAsync(templateId, ct);
         if (template is null)

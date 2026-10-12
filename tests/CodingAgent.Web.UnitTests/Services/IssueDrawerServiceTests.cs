@@ -16,6 +16,8 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// </summary>
 public class IssueDrawerServiceTests
 {
+    private static readonly string[] BugAndDocsLabels = ["bug", "docs"];
+
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<IDependencyChecker> _mockDependencyChecker;
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
@@ -140,10 +142,10 @@ public class IssueDrawerServiceTests
     public async Task LoadDrawerLabelsAsync_LoadsTheTrackersLabels_AndClearsThemWhenTheApiFails()
     {
         var template = MakeTemplate();
-        _mockBrowse.Setup(b => b.GetLabelsAsync("t-1", It.IsAny<CancellationToken>())).ReturnsAsync(new[] { "bug", "docs" });
+        _mockBrowse.Setup(b => b.GetLabelsAsync("t-1", It.IsAny<CancellationToken>())).ReturnsAsync(BugAndDocsLabels);
 
         await _service.LoadDrawerLabelsAsync(template);
-        Assert.Equal(new[] { "bug", "docs" }, _service.DrawerState.Labels);
+        Assert.Equal(BugAndDocsLabels, _service.DrawerState.Labels);
 
         _mockBrowse.Setup(b => b.GetLabelsAsync("t-1", It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("Failed to load labels: boom"));
         await _service.LoadDrawerLabelsAsync(template);

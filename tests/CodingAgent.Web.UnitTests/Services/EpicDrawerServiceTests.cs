@@ -13,6 +13,9 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// </summary>
 public class EpicDrawerServiceTests
 {
+    private static readonly string[] EpicIds = ["100", "101"];
+    private static readonly string[] BackendLabel = ["backend"];
+
     private readonly Mock<IUiBrowseClient> _mockBrowse;
     private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
     private readonly EpicDrawerService _service;
@@ -73,9 +76,9 @@ public class EpicDrawerServiceTests
         var error = await _service.LoadEpicDrawerIssuesAsync(template, 1);
 
         Assert.Null(error);
-        Assert.Equal(new[] { "100", "101" }, _service.DrawerState.Items.Select(i => i.Identifier));
+        Assert.Equal(EpicIds, _service.DrawerState.Items.Select(i => i.Identifier));
         Assert.True(_service.DrawerState.HasMore);
-        Assert.Equal(new[] { "backend" }, capturedLabels);
+        Assert.Equal(BackendLabel, capturedLabels);
     }
 
     [Fact]
@@ -95,11 +98,11 @@ public class EpicDrawerServiceTests
     public async Task OpenEpicDrawerAsync_LoadsTheEpicTrackersLabels()
     {
         SetupIssueProviderForEpic();
-        _mockBrowse.Setup(b => b.GetEpicLabelsAsync("t-1", It.IsAny<CancellationToken>())).ReturnsAsync(new[] { "backend" });
+        _mockBrowse.Setup(b => b.GetEpicLabelsAsync("t-1", It.IsAny<CancellationToken>())).ReturnsAsync(BackendLabel);
 
         await _service.OpenEpicDrawerAsync("t-1", new[] { MakeTemplate() });
 
-        Assert.Equal(new[] { "backend" }, _service.DrawerState.Labels);
+        Assert.Equal(BackendLabel, _service.DrawerState.Labels);
     }
 
     // ── DispatchDecompositionAsync — phase type selection ──

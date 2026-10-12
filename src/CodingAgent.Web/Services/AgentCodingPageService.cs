@@ -400,7 +400,7 @@ public class AgentCodingPageService
     // ── Active issues forwarding ──
 
     /// <summary>Reloads the Queued/Running badges for the template's trackers and repository.</summary>
-    public Task RefreshActiveIssuesAsync(TemplateId templateId) => _issueDrawerService.RefreshActiveIssuesAsync(templateId);
+    public Task RefreshActiveIssuesAsync(TemplateId templateId) => _issueDrawerService.RefreshActiveIssuesAsync(templateId, CancellationToken.None);
 
     public bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _issueDrawerService.IsIssueActive(issueIdentifier, issueProviderConfigId);

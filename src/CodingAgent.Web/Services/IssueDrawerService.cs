@@ -145,7 +145,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         }
     }
 
-    private IReadOnlyList<string>? SelectedLabels() =>
+    private List<string>? SelectedLabels() =>
         _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels.ToList() : null;
 
     private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template, CancellationToken ct)
@@ -291,7 +291,8 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     {
         var template = templates.FirstOrDefault(t => t.Id == templateId.Value);
         if (template == null) return null;
-        await RefreshActiveIssuesAsync(templateId);
+        // Not the drawer's token: a closed drawer's token is cancelled until OpenAsync renews it.
+        await RefreshActiveIssuesAsync(templateId, CancellationToken.None);
         return await _issueDrawer.OpenAsync(template, notifyStateChanged);
     }
 
@@ -312,7 +313,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
             {
                 var template = templates.FirstOrDefault(t => t.Id == id);
                 if (template == null) return null;
-                await RefreshActiveIssuesAsync(template.Id);
+                await RefreshActiveIssuesAsync(template.Id, CancellationToken.None);
                 return template;
             });
     }

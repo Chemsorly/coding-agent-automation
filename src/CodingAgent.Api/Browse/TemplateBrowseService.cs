@@ -13,7 +13,7 @@ internal sealed record BrowseTemplate(PipelineJobTemplate Template, PipelineProj
 /// A browse that could not be answered: the template's provider is gone or failed. The message is
 /// shown to the user as it is.
 /// </summary>
-internal sealed class TemplateBrowseException(string message, Exception? inner = null) : Exception(message, inner);
+public sealed class TemplateBrowseException(string message, Exception? inner = null) : Exception(message, inner);
 
 /// <summary>
 /// What the dispatch drawers browse for a template (spec 051 2.3b, moved from the web host's drawer
