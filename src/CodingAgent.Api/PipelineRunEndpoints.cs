@@ -227,17 +227,17 @@ public static class PipelineRunEndpoints
         IOrchestratorRunService runService,
         CancellationToken ct = default)
     {
-        var summary = await history.GetRunAsync(runId, ct);
+        var summary = await FindRunAsync(runId, history, runService, ct);
+        return summary is null ? TypedResults.NotFound() : TypedResults.Ok(summary);
+    }
 
-        summary ??= runService.GetActiveRuns()
+    /// <summary>The run from history, or else the in-flight run with that ID; null when neither exists.</summary>
+    internal static async Task<PipelineRunSummary?> FindRunAsync(
+        Guid runId, IPipelineRunHistoryService history, IOrchestratorRunService runService, CancellationToken ct) =>
+        await history.GetRunAsync(runId, ct)
+        ?? runService.GetActiveRuns()
             .FirstOrDefault(r => string.Equals(r.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase))
             ?.ToSummary();
-
-        if (summary is null)
-            return TypedResults.NotFound();
-
-        return TypedResults.Ok(summary);
-    }
 
     // ── GET /api/export/runs.json — operator-authenticated download ───
 

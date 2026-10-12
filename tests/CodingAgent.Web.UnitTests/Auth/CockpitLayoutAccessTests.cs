@@ -24,7 +24,7 @@ public class CockpitLayoutAccessTests : BunitContext
 
     private readonly Mock<IPipelineApiConfigClient> _configClient = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _uiConfig = new();
-    private readonly Mock<IPipelineApiRunHistoryClient> _runHistory = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiRunClient> _runHistory = new();
     private readonly Mock<IJSRuntime> _js = new();
     private readonly CockpitState _state = new();
     private readonly List<string?> _attentionQueries = [];

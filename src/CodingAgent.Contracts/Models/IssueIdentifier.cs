@@ -36,7 +36,7 @@ public readonly record struct IssueIdentifier(string Value)
     /// Custom JSON converter that serializes <see cref="IssueIdentifier"/> as a bare string
     /// (not as <c>{"value":"..."}</c>) to maintain wire compatibility with existing JSONB payloads.
     /// </summary>
-    internal sealed class IssueIdentifierJsonConverter : JsonConverter<IssueIdentifier>
+    public sealed class IssueIdentifierJsonConverter : JsonConverter<IssueIdentifier>
     {
         public override IssueIdentifier Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
             => new(reader.GetString()!);

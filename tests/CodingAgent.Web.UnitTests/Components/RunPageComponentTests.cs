@@ -52,10 +52,10 @@ public class RunPageComponentTests : BunitContext
             .Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
-        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory
             .Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(summary);
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, null));
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient
@@ -69,7 +69,6 @@ public class RunPageComponentTests : BunitContext
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
             c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
-        Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(new CockpitState());
     }
 
@@ -100,6 +99,22 @@ public class RunPageComponentTests : BunitContext
     }
 
     // ── Tests ─────────────────────────────────────────────────────────────
+
+    /// <summary>Spec 051 2.2a: the API names the agent provider in the run detail; the page needs no provider configs.</summary>
+    [Fact]
+    public void AgentProviderName_FromTheRunDetail_IsShown()
+    {
+        var summary = MakeSummary(PipelineRunType.Implementation, PipelineStep.Completed);
+        RegisterServices(summary);
+        var runs = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        runs.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, "Kiro (team pool)"));
+        Services.AddSingleton(runs.Object);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        Assert.Contains("Kiro (team pool)", cut.Markup);
+    }
 
     /// <summary>
     /// When GetRunAsync returns a summary with RunType = DecompositionAnalysis,
@@ -961,10 +976,10 @@ public class RunPageReconnectTests : BunitContext
 
     private void RegisterServices(PipelineRunSummary summary, Mock<IAgentHubConnection> mockHub)
     {
-        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory
             .Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(summary);
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, null));
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient
@@ -977,7 +992,6 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
             c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
-        Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());
     }
@@ -1105,12 +1119,12 @@ public class RunPageReconnectTests : BunitContext
             StartedAtOffset = activeSummary.StartedAtOffset,
             CompletedAtOffset = DateTimeOffset.UtcNow,
         };
-        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         // First call returns the active summary (page load); subsequent calls return completed.
         mockRunHistory
             .SetupSequence(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(activeSummary)
-            .ReturnsAsync(completedSummary);
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(activeSummary, null))
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(completedSummary, null));
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient
@@ -1123,7 +1137,6 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
             c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
-        Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());
 

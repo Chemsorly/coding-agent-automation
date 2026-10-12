@@ -76,8 +76,13 @@ public static class WorkItemQueryEndpoints
 
         // Optional project scope. WorkItem.ProjectId is a uuid column while the switcher passes the
         // project's id as a string (PipelineProject.Id is a Guid-string), so parse before comparing.
-        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+        // A scope that is not a GUID matches no work item; it must not widen the list to every project.
+        if (!string.IsNullOrEmpty(projectId))
+        {
+            if (!Guid.TryParse(projectId, out var scopeProjectId))
+                return TypedResults.Ok(Array.Empty<PendingWorkItemDto>());
             pending = pending.Where(w => w.ProjectId == scopeProjectId);
+        }
 
         var raw = await pending
             .ApplyDispatchOrder(dispatchOrder)
@@ -169,9 +174,13 @@ public static class WorkItemQueryEndpoints
                          // (Correctness review [WARNING])
                          || (w.DispatchedAt == null && w.CreatedAt < cutoff)));
         // Optional project scope (not passed by reconciliation). ProjectId is a uuid column; parse the
-        // switcher's Guid-string id before comparing.
-        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+        // switcher's Guid-string id before comparing. A scope that is not a GUID matches nothing.
+        if (!string.IsNullOrEmpty(projectId))
+        {
+            if (!Guid.TryParse(projectId, out var scopeProjectId))
+                return TypedResults.Ok(Array.Empty<ActiveWorkItemDto>());
             active = active.Where(w => w.ProjectId == scopeProjectId);
+        }
 
         var items = await active
             .Select(w => new
