@@ -82,6 +82,13 @@ POST /api/ui/settings/reviewer-configs/reset-to-defaults -> Ui: Ui.Admin, Ui.Any
 DELETE /api/ui/settings/reviewer-configs/{id} -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/templates -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/ui/settings/templates/move -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/templates/{templateId}/active-issues -> Ui: Ui.AnyAccess
+GET /api/ui/templates/{templateId}/epic-labels -> Ui: Ui.AnyAccess
+GET /api/ui/templates/{templateId}/epics -> Ui: Ui.AnyAccess
+GET /api/ui/templates/{templateId}/issues -> Ui: Ui.AnyAccess
+GET /api/ui/templates/{templateId}/issues/readiness -> Ui: Ui.AnyAccess
+GET /api/ui/templates/{templateId}/labels -> Ui: Ui.AnyAccess
+GET /api/ui/templates/{templateId}/pull-requests -> Ui: Ui.AnyAccess
 GET /api/ui/work-items/active -> Ui: Ui.AnyAccess
 GET /api/ui/work-items/pending -> Ui: Ui.AnyAccess
 POST /api/ui/work-items/{id:guid}/cancel -> Ui: Ui.AnyAccess, Ui.AnyOperator

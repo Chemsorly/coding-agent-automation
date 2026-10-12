@@ -121,6 +121,28 @@ internal sealed class WorkItemStore(IDbContextFactory<PipelineDbContext> dbFacto
     }
 
     /// <summary>
+    /// The drawers' badges for the issues of <paramref name="providerIds"/> that are live or ended within
+    /// the dedup cooldown: <see cref="WorkItemStatus.Pending"/> (queued) when a Pending item exists,
+    /// otherwise <see cref="WorkItemStatus.Running"/>.
+    /// </summary>
+    public async Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId, WorkItemStatus Status)>> GetIssueStatusesAsync(
+        IReadOnlyCollection<string> providerIds, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var rows = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => providerIds.Contains(w.IssueProviderConfigId))
+            .WhereActiveOrRecentlyTerminal(RecentTerminalCutoff())
+            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId, w.Status })
+            .ToListAsync(ct);
+        return rows
+            .GroupBy(r => (r.IssueIdentifier, r.IssueProviderConfigId))
+            .Select(g => (g.Key.IssueIdentifier, g.Key.IssueProviderConfigId,
+                g.Any(r => r.Status == WorkItemStatus.Pending) ? WorkItemStatus.Pending : WorkItemStatus.Running))
+            .ToList();
+    }
+
+    /// <summary>
     /// The decomposition work items that are Pending, Dispatched or Running. Both the analysis and
     /// the decomposition phase are stored as <see cref="WorkItemTaskType.Decomposition"/>; a separate
     /// analysis task type would have to be counted here too.

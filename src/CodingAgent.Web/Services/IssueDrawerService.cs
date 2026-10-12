@@ -1,7 +1,7 @@
-using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.Ui;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -9,7 +9,8 @@ namespace CodingAgent.Web.Services;
 
 /// <summary>
 /// Manages the issue dispatch drawer lifecycle: loading issues, dependency checking,
-/// label filtering, pagination, active-issue tracking, and dispatch.
+/// label filtering, pagination, active-issue tracking, and dispatch. The API browses the providers
+/// (spec 051 2.3b, <see cref="IUiBrowseClient"/>); dispatch still runs here until 2.3c.
 /// Owns and constructs the underlying DrawerStateService&lt;IssueSummary&gt;.
 /// Registered as Scoped (one instance per Blazor circuit).
 /// </summary>
@@ -20,7 +21,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly IDependencyChecker _dependencyChecker;
     private readonly IWorkDistributor _workDistributor;
-    private readonly IPipelineApiWorkItemClient _apiClient;
+    private readonly IUiBrowseClient _browse;
     private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _issueDrawer;
@@ -30,12 +31,12 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         IDependencyChecker dependencyChecker,
         IWorkDistributor workDistributor,
         IDispatchOrchestrationService dispatchOrchestration,
-        IPipelineApiWorkItemClient apiClient)
+        IUiBrowseClient browse)
     {
         _providerFactory = providerFactory;
         _dependencyChecker = dependencyChecker;
         _workDistributor = workDistributor;
-        _apiClient = apiClient;
+        _browse = browse;
         _dispatchOrchestration = dispatchOrchestration;
 
         _issueDrawer = new DrawerStateService<IssueSummary>(
@@ -78,11 +79,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         var ct = _issueDrawer.CancellationToken;
         try
         {
-            var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) { _issueDrawer.Loading = false; return "Issue provider not found for this template."; }
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels : null;
-            var result = await provider.ListOpenIssuesAsync(_issueDrawer.Page, 15, labels, ct);
+            var result = await _browse.GetIssuesAsync(template.Id, _issueDrawer.Page, SelectedLabels(), ct);
             _issueDrawer.Items = result.Items.ToList();
             _issueDrawer.HasMore = result.HasMore;
             return null;
@@ -92,6 +89,8 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
             _issueDrawer.Items.Clear();
             return null;
         }
+        // The API's reason is the message to show ("Issue provider not found…", "Failed to load issues: …").
+        catch (InvalidOperationException ex) { _issueDrawer.Items.Clear(); return ex.Message; }
         catch (Exception ex) { _issueDrawer.Items.Clear(); return $"Failed to load issues: {ex.Message}"; }
         finally { _issueDrawer.Loading = false; }
     }
@@ -104,11 +103,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         var ct = _issueDrawer.CancellationToken;
         try
         {
-            var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) return null;
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(ct);
-            _issueDrawer.Labels = labels.ToList();
+            _issueDrawer.Labels = (await _browse.GetLabelsAsync(template.Id, ct)).ToList();
             return null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -126,35 +121,32 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     public Task<string?> LoadDrawerLabelsAsync(PipelineJobTemplate template)
         => LoadDrawerLabelsCallbackAsync(template);
 
+    /// <summary>
+    /// Fills <see cref="DrawerReadiness"/> for the drawer's page. The API runs the dependency checks;
+    /// <paramref name="onProgress"/> is called once the results are in. Best-effort: a failure leaves
+    /// the readiness it already has.
+    /// </summary>
     public async Task CheckDrawerDependenciesAsync(
         PipelineJobTemplate template,
         Action? onProgress,
         CancellationToken cancellationToken)
     {
-        var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
-        if (providerConfig == null) return;
-
-        var issues = _issueDrawer.Items.ToList();
-        var stateCache = new Dictionary<int, bool>();
-
         try
         {
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            foreach (var issue in issues)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var result = await _dependencyChecker.CheckAsync(
-                    issue.Identifier, issue.Description, provider, stateCache, cancellationToken);
-                DrawerReadiness[issue.Identifier] = result;
-                onProgress?.Invoke();
-            }
+            var readiness = await _browse.GetIssueReadinessAsync(template.Id, _issueDrawer.Page, SelectedLabels(), cancellationToken);
+            foreach (var (identifier, result) in readiness)
+                DrawerReadiness[identifier] = result;
+            onProgress?.Invoke();
         }
         catch (OperationCanceledException) { throw; }
         catch
         {
-            // Best-effort: partial results are still useful
+            // Best-effort: the drawer works without readiness.
         }
     }
+
+    private List<string>? SelectedLabels() =>
+        _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels.ToList() : null;
 
     private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template, CancellationToken ct)
     {
@@ -173,10 +165,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         DrawerReadiness.Clear();
         _issueDrawer.SelectedLabels.Clear();
     }
-
-    // ── Cached provider context (set at open/switch time) ──
-
-    private IReadOnlyList<ProviderConfig>? _cachedIssueProviders;
 
     // ── Dispatch ──
 
@@ -303,7 +291,8 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     {
         var template = templates.FirstOrDefault(t => t.Id == templateId.Value);
         if (template == null) return null;
-        await RefreshActiveIssuesAsync();
+        // Not the drawer's token: a closed drawer's token is cancelled until OpenAsync renews it.
+        await RefreshActiveIssuesAsync(templateId, CancellationToken.None);
         return await _issueDrawer.OpenAsync(template, notifyStateChanged);
     }
 
@@ -324,7 +313,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
             {
                 var template = templates.FirstOrDefault(t => t.Id == id);
                 if (template == null) return null;
-                await RefreshActiveIssuesAsync();
+                await RefreshActiveIssuesAsync(template.Id, CancellationToken.None);
                 return template;
             });
     }
@@ -335,9 +324,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         IReadOnlyList<ProviderConfig> repoProviders,
         PipelineProject? parentProject)
     {
-        // Cache providers so the DrawerStateService dispatch callback can reach them
-        _cachedIssueProviders = issueProviders;
-
         _issueDrawer.IsDispatching = true;
         try
         {
@@ -354,47 +340,17 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     // ── Active issues ──
 
-    // TODO: [WARNING] RefreshActiveIssuesAsync passes CancellationToken.None to both API calls because
-    //   the method signature accepts no CancellationToken. Callers that own a cancellation token
-    //   (e.g. component disposal, navigation-away) cannot forward it, so the two in-flight HTTP
-    //   requests run to completion even after the owning service/component is disposed or navigated
-    //   away, then write into a stale ActiveIssues dictionary. Consider adding a CancellationToken
-    //   parameter to RefreshActiveIssuesAsync and threading it through both API calls.
-    public async Task RefreshActiveIssuesAsync()
+    /// <summary>
+    /// Reloads <see cref="ActiveIssues"/> for the template's issue tracker, repository and epic tracker:
+    /// Pending (queued) when a queued work item exists, otherwise Running (dispatched, running, or
+    /// ended within the dedup cooldown). The API computes the badges (spec 051 2.3b).
+    /// </summary>
+    public async Task RefreshActiveIssuesAsync(TemplateId templateId, CancellationToken ct = default)
     {
-        // Build a status-aware map by combining:
-        //   1. GetActiveIdentifiersAsync — all (IssueIdentifier, ProviderConfigId) pairs with active or
-        //      recently-terminal WorkItems. Items in this set are Dispatched/Running unless also pending.
-        //   2. GetPendingAsync — Pending (Queued) items, which include both IssueIdentifier AND
-        //      IssueProviderConfigId (ActiveWorkItemDto lacks IssueProviderConfigId so we cannot use
-        //      GetActiveAsync for the full key).
-        // Strategy:
-        //   - All pending items → WorkItemStatus.Pending (Queued badge)
-        //   - All active-identifier items not in the pending set → WorkItemStatus.Running (Running badge)
-        //     (these are Dispatched or Running status on the server; both show as "Running" in the UI)
-        // TODO: GetActiveIdentifiersAsync returns pairs for recently-terminal work items (Succeeded/Failed/
-        //   Cancelled within DefaultRestartDedupCooldown) in addition to truly-active ones. A recently-failed
-        //   issue that is not in the pending set is classified as Running here, showing a false "Running" badge
-        //   in the dispatch drawer. Consider excluding recently-terminal pairs from the Running classification
-        //   (e.g. cross-check against GetActiveAsync which exposes the actual WorkItemStatus).
-        var activeIdentifiers = await _apiClient.GetActiveIdentifiersAsync(CancellationToken.None);
-        // TODO: GetPendingAsync is capped at maxResults:200. If more than 200 work items are Pending, items
-        //   beyond the cap are absent from pendingKeys and are misclassified as Running. Consider paging until
-        //   exhausted or raising the cap to exceed the realistic maximum queue depth.
-        var pendingItems = await _apiClient.GetPendingAsync(maxResults: 200, ct: CancellationToken.None);
-
-        var pendingKeys = pendingItems
-            .Select(p => ((IssueIdentifier)p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
-            .ToHashSet();
-
-        var map = new Dictionary<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId), WorkItemStatus>();
-        foreach (var (issueId, provId) in activeIdentifiers)
-        {
-            var key = ((IssueIdentifier)issueId, (ProviderConfigId)provId);
-            map[key] = pendingKeys.Contains(key) ? WorkItemStatus.Pending : WorkItemStatus.Running;
-        }
-
-        ActiveIssues = map;
+        var active = await _browse.GetActiveIssuesAsync(templateId.Value, ct);
+        ActiveIssues = active.ToDictionary(
+            a => ((IssueIdentifier)a.IssueIdentifier, (ProviderConfigId)a.IssueProviderConfigId),
+            a => a.Status);
     }
 
     /// <summary>
@@ -417,15 +373,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     // ── Cross-drawer coordination ──
 
     public void Hide() => _issueDrawer.IsOpen = false;
-
-    // ── Provider context injection (called by coordinator before open/switch) ──
-
-    internal void SetProviderContext(
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders)
-    {
-        _cachedIssueProviders = issueProviders;
-    }
 
     // ── IDisposable ──
 

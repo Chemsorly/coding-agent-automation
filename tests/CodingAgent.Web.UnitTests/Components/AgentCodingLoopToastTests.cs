@@ -89,6 +89,8 @@ public class AgentCodingLoopToastTests : BunitContext
         mockApiWorkItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
         Services.AddSingleton<IPipelineApiWorkItemClient>(mockApiWorkItemClient.Object);
+        // Spec 051 2.3b: the drawers browse through the API; this page test never opens one.
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ProviderBackedBrowseClient.Empty().Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
         Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
 

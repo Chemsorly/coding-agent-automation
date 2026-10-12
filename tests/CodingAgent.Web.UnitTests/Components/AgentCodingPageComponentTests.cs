@@ -142,6 +142,8 @@ public class AgentCodingPageComponentTests : BunitContext
         mockApiWorkItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
         Services.AddSingleton<IPipelineApiWorkItemClient>(mockApiWorkItemClient.Object);
+        // Spec 051 2.3b: the drawers browse through the API; it answers from the provider mocks below.
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ProviderBackedBrowseClient.Create(() => _mockIssueProvider.Object, () => _mockRepoProvider.Object).Object);
 
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();

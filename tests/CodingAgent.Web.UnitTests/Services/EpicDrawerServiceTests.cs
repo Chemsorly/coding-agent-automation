@@ -2,6 +2,7 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
+using CodingAgent.Web.Ui;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
@@ -12,7 +13,10 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// </summary>
 public class EpicDrawerServiceTests
 {
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
+    private static readonly string[] EpicIds = ["100", "101"];
+    private static readonly string[] BackendLabel = ["backend"];
+
+    private readonly Mock<IUiBrowseClient> _mockBrowse;
     private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
     private readonly EpicDrawerService _service;
 
@@ -24,11 +28,12 @@ public class EpicDrawerServiceTests
 
     public EpicDrawerServiceTests()
     {
-        _mockProviderFactory = new Mock<IProviderFactory>();
+        _mockBrowse = new Mock<IUiBrowseClient>();
+        _mockBrowse.Setup(b => b.GetEpicLabelsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
         _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
 
         _service = new EpicDrawerService(
-            _mockProviderFactory.Object,
+            _mockBrowse.Object,
             _mockDispatchOrchestration.Object);
     }
 
@@ -44,97 +49,60 @@ public class EpicDrawerServiceTests
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
         var svc = new EpicDrawerService(
-            new Mock<IProviderFactory>().Object,
+            new Mock<IUiBrowseClient>().Object,
             new Mock<IDispatchOrchestrationService>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
     }
 
-    // ── LoadEpicDrawerIssuesAsync — deduplication regression ──
+    // ── LoadEpicDrawerIssuesAsync ──
+    // The API merges the new and the approved epics and picks the epic tracker; its
+    // TemplateBrowseServiceTests cover that. Here: the drawer shows what the API returns.
 
     [Fact]
-    public async Task LoadEpicDrawerIssuesAsync_DeduplicatesIssuesWithBothEpicLabels()
+    public async Task LoadEpicDrawerIssuesAsync_ShowsTheApisEpics_WithTheSelectedLabels()
     {
-        // Regression: issues with both agent:epic AND agent:epic-approved appear in both API queries.
-        // The result must be deduplicated by Identifier.
-        _service.SetProviderContext(IssueProviders);
         var template = MakeTemplate();
-
-        var duplicateIssue = MakeEpic("100", "agent:epic", "agent:epic-approved");
-        var epicOnlyIssue = MakeEpic("101", "agent:epic");
-        var approvedOnlyIssue = MakeEpic("102", "agent:epic-approved");
-
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(1, 8,
-                It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains("agent:epic") && !l.Contains("agent:epic-approved")),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary> { duplicateIssue, epicOnlyIssue }, HasMore = false, Page = 1, PageSize = 8 });
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(1, 8,
-                It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains("agent:epic-approved")),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary> { duplicateIssue, approvedOnlyIssue }, HasMore = false, Page = 1, PageSize = 8 });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+        _service.DrawerState.SelectedLabels.Add("backend");
+        IReadOnlyList<string>? capturedLabels = null;
+        _mockBrowse.Setup(b => b.GetEpicsAsync("t-1", 1, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, int, IReadOnlyList<string>?, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary> { MakeEpic("100", "agent:epic"), MakeEpic("101", "agent:epic-approved") },
+                HasMore = true, Page = 1, PageSize = 8,
+            });
 
         var error = await _service.LoadEpicDrawerIssuesAsync(template, 1);
 
         Assert.Null(error);
-        // 3 unique issues, NOT 4 (duplicate counted once)
-        Assert.Equal(3, _service.DrawerState.Items.Count);
-        Assert.Equal(1, _service.DrawerState.Items.Count(i => i.Identifier == "100"));
+        Assert.Equal(EpicIds, _service.DrawerState.Items.Select(i => i.Identifier));
+        Assert.True(_service.DrawerState.HasMore);
+        Assert.Equal(BackendLabel, capturedLabels);
     }
 
     [Fact]
-    public async Task LoadEpicDrawerIssuesAsync_ReturnsError_WhenProviderNotFound()
+    public async Task LoadEpicDrawerIssuesAsync_ReturnsTheApisReason_WhenItRefuses()
     {
-        _service.SetProviderContext(new List<ProviderConfig>());
         var template = MakeTemplate();
+        _mockBrowse.Setup(b => b.GetEpicsAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Epic issue provider not found."));
 
         var error = await _service.LoadEpicDrawerIssuesAsync(template, 1);
 
         Assert.Equal("Epic issue provider not found.", error);
+        Assert.Empty(_service.DrawerState.Items);
     }
 
-    // ── LoadEpicDrawerLabelsAsync — EpicIssueProviderId from project ──
-
     [Fact]
-    public async Task LoadEpicDrawerIssuesAsync_UsesEpicIssueProviderId_WhenProjectHasOne()
+    public async Task OpenEpicDrawerAsync_LoadsTheEpicTrackersLabels()
     {
-        // TODO: [WARNING] Both the epic-specific provider mock and the fallback provider mock return the
-        // same mockProvider.Object instance. The assertion Assert.Equal(epicProviderId, usedProvider!.Id)
-        // captures the Callback only if the epic-specific CreateIssueProvider overload is hit — but if
-        // the logic fell through to the default template.IssueProviderId, the fallback mock (p.Id != epicProviderId)
-        // returns mockProvider.Object without invoking the Callback, so usedProvider stays null and the
-        // Assert.NotNull would catch it. However, both providers would produce the same test outcome for
-        // load behavior. Use a distinct mock object for the fallback to make provider-selection failures
-        // observable via behavior divergence, not just usedProvider identity.
-        var epicProviderId = "epic-ip-2";
-        var epicProviders = new List<ProviderConfig>
-        {
-            IssueProviders[0],
-            new() { Id = epicProviderId, Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Epic Provider" }
-        };
-        _service.SetProviderContext(epicProviders);
+        SetupIssueProviderForEpic();
+        _mockBrowse.Setup(b => b.GetEpicLabelsAsync("t-1", It.IsAny<CancellationToken>())).ReturnsAsync(BackendLabel);
 
-        var project = new PipelineProject { Id = "p-1", Name = "P", TemplateIds = new[] { "t-1" }, EpicIssueProviderId = epicProviderId };
-        var projects = new List<PipelineProject> { project };
-        var template = MakeTemplate();
+        await _service.OpenEpicDrawerAsync("t-1", new[] { MakeTemplate() });
 
-        ProviderConfig? usedProvider = null;
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), HasMore = false, Page = 1, PageSize = 8 });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(p => p.Id == epicProviderId)))
-            .Callback<ProviderConfig>(p => usedProvider = p)
-            .Returns(mockProvider.Object);
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(p => p.Id != epicProviderId)))
-            .Returns(mockProvider.Object);
-
-        // Open via the projects-aware method to set the project context
-        await _service.OpenEpicDrawerAsync("t-1", new[] { template }, projects);
-
-        // Verify the epic-specific provider was used
-        Assert.NotNull(usedProvider);
-        Assert.Equal(epicProviderId, usedProvider!.Id);
+        Assert.Equal(BackendLabel, _service.DrawerState.Labels);
     }
 
     // ── DispatchDecompositionAsync — phase type selection ──
@@ -249,11 +217,9 @@ public class EpicDrawerServiceTests
     [Fact]
     public async Task DispatchFromEpicDrawerAsync_ClosesDrawer_OnSuccess()
     {
-        _service.SetProviderContext(IssueProviders);
-
         var template = MakeTemplate();
         SetupIssueProviderForEpic(items: new[] { MakeEpic("e-1", "agent:epic") });
-        await _service.OpenEpicDrawerAsync("t-1", new[] { template }, new List<PipelineProject>());
+        await _service.OpenEpicDrawerAsync("t-1", new[] { template });
         Assert.True(_service.DrawerState.IsOpen);
 
         _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
@@ -289,18 +255,14 @@ public class EpicDrawerServiceTests
 
     // ── Helpers ──
 
-    private void SetupIssueProviderForEpic(IEnumerable<IssueSummary>? items = null)
-    {
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+    /// <summary>Makes the API return <paramref name="items"/> as the template's epics.</summary>
+    private void SetupIssueProviderForEpic(IEnumerable<IssueSummary>? items = null) =>
+        _mockBrowse.Setup(b => b.GetEpicsAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = (items ?? Enumerable.Empty<IssueSummary>()).ToList(),
                 HasMore = false, Page = 1, PageSize = 8
             });
-        mockProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-    }
 
     private static JobDistributionRequest CreateMinimalRequest(WorkItemTaskType taskType = WorkItemTaskType.Decomposition) => new()
     {

@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -7,7 +8,8 @@ namespace CodingAgent.Web.Services;
 
 /// <summary>
 /// Manages the epic dispatch drawer lifecycle: loading epics with deduplication,
-/// label filtering, pagination, and decomposition dispatch.
+/// label filtering, pagination, and decomposition dispatch. The API browses the epic tracker
+/// (spec 051 2.3b, <see cref="IUiBrowseClient"/>); dispatch still runs here until 2.3c.
 /// Owns and constructs the underlying DrawerStateService&lt;IssueSummary&gt; for epic items.
 /// Registered as Scoped (one instance per Blazor circuit).
 /// </summary>
@@ -15,16 +17,16 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
 {
     private static readonly ILogger Logger = Log.ForContext<EpicDrawerService>();
 
-    private readonly IProviderFactory _providerFactory;
+    private readonly IUiBrowseClient _browse;
     private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _epicDrawer;
 
     public EpicDrawerService(
-        IProviderFactory providerFactory,
+        IUiBrowseClient browse,
         IDispatchOrchestrationService dispatchOrchestration)
     {
-        _providerFactory = providerFactory;
+        _browse = browse;
         _dispatchOrchestration = dispatchOrchestration;
 
         _epicDrawer = new DrawerStateService<IssueSummary>(
@@ -43,13 +45,12 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
 
     public DrawerStateService<IssueSummary> DrawerState => _epicDrawer;
 
-    // ── Cached context (set at open/switch time) ──
-
-    private IReadOnlyList<ProviderConfig>? _cachedIssueProviders;
-    private IReadOnlyList<PipelineProject>? _cachedProjects;
-
     // ── Data loading ──
 
+    /// <summary>
+    /// Loads a page of the new and the approved epics. The API lists them from the project's epic
+    /// tracker, otherwise the template's own, and merges the two lists (spec 051 2.3b).
+    /// </summary>
     public async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template, int page = 1)
     {
         _epicDrawer.Loading = true;
@@ -57,27 +58,10 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
         var ct = _epicDrawer.CancellationToken;
         try
         {
-            var epicProviderId = EpicTrackerFor(template, GetParentProject(template.Id));
-            var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == epicProviderId);
-            if (providerConfig == null) { _epicDrawer.Loading = false; return "Epic issue provider not found."; }
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-
-            var epicLabels = new List<string> { AgentLabels.Epic };
-            if (_epicDrawer.SelectedLabels.Count > 0)
-                epicLabels.AddRange(_epicDrawer.SelectedLabels);
-
-            var approvedLabels = new List<string> { AgentLabels.EpicApproved };
-            if (_epicDrawer.SelectedLabels.Count > 0)
-                approvedLabels.AddRange(_epicDrawer.SelectedLabels);
-
-            var epicResult = await provider.ListOpenIssuesAsync(page, 8, epicLabels, ct);
-            var approvedResult = await provider.ListOpenIssuesAsync(page, 8, approvedLabels, ct);
-
-            _epicDrawer.Items = epicResult.Items.Concat(approvedResult.Items)
-                .GroupBy(i => i.Identifier)
-                .Select(g => g.First())
-                .ToList();
-            _epicDrawer.HasMore = epicResult.HasMore || approvedResult.HasMore;
+            var labels = _epicDrawer.SelectedLabels.Count > 0 ? _epicDrawer.SelectedLabels.ToList() : null;
+            var result = await _browse.GetEpicsAsync(template.Id, page, labels, ct);
+            _epicDrawer.Items = result.Items.ToList();
+            _epicDrawer.HasMore = result.HasMore;
             return null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -85,6 +69,8 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
             _epicDrawer.Items.Clear();
             return null;
         }
+        // The API's reason is the message to show ("Epic issue provider not found.", "Failed to load epics: …").
+        catch (InvalidOperationException ex) { _epicDrawer.Items.Clear(); return ex.Message; }
         catch (Exception ex) { _epicDrawer.Items.Clear(); return $"Failed to load epics: {ex.Message}"; }
         finally { _epicDrawer.Loading = false; }
     }
@@ -94,12 +80,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
         var ct = _epicDrawer.CancellationToken;
         try
         {
-            var epicProviderId = EpicTrackerFor(template, GetParentProject(template.Id));
-            var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == epicProviderId);
-            if (providerConfig == null) return null;
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(ct);
-            _epicDrawer.Labels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
+            _epicDrawer.Labels = (await _browse.GetEpicLabelsAsync(template.Id, ct)).ToList();
             return null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -117,9 +98,6 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
         _epicDrawer.HasMore = false;
         _epicDrawer.SelectedLabels.Clear();
     }
-
-    private PipelineProject? GetParentProject(string templateId)
-        => _cachedProjects?.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
 
     /// <summary>
     /// The tracker the drawer lists epics from: the project's epic tracker when it has one, otherwise the
@@ -175,10 +153,8 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     public async Task<string?> OpenEpicDrawerAsync(
         TemplateId templateId,
         IReadOnlyList<PipelineJobTemplate> templates,
-        IReadOnlyList<PipelineProject> projects,
         Func<Task>? notifyStateChanged = null)
     {
-        _cachedProjects = projects;
         var template = templates.FirstOrDefault(t => t.Id == templateId.Value);
         if (template == null) return null;
         return await _epicDrawer.OpenAsync(template, notifyStateChanged);
@@ -189,10 +165,8 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     public Task<string?> SwitchToEpicDrawerAsync(
         TemplateId templateId,
         IReadOnlyList<PipelineJobTemplate> templates,
-        IReadOnlyList<PipelineProject> projects,
         Func<Task>? notifyStateChanged = null)
     {
-        _cachedProjects = projects;
         return _epicDrawer.SwitchAsync(templateId, notifyStateChanged,
             () => _epicDrawer.Items.Count > 0,
             async (id, ns) =>
@@ -226,13 +200,6 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     // ── Cross-drawer coordination ──
 
     public void Hide() => _epicDrawer.IsOpen = false;
-
-    // ── Provider context injection ──
-
-    internal void SetProviderContext(IReadOnlyList<ProviderConfig> issueProviders)
-    {
-        _cachedIssueProviders = issueProviders;
-    }
 
     // ── IDisposable ──
 

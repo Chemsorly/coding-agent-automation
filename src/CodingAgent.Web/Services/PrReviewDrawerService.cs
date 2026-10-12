@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -7,7 +8,8 @@ namespace CodingAgent.Web.Services;
 
 /// <summary>
 /// Manages the PR review dispatch drawer lifecycle: loading pull requests,
-/// label filtering, pagination, and dispatch.
+/// label filtering, pagination, and dispatch. The API browses the repository (spec 051 2.3b,
+/// <see cref="IUiBrowseClient"/>); dispatch still runs here until 2.3c.
 /// Owns and constructs the underlying DrawerStateService&lt;PullRequestSummary&gt;.
 /// Registered as Scoped (one instance per Blazor circuit).
 /// </summary>
@@ -15,16 +17,16 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
 {
     private static readonly ILogger Logger = Log.ForContext<PrReviewDrawerService>();
 
-    private readonly IProviderFactory _providerFactory;
+    private readonly IUiBrowseClient _browse;
     private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<PullRequestSummary> _prDrawer;
 
     public PrReviewDrawerService(
-        IProviderFactory providerFactory,
+        IUiBrowseClient browse,
         IDispatchOrchestrationService dispatchOrchestration)
     {
-        _providerFactory = providerFactory;
+        _browse = browse;
         _dispatchOrchestration = dispatchOrchestration;
 
         _prDrawer = new DrawerStateService<PullRequestSummary>(
@@ -51,21 +53,8 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         var ct = _prDrawer.CancellationToken;
         try
         {
-            var repoConfig = _cachedRepoProviders?.FirstOrDefault(p => p.Id == template.RepoProviderId);
-            if (repoConfig == null)
-            {
-                _prDrawer.Items = new();
-                _prDrawer.Loading = false;
-                Logger.Warning(
-                    "LoadPrDrawerPageAsync: repo provider {ProviderId} not found in cached providers (count={Count}). " +
-                    "This usually means SetProviderContext was not called before opening the drawer.",
-                    template.RepoProviderId,
-                    _cachedRepoProviders?.Count ?? -1);
-                return "Repository provider configuration not loaded. Try closing and reopening the PR browser.";
-            }
-            await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-            var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, ct);
+            var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels.ToList() : null;
+            var result = await _browse.GetPullRequestsAsync(template.Id, page, labels, ct);
             _prDrawer.Items = result.Items.ToList();
             _prDrawer.HasMore = result.HasMore;
             return null;
@@ -75,20 +64,19 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
             _prDrawer.Items = new();
             return null;
         }
+        // The API's reason is the message to show ("Repository provider not found…", "Failed to load pull requests: …").
+        catch (InvalidOperationException ex) { _prDrawer.Items = new(); return ex.Message; }
         catch (Exception ex) { _prDrawer.Items = new(); return $"Failed to load pull requests: {ex.Message}"; }
         finally { _prDrawer.Loading = false; }
     }
 
+    /// <summary>The PR drawer filters by the labels of the template's issue tracker, as the issue drawer does.</summary>
     private async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
     {
         var ct = _prDrawer.CancellationToken;
         try
         {
-            var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) return null;
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(ct);
-            _prDrawer.Labels = labels.ToList();
+            _prDrawer.Labels = (await _browse.GetLabelsAsync(template.Id, ct)).ToList();
             return null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -110,11 +98,6 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         // HasMore but does not assert SelectedLabels.Clear().
         _prDrawer.ClearItems();
     }
-
-    // ── Cached provider context (set at open/switch time) ──
-
-    private IReadOnlyList<ProviderConfig>? _cachedIssueProviders;
-    private IReadOnlyList<ProviderConfig>? _cachedRepoProviders;
 
     // ── Dispatch ──
 
@@ -202,16 +185,6 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     // ── Cross-drawer coordination ──
 
     public void Hide() => _prDrawer.IsOpen = false;
-
-    // ── Provider context injection (called by coordinator before open/switch) ──
-
-    internal void SetProviderContext(
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders)
-    {
-        _cachedIssueProviders = issueProviders;
-        _cachedRepoProviders = repoProviders;
-    }
 
     // ── IDisposable ──
 
