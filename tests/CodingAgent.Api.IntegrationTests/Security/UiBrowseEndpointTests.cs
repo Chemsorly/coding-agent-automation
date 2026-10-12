@@ -168,6 +168,47 @@ public sealed class UiBrowseEndpointTests(ApiWebApplicationFactory factory)
     }
 
     [Fact]
+    public async Task TemplateBrowse_ReadinessPullRequestsAndEpics_RoundTripThroughTheClient()
+    {
+        await SeedTemplatesAsync();
+        var issues = IssuesOfT();
+        issues.Setup(p => p.ListOpenIssuesAsync(1, 15, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [new IssueSummary { Identifier = "9", Title = "Blocked", Labels = [], Description = "Depends on #4" }],
+                Page = 1, PageSize = 15, HasMore = false,
+            });
+        issues.Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        issues.Setup(p => p.ListOpenIssuesAsync(1, 8, It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains(AgentLabels.Epic)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [new IssueSummary { Identifier = "30", Title = "Epic", Labels = [AgentLabels.Epic] }], Page = 1, PageSize = 8, HasMore = false });
+        issues.Setup(p => p.ListOpenIssuesAsync(1, 8, It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains(AgentLabels.EpicApproved)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 8, HasMore = false });
+        issues.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(["backend", AgentLabels.Epic]);
+        var repository = new Mock<IRepositoryProvider>();
+        repository.Setup(r => r.ListOpenPullRequestsAsync(1, 15, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PullRequestSummary>
+            {
+                Items = [new PullRequestSummary { Identifier = "12", Number = 12, Title = "PR 12", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Description = "", Labels = [], IsDraft = true }],
+                Page = 1, PageSize = 15, HasMore = false,
+            });
+        Mock.Get(factory.Services.GetRequiredService<IProviderFactory>())
+            .Setup(f => f.CreateRepositoryProvider(It.Is<ProviderConfig>(c => c.Id == RepoProviderT)))
+            .Returns(repository.Object);
+        var client = Browse(TestUserTokens.Scoped(ProjectT, AccessRole.ReadOnly));
+
+        var readiness = await client.GetIssueReadinessAsync(TemplateT, 1, null);
+        var pullRequests = await client.GetPullRequestsAsync(TemplateT, 1, null);
+        var epics = await client.GetEpicsAsync(TemplateT, 1, null);
+        var epicLabels = await client.GetEpicLabelsAsync(TemplateT);
+
+        readiness["9"].IsReady.Should().BeFalse();
+        readiness["9"].BlockedBy.Should().Equal(4);
+        pullRequests.Items.Single().IsDraft.Should().BeTrue();
+        epics.Items.Select(e => e.Identifier).Should().Equal("30");
+        epicLabels.Should().Equal("backend");
+    }
+
+    [Fact]
     public async Task TemplateBrowse_AFailingProvider_ReachesThePageAsItsReason()
     {
         await SeedTemplatesAsync();
