@@ -33,7 +33,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  PipelineDbContext (EF Core)  — authoritative Postgres access               │
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
 │  DispatchLifecycleService: creates K8s Jobs                                 │
-│    (POST /api/work-items/{id}/dispatch, POST /api/work-items/dispatch)      │
+│    (POST /api/work-items/{id}/dispatch)                                     │
 │  DatabaseMaintenanceService (triggered by Scheduler via HTTP)              │
 │  ChatJobDispatcher + ChatSessionWatcher + ChatHeartbeatTracker             │
 │  No leader election lease                                                   │
@@ -267,43 +267,41 @@ Job Controller, or between the Orchestrator and Agent pods.
 
 ## PVC Dispatch Race in Multi-Replica Deployments
 
-Kiro agents mount a credential PVC from the configured pool (`KiroPvcPool`). Both dispatch endpoints pick
-it in `DispatchLifecycleService`: `QueryAvailablePvcsAsync` computes the free PVCs from the
-`ClaimedPvcName` of active WorkItems, and `SelectPvcAsync` takes one from that list under
-`_pvcSelectLock`. `_pvcSelectLock` is an in-process `SemaphoreSlim`, so it serialises requests within one
-API pod only. Redis (`signalr.redis.connectionString`) makes agent selection and run tracking safe across
-replicas, but it plays no part in PVC selection.
+Kiro agents mount a credential PVC from the configured pool (`KiroPvcPool`). Every dispatch picks it in
+`DispatchLifecycleService`: `QueryAvailablePvcsAsync` computes the free PVCs from the `ClaimedPvcName` of
+active WorkItems, and `SelectPvcAsync` takes one from that list under `_pvcSelectLock`. `_pvcSelectLock` is
+an in-process `SemaphoreSlim`, so it serialises requests within one API pod only. Redis
+(`signalr.redis.connectionString`) makes agent selection and run tracking safe across replicas, but it
+plays no part in PVC selection.
+
+All work, including a manual dispatch from the drawers and a re-dispatch from the Run page, is queued as
+`Pending` and started by one endpoint:
 
 | Endpoint | Caller | Cross-replica guard |
 |---|---|---|
-| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop`, for all queued work | Postgres advisory lock `dispatch-selector:{selector}`, held from before the PVC query until the WorkItem is `Dispatched`. A lock timeout (60 s) returns an empty `503`, counted as a `lock_timeout` dispatch attempt. |
-| `POST /api/work-items/dispatch` (`DispatchWorkItem`) | Web Run page re-dispatch | None: the PVC availability is read outside any lock. |
+| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop` | Postgres advisory lock `dispatch-selector:{selector}`, held from before the PVC query until the WorkItem is `Dispatched`. A lock timeout (60 s) returns an empty `503`, counted as a `lock_timeout` dispatch attempt. |
 
-### Remaining race windows
+The synchronous `POST /api/work-items/dispatch`, which the Run page's re-dispatch used and which took no
+lock, was removed in spec 051 2.3c.
 
-- **Synchronous dispatch across replicas.** Two `POST /api/work-items/dispatch` requests on different API
-  pods can both see a free PVC, both create a K8s Job and both claim the same PVC.
-- **Different selectors on the Pending path.** The advisory lock is keyed by selector, so two Kiro
-  selectors (for example `dotnet,kiro` and `python,kiro`) that draw from the same pool are not serialised
-  against each other.
+### Remaining race window
+
+- **Different selectors.** The advisory lock is keyed by selector, so two Kiro selectors (for example
+  `dotnet,kiro` and `python,kiro`) that draw from the same pool are not serialised against each other.
 
 ### Detection and cleanup
 
 After creating the Job, `HandleOrphanedJobIfRaceDetectedAsync` reloads the WorkItem. If another request
 already moved it on, the losing request releases its PVC and deletes its Job (best effort). If both reach
 `FinalizeDispatchAsync`, the EF concurrency token fails one `SaveChangesAsync`; its Job is orphaned and
-the ReconciliationService removes it. On the synchronous endpoint a failed dispatch returns `503`, and
-`SafelyCancelOrphanedDispatchedWorkItemAsync` moves the orphaned `Dispatched` row to `Failed`
-(`InfrastructureFailure`).
+the ReconciliationService removes it.
 
-A `503` is transient. The Scheduler retries Pending work on its next cycle; on the Run page the operator
-sees the error and can re-dispatch.
+A `503` is transient: the item stays `Pending`, and the Scheduler retries it on its next cycle.
 
 ### Improvement path
 
-Keying the advisory lock by PVC pool instead of by selector would close the cross-selector window, and
-taking the same lock in `DispatchWorkItem` would close the synchronous one. Both lengthen the time
-dispatches for unrelated selectors wait on each other.
+Keying the advisory lock by PVC pool instead of by selector would close the cross-selector window. It
+lengthens the time dispatches for unrelated selectors wait on each other.
 
 ## Anti-patterns — Don't Do This
 

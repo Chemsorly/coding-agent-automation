@@ -50,6 +50,7 @@ GET /api/ui/projects -> Ui: Ui.AnyAccess
 GET /api/ui/projects/{projectId}/templates -> Ui: Ui.AnyAccess
 GET /api/ui/runs -> Ui: Ui.AnyAccess
 GET /api/ui/runs/{runId:guid} -> Ui: Ui.AnyAccess
+POST /api/ui/runs/{runId:guid}/redispatch -> Ui: Ui.AnyAccess, Ui.AnyOperator
 GET /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
 PUT /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
 DELETE /api/ui/settings/agent-profiles/{id} -> Ui: Ui.Admin, Ui.AnyAccess
@@ -101,7 +102,6 @@ GET /api/work-items/active -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/active-decomposition-count -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/active-identifiers -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/counts-by-status -> Service: AgentApiKey, OperatorApiKey
-POST /api/work-items/dispatch -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/is-distributed -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/pending -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/staleness -> Service: AgentApiKey, OperatorApiKey

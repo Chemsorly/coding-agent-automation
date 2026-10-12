@@ -60,18 +60,6 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     Task<int> GetActiveDecompositionCountAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Calls <c>POST /api/work-items/dispatch</c> to synchronously dispatch a work item:
-    /// PVC selection, K8s Job creation, and <c>Dispatched</c> state write happen atomically
-    /// in the API. Returns the new WorkItem ID on success.
-    /// Throws <see cref="System.Net.Http.HttpRequestException"/> with:
-    ///   <list type="bullet">
-    ///     <item>409 Conflict — concurrency limit reached or issue ineligible.</item>
-    ///     <item>503 Service Unavailable — no PVC available or K8s failure.</item>
-    ///   </list>
-    /// </summary>
-    Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default);
-
-    /// <summary>
     /// Calls <c>POST /api/work-items/{id}/dispatch</c> to dispatch an existing Pending WorkItem by CAS.
     /// Claims the item (Pending→Dispatched) and creates the K8s Job atomically.
     /// Returns a <see cref="DispatchPendingResult"/> indicating the outcome:

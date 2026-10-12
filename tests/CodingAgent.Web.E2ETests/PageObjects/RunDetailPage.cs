@@ -237,20 +237,15 @@ public sealed class RunDetailPage
     }
 
     /// <summary>
-    /// Waits until "Re-dispatched successfully" is shown on the page.
+    /// Waits until the re-dispatch success message ("⏳ Queued #…") is shown and returns its text.
     /// </summary>
-    /// TODO [WARNING]: This method uses `:has-text('Re-dispatched successfully')` with no element
-    /// type qualifier, so it matches every ancestor DOM node that contains that text (including
-    /// `<body>`, `<div>`, etc.). This is functionally equivalent for a success assertion but would
-    /// also resolve against a broader match if the text appeared in an unrelated context. Consider
-    /// scoping to the specific container, e.g. `[data-testid='redispatch-card'] :has-text(...)`,
-    /// once the element structure is stable.
-    public async Task WaitForRedispatchSuccessAsync(TimeSpan? timeout = null)
+    public async Task<string> WaitForRedispatchSuccessAsync(TimeSpan? timeout = null)
     {
         var effectiveTimeout = (int)(timeout ?? TimeSpan.FromSeconds(15)).TotalMilliseconds;
-        await _page.WaitForSelectorAsync(
-            ":has-text('Re-dispatched successfully')",
+        var success = await _page.WaitForSelectorAsync(
+            "[data-testid='redispatch-success']",
             new() { Timeout = effectiveTimeout });
+        return await success!.InnerTextAsync();
     }
 
     /// <summary>

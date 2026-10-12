@@ -14,9 +14,10 @@ namespace CodingAgent.Api.IntegrationTests.Dispatch;
 /// These cover what the web's IssueDrawerServiceTests, PrReviewDrawerServiceTests and
 /// EpicDrawerServiceTests covered at the provider level. The issue or pull request is now read from the
 /// provider, not taken from the browser: the force-requeue of a blocking label, the epic-review and
-/// dependency refusals, the epic phase and tracker, and the messages.
+/// dependency refusals, the epic phase and tracker, and the messages. The RunPage's re-dispatch, which
+/// now queues the run, is covered at the end.
 /// </summary>
-public class TemplateDispatchServiceTests
+public class ManualDispatchServiceTests
 {
     private static readonly PipelineJobTemplate Template = new() { Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", BrainProviderId = "brain-1" };
     private static readonly ProviderConfig IssueTracker = new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Issues" };
@@ -24,6 +25,7 @@ public class TemplateDispatchServiceTests
     private static readonly ProviderConfig Repository = new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" };
     private static readonly PipelineProject Project = new() { Id = "8f0d5c1e-0000-0000-0000-000000000001", Name = "P", TemplateIds = ["t-1"] };
 
+    private readonly Mock<IProjectStore> _projects = new();
     private readonly Mock<IProviderConfigStore> _configs = new();
     private readonly Mock<IProviderFactory> _factory = new();
     private readonly Mock<IDependencyChecker> _dependencies = new();
@@ -37,8 +39,9 @@ public class TemplateDispatchServiceTests
         TaskType = WorkItemTaskType.Implementation, AgentSelector = "dotnet", TimeoutSeconds = 3600, ProviderConfigs = []
     };
 
-    public TemplateDispatchServiceTests()
+    public ManualDispatchServiceTests()
     {
+        _projects.Setup(p => p.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Project]);
         _configs.Setup(c => c.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>())).ReturnsAsync(IssueTracker);
         _configs.Setup(c => c.GetProviderConfigByIdAsync("epic-ip", ProviderKind.Issue, It.IsAny<CancellationToken>())).ReturnsAsync(EpicTracker);
         _configs.Setup(c => c.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>())).ReturnsAsync(Repository);
@@ -54,7 +57,7 @@ public class TemplateDispatchServiceTests
         Distributes(success: true);
     }
 
-    private TemplateDispatchService Service() => new(_configs.Object, _factory.Object, _dependencies.Object, _orchestration.Object);
+    private ManualDispatchService Service() => new(_projects.Object, _configs.Object, _factory.Object, _dependencies.Object, _orchestration.Object);
 
     private static BrowseTemplate Target(PipelineProject? project = null) => new(Template, project ?? Project);
 
@@ -94,7 +97,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchIssueAsync(Target(), "42", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>())
+        (await act.Should().ThrowAsync<DispatchRefusedException>())
             .WithMessage("Cannot dispatch — issue is blocked by open dependencies: #5, https://example.test/issues/6");
         _orchestration.VerifyNoOtherCalls();
     }
@@ -106,7 +109,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchIssueAsync(Target(), "42", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("Template references providers that no longer exist.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Template references providers that no longer exist.");
     }
 
     [Fact]
@@ -128,7 +131,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchIssueAsync(Target(), "42", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("*orchestration preparation failed*");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("*orchestration preparation failed*");
     }
 
     [Fact]
@@ -181,7 +184,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchIssueAsync(Target(), "99", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("*human approval*epic approval workflow*");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("*human approval*epic approval workflow*");
         _issues.Verify(t => t.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _issues.Verify(t => t.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _orchestration.VerifyNoOtherCalls();
@@ -196,7 +199,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchIssueAsync(Target(), "42", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage($"Could not clear blocking label '{AgentLabels.Error}' before dispatch — *");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage($"Could not clear blocking label '{AgentLabels.Error}' before dispatch — *");
         _orchestration.VerifyNoOtherCalls();
     }
 
@@ -209,7 +212,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchIssueAsync(Target(), "42", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("Could not dispatch — distribution failed.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Could not dispatch — distribution failed.");
         _issues.Verify(t => t.AddLabelAsync(It.Is<IssueIdentifier>(i => i.Value == "42"), AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -240,7 +243,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchPullRequestAsync(Target(), 7, CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("PR #7 is not open.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("PR #7 is not open.");
         _orchestration.VerifyNoOtherCalls();
     }
 
@@ -251,7 +254,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchPullRequestAsync(Target(), 7, CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("Template references providers that no longer exist.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Template references providers that no longer exist.");
     }
 
     [Fact]
@@ -265,7 +268,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchPullRequestAsync(Target(), 7, CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("PR #7 is already being processed or queued.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("PR #7 is already being processed or queued.");
     }
 
     // ── Epics ──
@@ -306,7 +309,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchEpicAsync(Target(project), "e-1", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("The project's epic issue provider no longer exists.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("The project's epic issue provider no longer exists.");
     }
 
     [Fact]
@@ -316,7 +319,7 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchEpicAsync(Target(), "e-1", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("Template references providers that no longer exist.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Template references providers that no longer exist.");
     }
 
     [Fact]
@@ -327,6 +330,84 @@ public class TemplateDispatchServiceTests
 
         var act = () => Service().DispatchEpicAsync(Target(), "e-1", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<TemplateDispatchException>()).WithMessage("Could not dispatch — epic is already being processed or queued, or no agents are available.");
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Could not dispatch — epic is already being processed or queued, or no agents are available.");
+    }
+
+    // ── Re-dispatch ──
+
+    private static PipelineRunSummary FailedRun(
+        string? projectId = "8F0D5C1E-0000-0000-0000-000000000001", PipelineStep finalStep = PipelineStep.Failed,
+        PipelineRunType runType = PipelineRunType.Implementation, string? issueProvider = "ip-1") => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        IssueIdentifier = "42",
+        IssueTitle = "Issue 42",
+        FinalStep = finalStep,
+        RunType = runType,
+        IssueProviderConfigId = issueProvider,
+        RepoProviderConfigId = "rp-1",
+        BrainProviderConfigId = "brain-1",
+        PipelineProviderConfigId = "ci-1",
+        ProjectId = projectId,
+    };
+
+    [Fact]
+    public async Task RedispatchRunAsync_QueuesTheRunsIssue_WithItsProvidersAndProject()
+    {
+        var message = await Service().RedispatchRunAsync(FailedRun(), CancellationToken.None);
+
+        message.Should().Be("⏳ Queued #42 — the job controller will start an agent pod for it");
+        _orchestration.Verify(o => o.PrepareDistributionRequestAsync(It.Is<ImplementationDispatchOrchestrationRequest>(r =>
+            r.IssueIdentifier.Value == "42" && r.IssueProviderId.Value == "ip-1" && r.RepoProviderId.Value == "rp-1"
+            && r.BrainProviderId == "brain-1" && r.PipelineProviderId == "ci-1" && r.InitiatedBy == InitiatedByConstants.Manual
+            && r.Project == Project), It.IsAny<CancellationToken>()), Times.Once);
+        _orchestration.Verify(o => o.DistributeAndFinalizeAsync(_prepared, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RedispatchRunAsync_OfARunWithoutAProject_QueuesUnderAnUnnamedOne()
+    {
+        await Service().RedispatchRunAsync(FailedRun(projectId: null), CancellationToken.None);
+
+        _orchestration.Verify(o => o.PrepareDistributionRequestAsync(
+            It.Is<ImplementationDispatchOrchestrationRequest>(r => r.Project.Id == "" && r.Project.Name == "Unknown"), It.IsAny<CancellationToken>()), Times.Once);
+        _projects.Verify(p => p.LoadProjectsAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(PipelineStep.Completed, PipelineRunType.Implementation, "ip-1")]
+    [InlineData(PipelineStep.Failed, PipelineRunType.Review, "ip-1")]
+    [InlineData(PipelineStep.Failed, PipelineRunType.Implementation, null)]
+    public async Task RedispatchRunAsync_OfARunThatCannotBeRedispatched_IsRefused(PipelineStep finalStep, PipelineRunType runType, string? issueProvider)
+    {
+        var run = FailedRun(finalStep: finalStep, runType: runType, issueProvider: issueProvider);
+
+        var act = () => Service().RedispatchRunAsync(run, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Only a failed, cancelled or conflicted implementation run can be re-dispatched.");
+        _orchestration.VerifyNoOtherCalls();
+    }
+
+    /// <summary>The drawers count a live item as queued; a re-dispatch created no run, so it is refused.</summary>
+    [Fact]
+    public async Task RedispatchRunAsync_WhenTheIssueAlreadyHasLiveWork_IsRefused()
+    {
+        _orchestration.Setup(o => o.DistributeAndFinalizeAsync(_prepared, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, true, null) { AlreadyExists = true });
+
+        var act = () => Service().RedispatchRunAsync(FailedRun(), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Issue #42 already has queued or running work.");
+    }
+
+    [Fact]
+    public async Task RedispatchRunAsync_WhenThePreparationFails_IsRefused()
+    {
+        _orchestration.Setup(o => o.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDistributionRequest?)null);
+
+        var act = () => Service().RedispatchRunAsync(FailedRun(), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("*orchestration preparation failed*");
     }
 }

@@ -178,15 +178,6 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
                     return runId;
                 return Guid.NewGuid();
             });
-        // Consolidation → DispatchAsync (synchronous path)
-        mockApiClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((JobDistributionRequest req, CancellationToken _) =>
-            {
-                if (!string.IsNullOrEmpty(req.RunId) && Guid.TryParse(req.RunId, out var runId))
-                    return runId;
-                return Guid.NewGuid();
-            });
         return new KubernetesWorkDistributor(
             mockApiClient.Object,
             NullLogger<KubernetesWorkDistributor>.Instance);

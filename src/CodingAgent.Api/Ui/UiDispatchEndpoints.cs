@@ -23,17 +23,17 @@ internal static class UiDispatchEndpoints
 
     /// <summary>POST …/issues/{issueIdentifier}/dispatch — the issue, for implementation.</summary>
     internal static Task<IResult> DispatchIssue(
-        string templateId, string issueIdentifier, IUserAccess access, TemplateBrowseService browse, TemplateDispatchService dispatch, CancellationToken ct) =>
+        string templateId, string issueIdentifier, IUserAccess access, TemplateBrowseService browse, ManualDispatchService dispatch, CancellationToken ct) =>
         DispatchAsync(templateId, access, browse, template => dispatch.DispatchIssueAsync(template, issueIdentifier, CancellationToken.None), ct);
 
     /// <summary>POST …/pull-requests/{number}/dispatch — the open pull request, for review.</summary>
     internal static Task<IResult> DispatchPullRequest(
-        string templateId, int number, IUserAccess access, TemplateBrowseService browse, TemplateDispatchService dispatch, CancellationToken ct) =>
+        string templateId, int number, IUserAccess access, TemplateBrowseService browse, ManualDispatchService dispatch, CancellationToken ct) =>
         DispatchAsync(templateId, access, browse, template => dispatch.DispatchPullRequestAsync(template, number, CancellationToken.None), ct);
 
     /// <summary>POST …/epics/{issueIdentifier}/dispatch — the epic, for analysis or, once approved, decomposition.</summary>
     internal static Task<IResult> DispatchEpic(
-        string templateId, string issueIdentifier, IUserAccess access, TemplateBrowseService browse, TemplateDispatchService dispatch, CancellationToken ct) =>
+        string templateId, string issueIdentifier, IUserAccess access, TemplateBrowseService browse, ManualDispatchService dispatch, CancellationToken ct) =>
         DispatchAsync(templateId, access, browse, template => dispatch.DispatchEpicAsync(template, issueIdentifier, CancellationToken.None), ct);
 
     /// <summary>
@@ -53,7 +53,7 @@ internal static class UiDispatchEndpoints
         {
             return TypedResults.Ok(await dispatch(template));
         }
-        catch (TemplateDispatchException ex)
+        catch (DispatchRefusedException ex)
         {
             return TypedResults.Json(ex.Message, statusCode: StatusCodes.Status409Conflict);
         }

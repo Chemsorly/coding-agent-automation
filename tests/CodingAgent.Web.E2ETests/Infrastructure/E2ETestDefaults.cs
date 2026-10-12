@@ -163,8 +163,8 @@ internal static class E2ETestDefaults
               providerType: "opencode"
               maxConcurrent: 5
             # ── Test-only selectors ─────────────────────────────────────────────────
-            # The synchronous dispatch endpoint (POST /api/work-items/dispatch, issue #2322)
-            # requires a matching JobTemplate or it returns 409 before any WorkItem is written.
+            # Dispatching a Pending work item (POST /api/work-items/{id}/dispatch) needs a matching
+            # JobTemplate, or the item is deferred with "no_template".
             # Each test class that seeds its own AgentProfile uses a unique MatchLabels value
             # (e.g. "db-e2e", "edge-e2e") to isolate its dispatches from other parallel tests.
             # These labels don't correspond to real images; providerType "opencode" is used so

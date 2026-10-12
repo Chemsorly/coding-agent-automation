@@ -165,9 +165,9 @@ public sealed class FakeJobController : IAsyncDisposable
                 await fakeAgent.StartAssignedWorkItemAsync(item.Id, ct);
         }
 
-        // ── Synchronous-dispatch path: Dispatched items (issue #2322) ─────────────────────
-        // The new POST /api/work-items/dispatch endpoint writes WorkItems directly as Dispatched
-        // without going through Pending, so the Pending poll above never sees them.
+        // ── Dispatched items ─────────────────────────────────────────────────────────────
+        // Items that are already Dispatched (seeded so by a test, or claimed elsewhere) never
+        // show up in the Pending poll above.
         // Poll GetActiveAsync with a large negative olderThanSeconds so the cutoff is far in the
         // future, matching all active items regardless of when they were dispatched.
         var active = await _workItems.GetActiveAsync(olderThanSeconds: -3600, ct: ct);

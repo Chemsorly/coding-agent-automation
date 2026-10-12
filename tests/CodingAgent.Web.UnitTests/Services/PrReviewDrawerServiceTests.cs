@@ -10,7 +10,7 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// pagination, dispatch, and close-on-success behavior.
 /// Each test constructs PrReviewDrawerService with only its own dependencies. Since spec 051 2.3b and
 /// 2.3c the API lists and dispatches the pull requests (<see cref="IUiBrowseClient"/>,
-/// <see cref="IUiDispatchClient"/>); its TemplateBrowseServiceTests and TemplateDispatchServiceTests cover that.
+/// <see cref="IUiDispatchClient"/>); its TemplateBrowseServiceTests and ManualDispatchServiceTests cover that.
 /// </summary>
 public class PrReviewDrawerServiceTests
 {

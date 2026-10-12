@@ -36,16 +36,16 @@ public class RunPageComponentTests : BunitContext
     /// <summary>
     /// Registers all services required by RunPage into bUnit's service collection,
     /// configured so that GetRunAsync returns the provided summary and the page renders
-    /// in a completed (non-live) state. Uses a default (no-setup) WorkItems mock.
+    /// in a completed (non-live) state.
     /// </summary>
     private void RegisterServices(PipelineRunSummary summary)
-        => RegisterServices(summary, new Mock<IPipelineApiWorkItemClient>());
+        => RegisterServices(summary, new Mock<CodingAgent.Web.Ui.IUiRunClient>());
 
     /// <summary>
-    /// Overload accepting a pre-configured IPipelineApiWorkItemClient mock, used by
-    /// re-dispatch tests that need to assert on DispatchAsync calls.
+    /// Overload accepting a pre-configured run client mock, used by re-dispatch tests that
+    /// set up and assert on RedispatchAsync.
     /// </summary>
-    private void RegisterServices(PipelineRunSummary summary, Mock<IPipelineApiWorkItemClient> mockWorkItems)
+    private void RegisterServices(PipelineRunSummary summary, Mock<CodingAgent.Web.Ui.IUiRunClient> mockRunHistory)
     {
         var mockHub = new Mock<IAgentHubConnection>();
         mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
@@ -59,7 +59,6 @@ public class RunPageComponentTests : BunitContext
             .Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
-        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory
             .Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, null));
@@ -72,7 +71,6 @@ public class RunPageComponentTests : BunitContext
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
-        Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
             c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
@@ -597,19 +595,12 @@ public class RunPageComponentTests : BunitContext
     }
 
     /// <summary>
-    /// Clicking Re-dispatch then Confirm must call WorkItems.DispatchAsync once with the
-    /// correct IssueIdentifier from the summary.
+    /// Clicking Re-dispatch then Confirm asks the API to queue the run again (spec 051 2.3c) and
+    /// shows the message it answers.
     /// </summary>
     [Fact]
-    public async Task ReDispatch_ClickConfirm_CallsDispatchAsync()
+    public async Task ReDispatch_ClickConfirm_QueuesTheRunThroughTheApi_AndShowsItsMessage()
     {
-        var dispatchedRequest = (JobDistributionRequest?)null;
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
-        mockWorkItems
-            .Setup(w => w.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<JobDistributionRequest, CancellationToken>((req, _) => dispatchedRequest = req)
-            .ReturnsAsync(Guid.NewGuid());
-
         var summary = new PipelineRunSummary
         {
             RunId = Guid.NewGuid().ToString(),
@@ -622,37 +613,29 @@ public class RunPageComponentTests : BunitContext
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
         };
-        RegisterServices(summary, mockWorkItems);
+        var runs = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        runs.Setup(r => r.RedispatchAsync(Guid.Parse(summary.RunId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("⏳ Queued #org/repo#2948 — the job controller will start an agent pod for it");
+        RegisterServices(summary, runs);
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
 
-        // Click the "Re-dispatch" button to show the confirm section
+        // Click the "Re-dispatch" button to show the confirm section, then confirm
         await cut.InvokeAsync(() => cut.Find("[data-testid='redispatch-btn']").Click());
-
-        // Click the "Confirm re-dispatch" button
         await cut.InvokeAsync(() => cut.Find("[data-testid='redispatch-confirm-btn']").Click());
 
-        // Verify DispatchAsync was called once with the correct IssueIdentifier
-        mockWorkItems.Verify(w => w.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        Assert.NotNull(dispatchedRequest);
-        Assert.Equal("org/repo#2948", (string)dispatchedRequest!.IssueIdentifier);
-        Assert.Equal("ip-1", dispatchedRequest.IssueProviderConfigId);
-        Assert.Equal("rp-1", dispatchedRequest.RepoProviderConfigId);
-        Assert.Equal(WorkItemTaskType.Implementation, dispatchedRequest.TaskType);
-        Assert.Equal(PipelineRunType.Implementation, dispatchedRequest.RunType);
+        runs.Verify(r => r.RedispatchAsync(Guid.Parse(summary.RunId), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal("⏳ Queued #org/repo#2948 — the job controller will start an agent pod for it",
+            cut.Find("[data-testid='redispatch-success']").TextContent);
+        Assert.Empty(cut.FindAll("[data-testid='redispatch-confirm-btn']"));
     }
 
     /// <summary>
-    /// When DispatchAsync throws, the page must render an error message and not crash.
+    /// When the API refuses the re-dispatch, the page shows its reason and does not crash.
     /// </summary>
     [Fact]
-    public async Task ReDispatch_DispatchFails_ShowsError()
+    public async Task ReDispatch_ApiRefuses_ShowsTheReason()
     {
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
-        mockWorkItems
-            .Setup(w => w.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new System.Net.Http.HttpRequestException("503 Service Unavailable"));
-
         var summary = new PipelineRunSummary
         {
             RunId = Guid.NewGuid().ToString(),
@@ -665,7 +648,10 @@ public class RunPageComponentTests : BunitContext
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
         };
-        RegisterServices(summary, mockWorkItems);
+        var runs = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        runs.Setup(r => r.RedispatchAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Issue #2948 already has queued or running work."));
+        RegisterServices(summary, runs);
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
 
@@ -673,17 +659,11 @@ public class RunPageComponentTests : BunitContext
         await cut.InvokeAsync(() => cut.Find("[data-testid='redispatch-btn']").Click());
         await cut.InvokeAsync(() => cut.Find("[data-testid='redispatch-confirm-btn']").Click());
 
-        // An error message must be rendered; the re-dispatch button must still be available
-        // TODO: [WARNING] The claim "re-dispatch button must still be available" is not asserted. After a
-        // failure _showRedispatchConfirm is still true so the confirm dialog (redispatch-confirm-btn) is
-        // visible, not the initial redispatch-btn. Assert that redispatch-confirm-btn is present so a
-        // regression that hides all re-dispatch UI on error would be caught.
-        // TODO: [WARNING] No assertion that the success banner is absent. An implementation that sets
-        // _redispatchSuccess=true on failure would show both callouts and still pass this test. Add
-        // Assert.Empty(cut.FindAll(".agent-detail-confirm")) to guard against that.
         var errorCallout = cut.Find(".summary-failure-callout");
-        Assert.NotNull(errorCallout);
         Assert.Contains("Re-dispatch failed", errorCallout.TextContent);
+        Assert.Contains("already has queued or running work", errorCallout.TextContent);
+        Assert.Empty(cut.FindAll("[data-testid='redispatch-success']"));
+        Assert.NotEmpty(cut.FindAll("[data-testid='redispatch-confirm-btn']"));
     }
 
     // ── Issue #2937: RunPage cancel confirmation ──────────────────────────────
@@ -719,8 +699,7 @@ public class RunPageComponentTests : BunitContext
     public void CancelRun_ClickCancelPipeline_ShowsConfirmation_NoCancelYet()
     {
         var runId = Guid.NewGuid().ToString();
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
-        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+        RegisterServices(MakeActiveSummary(runId));
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
 
@@ -745,11 +724,10 @@ public class RunPageComponentTests : BunitContext
     public async Task CancelRun_ClickConfirm_CallsCancelOnce()
     {
         var runId = Guid.NewGuid().ToString();
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
         _workItemActions
             .Setup(w => w.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+        RegisterServices(MakeActiveSummary(runId));
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
 
@@ -772,8 +750,7 @@ public class RunPageComponentTests : BunitContext
     public void CancelRun_ClickDismiss_HidesConfirmation_NoCancelCalled()
     {
         var runId = Guid.NewGuid().ToString();
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
-        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+        RegisterServices(MakeActiveSummary(runId));
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
 
@@ -799,11 +776,10 @@ public class RunPageComponentTests : BunitContext
     public async Task CancelRun_CancelFails_ShowsErrorCallout()
     {
         var runId = Guid.NewGuid().ToString();
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
         _workItemActions
             .Setup(w => w.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new System.Net.Http.HttpRequestException("503 Service Unavailable"));
-        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+        RegisterServices(MakeActiveSummary(runId));
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
 

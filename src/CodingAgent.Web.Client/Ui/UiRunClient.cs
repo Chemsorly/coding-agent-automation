@@ -14,6 +14,13 @@ public interface IUiRunClient
 
     /// <summary>The run and its agent provider's name, or null when it does not exist or the user cannot read it.</summary>
     Task<UiRunDetail?> GetRunAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Queues a new implementation run for the issue of a failed, cancelled or conflicted implementation run;
+    /// returns the message to show. A run that cannot be re-dispatched throws <see cref="InvalidOperationException"/>
+    /// with the reason.
+    /// </summary>
+    Task<string> RedispatchAsync(Guid runId, CancellationToken ct = default);
 }
 
 public sealed class UiRunClient(HttpClient http, IUiAccessTokenSource tokens) : UiApiClient(http, tokens), IUiRunClient
@@ -35,6 +42,9 @@ public sealed class UiRunClient(HttpClient http, IUiAccessTokenSource tokens) : 
 
     public Task<UiRunDetail?> GetRunAsync(Guid runId, CancellationToken ct = default) =>
         FindAsync($"/api/ui/runs/{runId}", UiJsonContext.Default.UiRunDetail, ct);
+
+    public Task<string> RedispatchAsync(Guid runId, CancellationToken ct = default) =>
+        SendForResultAsync(HttpMethod.Post, $"/api/ui/runs/{runId}/redispatch", null, UiJsonContext.Default.String, ct);
 }
 
 /// <summary>

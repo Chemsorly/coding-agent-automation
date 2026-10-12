@@ -9,7 +9,7 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// Tests for EpicDrawerService in isolation: epic loading with deduplication,
 /// label filtering, dispatch, close-on-success behavior.
 /// Each test constructs EpicDrawerService with only its own dependencies. The API picks the phase and
-/// the epic tracker (spec 051 2.3c); its TemplateDispatchServiceTests cover that.
+/// the epic tracker (spec 051 2.3c); its ManualDispatchServiceTests cover that.
 /// </summary>
 public class EpicDrawerServiceTests
 {

@@ -24,673 +24,6 @@ using Moq;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Tests for the synchronous <c>POST /api/work-items/dispatch</c> endpoint
-/// (<see cref="WorkItemDispatchEndpoints.DispatchWorkItem"/>).
-///
-/// <para>
-/// As of the Pending-queue restore (fix/restore-pending-queue), this endpoint is called by the
-/// Scheduler-side <c>WorkItemDispatchLoop</c>. The Scheduler creates a <c>Pending</c> WorkItem
-/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchLoop</c> then polls those items and calls
-/// <c>POST /api/work-items/dispatch</c> when capacity is available.
-/// </para>
-///
-/// Covers:
-/// <list type="number">
-///   <item><c>POST /api/work-items/dispatch</c> endpoint handler — concurrency gating, PVC gating, success path.</item>
-///   <item>Transition state machine: <c>Pending→Dispatched</c> remains valid (used by this endpoint).</item>
-/// </list>
-/// </summary>
-public sealed class SynchronousDispatchEndpointTests
-{
-    private readonly string _dbName = $"dispatch-test-{Guid.NewGuid():N}";
-
-    // ── Helpers ─────────────────────────────────────────────────────────────
-
-    private IDbContextFactory<PipelineDbContext> CreateDbFactory()
-    {
-        var opts = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase(_dbName)
-            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-        return new SimpleInMemoryDbContextFactory(opts);
-    }
-
-    private static JobTemplateStore CreateTemplateStore(
-        string labels = "kiro,dotnet",
-        int maxConcurrent = 5,
-        string providerType = "kiro") =>
-        JobTemplateStore.LoadFromYaml($"""
-            - labels: "{labels}"
-              image: "test-image:latest"
-              imagePullPolicy: "Always"
-              providerType: "{providerType}"
-              maxConcurrent: {maxConcurrent}
-            """);
-
-    private DispatchLifecycleService CreateLifecycleService(
-        IKubernetesJobClient? k8sClient = null,
-        IReadOnlyList<string>? pvcPool = null)
-    {
-        var dbFactory = CreateDbFactory();
-        var transitionSvc = new WorkItemTransitionService(
-            dbFactory,
-            Mock.Of<ILogger<WorkItemTransitionService>>());
-        var opts = new DispatchServiceOptions
-        {
-            Namespace = "test",
-            OrchestratorUrl = "http://test",
-            AgentApiKeySecretName = "secret",
-            AgentApiKeyValue = "test-master-key",
-            AgentServiceAccountName = "sa",
-            KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
-        };
-        return new DispatchLifecycleService(
-            k8sClient ?? Mock.Of<IKubernetesJobClient>(),
-            transitionSvc,
-            opts);
-    }
-
-    private static IOrchestratorRunService CreateRunService() =>
-        new OrchestratorRunService(Mock.Of<Serilog.ILogger>());
-
-    private static DispatchWorkItemService CreateDispatchService(
-        string labels = "kiro,dotnet",
-        int maxConcurrent = 5,
-        string providerType = "kiro") =>
-        new DispatchWorkItemService(CreateTemplateStore(labels, maxConcurrent, providerType));
-
-    private static JobDistributionRequest MakeRequest(
-        WorkItemTaskType taskType = WorkItemTaskType.Implementation,
-        string selector = "kiro,dotnet",
-        string? runId = null) => new()
-        {
-            IssueIdentifier = new IssueIdentifier($"issue-{Guid.NewGuid():N}"),
-            IssueProviderConfigId = "prov-1",
-            RepoProviderConfigId = "repo-1",
-            InitiatedBy = "test",
-            TaskType = taskType,
-            AgentSelector = selector,
-            TimeoutSeconds = 3600,
-            RunId = runId ?? Guid.NewGuid().ToString()
-        };
-
-    // ── Acceptance Criterion: Review dispatched successfully ─────────────────
-
-    [Fact]
-    public async Task DispatchWorkItem_ReviewRequest_Returns200_WithWorkItemId()
-    {
-        // Arrange: a Review request should succeed through the synchronous dispatch path
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        var request = MakeRequest(WorkItemTaskType.Review, "kiro,dotnet");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 200 OK with WorkItemId
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
-        okResult.Should().NotBeNull("dispatch should succeed for a Review request");
-
-        // Verify WorkItem was created in the DB as Dispatched
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
-        item.Should().NotBeNull();
-        item!.Status.Should().Be(WorkItemStatus.Dispatched, "synchronous dispatch creates item directly as Dispatched");
-    }
-
-    // ── Acceptance Criterion: 409 when concurrency limit reached ─────────────
-
-    [Fact]
-    public async Task DispatchWorkItem_WhenConcurrencyLimitReached_Returns409()
-    {
-        // Arrange: seed 2 active items (maxConcurrent=2 means limit reached)
-        var dbFactory = CreateDbFactory();
-        await using (var db = await dbFactory.CreateDbContextAsync())
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                db.WorkItems.Add(new WorkItemEntity
-                {
-                    Id = Guid.NewGuid(),
-                    TaskType = WorkItemTaskType.Implementation,
-                    IssueIdentifier = $"active-{i}",
-                    IssueProviderConfigId = "prov-1",
-                    Status = WorkItemStatus.Dispatched,
-                    AgentSelector = "kiro,dotnet",
-                    TimeoutSeconds = 3600,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    Payload = "{}"
-                });
-            }
-            await db.SaveChangesAsync();
-        }
-
-        var templateStore = CreateTemplateStore(maxConcurrent: 2);
-        var lifecycle = CreateLifecycleService();
-        var runService = CreateRunService();
-        var request = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 409 Conflict
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>();
-    }
-
-    /// <summary>
-    /// Follow-up to issue #2777. An item that <c>DispatchPendingWorkItem</c> dispatched through the profile
-    /// fallback is stored with its partial selector ("dotnet") but runs under the "dotnet,kiro" template. This
-    /// path has no fallback of its own, but its concurrency snapshot must still count that item under "dotnet,kiro".
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_ActiveItemStoredWithPartialSelector_CountsTowardTemplateLimit_Returns409()
-    {
-        // Arrange: one Running item stored as "dotnet" fills the "dotnet,kiro" template's maxConcurrent=1
-        var dbFactory = CreateDbFactory();
-        await using (var db = await dbFactory.CreateDbContextAsync())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = Guid.NewGuid(),
-                TaskType = WorkItemTaskType.Implementation,
-                IssueIdentifier = "active-via-fallback",
-                IssueProviderConfigId = "prov-1",
-                Status = WorkItemStatus.Running,
-                AgentSelector = "dotnet",
-                TimeoutSeconds = 3600,
-                CreatedAt = DateTimeOffset.UtcNow,
-                Payload = "{}"
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var templateStore = CreateTemplateStore("dotnet,kiro", maxConcurrent: 1);
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(ps => ps.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new AgentProfile
-                {
-                    DisplayName = "Kiro+Dotnet",
-                    AgentProviderConfigId = "agent-kiro",
-                    MatchLabels = ["dotnet", "kiro"],
-                    Enabled = true
-                }
-            });
-        var request = MakeRequest(WorkItemTaskType.Implementation, "dotnet,kiro");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, CreateRunService(), CreateLifecycleService(),
-            new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(profileStoreMock.Object, templateStore),
-            CancellationToken.None);
-
-        // Assert
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "the Running item stored as 'dotnet' runs under the 'dotnet,kiro' template and fills its maxConcurrent=1");
-    }
-
-    // ── Acceptance Criterion: 503 when no PVC available ──────────────────────
-
-    [Fact]
-    public async Task DispatchWorkItem_WhenNoPvcAvailable_Returns503()
-    {
-        // Arrange: "pvc-0" is the only PVC and it's claimed by an active item
-        var dbFactory = CreateDbFactory();
-        await using (var db = await dbFactory.CreateDbContextAsync())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = Guid.NewGuid(),
-                TaskType = WorkItemTaskType.Implementation,
-                IssueIdentifier = "pvc-holder",
-                IssueProviderConfigId = "prov-1",
-                Status = WorkItemStatus.Dispatched,
-                ClaimedPvcName = "pvc-0",
-                AgentSelector = "kiro,dotnet",
-                TimeoutSeconds = 3600,
-                CreatedAt = DateTimeOffset.UtcNow,
-                Payload = "{}"
-            });
-            await db.SaveChangesAsync();
-        }
-
-        // Only one PVC in pool and it's claimed
-        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0"]);
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var runService = CreateRunService();
-        var request = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 503 Service Unavailable
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull();
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
-    }
-
-    // ── Acceptance Criterion: 422 when no template for selector ─────────────
-
-    [Fact]
-    public async Task DispatchWorkItem_WhenNoTemplateForSelector_Returns422()
-    {
-        var dbFactory = CreateDbFactory();
-        // Template only has "kiro,dotnet", not "opencode,java"
-        var templateStore = CreateTemplateStore("kiro,dotnet");
-        var lifecycle = CreateLifecycleService();
-        var runService = CreateRunService();
-        var request = MakeRequest(WorkItemTaskType.Implementation, "opencode,java");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 422 Unprocessable Entity (permanent config error — no job template for selector).
-        // Distinct from 409 (transient capacity) so callers can distinguish permanent vs transient failures.
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull();
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status422UnprocessableEntity);
-    }
-
-    // ── Acceptance Criterion: PipelineRun registered in RunService ────────────
-
-    [Fact]
-    public async Task DispatchWorkItem_OnSuccess_RegistersPipelineRunInRunService()
-    {
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-        var runId = Guid.NewGuid();
-        var request = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet", runId: runId.ToString());
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
-        okResult.Should().NotBeNull();
-
-        // Assert: PipelineRun registered in RunService (for SignalR hub routing)
-        var run = runService.GetRun(new RunId(runId.ToString()));
-        run.Should().NotBeNull("PipelineRun must be registered so the UI can receive live run events");
-    }
-
-    // ── Acceptance Criterion: Review dispatched before Implementation (priority ordering) ─
-
-    [Fact]
-    public async Task DispatchWorkItem_ReviewRequest_CreatesWorkItem_AsReviewTaskType()
-    {
-        // This test verifies that the dispatch endpoint correctly handles Review task type.
-        // The Scheduler (not the dispatch endpoint) enforces priority ordering — it picks
-        // Review items first. This test verifies the endpoint correctly passes the task type
-        // through to the WorkItem.
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        var reviewRequest = MakeRequest(WorkItemTaskType.Review, "kiro,dotnet");
-        var implRequest = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-
-        // Act: dispatch Review request first (as Scheduler would select it first)
-        var reviewResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            reviewRequest, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: Review dispatched successfully as Dispatched
-        var reviewOk = reviewResult as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
-        reviewOk.Should().NotBeNull("Review dispatch should succeed");
-
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var reviewItem = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.Id == reviewOk!.Value);
-        reviewItem.Should().NotBeNull();
-        reviewItem!.TaskType.Should().Be(WorkItemTaskType.Review);
-        reviewItem.Status.Should().Be(WorkItemStatus.Dispatched);
-    }
-
-    /// <summary>
-    /// AC: A Review WorkItem is dispatched (K8s Job created) before a same-age or newer
-    /// Implementation WorkItem when capacity is constrained (maxConcurrent=1).
-    /// The Scheduler calls the dispatch endpoint with Review first — the endpoint must succeed
-    /// for Review and return 409 for Implementation (concurrency limit reached after Review).
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_ReviewDispatchedFirst_ImplementationBlockedByConcurrencyLimit()
-    {
-        // Arrange: single concurrency slot — only one item can be active at a time.
-        // The Scheduler picks Review first and dispatches it. The subsequent Implementation
-        // dispatch must be rejected (409) because the Review now occupies the slot.
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 1);
-
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        var reviewRequest = MakeRequest(WorkItemTaskType.Review, "kiro,dotnet");
-        var implRequest = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-
-        // Act: dispatch Review first (as the Scheduler's priority ordering guarantees)
-        var reviewResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            reviewRequest, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: Review is dispatched — K8s Job created, WorkItem=Dispatched
-        var reviewOk = reviewResult as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
-        reviewOk.Should().NotBeNull("Review dispatch must succeed (K8s Job created)");
-
-        k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Once, "K8s Job must be created for the Review WorkItem");
-
-        await using (var db = await dbFactory.CreateDbContextAsync())
-        {
-            var reviewItem = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == reviewOk.Value);
-            reviewItem.Should().NotBeNull();
-            reviewItem!.Status.Should().Be(WorkItemStatus.Dispatched, "Review must be Dispatched before Implementation is attempted");
-            reviewItem.TaskType.Should().Be(WorkItemTaskType.Review);
-        }
-
-        // Act: dispatch Implementation — concurrency limit is now reached (Review occupies the slot)
-        var implResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            implRequest, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: Implementation blocked by concurrency limit
-        implResult.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "Implementation must be blocked (409 Conflict) because Review already occupies the single concurrency slot");
-
-        // K8s still only has one Job (Review) — Implementation was never submitted
-        k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Once, "only the Review K8s Job must have been created — Implementation was rejected");
-    }
-
-    // ── Acceptance Criterion: PVC double-assignment — two concurrent calls, one PVC ───────
-
-    /// <summary>
-    /// AC: Two concurrent calls to <c>POST /api/work-items/dispatch</c> for the same single-PVC kiro
-    /// pool must result in exactly one 200 (Dispatched) and one 503 (no capacity). The
-    /// <see cref="DispatchLifecycleService._pvcSelectLock"/> serialises PVC selection so both calls
-    /// cannot claim the same PVC.
-    ///
-    /// Implementation note: The <c>DispatchWorkItem</c> handler takes a snapshot of available PVCs
-    /// BEFORE entering <c>ExecuteDispatchLifecycleAsync</c>. When two calls race, both snapshots may
-    /// show the PVC as available. Inside <c>ExecuteDispatchLifecycleAsync</c> the shared
-    /// <c>_pvcSelectLock</c> on the singleton <c>DispatchLifecycleService</c> serialises the actual
-    /// PVC claim: the first caller removes the PVC from the shared list; the second finds it empty and
-    /// returns without dispatching. The second call's Dispatched row (created before the lifecycle
-    /// is entered) is then cleaned up by <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c>.
-    /// This test verifies the single-process invariant: exactly one 200 and one 503, and the K8s
-    /// Job client called exactly once.
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_TwoConcurrentCalls_SinglePvcPool_OnlyOneSucceeds()
-    {
-        // Arrange: single PVC pool — "pvc-0" is the only available credential PVC.
-        // Both concurrent requests will see "pvc-0" as available before entering the lifecycle.
-        // The shared _pvcSelectLock inside DispatchLifecycleService ensures only one actually
-        // claims the PVC.
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 10, providerType: "kiro");
-
-        // Use a barrier to maximise concurrency: both tasks reach the K8s call simultaneously.
-        var k8sCallBarrier = new SemaphoreSlim(0, 1);
-        var k8sCallCount = 0;
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask)
-            .Callback(() => Interlocked.Increment(ref k8sCallCount));
-
-        // Single shared DispatchLifecycleService instance — _pvcSelectLock is on this instance.
-        var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: ["pvc-0"]);
-
-        var request1 = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-        var request2 = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-
-        // Act: both calls run concurrently, sharing the same lifecycle (same _pvcSelectLock).
-        var task1 = WorkItemDispatchEndpoints.DispatchWorkItem(
-            request1, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-        var task2 = WorkItemDispatchEndpoints.DispatchWorkItem(
-            request2, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        var results = await Task.WhenAll(task1, task2);
-
-        // Assert: exactly one 200 OK and one non-200 (503 or 409)
-        var okCount = results.Count(r => r is Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>);
-        var failCount = results.Count(r => r is Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult s
-            && s.StatusCode == StatusCodes.Status503ServiceUnavailable);
-
-        okCount.Should().Be(1, "exactly one concurrent dispatch must succeed with a single-PVC pool");
-        failCount.Should().Be(1, "the other concurrent dispatch must receive 503 (no PVC available)");
-
-        // K8s Job must be created exactly once — the PVC was not double-assigned
-        k8sCallCount.Should().Be(1, "only one K8s Job must be created — the PVC must not be double-assigned");
-
-        // Verify DB state: exactly one Dispatched WorkItem (the successful one)
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var dispatched = await db.WorkItems.AsNoTracking()
-            .Where(w => w.Status == WorkItemStatus.Dispatched)
-            .ToListAsync();
-        dispatched.Should().HaveCount(1, "exactly one WorkItem must be in Dispatched state");
-    }
-
-    // ── Coverage: K8s failure → !dispatched → 503 with orphan cleanup ────────
-
-    /// <summary>
-    /// When the K8s job creation throws, <c>ExecuteDispatchLifecycleAsync</c> transitions
-    /// the item to Failed internally (via <c>FailWorkItemAsync</c> in <c>CreateK8sJobAsync</c>)
-    /// and returns without calling <c>onDispatchSuccess</c>.
-    /// The endpoint must return 503 and the WorkItem must be in a terminal state (not Dispatched).
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_WhenK8sJobCreationFails_Returns503_AndCleansUpWorkItem()
-    {
-        // Arrange: K8s client throws on CreateJobAsync to simulate K8s API failure
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("K8s API unavailable"));
-
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-        var request = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 503 returned
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull("K8s failure must return 503");
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
-
-        // WorkItem must not remain in Dispatched state — it was cleaned up to Failed
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
-        item.Should().NotBeNull("WorkItem was created before K8s call");
-        item!.Status.Should().NotBe(WorkItemStatus.Dispatched,
-            "an orphaned Dispatched WorkItem must be cleaned up when K8s job creation fails");
-    }
-
-    // ── Coverage: non-kiro template (no PVC gate) happy path ────────────────
-
-    /// <summary>
-    /// Non-kiro templates (providerType != "kiro") skip the PVC availability check.
-    /// The endpoint must dispatch successfully without requiring a PVC.
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_NonKiroTemplate_SkipsPvcGate_Returns200()
-    {
-        // Arrange: non-kiro template — providerType is not "kiro"
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(labels: "opencode,python", maxConcurrent: 5, providerType: "opencode");
-
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        // Non-kiro lifecycle — no PVC pool needed
-        var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
-        var request = MakeRequest(WorkItemTaskType.Implementation, "opencode,python");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 200 OK — PVC gate was skipped for non-kiro template
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
-        okResult.Should().NotBeNull("non-kiro dispatch must succeed without a PVC");
-
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
-        item.Should().NotBeNull();
-        item!.Status.Should().Be(WorkItemStatus.Dispatched,
-            "non-kiro WorkItem must be Dispatched on success");
-    }
-
-    // ── TimeoutSeconds clamping (issue #2745) ─────────────────────────────────
-
-    /// <summary>
-    /// AC (issue #2745): POST /api/work-items/dispatch with TimeoutSeconds = 0 must store
-    /// <c>PipelineConstants.DefaultAgentTimeout</c> (1800s) rather than zero.
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_WithZeroTimeoutSeconds_StoresDefaultTimeoutSeconds()
-    {
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(
-                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        var request = MakeRequest() with { TimeoutSeconds = 0 };
-
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
-            "dispatch must succeed so we can verify the stored TimeoutSeconds");
-
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var item2 = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
-        item2.Should().NotBeNull();
-        item2!.TimeoutSeconds.Should().Be(
-            (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
-            "a zero TimeoutSeconds must be clamped to DefaultAgentTimeout (1800s) at the dispatch insert path");
-    }
-
-    /// <summary>
-    /// AC (issue #2745): POST /api/work-items/dispatch with a negative TimeoutSeconds must store
-    /// <c>PipelineConstants.DefaultAgentTimeout</c> (1800s) rather than the negative value.
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_WithNegativeTimeoutSeconds_StoresDefaultTimeoutSeconds()
-    {
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(
-                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        var request = MakeRequest() with { TimeoutSeconds = -1 };
-
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
-            "dispatch must succeed so we can verify the stored TimeoutSeconds");
-
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var item3 = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
-        item3.Should().NotBeNull();
-        item3!.TimeoutSeconds.Should().Be(
-            (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
-            "a negative TimeoutSeconds must be clamped to DefaultAgentTimeout (1800s) at the dispatch insert path");
-    }
-
-    // TODO [WARNING]: Add a positive-value passthrough regression test for the DispatchWorkItem path
-    // (mirroring WorkItemEndpointTests.CreateWorkItem_WithPositiveTimeoutSeconds_StoresAsProvided).
-    // Without it, an accidental inversion of the clamp condition (e.g. `> 0` changed to `>= 0`, or
-    // the branches swapped) would go undetected on this path — the zero and negative tests both
-    // produce the default value regardless of which branch runs when the input is <= 0.
-    // (Correctness + TestQualityReviewer review [WARNING])
-
-    // TODO [WARNING]: The three TimeoutSeconds tests (zero, negative, and positive) are structurally
-    // identical — same arrange, same act, same DB-read pattern — differing only in the input value and
-    // expected stored value. Consolidate them into a single [Theory] / [InlineData] test with triples
-    // (inputTimeout, expectedStoredValue, reason) to eliminate copy-paste and make adding a fourth
-    // variant trivial. (TestQualityReviewer review [WARNING])
-    /// <summary>
-    /// AC (issue #2745): POST /api/work-items/dispatch with a positive TimeoutSeconds must store
-    /// the provided value unchanged rather than being replaced by <c>DefaultAgentTimeout</c>.
-    /// Without this test, an accidental inversion of the clamp condition (<c>&gt; 0</c> → <c>&gt;= 0</c>)
-    /// would go undetected — the zero and negative tests both produce the default value regardless
-    /// of which branch executes when the input is ≤ 0.
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_WithPositiveTimeoutSeconds_StoresAsProvided()
-    {
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(
-                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        const int customTimeout = 7200;
-        var request = MakeRequest() with { TimeoutSeconds = customTimeout };
-
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
-            "dispatch must succeed so we can verify the stored TimeoutSeconds");
-
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
-        item.Should().NotBeNull();
-        item!.TimeoutSeconds.Should().Be(
-            customTimeout,
-            "a positive TimeoutSeconds must be stored as-is without clamping");
-    }
-}
-
-/// <summary>
 /// Tests for the <see cref="WorkItemTransitionService.IsValidTransition"/> state machine.
 /// After issue #2566, the consolidation-specific TODO comments on Pending→Dispatched and
 /// Dispatched→Pending are removed. Both transitions remain valid:
@@ -1455,8 +788,6 @@ public sealed class DispatchPendingWorkItemEndpointTests
     /// <c>FailWorkItemAsync</c> calls: exactly 1 is correct, 2 means the orphan cleanup ran on this
     /// path too. The count does not depend on the item's state, so the assertion is not vacuous.
     /// </para>
-    /// The create-as-Dispatched counterpart, where the cleanup must run, is
-    /// <see cref="SynchronousDispatchEndpointTests.DispatchWorkItem_WhenK8sJobCreationFails_Returns503_AndCleansUpWorkItem"/>.
     /// </summary>
     [Fact]
     public async Task DispatchPendingWorkItem_OnK8sFailure_DoesNotCallSafelyCancelOrphanedDispatchedWorkItemAsync()
@@ -2652,16 +1983,11 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
 }
 
-// ── Characterization tests for unique-violation idempotent-retry (CreateWorkItem + DispatchWorkItem) ──
+// ── Characterization tests for unique-violation idempotent-retry (CreateWorkItem) ──
 
 /// <summary>
 /// Characterization tests for the <c>catch (Exception ex) when (IsUniqueViolation(ex))</c>
-/// block in <c>CreateWorkItem</c> and <c>DispatchWorkItem</c>.
-///
-/// <para>
-/// These tests lock in the behavior of the unique-violation idempotent-retry path before
-/// extracting it into a shared <c>DispatchWorkItemService.HandleUniqueViolationAsync</c> method.
-/// </para>
+/// block in <c>CreateWorkItem</c> (now in <c>WorkItemStore.CreateAsync</c>).
 ///
 /// <para>
 /// EF InMemory throws <c>ArgumentException("An item with the same key has already been added")</c>
@@ -2702,18 +2028,6 @@ public sealed class UniqueViolationIdempotentRetryTests
             TimeoutSeconds = 3600,
             RunId = runId ?? Guid.NewGuid().ToString()
         };
-
-    private static JobTemplateStore CreateTemplateStore(
-        string labels = "kiro,dotnet",
-        int maxConcurrent = 5,
-        string providerType = "kiro") =>
-        JobTemplateStore.LoadFromYaml($"""
-            - labels: "{labels}"
-              image: "test-image:latest"
-              imagePullPolicy: "Always"
-              providerType: "{providerType}"
-              maxConcurrent: {maxConcurrent}
-            """);
 
     // ── CreateWorkItem unique-violation tests ────────────────────────────────────
 
@@ -2793,105 +2107,7 @@ public sealed class UniqueViolationIdempotentRetryTests
         conflict.Should().NotBeNull("unique-violation with no pre-existing row must return 409 via HandleUniqueViolationFallback");
         conflict!.Value.Should().Contain("live work item", "the body must be the HandleUniqueViolationFallback message");
     }
-
-    // ── DispatchWorkItem unique-violation tests ──────────────────────────────────
-
-    /// <summary>
-    /// When <c>DispatchWorkItem</c> encounters a unique-violation exception and the existing item
-    /// is active (Dispatched or Running), it must return 200 (idempotent retry — item is running).
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_UniqueViolation_WhenExistingItemIsActive_Returns200()
-    {
-        // Arrange: use a factory where SaveChanges throws ArgumentException (unique violation),
-        // and the re-check DB (fresh context) contains a Dispatched item with the matching ID.
-        var workItemId = Guid.NewGuid();
-        var dbFactory = new PrepopulatedThrowingDbContextFactory(_dbName + "-dw-active", workItemId, WorkItemStatus.Dispatched);
-
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        // Request with RunId = workItemId → handler uses this as workItemId
-        var request = MakeRequest(runId: workItemId.ToString());
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 200 OK — item is active (Dispatched), idempotent retry succeeds
-        var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
-        ok.Should().NotBeNull("active existing item must return 200 on unique-violation idempotent retry");
-        ok!.Value.Should().Be(workItemId);
-    }
-
-    /// <summary>
-    /// When <c>DispatchWorkItem</c> encounters a unique-violation exception and the existing item
-    /// is in a non-active state (e.g., Failed), it must return 409 Conflict so the Scheduler
-    /// re-queues the issue rather than treating it as dispatched.
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_UniqueViolation_WhenExistingItemIsNonActive_Returns409()
-    {
-        // Arrange: SaveChanges throws unique violation; re-check DB has a Failed item.
-        var workItemId = Guid.NewGuid();
-        var dbFactory = new PrepopulatedThrowingDbContextFactory(_dbName + "-dw-failed", workItemId, WorkItemStatus.Failed);
-
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-
-        var request = MakeRequest(runId: workItemId.ToString());
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
-
-        // Assert: 409 Conflict — existing item is non-active (Failed)
-        var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
-        conflict.Should().NotBeNull("non-active existing item must return 409 on unique-violation idempotent retry");
-        conflict!.Value.Should().Contain("Failed", "the 409 body must include the current non-active status");
-    }
-
-    // ── Private helpers ──────────────────────────────────────────────────────────
-
-    private DispatchLifecycleService CreateLifecycleService(
-        IKubernetesJobClient? k8sClient = null,
-        IReadOnlyList<string>? pvcPool = null)
-    {
-        var dbFactory = CreateDbFactory();
-        var transitionSvc = new WorkItemTransitionService(
-            dbFactory,
-            Mock.Of<ILogger<WorkItemTransitionService>>());
-        var opts = new DispatchServiceOptions
-        {
-            Namespace = "test",
-            OrchestratorUrl = "http://test",
-            AgentApiKeySecretName = "secret",
-            AgentApiKeyValue = "test-master-key",
-            AgentServiceAccountName = "sa",
-            KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
-        };
-        return new DispatchLifecycleService(
-            k8sClient ?? Mock.Of<IKubernetesJobClient>(),
-            transitionSvc,
-            opts);
-    }
 }
-
-// TODO [WARNING]: The DispatchWorkItem (synchronous dispatch) paths for CRLF injection are not
-// covered by tests. The diff sanitizes request.AgentSelector in:
-//   - DispatchWorkItem concurrency-limit Conflict body (line ~573–579)
-//   - DispatchWorkItem no-template 422 log call (line ~542; body is not reflected, lower priority)
-// If sanitization were accidentally reverted on those branches, no test would fail. Consider
-// adding tests analogous to Tests 15–16 above for the DispatchWorkItem concurrency-conflict
-// path, and optionally for the 422 log-only path.
 
 // ── Isolation tests for extracted helpers (issue #3235) ──────────────────────
 
@@ -2902,9 +2118,8 @@ public sealed class UniqueViolationIdempotentRetryTests
 ///
 /// <para>
 /// These tests target the helpers directly. The handler-level behaviour is covered by the
-/// existing tests in <see cref="DispatchPendingWorkItemEndpointTests"/> and
-/// <see cref="SynchronousDispatchEndpointTests"/>, which continue to exercise the full
-/// dispatch pipeline through both callers.
+/// existing tests in <see cref="DispatchPendingWorkItemEndpointTests"/>, which exercise the
+/// full dispatch pipeline.
 /// </para>
 /// </summary>
 public sealed class ExtractedHelperIsolationTests
@@ -3087,7 +2302,7 @@ public sealed class ExtractedHelperIsolationTests
     // ── InterpretDispatchResult ────────────────────────────────────────────────
 
     /// <summary>
-    /// On the pending-dispatch path (rewriteConcurrencyLimitAsDeferred=true), a 409 input must
+    /// A 409 input must
     /// be rewritten to 200 DispatchPendingResponse(false, "concurrency_limit") with outcome
     /// <see cref="DispatchInterpretOutcome.ConcurrencyLimitRewritten"/>.
     /// </summary>
@@ -3098,7 +2313,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 1);
 
         var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
         ok.Should().NotBeNull("409 on the pending path must be rewritten to 200 Ok<DispatchPendingResponse>");
@@ -3109,24 +2324,6 @@ public sealed class ExtractedHelperIsolationTests
         // TODO [WARNING]: Does not assert that RecordDispatchAttempt("deferred","concurrency_limit")
         // was emitted. If that call is removed from InterpretDispatchResult this test still passes.
         // Add telemetry assertion to verify the side effect. See review finding: TestQualityReviewer @ line 2660.
-    }
-
-    /// <summary>
-    /// On the sync-dispatch path (rewriteConcurrencyLimitAsDeferred=false), a 409 input must
-    /// pass through unchanged with outcome <see cref="DispatchInterpretOutcome.PassThrough"/>.
-    /// </summary>
-    [Fact]
-    public void InterpretDispatchResult_409Input_SyncPath_PassesThrough()
-    {
-        var rawResult = TypedResults.Conflict("limit reached");
-        var pvcResult = MakePvcResult(available: 1);
-
-        var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: false);
-
-        result.Should().BeSameAs(rawResult, "409 on the sync path must be returned unchanged");
-        outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
-            "a pass-through 409 on the sync path must carry the PassThrough outcome");
     }
 
     /// <summary>
@@ -3141,7 +2338,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 0); // empty pool → pvc_unavailable
 
         var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         result.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -3168,7 +2365,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 1); // PVC available → k8s_error disambiguation
 
         var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         result.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
         outcome.Should().Be(DispatchInterpretOutcome.K8sError503,
@@ -3191,7 +2388,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 0); // empty pool but non-kiro → k8s_error
 
         var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: false);
 
         result.Should().BeSameAs(rawResult, "503 must be returned unchanged for non-kiro agent");
         outcome.Should().Be(DispatchInterpretOutcome.K8sError503,
@@ -3204,7 +2401,7 @@ public sealed class ExtractedHelperIsolationTests
     /// <summary>
     /// A success result (200 Ok) must pass through unchanged with outcome
     /// <see cref="DispatchInterpretOutcome.PassThrough"/>.
-    /// Both rewriteConcurrencyLimitAsDeferred values produce the same pass-through for success.
+    /// A success passes through.
     /// </summary>
     [Fact]
     public void InterpretDispatchResult_SuccessInput_PassesThrough()
@@ -3213,7 +2410,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 1);
 
         var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         result.Should().BeSameAs(rawResult, "a success result must pass through the helper unchanged");
         outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
@@ -3251,28 +2448,10 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 1);
 
         var (_, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         outcome.Should().Be(DispatchInterpretOutcome.ConcurrencyLimitRewritten,
-            "a 409 on the pending-dispatch path (rewriteConcurrencyLimitAsDeferred=true) must produce ConcurrencyLimitRewritten");
-    }
-
-    /// <summary>
-    /// Characterization: a 409 on the sync path must return outcome
-    /// <see cref="DispatchInterpretOutcome.PassThrough"/> (pass-through, no rewrite).
-    /// Written before the refactor as a compile-forcing prerequisite (issue #3260).
-    /// </summary>
-    [Fact]
-    public void InterpretDispatchResult_409Input_SyncPath_ReturnsOutcomePassThrough()
-    {
-        var rawResult = TypedResults.Conflict("limit reached");
-        var pvcResult = MakePvcResult(available: 1);
-
-        var (_, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: false);
-
-        outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
-            "a 409 on the sync-dispatch path (rewriteConcurrencyLimitAsDeferred=false) must produce PassThrough");
+            "a 409 must produce ConcurrencyLimitRewritten");
     }
 
     /// <summary>
@@ -3287,7 +2466,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 0); // empty pool + kiro → PvcExhausted503
 
         var (_, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         outcome.Should().Be(DispatchInterpretOutcome.PvcExhausted503,
             "a 503 with empty PVC pool and kiro agent must produce PvcExhausted503");
@@ -3305,7 +2484,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 1); // PVCs available → k8s_error, not pvc_unavailable
 
         var (_, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         outcome.Should().Be(DispatchInterpretOutcome.K8sError503,
             "a 503 with PVCs available must produce K8sError503 (not PvcExhausted503)");
@@ -3323,7 +2502,7 @@ public sealed class ExtractedHelperIsolationTests
         var pvcResult = MakePvcResult(available: 1);
 
         var (_, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+            rawResult, pvcResult, isKiroAgent: true);
 
         outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
             "a success result must produce PassThrough so the caller emits RecordDispatchAttempt(\"dispatched\",\"none\")");
@@ -3497,84 +2676,6 @@ file sealed class ThrowingPipelineDbContext : PipelineDbContext
             foreach (var idx in et.GetIndexes().Where(i => i.GetFilter() != null).ToList())
                 et.RemoveIndex(idx);
         }
-    }
-}
-
-/// <summary>
-/// An <see cref="IDbContextFactory{TContext}"/> for testing the unique-violation catch block in
-/// <c>DispatchWorkItem</c> and <c>CreateWorkItem</c>. On the FIRST call, returns a context whose
-/// <c>SaveChangesAsync</c> throws <see cref="ArgumentException"/> (simulating a unique-violation).
-/// On subsequent calls, returns a real InMemory context pre-populated with a work item at the
-/// specified <paramref name="workItemId"/> in the specified <paramref name="existingStatus"/>.
-/// This simulates the catch block's re-check path: a fresh DbContext is opened to query whether
-/// the conflicting item already exists and in what state.
-/// </summary>
-file sealed class PrepopulatedThrowingDbContextFactory : IDbContextFactory<PipelineDbContext>
-{
-    private readonly DbContextOptions<PipelineDbContext> _throwOpts;
-    private readonly DbContextOptions<PipelineDbContext> _readOpts;
-    private readonly Guid _workItemId;
-    private readonly WorkItemStatus _existingStatus;
-    // TODO [WARNING]: _hasThrown is consumed on the FIRST call to CreateDbContextAsync. The
-    // DispatchWorkItem handler opens at least one context for the pre-save work AND a fresh one
-    // inside HandleUniqueViolationAsync for the re-check. If the handler opens more than one
-    // context before SaveChangesAsync throws, _hasThrown is consumed on the first non-save call
-    // and the re-check context is returned from the throw-opts (empty) DB rather than the
-    // pre-populated read DB — making both DispatchWorkItem unique-violation tests sensitive to
-    // the exact number of CreateDbContextAsync calls before save. Consider tracking invocations
-    // more precisely (e.g. counting SaveChangesAsync throws) to decouple from call-order assumptions.
-    private bool _hasThrown;
-
-    public PrepopulatedThrowingDbContextFactory(string dbName, Guid workItemId, WorkItemStatus existingStatus)
-    {
-        _workItemId = workItemId;
-        _existingStatus = existingStatus;
-
-        // Throwing context uses an empty DB — SaveChangesAsync throws before any write.
-        _throwOpts = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase(dbName + "-throw")
-            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-
-        // Read context uses a separate DB pre-populated with the "existing" item.
-        _readOpts = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase(dbName + "-read")
-            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-
-        // Pre-populate the read DB with the "existing" item.
-        using var seedCtx = new TestPipelineDbContext(_readOpts);
-        seedCtx.WorkItems.Add(new WorkItemEntity
-        {
-            Id = workItemId,
-            TaskType = WorkItemTaskType.Implementation,
-            IssueIdentifier = $"issue-{workItemId:N}",
-            IssueProviderConfigId = "prov-1",
-            Status = existingStatus,
-            AgentSelector = "kiro,dotnet",
-            TimeoutSeconds = 3600,
-            CreatedAt = DateTimeOffset.UtcNow,
-            DispatchedAt = existingStatus == WorkItemStatus.Dispatched ? DateTimeOffset.UtcNow : null,
-            Payload = "{}"
-        });
-        seedCtx.SaveChanges();
-    }
-
-    public PipelineDbContext CreateDbContext() => CreateContext();
-
-    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
-        => Task.FromResult<PipelineDbContext>(CreateContext());
-
-    private PipelineDbContext CreateContext()
-    {
-        if (!_hasThrown)
-        {
-            _hasThrown = true;
-            // First context: throws on SaveChangesAsync; uses an empty DB so Add() succeeds.
-            return new ThrowingPipelineDbContext(_throwOpts);
-        }
-        // Subsequent contexts: reads from the pre-populated DB to find the "existing" item.
-        return new TestPipelineDbContext(_readOpts);
     }
 }
 
