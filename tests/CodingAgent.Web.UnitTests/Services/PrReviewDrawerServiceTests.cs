@@ -2,17 +2,19 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
+using CodingAgent.Web.Ui;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Tests for PrReviewDrawerService in isolation: PR loading, label filtering,
 /// pagination, dispatch, and close-on-success behavior.
-/// Each test constructs PrReviewDrawerService with only its own dependencies.
+/// Each test constructs PrReviewDrawerService with only its own dependencies. Since spec 051 2.3b the
+/// API lists the pull requests (<see cref="IUiBrowseClient"/>); its TemplateBrowseServiceTests cover that.
 /// </summary>
 public class PrReviewDrawerServiceTests
 {
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
+    private readonly Mock<IUiBrowseClient> _mockBrowse;
     private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
     private readonly PrReviewDrawerService _service;
 
@@ -24,11 +26,12 @@ public class PrReviewDrawerServiceTests
 
     public PrReviewDrawerServiceTests()
     {
-        _mockProviderFactory = new Mock<IProviderFactory>();
+        _mockBrowse = new Mock<IUiBrowseClient>();
+        _mockBrowse.Setup(b => b.GetLabelsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
         _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
 
         _service = new PrReviewDrawerService(
-            _mockProviderFactory.Object,
+            _mockBrowse.Object,
             _mockDispatchOrchestration.Object);
     }
 
@@ -44,7 +47,7 @@ public class PrReviewDrawerServiceTests
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
         var svc = new PrReviewDrawerService(
-            new Mock<IProviderFactory>().Object,
+            new Mock<IUiBrowseClient>().Object,
             new Mock<IDispatchOrchestrationService>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
@@ -55,7 +58,6 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task LoadPrDrawerPageAsync_LoadsData_WhenRepoProviderExists()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
         SetupRepoProvider(items: new[] { MakePr("1"), MakePr("2") }, hasMore: true);
 
@@ -68,15 +70,15 @@ public class PrReviewDrawerServiceTests
     }
 
     [Fact]
-    public async Task LoadPrDrawerPageAsync_ReturnsErrorAndEmptyList_WhenRepoProviderNotFound()
+    public async Task LoadPrDrawerPageAsync_ReturnsTheApisReasonAndEmptyList_WhenItRefuses()
     {
-        _service.SetProviderContext(IssueProviders, new List<ProviderConfig>());
         var template = MakeTemplate();
+        _mockBrowse.Setup(b => b.GetPullRequestsAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Repository provider not found for this template."));
 
         var error = await _service.LoadPrDrawerPageAsync(template, 1);
 
-        Assert.NotNull(error);
-        Assert.Contains("Repository provider configuration not loaded", error);
+        Assert.Equal("Repository provider not found for this template.", error);
         Assert.Empty(_service.DrawerState.Items);
     }
 
@@ -85,7 +87,6 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task ClearPrDrawerLabelFilter_ClearsItemsAndPage()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
         SetupRepoProvider(items: new[] { MakePr("10") }, hasMore: true);
         await _service.LoadPrDrawerPageAsync(template, 2);
@@ -167,7 +168,6 @@ public class PrReviewDrawerServiceTests
     public async Task DispatchFromPrDrawerAsync_DoesNotCloseDrawer_OnSuccess()
     {
         // PR drawer stays open after dispatch (unlike issue/epic)
-        _service.SetProviderContext(IssueProviders, RepoProviders);
 
         var template = MakeTemplate();
         SetupRepoProvider(items: new[] { MakePr() });
@@ -191,7 +191,6 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task ClosePrDrawer_NullsTemplate()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         SetupRepoProvider(items: new[] { MakePr() });
         await _service.OpenPrDrawerAsync("t-1", new[] { MakeTemplate() });
         Assert.NotNull(_service.DrawerState.Template);
@@ -211,21 +210,14 @@ public class PrReviewDrawerServiceTests
 
     // ── Helpers ──
 
-    private void SetupRepoProvider(IEnumerable<PullRequestSummary>? items = null, bool hasMore = false)
-    {
-        var mockRepo = new Mock<IRepositoryProvider>();
-        mockRepo.Setup(r => r.ListOpenPullRequestsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+    /// <summary>Makes the API return <paramref name="items"/> as the template's pull requests.</summary>
+    private void SetupRepoProvider(IEnumerable<PullRequestSummary>? items = null, bool hasMore = false) =>
+        _mockBrowse.Setup(b => b.GetPullRequestsAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = (items ?? Enumerable.Empty<PullRequestSummary>()).ToList(),
                 HasMore = hasMore, Page = 1, PageSize = 15
             });
-        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(mockRepo.Object);
-
-        var mockIssue = new Mock<IIssueProvider>();
-        mockIssue.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockIssue.Object);
-    }
 
     private static JobDistributionRequest CreateMinimalRequest() => new()
     {

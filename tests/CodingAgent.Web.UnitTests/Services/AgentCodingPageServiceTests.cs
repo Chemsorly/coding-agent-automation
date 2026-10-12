@@ -490,7 +490,7 @@ public class AgentCodingPageServiceTests
         _service.Templates.Add(template);
 
         _mockEpicDrawerService
-            .Setup(s => s.OpenEpicDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<IReadOnlyList<PipelineProject>>(), It.IsAny<Func<Task>?>()))
+            .Setup(s => s.OpenEpicDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<Func<Task>?>()))
             .ReturnsAsync((string?)null);
 
         await _service.OpenEpicDrawerAsync("t-1");
@@ -617,12 +617,12 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task RefreshActiveIssuesAsync_DelegatesToIssueDrawerService()
     {
-        _mockIssueDrawerService.Setup(s => s.RefreshActiveIssuesAsync())
+        _mockIssueDrawerService.Setup(s => s.RefreshActiveIssuesAsync("t-1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        await _service.RefreshActiveIssuesAsync();
+        await _service.RefreshActiveIssuesAsync("t-1");
 
-        _mockIssueDrawerService.Verify(s => s.RefreshActiveIssuesAsync(), Times.Once);
+        _mockIssueDrawerService.Verify(s => s.RefreshActiveIssuesAsync("t-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

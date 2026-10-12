@@ -52,6 +52,7 @@ public static class UiClientStubs
 
         var browse = new Mock<IUiBrowseClient>();
         browse.Setup(c => c.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new BacklogResult([], IsTruncated: false));
+        browse.Setup(c => c.GetActiveIssuesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<UiActiveIssue>());
         services.RemoveAll<IUiBrowseClient>();
         services.AddSingleton(browse.Object);
     }

@@ -1,7 +1,11 @@
 using System.Net;
 using System.Net.Http.Headers;
 using AwesomeAssertions;
+using System.Text.Json;
 using CodingAgent.Contracts.Auth;
+using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Ui;
@@ -85,5 +89,138 @@ public sealed class UiBrowseEndpointTests(ApiWebApplicationFactory factory)
         backlog.Issues.Select(i => (i.Identifier, i.IsReady)).Should().BeEquivalentTo([("7", true), ("8", false)]);
         backlog.Issues.Single(i => i.Identifier == "7").Labels.Should().Equal("bug");
         backlog.BlockedIssues().Should().BeEmpty("a parked issue is not ready, but nothing blocks it");
+    }
+
+    // ── Template browse (2.3b part 2) ─────────────────────────────────────
+
+    private const string TemplateOfU = "7a000000-0000-0000-0000-0000000000a8";
+    private const string TemplateWithoutProject = "7a000000-0000-0000-0000-0000000000a9";
+    private const string RepoProviderT = "8b000000-0000-0000-0000-0000000000a8";
+
+    private async Task SeedTemplatesAsync()
+    {
+        var projects = factory.Services.GetRequiredService<IProjectStore>();
+        await projects.SaveProjectAsync(new PipelineProject { Id = ProjectT, Name = "Tango" }, CancellationToken.None);
+        await projects.SaveProjectAsync(new PipelineProject { Id = ProjectU, Name = "Uniform" }, CancellationToken.None);
+        await projects.SaveTemplateAsync(ProjectT, new PipelineJobTemplate
+        {
+            Id = TemplateT, Name = "tango-api", IssueProviderId = IssueProviderT, RepoProviderId = RepoProviderT, Enabled = true,
+        }, CancellationToken.None);
+        await projects.SaveTemplateAsync(ProjectU, new PipelineJobTemplate
+        {
+            Id = TemplateOfU, Name = "uniform-api", IssueProviderId = IssueProviderT, RepoProviderId = RepoProviderT,
+        }, CancellationToken.None);
+        using var scope = factory.Services.CreateScope();
+        var configs = scope.ServiceProvider.GetRequiredService<IProviderConfigStore>();
+        await configs.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = IssueProviderT, Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Tango issues",
+        }, CancellationToken.None);
+        await configs.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = RepoProviderT, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Tango repo",
+        }, CancellationToken.None);
+    }
+
+    private Mock<IIssueProvider> IssuesOfT()
+    {
+        var issues = new Mock<IIssueProvider>();
+        Mock.Get(factory.Services.GetRequiredService<IProviderFactory>())
+            .Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(c => c.Id == IssueProviderT)))
+            .Returns(issues.Object);
+        return issues;
+    }
+
+    [Fact]
+    public async Task TemplateBrowse_NeedsReadOnTheTemplatesProject()
+    {
+        await SeedTemplatesAsync();
+        var readerOfT = Http(TestUserTokens.Scoped(ProjectT, AccessRole.ReadOnly));
+
+        foreach (var path in new[] { "issues", "issues/readiness", "labels", "pull-requests", "epics", "epic-labels", "active-issues" })
+        {
+            (await readerOfT.GetAsync($"/api/ui/templates/{TemplateOfU}/{path}")).StatusCode.Should().Be(HttpStatusCode.NotFound, path);
+            (await readerOfT.GetAsync($"/api/ui/templates/{TemplateWithoutProject}/{path}")).StatusCode.Should().Be(HttpStatusCode.NotFound, path);
+        }
+        (await readerOfT.GetAsync($"/api/ui/templates/{TemplateT}/active-issues")).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task TemplateBrowse_ListsTheTrackersIssues_ThroughTheClient()
+    {
+        await SeedTemplatesAsync();
+        var issues = IssuesOfT();
+        issues.Setup(p => p.ListOpenIssuesAsync(2, 15, It.Is<IReadOnlyList<string>?>(l => l != null && l.Count == 2 && l[0] == "bug" && l[1] == "a b"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [new IssueSummary { Identifier = "7", Title = "Ready", Labels = ["bug"], Description = "", Url = "https://x/issues/7" }],
+                Page = 2, PageSize = 15, HasMore = true,
+            });
+        issues.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(["bug", "a b"]);
+        var client = Browse(TestUserTokens.Scoped(ProjectT, AccessRole.ReadOnly));
+
+        var page = await client.GetIssuesAsync(TemplateT, 2, ["bug", "a b"]);
+        var labels = await client.GetLabelsAsync(TemplateT);
+
+        page.Items.Single().Identifier.Should().Be("7");
+        page.HasMore.Should().BeTrue();
+        labels.Should().Equal("bug", "a b");
+    }
+
+    [Fact]
+    public async Task TemplateBrowse_AFailingProvider_ReachesThePageAsItsReason()
+    {
+        await SeedTemplatesAsync();
+        IssuesOfT().Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+
+        var list = () => Browse(TestUserTokens.Global(AccessRole.ReadOnly)).GetIssuesAsync(TemplateT, 1, null);
+
+        (await list.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Be("Failed to load issues: rate limited");
+    }
+
+    [Fact]
+    public async Task ActiveIssues_BadgeTheTemplatesQueuedAndRunningWork()
+    {
+        await SeedTemplatesAsync();
+        var queued = SeedWorkItem(IssueProviderT, WorkItemStatus.Pending);
+        var running = SeedWorkItem(RepoProviderT, WorkItemStatus.Running);
+        var otherProvider = SeedWorkItem("8b000000-0000-0000-0000-0000000000ff", WorkItemStatus.Running);
+
+        var active = await Browse(TestUserTokens.Scoped(ProjectT, AccessRole.ReadOnly)).GetActiveIssuesAsync(TemplateT);
+
+        active.Should().Contain(new UiActiveIssue(queued, IssueProviderT, WorkItemStatus.Pending));
+        active.Should().Contain(new UiActiveIssue(running, RepoProviderT, WorkItemStatus.Running));
+        active.Select(a => a.IssueIdentifier).Should().NotContain(otherProvider);
+    }
+
+    private string SeedWorkItem(string providerId, WorkItemStatus status)
+    {
+        var issue = $"browse-{Guid.NewGuid():N}";
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier(issue),
+            IssueProviderConfigId = providerId,
+            RepoProviderConfigId = RepoProviderT,
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+        };
+        using var db = factory.CreateDbContext();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = issue,
+            IssueProviderConfigId = providerId,
+            Status = status,
+            Payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default),
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        db.SaveChanges();
+        return issue;
     }
 }

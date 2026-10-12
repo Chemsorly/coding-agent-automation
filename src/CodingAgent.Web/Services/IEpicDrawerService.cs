@@ -31,7 +31,6 @@ public interface IEpicDrawerService
     Task<string?> OpenEpicDrawerAsync(
         TemplateId templateId,
         IReadOnlyList<PipelineJobTemplate> templates,
-        IReadOnlyList<PipelineProject> projects,
         Func<Task>? notifyStateChanged = null);
 
     void CloseEpicDrawer();
@@ -39,7 +38,6 @@ public interface IEpicDrawerService
     Task<string?> SwitchToEpicDrawerAsync(
         TemplateId templateId,
         IReadOnlyList<PipelineJobTemplate> templates,
-        IReadOnlyList<PipelineProject> projects,
         Func<Task>? notifyStateChanged = null);
 
     Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(

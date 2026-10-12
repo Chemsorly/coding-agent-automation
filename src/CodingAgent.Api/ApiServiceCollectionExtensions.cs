@@ -684,6 +684,7 @@ public static class ApiServiceCollectionExtensions
         // The pages' provider browsing runs here with the stored credentials.
         services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
         services.AddSingleton<CodingAgent.Api.Browse.BacklogService>();
+        services.AddSingleton<CodingAgent.Api.Browse.TemplateBrowseService>();
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync

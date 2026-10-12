@@ -55,7 +55,7 @@ public interface IIssueDrawerService
 
     // ── Active issues ──
 
-    Task RefreshActiveIssuesAsync();
+    Task RefreshActiveIssuesAsync(TemplateId templateId, CancellationToken ct = default);
     bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
     WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
     Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);

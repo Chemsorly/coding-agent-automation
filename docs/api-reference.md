@@ -544,6 +544,20 @@ The actions on one work item need the `operator` role on the work item's stored 
 
 `GET /api/ui/backlog?projectId=` returns the open issues of the enabled templates' issue providers, as `{ issues, isTruncated }`. Each issue says whether it is ready to dispatch. It is not ready when it has open dependencies (`blockedBy`, `blockedByUrls`) or carries a lifecycle label such as `agent:in-progress` or `backlog`. The API calls the providers with the stored credentials. `isTruncated` is set when a provider had more than 200 open issues. The `projectId` rule is the same as for the lists above.
 
+### Template browse (any role)
+
+The dispatch drawers browse a template's providers through `/api/ui/templates/{templateId}/…`. A template needs read on the project that owns it, and a template of no project needs global read. A template the user cannot read is `404`, like a missing one. When the template's provider is gone or fails, the API answers `502` with the message to show, as a JSON string. Pages hold 15 issues or pull requests. `labels` can be repeated and is passed to the provider's label filter.
+
+| Path | Returns |
+|---|---|
+| `GET …/issues?page=&labels=` | A page of the template tracker's open issues, as `{ items, page, pageSize, hasMore }`. |
+| `GET …/issues/readiness?page=&labels=` | The dependency readiness of the same page's issues, by identifier. The checks are best-effort: when one fails, the issues checked so far are returned. |
+| `GET …/labels` | The labels of the template's issue tracker. |
+| `GET …/pull-requests?page=&labels=` | A page of the template repository's open pull requests. |
+| `GET …/epics?page=&labels=` | The new and the approved epics (8 of each per page), merged. They come from the project's epic tracker when it has one, otherwise from the template's tracker. |
+| `GET …/epic-labels` | The epic tracker's labels, without the epic workflow labels. |
+| `GET …/active-issues` | The issues and pull requests of the template's trackers and repository that already have work, as `[{ issueIdentifier, issueProviderConfigId, status }]`. `Pending` means queued. `Running` covers dispatched and running work, and work that ended within the dedup cooldown. |
+
 ### Settings (admin)
 
 `/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
@@ -646,6 +660,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/work-items/pending`, `/api/ui/work-items/active` | User token | Queue and in-flight work items (per project) |
 | POST, PUT | `/api/ui/work-items/{id}/cancel`, `/api/ui/work-items/{id}/priority` | User token, operator of the item's project | Cancel a run or queued item; set queue priority |
 | GET | `/api/ui/backlog` | User token | Open provider issues with their dispatch readiness (per project) |
+| GET | `/api/ui/templates/{templateId}/…` | User token, read on the template's project | The drawers' issues, readiness, labels, pull requests, epics and active work |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

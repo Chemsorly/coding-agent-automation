@@ -41,4 +41,9 @@ namespace CodingAgent.Web.Ui;
 [JsonSerializable(typeof(IReadOnlyList<ActiveWorkItemDto>))]
 [JsonSerializable(typeof(UiPriorityRequest))]
 [JsonSerializable(typeof(BacklogResult))]
+[JsonSerializable(typeof(PagedResult<IssueSummary>))]
+[JsonSerializable(typeof(PagedResult<PullRequestSummary>))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, DependencyCheckResult>))]
+[JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(IReadOnlyList<UiActiveIssue>))]
 internal sealed partial class UiJsonContext : JsonSerializerContext;
