@@ -15,7 +15,7 @@ public static partial class ServiceCollectionExtensions
     /// IDependencyChecker, PipelineLoopServiceDependencies, and IPipelineLoopService have been
     /// moved to CodingAgent.Scheduler.
     ///
-    /// RETAINED (consumed by consolidation and the label service):
+    /// RETAINED (consumed by the consolidation trigger and the label service):
     /// - ApiConfigurationStore + IConfigurationStore + IAgentProfileStore +
     ///   IQualityGateConfigStore + IReviewerConfigStore
     ///   (sourced from CodingAgent.Api.Client.Stores)
@@ -31,7 +31,7 @@ public static partial class ServiceCollectionExtensions
         // Sets PooledConnectionLifetime so stale connections to replaced pod IPs (after a
         // rolling update) are recycled within 90s rather than persisting indefinitely.
         // Applied via ConfigureHttpClientDefaults so it covers every client registered in
-        // this method (ISchedulerApiClient) and in RegisterTokenAndRunServices (TokenVending).
+        // this method (ISchedulerApiClient).
         // ConfigureHttpClientDefaults is additive — if AddPipelineApiClient also registered a
         // ConfigurePrimaryHttpMessageHandler, the last registration wins. Both register an
         // identical SocketsHttpHandler factory so the outcome is correct regardless of order.
@@ -93,7 +93,7 @@ public static partial class ServiceCollectionExtensions
 
         // ── Spec 045 retained registrations ──────────────────────────────────────────────────
         // ApiConfigurationStore composed from three narrow store shims. Required by
-        // LabelService and ConsolidationJobPreparationService.
+        // LabelService and the consolidation trigger.
 
         services.AddSingleton<ApiPipelineConfigStore>(sp =>
         {

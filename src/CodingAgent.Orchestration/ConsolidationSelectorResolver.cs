@@ -3,13 +3,14 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgent.Web.Services;
+namespace CodingAgent.Orchestration;
 
 /// <summary>
 /// Resolves the agent selector labels for a consolidation dispatch request.
 /// Implements <see cref="IConsolidationSelectorResolver"/> using <see cref="IAgentProfileStore"/>
-/// and <see cref="IPipelineConfigStore"/>, both of which are natural in the <c>CodingAgent.Web</c> layer.
-/// This keeps infrastructure-layer dependencies out of <c>CodingAgent.Pipeline</c>.
+/// and <see cref="IPipelineConfigStore"/>. It lives here rather than in <c>CodingAgent.Pipeline</c>
+/// so the stores stay out of that layer, and both hosts that trigger consolidation register it
+/// (the API since spec 051 2.4a; the web host until its Consolidation page calls the API).
 /// <para>
 /// Resolution order:
 /// <list type="number">

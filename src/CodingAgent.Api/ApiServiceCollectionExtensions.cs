@@ -446,15 +446,6 @@ public static class ApiServiceCollectionExtensions
 
     /// <summary>
     /// Registers lifecycle, consolidation, agent communication, and run management services.
-    ///
-    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 5 required
-    /// arguments only (no <c>IWorkDistributor</c>, <c>IConsolidationSelectorResolver</c> or
-    /// <c>IPipelineConfigStore</c>). The Web host's <c>AddConsolidationServices</c> passes those too. These are
-    /// intentionally different — do NOT unify them.
-    // TODO [WARNING]: The required-argument count in this comment was "7" before IPipelineRunHistoryService
-    // and IConsolidationFeedbackCache were removed from ConsolidationServiceDependencies in issue #3030,
-    // then "6" before the count was corrected to "5" in issue #3264.
-    // Update this count if ConsolidationServiceDependencies gains or loses required parameters in future.
     /// </summary>
     private static void AddLifecycleAndConsolidation(IServiceCollection services)
     {
@@ -468,14 +459,24 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IChatNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
 
         // ── IConsolidationService ────────────────────────────────────────────
-        // IMPORTANT: intentionally the minimal-argument form — not the Web host's full form.
+        // Spec 051 2.4a: the same full form as the web host's AddConsolidationServices. Until then the
+        // API only saved harness suggestions for the hub and had no IWorkDistributor, so it registered
+        // a form that could not trigger. A trigger now enqueues through ApiWorkDistributor (AddDispatch)
+        // and reads the saved settings from IPipelineConfigStore; the empty configuration is only the
+        // fallback for a host without that store.
+        services.AddSingleton<IConsolidationSelectorResolver>(sp => new ConsolidationSelectorResolver(
+            sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<IPipelineConfigStore>()));
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new ConsolidationServiceDependencies(
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
-                sp.GetRequiredService<IProviderConfigStore>())));
+                sp.GetRequiredService<IProviderConfigStore>(),
+                WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
+                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
+                PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
 
         // ── IAgentCommunication → SignalRAgentCommunication ──────────────────
         // Registered before ModelFetchService which depends on it.

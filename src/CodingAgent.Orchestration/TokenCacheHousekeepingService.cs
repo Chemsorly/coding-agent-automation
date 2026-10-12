@@ -8,8 +8,8 @@ namespace CodingAgent.Orchestration;
 /// Background service that periodically evicts expired entries from
 /// <see cref="TokenVendingService"/>'s token and semaphore caches.
 ///
-/// Registered as a hosted service in all three hosts that register
-/// <see cref="TokenVendingService"/> as a singleton (Api, Web, Scheduler).
+/// Registered as a hosted service in both hosts that register
+/// <see cref="TokenVendingService"/> as a singleton (Api, Scheduler).
 /// The sweep interval defaults to 5 minutes — well within the 1-hour token
 /// lifetime — so stale entries are collected long before memory pressure
 /// could occur in normal deployments.
