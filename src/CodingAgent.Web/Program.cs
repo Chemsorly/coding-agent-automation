@@ -117,19 +117,12 @@ var apiHubUrl = builder.Configuration.GetValue<string>("PipelineApi:HubUrl")
     ?? $"{apiBaseUrl.TrimEnd('/')}/hubs/agent";
 builder.Services.AddScoped<IAgentHubConnection>(_ => new AgentHubConnection(apiHubUrl, agentApiKey));
 
-// Bootstrap config for DI registration only — real config is loaded from Pipeline API at runtime.
-// NOTE: ClosedLoopAutoStart defaults to false here; AutoStartPipelineLoopAsync loads the real value from the API.
-var pipelineConfig = new PipelineConfiguration();
-
 builder.Services.AddInfrastructureServices();
 builder.Services.AddPipelineServices(Serilog.Log.Logger);
 builder.Services.AddPipelineCoreServices();
 builder.Services.AddOrchestrationServices();
-// AddConsolidationServices registers IConsolidationSelectorResolver and wires IWorkDistributor
-// into ConsolidationService. IWorkDistributor is registered by AddWorkDistribution (next line).
-// Ordering is safe at runtime (singleton factories resolve lazily), but keep AddWorkDistribution
-// immediately after AddConsolidationServices so the dependency is visible.
-builder.Services.AddConsolidationServices(pipelineConfig);
+// The Consolidation page triggers through the API since spec 051 2.4b, so this host registers no
+// consolidation service.
 builder.Services.AddWorkDistribution(builder.Configuration);
 
 // Frontend observability (Faro) — scoped so each Blazor circuit gets its own instance.

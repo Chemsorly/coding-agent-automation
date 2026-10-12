@@ -64,35 +64,4 @@ public static partial class ServiceCollectionExtensions
 
         return services;
     }
-
-    /// <summary>
-    /// Registers the consolidation trigger for the Consolidation page: the selector resolver and the service.
-    /// The API registers the same form (spec 051 2.4a); this one goes when the page calls the API.
-    /// </summary>
-    public static IServiceCollection AddConsolidationServices(
-        this IServiceCollection services,
-        PipelineConfiguration pipelineConfig)
-    {
-        // Resolves agent selector labels for consolidation dispatch.
-        services.AddSingleton<IConsolidationSelectorResolver>(sp =>
-            new ConsolidationSelectorResolver(
-                sp.GetRequiredService<IAgentProfileStore>(),
-                sp.GetRequiredService<IPipelineConfigStore>()));
-
-        // IWorkDistributor is registered by AddWorkDistribution (called immediately after
-        // AddConsolidationServices in Program.cs). The factory lambda resolves lazily at
-        // first use, so ordering at startup is safe.
-        services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
-            new Pipeline.Models.ConsolidationServiceDependencies(
-                Log.Logger,
-                pipelineConfig,
-                sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>(),
-                sp.GetRequiredService<IProviderConfigStore>(),
-                WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
-                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
-                PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
-
-        return services;
-    }
 }

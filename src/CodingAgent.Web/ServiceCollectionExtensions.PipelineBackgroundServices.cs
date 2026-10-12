@@ -15,7 +15,7 @@ public static partial class ServiceCollectionExtensions
     /// IDependencyChecker, PipelineLoopServiceDependencies, and IPipelineLoopService have been
     /// moved to CodingAgent.Scheduler.
     ///
-    /// RETAINED (consumed by the consolidation trigger and the label service):
+    /// RETAINED (consumed by the label service and the pages not yet on /api/ui):
     /// - ApiConfigurationStore + IConfigurationStore + IAgentProfileStore +
     ///   IQualityGateConfigStore + IReviewerConfigStore
     ///   (sourced from CodingAgent.Api.Client.Stores)
@@ -93,7 +93,7 @@ public static partial class ServiceCollectionExtensions
 
         // ── Spec 045 retained registrations ──────────────────────────────────────────────────
         // ApiConfigurationStore composed from three narrow store shims. Required by
-        // LabelService and the consolidation trigger.
+        // LabelService and the pages not yet on /api/ui.
 
         services.AddSingleton<ApiPipelineConfigStore>(sp =>
         {
