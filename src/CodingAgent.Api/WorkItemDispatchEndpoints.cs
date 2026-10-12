@@ -64,6 +64,8 @@ public static class WorkItemDispatchEndpoints
     /// <summary>
     /// POST /api/work-items
     /// Creates a new WorkItem with Status=Pending from a JobDistributionRequest.
+    /// The work is done by <see cref="WorkItemStore.CreateAsync"/>, which the in-process
+    /// <see cref="ApiWorkDistributor"/> shares.
     /// Also materialises an in-memory <see cref="PipelineRun"/> in <see cref="IOrchestratorRunService"/>
     /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
@@ -76,78 +78,13 @@ public static class WorkItemDispatchEndpoints
     /// </summary>
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        IOrchestratorRunService runService,
+        WorkItemStore store,
         CancellationToken ct = default)
     {
-        // Use RunId from request if provided (ensures WorkItem.Id == PipelineRun.RunId for hub routing).
-        // Fall back to a new GUID when no RunId is set (e.g., direct API calls without orchestration).
-        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
-            ? parsedRunId
-            : Guid.NewGuid();
-
-        var entity = BuildWorkItemEntity(request, workItemId);
-
-        try
-        {
-            await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-            // Pre-check to avoid the EF Error log produced by a Postgres 23505 unique violation
-            // on the happy-path (common re-dispatch of the same RunId or concurrent issue).
-            // The unique-violation catch below remains as the race backstop for concurrent inserts.
-            // (issue #2956)
-            //
-            // NOTE (issue #3243): The two pre-check queries are a TOCTOU: a concurrent request can
-            // insert a conflicting row between the AnyAsync calls and SaveChangesAsync, causing
-            // the unique-violation catch to fire anyway. This only affects log-noise suppression,
-            // not correctness (the catch backstop handles it). Additionally, the active-conflict
-            // check reproduces the partial unique index predicate in application code — these can
-            // drift if the index conditions change. Consider whether a single try/catch with a
-            // lighter pre-check (PK only) is sufficient.
-            //
-            // 1. Idempotent PK retry: same RunId was already created → return 201.
-            var existingById = await db.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
-            if (existingById)
-                return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
-
-            // 2. Active item for the same issue/provider → 409 (partial unique index predicate).
-            var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
-            var activeConflict = await db.WorkItems.AnyAsync(
-                w => w.IssueIdentifier == entity.IssueIdentifier
-                  && w.IssueProviderConfigId == entity.IssueProviderConfigId
-                  && activeStatuses.Contains(w.Status),
-                ct);
-            if (activeConflict)
-                return DispatchWorkItemService.HandleUniqueViolationFallback();
-
-            db.WorkItems.Add(entity);
-            await db.SaveChangesAsync(ct);
-        }
-        catch (Exception ex) when (IsUniqueViolation(ex))
-        {
-            // Distinguish idempotent PK retry from business-rule unique index conflict.
-            // Delegates to DispatchWorkItemService.HandleUniqueViolationAsync which opens
-            // a fresh DbContext (this context is faulted after the exception) to re-query:
-            // - If a row with workItemId already exists → 201 (idempotent PK retry).
-            // - Otherwise → 409 via HandleUniqueViolationFallback (partial unique index on
-            //   (IssueIdentifier, IssueProviderConfigId) — a different run is already live).
-            return await DispatchWorkItemService.HandleUniqueViolationAsync(dbFactory, workItemId, isNewlyCreated: true, ct);
-        }
-
-        // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
-        // can subscribe to hub events and display the run immediately (Req 1a.1 Option A).
-        // WorkItem.Id == PipelineRun.RunId for deterministic hub-group routing.
-        // NOTE (issue #3243): The comment "Consolidation WorkItems return null" was removed (issue #3023).
-        // PipelineRunFactory.CreateFromWorkItem now returns a real PipelineRun for consolidation
-        // work items (TaskType == Consolidation || RunType == Consolidation branch). The run is added
-        // to IOrchestratorRunService here and removed when RunLifecycleManager reaches a terminal
-        // state. Do not restore the early-return for consolidation — CancelRunAsync, CompleteRunAsync,
-        // and the history query all depend on the in-memory run being present.
-        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
-        if (run is not null)
-            runService.AddRun(run);
-
-        return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
+        var (outcome, workItemId) = await store.CreateAsync(request, ct);
+        return outcome == WorkItemCreateOutcome.LiveItemExists
+            ? DispatchWorkItemService.HandleUniqueViolationFallback()
+            : TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
     }
 
     /// <summary>
@@ -447,7 +384,7 @@ public static class WorkItemDispatchEndpoints
             // - Active (Dispatched/Running) → 200 OK.
             // - Non-active → 409 Conflict (Scheduler must re-queue).
             // - Not found → 409 via HandleUniqueViolationFallback (IssueIdentifier conflict).
-            return await DispatchWorkItemService.HandleUniqueViolationAsync(dbFactory, workItemId, isNewlyCreated: false, ct);
+            return await DispatchWorkItemService.HandleUniqueViolationAsync(dbFactory, workItemId, ct);
         }
 
         // Register PipelineRun so the UI can subscribe to hub events immediately.
@@ -822,34 +759,9 @@ public static class WorkItemDispatchEndpoints
     internal static async Task<IResult> GetIsDistributed(
         string issueIdentifier,
         string issueProviderConfigId,
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-        // TODO: recentTerminalCutoff is still recomputed inline here and in GetActiveIdentifiers.
-        // The activeStatuses local was removed (now inside WhereActiveOrRecentlyTerminal), but the
-        // cutoff DateTimeOffset calculation remains in both callers. Consider moving the cutoff
-        // computation into WhereActiveOrRecentlyTerminal (e.g. as an overload that accepts a
-        // TimeSpan or reads PipelineConstants directly) so the "active or recently terminal"
-        // semantics are fully self-contained in one place.
-        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
-
-        // Single query evaluates both conditions at the same database snapshot, eliminating
-        // the narrow TOCTOU window that existed when the active-status check and the
-        // recently-terminal check were two sequential AnyAsync round-trips. A WorkItem that
-        // transitions from an active status to a terminal status between two separate reads
-        // could cause both reads to return false and the endpoint to incorrectly report
-        // isDistributed = false.
-        var isDistributed = await db.WorkItems
-            .AsNoTracking()
-            .Where(w => w.IssueIdentifier == issueIdentifier &&
-                        w.IssueProviderConfigId == issueProviderConfigId)
-            .WhereActiveOrRecentlyTerminal(recentTerminalCutoff)
-            .AnyAsync(ct);
-
-        return TypedResults.Ok(new { isDistributed });
-    }
+        WorkItemStore store,
+        CancellationToken ct) =>
+        TypedResults.Ok(new { isDistributed = await store.IsDistributedAsync(issueIdentifier, issueProviderConfigId, ct) });
 
     // ── GET /active-identifiers ───────────────────────────────────────────
 
@@ -861,33 +773,11 @@ public static class WorkItemDispatchEndpoints
     /// 200 with array of { issueIdentifier, issueProviderConfigId }.
     /// </summary>
     internal static async Task<IResult> GetActiveIdentifiers(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-        // TODO: recentTerminalCutoff is still recomputed inline here and in GetIsDistributed.
-        // The activeStatuses local was removed (now inside WhereActiveOrRecentlyTerminal), but the
-        // cutoff DateTimeOffset calculation remains in both callers. Consider moving the cutoff
-        // computation into WhereActiveOrRecentlyTerminal (e.g. as an overload that accepts a
-        // TimeSpan or reads PipelineConstants directly) so the "active or recently terminal"
-        // semantics are fully self-contained in one place.
-        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
-
-        // Single query with WhereActiveOrRecentlyTerminal eliminates the TOCTOU window that existed
-        // when active and recently-terminal pairs were fetched in two sequential ToListAsync calls.
-        // A WorkItem that transitioned between the two queries could produce a false negative.
-        // Distinct() deduplicates pairs that appear under both the active-status and the
-        // recently-terminal branch (e.g. an active item that also has CompletedAt set).
-        var result = await db.WorkItems
-            .AsNoTracking()
-            .WhereActiveOrRecentlyTerminal(recentTerminalCutoff)
-            .Select(w => new ActiveIdentifierDto(w.IssueIdentifier, w.IssueProviderConfigId))
-            .Distinct()
-            .ToListAsync(ct);
-
-        return TypedResults.Ok((IReadOnlyList<ActiveIdentifierDto>)result);
-    }
+        WorkItemStore store,
+        CancellationToken ct) =>
+        TypedResults.Ok((IReadOnlyList<ActiveIdentifierDto>)(await store.GetActiveIdentifiersAsync(ct))
+            .Select(p => new ActiveIdentifierDto(p.IssueIdentifier, p.IssueProviderConfigId))
+            .ToList());
 
     /// <summary>
     /// DTO returned by <see cref="GetActiveIdentifiers"/>. Named type eliminates the

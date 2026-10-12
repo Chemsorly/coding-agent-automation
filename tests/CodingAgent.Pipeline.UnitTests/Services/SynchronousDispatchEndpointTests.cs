@@ -2732,13 +2732,13 @@ public sealed class UniqueViolationIdempotentRetryTests
 
         // Act: first call — succeeds, returns 201
         var firstResult = await WorkItemDispatchEndpoints.CreateWorkItem(
-            request, dbFactory, runService, CancellationToken.None);
+            request, new WorkItemStore(dbFactory, runService), CancellationToken.None);
         firstResult.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Created<Guid>>(
             "first call must succeed");
 
         // Act: second call with same RunId — triggers PK unique violation
         var secondResult = await WorkItemDispatchEndpoints.CreateWorkItem(
-            request, dbFactory, runService, CancellationToken.None);
+            request, new WorkItemStore(dbFactory, runService), CancellationToken.None);
 
         // Assert: second call must return 201 (idempotent — item already exists)
         var created = secondResult as Microsoft.AspNetCore.Http.HttpResults.Created<Guid>;
@@ -2786,7 +2786,7 @@ public sealed class UniqueViolationIdempotentRetryTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.CreateWorkItem(
-            request, dbFactory, runService, CancellationToken.None);
+            request, new WorkItemStore(dbFactory, runService), CancellationToken.None);
 
         // Assert: 409 Conflict via HandleUniqueViolationFallback
         var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;

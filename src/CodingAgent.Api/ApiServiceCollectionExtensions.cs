@@ -304,7 +304,7 @@ public static class ApiServiceCollectionExtensions
         return async (issueId, providerConfigId, ct) =>
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
-            // Mirror WorkItemDispatchEndpoints.GetIsDistributed: single query covering
+            // Mirror WorkItemStore.IsDistributedAsync: single query covering
             // active status OR recently completed in one atomic DB read, eliminating
             // the TOCTOU window that existed with two sequential AnyAsync round-trips.
             // A WorkItem that transitions from active to terminal between two separate
@@ -672,6 +672,13 @@ public static class ApiServiceCollectionExtensions
         // The API host does not have a IPipelineApiWorkItemClient in this host,
         // so includeWorkItemClient is false (workItemClient = null).
         services.AddDispatchResolutionServices(includeWorkItemClient: false);
+
+        // ── Queue (spec 051 2.3a) ──────────────────────────────────────────────
+        // WorkItemStore backs the /api/work-items enqueue, status and dedup handlers. ApiWorkDistributor
+        // is IWorkDistributor in this process, over the same store, for the dispatch logic that moves
+        // into the API; nothing here resolved an IWorkDistributor before.
+        services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
+        services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
