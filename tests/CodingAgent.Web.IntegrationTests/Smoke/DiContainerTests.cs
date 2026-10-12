@@ -1,5 +1,4 @@
 using System.Reflection;
-using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Services;
@@ -28,7 +27,6 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData(typeof(IAgentPhaseExecutor))]
     [InlineData(typeof(IQualityGateExecutor))]
     [InlineData(typeof(IssueDescriptionParser))]
-    [InlineData(typeof(GitHubValidationService))]
     public void Key_Service_Resolves_Without_Error(Type serviceType)
     {
         using var scope = _factory.Services.CreateScope();

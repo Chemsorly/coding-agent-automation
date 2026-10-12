@@ -1,6 +1,4 @@
 using CodingAgent.Infrastructure;
-using CodingAgent.Infrastructure.GitHub;
-using CodingAgent.Infrastructure.GitLab;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
@@ -25,11 +23,9 @@ public static partial class ServiceCollectionExtensions
     public static IServiceCollection AddInfrastructureServices(
         this IServiceCollection services)
     {
+        // The drawers still call providers from here until spec 051 2.3; Settings' provider checks
+        // (GitHub/GitLab validation) run in the API since 2.1c.
         services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
-
-        services.AddTransient<GitHubValidationService>(sp =>
-            new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
-        services.AddTransient<GitLabValidationService>();
 
         return services;
     }

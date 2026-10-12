@@ -26,7 +26,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
     {
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        Services.AddSingleton(Mock.Of<CodingAgent.Api.Client.IPipelineApiConfigClient>(c =>
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
         _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
@@ -195,7 +195,7 @@ public class ProjectDetailSectionSettingsValidationTests : BunitContext
     {
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        Services.AddSingleton(Mock.Of<CodingAgent.Api.Client.IPipelineApiConfigClient>(c =>
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
         _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
@@ -357,7 +357,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
     {
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        Services.AddSingleton(Mock.Of<CodingAgent.Api.Client.IPipelineApiConfigClient>(c =>
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -865,7 +865,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
     {
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        Services.AddSingleton(Mock.Of<CodingAgent.Api.Client.IPipelineApiConfigClient>(c =>
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
         _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());

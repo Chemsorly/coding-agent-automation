@@ -364,6 +364,10 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IProviderFactory>(sp =>
             new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
+        // Spec 051 2.1c: the Settings provider checks run here, with the stored credentials.
+        services.AddTransient(sp => new CodingAgent.Infrastructure.GitHub.GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
+        services.AddTransient<CodingAgent.Infrastructure.GitLab.GitLabValidationService>();
+
         // ── AgentRegistryService + IAgentRegistryService ────────────────────
         // Use DistributedAgentRegistryService when Redis is available (multi-replica mode);
         // fall back to in-memory AgentRegistryService for local dev without Redis.

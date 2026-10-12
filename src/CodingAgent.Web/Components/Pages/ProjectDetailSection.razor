@@ -3,8 +3,7 @@
 @using CodingAgent.Pipeline.Models
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
-@* Spec 051: provider configs move to the UI surface in 2.1c, together with the provider operations. *@
-@inject IPipelineApiConfigClient ProviderConfigs
+@inject IUiProviderClient ProviderConfigs
 
 <section class="settings-section">
     <h2>@_project.Name</h2>

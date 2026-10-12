@@ -51,6 +51,15 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
         await EnsureAcceptedAsync(response, ct);
     }
 
+    /// <summary>Sends a request and reads its JSON result; a refusal (400, 404) throws with the API's reason.</summary>
+    protected async Task<T> SendForResultAsync<T>(HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> type, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, path) { Content = content };
+        using var response = await SendAsync(request, ct);
+        await EnsureAcceptedAsync(response, ct);
+        return (await response.Content.ReadFromJsonAsync(type, ct))!;
+    }
+
     protected async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var token = await tokens.GetTokenAsync(ct);
@@ -66,12 +75,16 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
     private static async Task EnsureAcceptedAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
-        {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            var reason = body.StartsWith('"') ? JsonSerializer.Deserialize(body, UiJsonContext.Default.String) : body;
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(reason) ? $"The API returned {(int)response.StatusCode}." : reason);
-        }
+            throw new InvalidOperationException(await ReadReasonAsync(response, ct));
 
         response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>The reason the API gave for a failed request: its JSON string body, or the raw body.</summary>
+    protected static async Task<string> ReadReasonAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        var body = await response.Content.ReadAsStringAsync(ct);
+        var reason = body.StartsWith('"') ? JsonSerializer.Deserialize(body, UiJsonContext.Default.String) : body;
+        return string.IsNullOrWhiteSpace(reason) ? $"The API returned {(int)response.StatusCode}." : reason;
     }
 }

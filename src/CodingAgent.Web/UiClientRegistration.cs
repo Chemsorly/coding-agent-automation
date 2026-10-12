@@ -20,6 +20,12 @@ internal static class UiClientRegistration
         services.AddHttpClient<IUiHealthClient, UiHealthClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiConfigClient, UiConfigClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiSettingsClient, UiSettingsClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+        // Provider checks call GitHub or GitLab from the API, and fetching models runs a Job there.
+        services.AddHttpClient<IUiProviderClient, UiProviderClient>(client =>
+        {
+            client.BaseAddress = new Uri(apiBaseUrl);
+            client.Timeout = TimeSpan.FromMinutes(2);
+        });
 
         return services;
     }

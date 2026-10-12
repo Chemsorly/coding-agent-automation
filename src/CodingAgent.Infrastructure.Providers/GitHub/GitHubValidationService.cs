@@ -33,7 +33,7 @@ public class GitHubValidationService
     /// When owner/repo are provided and a provider factory is available, delegates the credential +
     /// repo access check to the provider's <see cref="IIssueProvider.ValidateAsync"/>.
     /// </summary>
-    public async Task<(bool Success, string Message)> ValidateAppCredentialsAsync(
+    public virtual async Task<(bool Success, string Message)> ValidateAppCredentialsAsync(
         string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct,
         string? owner = null, string? repo = null)
     {
@@ -159,7 +159,7 @@ public class GitHubValidationService
     /// Creates a temporary auth service, generates a token, and lists installation repos.
     /// Returns up to 100 repos sorted by most recently pushed.
     /// </summary>
-    public async Task<IReadOnlyList<(string FullName, string Owner, string Name)>> ListRepositoriesWithAppAsync(
+    public virtual async Task<IReadOnlyList<(string FullName, string Owner, string Name)>> ListRepositoriesWithAppAsync(
         string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct)
     {
         try
@@ -188,7 +188,7 @@ public class GitHubValidationService
     /// Validates that the GitHub App has Actions read access on the specified repository
     /// by attempting to list workflow runs. Returns a user-friendly message.
     /// </summary>
-    public async Task<(bool Success, string Message)> ValidateActionsAccessAsync(
+    public virtual async Task<(bool Success, string Message)> ValidateActionsAccessAsync(
         string apiUrl, string clientId, long installationId, string privateKeyBase64,
         string owner, string repo, CancellationToken ct)
     {

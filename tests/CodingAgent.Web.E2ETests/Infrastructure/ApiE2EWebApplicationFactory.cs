@@ -157,6 +157,10 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             ReplaceSingleton<IProviderFactory>(services, _fakeProviders);
             ReplaceSingleton(services, new Mock<IQualityGateValidator>().Object);
 
+            // Spec 051 2.1c: Settings checks provider credentials here. A GitLab check always
+            // passes, so forms save with dummy credentials without calling gitlab.com.
+            ReplaceSingleton<CodingAgent.Infrastructure.GitLab.GitLabValidationService>(services, new FakeGitLabValidationService());
+
             // The *same* fake cluster the Blazor host writes to. ChatJobDispatcher moved to this
             // host, so its Jobs land in whichever fake this registration names — and the tests
             // assert against the Blazor host's instance via Fixture.K8sClient. A second instance
