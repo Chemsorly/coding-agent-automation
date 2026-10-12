@@ -433,75 +433,43 @@ internal sealed class DispatchWorkItemService
     // ── Unique-violation idempotent-retry resolver ───────────────────────────────
 
     /// <summary>
-    /// Handles the <c>catch (Exception ex) when (IsUniqueViolation(ex))</c> body that was
-    /// duplicated across <c>CreateWorkItem</c> and <c>DispatchWorkItem</c>.
-    ///
-    /// <para>
+    /// The <c>catch (Exception ex) when (IsUniqueViolation(ex))</c> body of <c>DispatchWorkItem</c>.
+    /// (<c>CreateWorkItem</c>'s lives in <see cref="WorkItemStore.CreateAsync"/> since spec 051 2.3a.)
     /// Opens a fresh <see cref="PipelineDbContext"/> (the original context is faulted after a
-    /// <see cref="Microsoft.EntityFrameworkCore.DbUpdateException"/>) and re-queries by
-    /// <paramref name="workItemId"/>:
-    /// <list type="bullet">
-    ///   <item>
-    ///     <c>isNewlyCreated=true</c> (<c>CreateWorkItem</c> path): checks whether any row with
-    ///     this ID exists. Returns 201 if the row exists (idempotent PK retry); otherwise
-    ///     delegates to <see cref="HandleUniqueViolationFallback"/> (partial unique-index conflict).
-    ///   </item>
-    ///   <item>
-    ///     <c>isNewlyCreated=false</c> (<c>DispatchWorkItem</c> path): projects the existing
-    ///     row's status. Returns 200 if active (<c>Dispatched</c> or <c>Running</c>); returns
-    ///     409 Conflict with a status message if non-active; otherwise delegates to
-    ///     <see cref="HandleUniqueViolationFallback"/>.
-    ///   </item>
-    /// </list>
-    /// </para>
+    /// <see cref="Microsoft.EntityFrameworkCore.DbUpdateException"/>) and projects the existing row's
+    /// status: 200 if it is active (<c>Dispatched</c> or <c>Running</c>), 409 with the status if not,
+    /// and <see cref="HandleUniqueViolationFallback"/> when no row has <paramref name="workItemId"/>.
     /// </summary>
     /// <param name="dbFactory">
     /// Factory used to open a fresh context. Must NOT be the faulted context from the caller's
     /// <c>SaveChangesAsync</c> path.
     /// </param>
     /// <param name="workItemId">The ID of the work item that triggered the unique violation.</param>
-    /// <param name="isNewlyCreated">
-    /// <c>true</c> when called from <c>CreateWorkItem</c>; <c>false</c> when called from
-    /// <c>DispatchWorkItem</c>.
-    /// </param>
     /// <param name="ct">Cancellation token.</param>
     internal static async Task<IResult> HandleUniqueViolationAsync(
         IDbContextFactory<PipelineDbContext> dbFactory,
         Guid workItemId,
-        bool isNewlyCreated,
         CancellationToken ct)
     {
         await using var freshDb = await dbFactory.CreateDbContextAsync(ct);
 
-        if (isNewlyCreated)
+        // DispatchWorkItem path: status-aware check.
+        // Return 200 only when the existing item is still active (Dispatched or Running).
+        // For terminal or Pending states, return 409 so the Scheduler re-queues the issue
+        // rather than treating it as dispatched — a Failed/Cancelled item has no K8s Job
+        // and returning 200 would cause DispatchOrchestrationService to swap the GitHub
+        // label to agent:in-progress with no running job.
+        var existing = await freshDb.WorkItems.AsNoTracking()
+            .Select(w => new { w.Id, w.Status })
+            .FirstOrDefaultAsync(w => w.Id == workItemId, ct);
+        if (existing is not null)
         {
-            // CreateWorkItem path: existence check only.
-            // Idempotent PK retry — row already exists with this RunId → return 201 so
-            // EnsureSuccessStatusCode() on the retried response succeeds.
-            var exists = await freshDb.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
-            if (exists)
-                return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
-        }
-        else
-        {
-            // DispatchWorkItem path: status-aware check.
-            // Return 200 only when the existing item is still active (Dispatched or Running).
-            // For terminal or Pending states, return 409 so the Scheduler re-queues the issue
-            // rather than treating it as dispatched — a Failed/Cancelled item has no K8s Job
-            // and returning 200 would cause DispatchOrchestrationService to swap the GitHub
-            // label to agent:in-progress with no running job.
-            var existing = await freshDb.WorkItems.AsNoTracking()
-                .Select(w => new { w.Id, w.Status })
-                .FirstOrDefaultAsync(w => w.Id == workItemId, ct);
-            if (existing is not null)
-            {
-                var isActive = existing.Status is WorkItemStatus.Dispatched or WorkItemStatus.Running;
-                if (isActive)
-                    return TypedResults.Ok(workItemId);
-                Log.Warning("DispatchWorkItemService.HandleUniqueViolationAsync: idempotent retry for {WorkItemId} but existing item is in non-active state {Status} — returning 409",
-                    workItemId, existing.Status);
-                return TypedResults.Conflict($"Work item {workItemId} already exists in non-active state {existing.Status}.");
-            }
+            var isActive = existing.Status is WorkItemStatus.Dispatched or WorkItemStatus.Running;
+            if (isActive)
+                return TypedResults.Ok(workItemId);
+            Log.Warning("DispatchWorkItemService.HandleUniqueViolationAsync: idempotent retry for {WorkItemId} but existing item is in non-active state {Status} — returning 409",
+                workItemId, existing.Status);
+            return TypedResults.Conflict($"Work item {workItemId} already exists in non-active state {existing.Status}.");
         }
 
         // Postgres 23505: partial unique index on (IssueIdentifier, IssueProviderConfigId)
