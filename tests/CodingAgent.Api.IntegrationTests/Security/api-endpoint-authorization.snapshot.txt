@@ -7,7 +7,6 @@ POST /api/chat/{agentId}/terminate -> Service: OperatorApiKey
 GET /api/config/agent-profiles -> Service: OperatorApiKey
 GET /api/config/export -> Service: OperatorApiKey
 POST /api/config/import -> Service: OperatorApiKey
-GET /api/config/models -> Service: OperatorApiKey
 GET /api/config/pipeline -> Service: OperatorApiKey
 PUT /api/config/pipeline -> Service: OperatorApiKey
 GET /api/config/projects -> Service: OperatorApiKey
@@ -17,8 +16,6 @@ PUT /api/config/projects/{projectId}/templates -> Service: OperatorApiKey
 DELETE /api/config/projects/{projectId}/templates/{templateId} -> Service: OperatorApiKey
 POST /api/config/projects/{sourceProjectId}/templates/{templateId}/move -> Service: OperatorApiKey
 GET /api/config/provider-configs -> Service: OperatorApiKey
-PUT /api/config/provider-configs -> Service: OperatorApiKey
-DELETE /api/config/provider-configs/{id} -> Service: OperatorApiKey
 GET /api/config/provider-configs/{id} -> Service: OperatorApiKey
 GET /api/config/quality-gate-configs -> Service: OperatorApiKey
 GET /api/config/reviewer-configs -> Service: OperatorApiKey

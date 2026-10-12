@@ -41,8 +41,6 @@ public interface IPipelineApiConfigClient
     /// require the operator key.
     /// </summary>
     Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsWithSecretsAsync(ProviderKind kind, CancellationToken ct = default);
-    Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct = default);
-    Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct = default);
 
     // Agent profiles
     Task<IReadOnlyList<AgentProfile>> GetAgentProfilesAsync(CancellationToken ct = default);
@@ -63,7 +61,4 @@ public interface IPipelineApiConfigClient
     Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct = default);
     Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default);
     Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default);
-
-    // Model fetch — Option A passthrough via GET /api/config/models
-    Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> GetModelsAsync(CancellationToken ct = default);
 }
