@@ -1,4 +1,6 @@
+using CodingAgent.Contracts.Auth;
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -7,10 +9,11 @@ using Microsoft.EntityFrameworkCore;
 namespace CodingAgent.Api.Ui;
 
 /// <summary>
-/// Spec 051 2.2a: run history and the work-item lists, for every role. Lists follow D3 rule 3
-/// (<see cref="IUserAccess.DemandList"/>): without a project the user needs global read; a scoped
-/// user always has a project selected. A run's detail is checked against the run's own project.
-/// The handlers reuse the service surface's, so both surfaces return the same data.
+/// Spec 051 2.2a/2.2b: run history, the work-item lists and the work-item actions. Lists follow D3
+/// rule 3 (<see cref="IUserAccess.DemandList"/>): without a project the user needs global read; a
+/// scoped user always has a project selected. A run's detail and the actions are checked against
+/// the stored project of the run or work item, never one the client sends. The handlers reuse the
+/// service surface's, so both surfaces behave the same.
 /// </summary>
 internal static class UiRunEndpoints
 {
@@ -20,6 +23,8 @@ internal static class UiRunEndpoints
         group.MapGet("/runs/{runId:guid}", GetRun);
         group.MapGet("/work-items/pending", GetPendingWorkItems);
         group.MapGet("/work-items/active", GetActiveWorkItems);
+        group.MapPost("/work-items/{id:guid}/cancel", CancelWorkItem).RequireAuthorization(UiPolicies.AnyOperator);
+        group.MapPut("/work-items/{id:guid}/priority", SetPriority).RequireAuthorization(UiPolicies.AnyOperator);
         return group;
     }
 
@@ -66,5 +71,44 @@ internal static class UiRunEndpoints
     {
         access.DemandList(projectId);
         return await WorkItemQueryEndpoints.GetActiveWorkItems(olderThanSeconds, dbFactory, runService, projectId, ct);
+    }
+
+    /// <summary>
+    /// POST /api/ui/work-items/{id}/cancel — cancels a queued item or an in-flight run (a run's ID is
+    /// its work item's). 204 when it had already ended.
+    /// </summary>
+    internal static async Task<IResult> CancelWorkItem(
+        Guid id, IUserAccess access, IDbContextFactory<PipelineDbContext> dbFactory,
+        WorkItemStatusTransitionService transitions, CancellationToken ct)
+    {
+        if (!await DemandOperateOnWorkItemAsync(id, access, dbFactory, ct))
+            return TypedResults.NotFound();
+        return await WorkItemAgentEndpoints.PostStatus(id, new WorkItemStatusRequest { Status = WorkItemStatus.Cancelled }, transitions, ct);
+    }
+
+    /// <summary>PUT /api/ui/work-items/{id}/priority — the dispatch weight of a queued item; 409 once it left the queue.</summary>
+    internal static async Task<IResult> SetPriority(
+        Guid id, UiPriorityRequest request, IUserAccess access, IDbContextFactory<PipelineDbContext> dbFactory,
+        WorkItemTransitionService transitions, CancellationToken ct)
+    {
+        if (!await DemandOperateOnWorkItemAsync(id, access, dbFactory, ct))
+            return TypedResults.NotFound();
+        return await WorkItemDispatchEndpoints.PostPriorityWeight(
+            id, new PriorityWeightRequest { PriorityWeight = request.PriorityWeight }, transitions, ct);
+    }
+
+    /// <summary>False when the work item does not exist; throws (404/403) when the user cannot operate on its project.</summary>
+    private static async Task<bool> DemandOperateOnWorkItemAsync(
+        Guid id, IUserAccess access, IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems.AsNoTracking()
+            .Where(w => w.Id == id)
+            .Select(w => new { w.ProjectId })
+            .FirstOrDefaultAsync(ct);
+        if (item is null)
+            return false;
+        access.DemandOperate(ProjectIds.Normalize(item.ProjectId));
+        return true;
     }
 }

@@ -533,6 +533,13 @@ The run detail is checked against the run's own project. A run the user cannot r
 | `GET /api/ui/work-items/pending?maxResults=&projectId=` | The queue, in dispatch order. |
 | `GET /api/ui/work-items/active?olderThanSeconds=&projectId=` | Dispatched and running work items. |
 
+The actions on one work item need the `operator` role on the work item's stored project. A user who can only read that project gets `403`; a user who cannot see it gets `404`. A run's ID is its work item's ID, so cancelling a run uses the same endpoint.
+
+| Path | Does |
+|---|---|
+| `POST /api/ui/work-items/{id}/cancel` | Cancels a queued item or an in-flight run. Returns `204` when it had already ended. |
+| `PUT /api/ui/work-items/{id}/priority` | Sets the dispatch weight of a queued item from `{ priorityWeight }` (0–1000). Returns `400` outside that range and `409` once the item has left the queue. |
+
 ### Settings (admin)
 
 `/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
@@ -633,6 +640,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/pipeline-settings` | User token | Global settings pages outside Settings show |
 | GET | `/api/ui/runs`, `/api/ui/runs/{runId}` | User token | Run history and run detail (per project) |
 | GET | `/api/ui/work-items/pending`, `/api/ui/work-items/active` | User token | Queue and in-flight work items (per project) |
+| POST, PUT | `/api/ui/work-items/{id}/cancel`, `/api/ui/work-items/{id}/priority` | User token, operator of the item's project | Cancel a run or queued item; set queue priority |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

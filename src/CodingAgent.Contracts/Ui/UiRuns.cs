@@ -7,3 +7,6 @@ namespace CodingAgent.Contracts.Ui;
 /// is resolved by the API, so the page needs no provider configs.
 /// </summary>
 public sealed record UiRunDetail(PipelineRunSummary Run, string? AgentProviderName);
+
+/// <summary>Body of <c>PUT /api/ui/work-items/{id}/priority</c>: the dispatch weight, 0–1000.</summary>
+public sealed record UiPriorityRequest(int PriorityWeight);

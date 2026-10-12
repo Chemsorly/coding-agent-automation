@@ -132,7 +132,7 @@ public class WorkComponentTests : BunitContext
         _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 750, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -144,7 +144,7 @@ public class WorkComponentTests : BunitContext
             await input.ChangeAsync(new ChangeEventArgs { Value = "750" });
         });
 
-        _mockWorkItems.Verify(c => c.SetPriorityAsync(itemId, 750, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLists.Verify(c => c.SetPriorityAsync(itemId, 750, It.IsAny<CancellationToken>()), Times.Once);
         // TODO: This only verifies the API was called — it does not assert that the displayed value
         // (input attribute or _pending state) was subsequently updated after RefreshQuietAsync ran.
         // AC states "on successful update the displayed value reflects the new weight without a full
@@ -175,7 +175,7 @@ public class WorkComponentTests : BunitContext
             await input.ChangeAsync(new ChangeEventArgs { Value = "1001" });
         });
 
-        _mockWorkItems.Verify(
+        _mockLists.Verify(
             c => c.SetPriorityAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a value outside 0–1000 must not be forwarded to the API");
@@ -190,7 +190,7 @@ public class WorkComponentTests : BunitContext
         _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 100, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("400 Bad Request"));
 
@@ -220,7 +220,7 @@ public class WorkComponentTests : BunitContext
                 pendingCallCount++;
                 return [MakePendingItem(itemId)];
             });
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 200, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("409 Conflict"));
 
@@ -254,7 +254,7 @@ public class WorkComponentTests : BunitContext
         _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 300, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -394,9 +394,9 @@ public class WorkComponentTests : BunitContext
         _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2231", "Some issue")]);
-        _mockWorkItems
-            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        _mockLists
+            .Setup(c => c.CancelAsync(id, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var navMan = Services.GetRequiredService<NavigationManager>();
         var initialUri = navMan.Uri;
@@ -414,7 +414,7 @@ public class WorkComponentTests : BunitContext
 
     /// <summary>
     /// Clicking "Cancel" on an in-flight run must show a confirmation prompt (not immediately cancel).
-    /// The confirm/Yes and dismiss/No buttons must appear; PostStatusAsync must NOT be called yet.
+    /// The confirm/Yes and dismiss/No buttons must appear; CancelAsync must NOT be called yet.
     /// </summary>
     // TODO: [WARNING] This test does not assert that the original cancel-btn-{id} is hidden once
     // the confirmation is shown. A regression that renders both simultaneously would pass this test.
@@ -437,15 +437,15 @@ public class WorkComponentTests : BunitContext
         Assert.NotEmpty(cut.FindAll($"[data-testid='confirm-cancel-btn-{id}']"));
         Assert.NotEmpty(cut.FindAll($"[data-testid='dismiss-cancel-btn-{id}']"));
 
-        // PostStatusAsync must NOT have been called yet
-        _mockWorkItems.Verify(
-            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+        // CancelAsync must NOT have been called yet
+        _mockLists.Verify(
+            c => c.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never,
-            "PostStatusAsync must not be called when only the Cancel button is clicked");
+            "CancelAsync must not be called when only the Cancel button is clicked");
     }
 
     /// <summary>
-    /// Clicking "Yes" after the confirmation prompt must call PostStatusAsync once with the correct id.
+    /// Clicking "Yes" after the confirmation prompt must call CancelAsync once with the correct id.
     /// </summary>
     [Fact]
     public async Task InFlightCancel_ClickConfirm_CallsPostStatusOnce()
@@ -454,9 +454,9 @@ public class WorkComponentTests : BunitContext
         _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2937", "Live run")]);
-        _mockWorkItems
-            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        _mockLists
+            .Setup(c => c.CancelAsync(id, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var cut = Render<Work>();
 
@@ -466,14 +466,14 @@ public class WorkComponentTests : BunitContext
         // Click Yes (confirm)
         await cut.InvokeAsync(() => cut.Find($"[data-testid='confirm-cancel-btn-{id}']").Click());
 
-        _mockWorkItems.Verify(
-            c => c.PostStatusAsync(id, It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled"), It.IsAny<CancellationToken>()),
+        _mockLists.Verify(
+            c => c.CancelAsync(id, It.IsAny<CancellationToken>()),
             Times.Once,
-            "PostStatusAsync must be called exactly once with Cancelled after confirming");
+            "CancelAsync must be called exactly once with Cancelled after confirming");
     }
 
     /// <summary>
-    /// Clicking "No" (dismiss) after the confirmation prompt must hide the confirmation and NOT call PostStatusAsync.
+    /// Clicking "No" (dismiss) after the confirmation prompt must hide the confirmation and NOT call CancelAsync.
     /// </summary>
     [Fact]
     public void InFlightCancel_ClickDismiss_HidesConfirmation_AndDoesNotCallPostStatus()
@@ -496,11 +496,11 @@ public class WorkComponentTests : BunitContext
         Assert.Empty(cut.FindAll($"[data-testid='dismiss-cancel-btn-{id}']"));
         Assert.NotEmpty(cut.FindAll($"[data-testid='cancel-btn-{id}']"));
 
-        // PostStatusAsync must not have been called
-        _mockWorkItems.Verify(
-            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+        // CancelAsync must not have been called
+        _mockLists.Verify(
+            c => c.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never,
-            "PostStatusAsync must not be called when the dismiss button is clicked");
+            "CancelAsync must not be called when the dismiss button is clicked");
     }
 
     // ── In-flight Initiated by column (issue #2540) ───────────────────────────

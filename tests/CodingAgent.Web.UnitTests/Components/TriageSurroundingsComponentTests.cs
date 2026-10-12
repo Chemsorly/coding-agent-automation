@@ -72,6 +72,7 @@ public class TriageSurroundingsComponentTests : BunitContext
         Services.AddTestAccess();
         Services.AddSingleton(history.Object);
         Services.AddSingleton(triages.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiWorkItemClient>());
         Services.AddSingleton(hub.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiWorkItemClient>());
         Services.AddSingleton(config.Object);

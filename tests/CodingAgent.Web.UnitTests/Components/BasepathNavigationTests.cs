@@ -252,6 +252,7 @@ public class BasepathNavigationTests : BunitContext
 
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiWorkItemClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>());

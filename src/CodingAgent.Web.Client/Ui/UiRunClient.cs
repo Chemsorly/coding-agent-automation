@@ -37,12 +37,22 @@ public sealed class UiRunClient(HttpClient http, IUiAccessTokenSource tokens) : 
         FindAsync($"/api/ui/runs/{runId}", UiJsonContext.Default.UiRunDetail, ct);
 }
 
-/// <summary>The work-item lists of the Work and Overview pages (spec 051 2.2a), under the same project rule as runs.</summary>
+/// <summary>
+/// The work-item lists of the Work and Overview pages (spec 051 2.2a), under the same project rule as
+/// runs, and the actions on one work item (2.2b), which the API checks against its stored project.
+/// A refusal throws <see cref="InvalidOperationException"/> with the API's reason.
+/// </summary>
 public interface IUiWorkItemClient
 {
     Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, string? projectId = null, CancellationToken ct = default);
 
     Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds = 0, string? projectId = null, CancellationToken ct = default);
+
+    /// <summary>Cancels a queued item or an in-flight run (a run's ID is its work item's); a no-op once it has ended.</summary>
+    Task CancelAsync(Guid workItemId, CancellationToken ct = default);
+
+    /// <summary>Sets the dispatch weight (0–1000) of a queued item.</summary>
+    Task SetPriorityAsync(Guid workItemId, int priorityWeight, CancellationToken ct = default);
 }
 
 public sealed class UiWorkItemClient(HttpClient http, IUiAccessTokenSource tokens) : UiApiClient(http, tokens), IUiWorkItemClient
@@ -52,6 +62,12 @@ public sealed class UiWorkItemClient(HttpClient http, IUiAccessTokenSource token
 
     public Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds = 0, string? projectId = null, CancellationToken ct = default) =>
         GetAsync($"/api/ui/work-items/active?olderThanSeconds={olderThanSeconds}{ProjectScope(projectId)}", UiJsonContext.Default.IReadOnlyListActiveWorkItemDto, ct);
+
+    public Task CancelAsync(Guid workItemId, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Post, $"/api/ui/work-items/{workItemId}/cancel", ct);
+
+    public Task SetPriorityAsync(Guid workItemId, int priorityWeight, CancellationToken ct = default) =>
+        SendJsonAsync(HttpMethod.Put, $"/api/ui/work-items/{workItemId}/priority", new UiPriorityRequest(priorityWeight), UiJsonContext.Default.UiPriorityRequest, ct);
 
     private static string ProjectScope(string? projectId) =>
         string.IsNullOrEmpty(projectId) ? "" : $"&projectId={Uri.EscapeDataString(projectId)}";

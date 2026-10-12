@@ -83,6 +83,8 @@ GET /api/ui/settings/templates -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/ui/settings/templates/move -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/work-items/active -> Ui: Ui.AnyAccess
 GET /api/ui/work-items/pending -> Ui: Ui.AnyAccess
+POST /api/ui/work-items/{id:guid}/cancel -> Ui: Ui.AnyAccess, Ui.AnyOperator
+PUT /api/ui/work-items/{id:guid}/priority -> Ui: Ui.AnyAccess, Ui.AnyOperator
 POST /api/work-items/ -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/active -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/active-decomposition-count -> Service: AgentApiKey, OperatorApiKey
