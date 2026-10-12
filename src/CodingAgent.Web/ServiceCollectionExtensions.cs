@@ -47,7 +47,7 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers multi-agent orchestration services: agent registry and token vending.
+    /// Registers multi-agent orchestration services: agent registry and the label service.
     /// HeartbeatMonitorService was deleted at Spec 041–045 arc close — agent timeouts
     /// are enforced by ReconciliationService in JobController.
     /// </summary>
@@ -56,8 +56,8 @@ public static partial class ServiceCollectionExtensions
         // ── Agent Registry ─────────────────────────────────────────────────
         RegisterAgentRegistry(services);
 
-        // ── Token Vending & Run Services ───────────────────────────────────
-        RegisterTokenAndRunServices(services);
+        // ── Label Service ──────────────────────────────────────────────────
+        RegisterLabelService(services);
 
         // ── Background Services ────────────────────────────────────────────
         RegisterOrchestrationBackgroundServices(services);
@@ -66,21 +66,14 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers consolidation services: job preparation, selector resolver, service, and badge service.
+    /// Registers the consolidation trigger for the Consolidation page: the selector resolver and the service.
+    /// The API registers the same form (spec 051 2.4a); this one goes when the page calls the API.
     /// </summary>
     public static IServiceCollection AddConsolidationServices(
         this IServiceCollection services,
         PipelineConfiguration pipelineConfig)
     {
-        services.AddSingleton<IConsolidationJobPreparationService>(sp => new ConsolidationJobPreparationService(
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ITokenVendingService>(),
-            Log.Logger));
-
         // Resolves agent selector labels for consolidation dispatch.
-        // Implemented in CodingAgent.Web so IAgentProfileStore and IPipelineConfigStore
-        // stay out of CodingAgent.Pipeline.
         services.AddSingleton<IConsolidationSelectorResolver>(sp =>
             new ConsolidationSelectorResolver(
                 sp.GetRequiredService<IAgentProfileStore>(),

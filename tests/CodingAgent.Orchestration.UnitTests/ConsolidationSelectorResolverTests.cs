@@ -1,8 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.Services;
 
-namespace CodingAgent.Web.UnitTests.Services;
+namespace CodingAgent.Orchestration.UnitTests;
 
 /// <summary>
 /// Unit tests for <see cref="ConsolidationSelectorResolver.Resolve"/>.
