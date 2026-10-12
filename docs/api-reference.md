@@ -540,6 +540,10 @@ The actions on one work item need the `operator` role on the work item's stored 
 | `POST /api/ui/work-items/{id}/cancel` | Cancels a queued item or an in-flight run. Returns `204` when it had already ended. |
 | `PUT /api/ui/work-items/{id}/priority` | Sets the dispatch weight of a queued item from `{ priorityWeight }` (0–1000). Returns `400` outside that range and `409` once the item has left the queue. |
 
+### Backlog (any role)
+
+`GET /api/ui/backlog?projectId=` returns the open issues of the enabled templates' issue providers, as `{ issues, isTruncated }`. Each issue says whether it is ready to dispatch. It is not ready when it has open dependencies (`blockedBy`, `blockedByUrls`) or carries a lifecycle label such as `agent:in-progress` or `backlog`. The API calls the providers with the stored credentials. `isTruncated` is set when a provider had more than 200 open issues. The `projectId` rule is the same as for the lists above.
+
 ### Settings (admin)
 
 `/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
@@ -641,6 +645,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/runs`, `/api/ui/runs/{runId}` | User token | Run history and run detail (per project) |
 | GET | `/api/ui/work-items/pending`, `/api/ui/work-items/active` | User token | Queue and in-flight work items (per project) |
 | POST, PUT | `/api/ui/work-items/{id}/cancel`, `/api/ui/work-items/{id}/priority` | User token, operator of the item's project | Cancel a run or queued item; set queue priority |
+| GET | `/api/ui/backlog` | User token | Open provider issues with their dispatch readiness (per project) |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

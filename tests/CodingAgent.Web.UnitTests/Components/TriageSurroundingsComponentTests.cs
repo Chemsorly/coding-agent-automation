@@ -35,7 +35,7 @@ public class TriageSurroundingsComponentTests : BunitContext
         Services.AddSingleton(triages.Object);
         Services.AddSingleton(history.Object);
         Services.AddSingleton(state);
-        Services.AddSingleton(new BlockedIssuesService(Mock.Of<IPipelineApiConfigClient>(), Mock.Of<IProviderFactory>(), Mock.Of<IDependencyChecker>()));
+        Services.AddSingleton(new BlockedIssuesService(Mock.Of<CodingAgent.Web.Ui.IUiBrowseClient>()));
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
         var cut = Render<Attention>();

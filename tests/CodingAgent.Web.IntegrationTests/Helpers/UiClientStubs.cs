@@ -49,5 +49,10 @@ public static class UiClientStubs
         workItems.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ActiveWorkItemDto>());
         services.RemoveAll<IUiWorkItemClient>();
         services.AddSingleton(workItems.Object);
+
+        var browse = new Mock<IUiBrowseClient>();
+        browse.Setup(c => c.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new BacklogResult([], IsTruncated: false));
+        services.RemoveAll<IUiBrowseClient>();
+        services.AddSingleton(browse.Object);
     }
 }
