@@ -32,5 +32,10 @@ public static class UiClientStubs
         settings.Setup(c => c.GetFirstRunStateAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new UiFirstRunState(true, false));
         services.RemoveAll<IUiSettingsClient>();
         services.AddSingleton(settings.Object);
+
+        var providers = new Mock<IUiProviderClient>();
+        providers.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ProviderConfig>());
+        services.RemoveAll<IUiProviderClient>();
+        services.AddSingleton(providers.Object);
     }
 }

@@ -8,7 +8,7 @@ namespace CodingAgent.Api.Ui;
 /// <summary>
 /// Spec 051 2.1b: Settings on the UI surface, admin only. The handlers are the service surface's
 /// (<see cref="ConfigEndpoints"/>), so validation is identical. Projects and agent profiles go through
-/// <see cref="UiSecretMask"/> (D4). Provider configs and their operations follow in 2.1c.
+/// <see cref="UiSecretMask"/> (D4). Provider configs and their operations are in <see cref="UiProviderEndpoints"/>.
 /// The config export stays unredacted (spec 051 Q1): it is the admin's backup and restore file.
 /// </summary>
 internal static class UiSettingsEndpoints
@@ -48,6 +48,8 @@ internal static class UiSettingsEndpoints
 
         group.MapGet("/first-run", GetFirstRun);
         group.MapPost("/first-run/dismiss", DismissFirstRunBanner);
+
+        group.MapUiProviderEndpoints();
 
         return group;
     }

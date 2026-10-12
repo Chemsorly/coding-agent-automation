@@ -520,13 +520,34 @@ These return slim views of the configuration for pages outside Settings. They ne
 
 ### Settings (admin)
 
-`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface. Provider configs follow in a later version.
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
 
 Secrets never leave the API here, not even for an admin:
-- Project secrets and every MCP server env value and header (in projects and agent profiles) come back as `****`.
+- These values come back as `****`:
+  - project secrets;
+  - every MCP server env value and header (in projects and agent profiles);
+  - provider secrets;
+  - the provider settings `privateKeyBase64`, `token` and `accessToken`.
 - Saving `****` keeps the stored value under the same key (MCP servers are matched by name). A key that is left out is removed.
-- A `****` with no stored value behind it, for example after renaming an MCP server, is refused with `400` and the key named. Enter the value again.
+- A `****` with no stored value behind it is refused with `400` and the key named. This happens, for example, after renaming an MCP server or for a new provider. Enter the value again.
+- A stored provider credential is only used with its stored URL (`apiUrl`, `baseUrl`). A provider whose URL changed while a credential is still `****` is refused with `400`. Enter the credential again.
 - The only exception is `GET /api/ui/settings/export`: the backup file contains live credentials, so treat it as a secret.
+
+The provider operations of the Settings page run in the API:
+
+| Path | Does |
+|---|---|
+| `GET /provider-configs?kind=` | The provider configs of a kind, masked. |
+| `PUT /provider-configs` | Saves the config. With `?copyFrom={id}&copyFromKind={kind}`, a new config takes its `****` credentials from that stored provider. Settings creates a repository's related issue, repository and pipeline providers this way. |
+| `DELETE /provider-configs/{id}?kind=` | Deletes the config. |
+| `POST /provider-configs/check` | Checks the GitHub App or GitLab credentials in the posted form, and the repository or project when one is named. Returns `{ success, message }`. |
+| `POST /provider-configs/actions-access` | Whether the GitHub App can read the repository's workflow runs, as `{ success, message }`. |
+| `POST /provider-configs/repositories` | The repositories the GitHub App installation can access, as `[{ fullName, owner, name }]`. Returns `400` with the reason when the credentials fail. |
+| `POST /provider-configs/initialize` | Checks access and creates the agent labels, as `{ success, message }`. `success` is `false` when some labels could not be created. Returns `400` with the reason when access fails. |
+| `GET`, `POST /provider-configs/{id}/agent-labels` | Whether the stored issue provider's repository has the agent labels, or creates them. Returns `true` or `false`. |
+| `GET /models` | The models the agent CLI offers. Returns `502` with the reason as a JSON string when the fetch fails. |
+
+Every operation takes the form as posted. Its `****` values are filled in from the stored config with the same ID and kind, under the URL rule above.
 
 ---
 

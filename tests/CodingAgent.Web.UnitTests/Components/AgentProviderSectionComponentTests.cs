@@ -1,8 +1,8 @@
 using Bunit;
 using Moq;
 using AwesomeAssertions;
-using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
+using CodingAgent.Web.Ui;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
@@ -15,11 +15,12 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class AgentProviderSectionComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
+    private readonly Mock<IUiProviderClient> _mockConfigClient;
+    private readonly Mock<IUiSettingsClient> _settingsClient = new();
 
     public AgentProviderSectionComponentTests()
     {
-        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        _mockConfigClient = new Mock<IUiProviderClient>();
     }
 
     [Fact]
@@ -178,7 +179,8 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
         var addButton = component.Find(".btn-add");
@@ -206,7 +208,8 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigClient, _mockConfigClient.Object));
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object));
 
         var addButton = component.Find(".btn-add");
         addButton.Click();
@@ -233,7 +236,8 @@ public class AgentProviderSectionComponentTests : BunitContext
         var onSavedCalled = false;
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
             .Add(p => p.OnSaved, EventCallback.Factory.Create(this, () => onSavedCalled = true)));
 
         var addButton = component.Find(".btn-add");
@@ -266,7 +270,8 @@ public class AgentProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
         var addButton = component.Find(".btn-add");
@@ -307,7 +312,8 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, id => deletedId = id)));
 
         var deleteButton = component.Find(".btn-delete");
@@ -342,7 +348,8 @@ public class AgentProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
@@ -388,12 +395,68 @@ public class AgentProviderSectionComponentTests : BunitContext
         Assert.Contains("These configurations define how agents execute", component.Markup);
     }
 
+    [Fact]
+    public async Task AgentProviderSection_FetchModels_LoadsTheApiModels()
+    {
+        _mockConfigClient.Setup(c => c.GetModelsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<AgentModelInfo> { new() { ModelId = "claude-sonnet-4" }, new() { ModelId = "claude-opus-4" } }, (string?)null));
+        (string Message, bool IsError)? statusResult = null;
+        var component = Render<AgentProviderSection>(parameters => parameters
+            .Add(p => p.Providers, new List<ProviderConfig>())
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
+            .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
+
+        component.Find(".btn-add").Click();
+        await component.FindAll("button").First(b => b.TextContent.Contains("Fetch Models"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        statusResult.Should().Be(("2 model(s) loaded.", false));
+        component.Markup.Should().Contain("claude-opus-4");
+    }
+
+    [Fact]
+    public async Task AgentProviderSection_FetchModels_ApiError_ShowsIt()
+    {
+        _mockConfigClient.Setup(c => c.GetModelsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Array.Empty<AgentModelInfo>(), "Model fetch timed out after 120s"));
+        (string Message, bool IsError)? statusResult = null;
+        var component = Render<AgentProviderSection>(parameters => parameters
+            .Add(p => p.Providers, new List<ProviderConfig>())
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
+            .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
+
+        component.Find(".btn-add").Click();
+        await component.FindAll("button").First(b => b.TextContent.Contains("Fetch Models"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        statusResult.Should().Be(("Model fetch timed out after 120s", true));
+    }
+
+    [Fact]
+    public void AgentProviderSection_KubernetesMode_ReadsTheFetchTimeoutFromTheSettingsClient()
+    {
+        _settingsClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { ModelFetchTimeoutSeconds = 77 });
+        var component = Render<AgentProviderSection>(parameters => parameters
+            .Add(p => p.Providers, new List<ProviderConfig>())
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object)
+            .Add(p => p.IsKubernetesMode, true));
+
+        component.Find(".btn-add").Click();
+
+        component.Markup.Should().Contain("~77s");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private IRenderedComponent<AgentProviderSection> RenderSection(List<ProviderConfig>? providers = null)
     {
         return Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers ?? new List<ProviderConfig>())
-            .Add(p => p.ConfigClient, _mockConfigClient.Object));
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
+            .Add(p => p.SettingsClient, _settingsClient.Object));
     }
 }

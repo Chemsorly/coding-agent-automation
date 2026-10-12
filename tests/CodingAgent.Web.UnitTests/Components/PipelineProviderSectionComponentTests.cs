@@ -1,8 +1,7 @@
 using Bunit;
 using Moq;
-using CodingAgent.Api.Client;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Components.Pages;
-using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
@@ -15,13 +14,11 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class PipelineProviderSectionComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
-    private readonly GitHubValidationService _gitHubValidator;
+    private readonly Mock<CodingAgent.Web.Ui.IUiProviderClient> _mockConfigClient;
 
     public PipelineProviderSectionComponentTests()
     {
-        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
-        _gitHubValidator = new GitHubValidationService();
+        _mockConfigClient = new Mock<CodingAgent.Web.Ui.IUiProviderClient>();
     }
 
     [Fact]
@@ -151,8 +148,7 @@ public class PipelineProviderSectionComponentTests : BunitContext
 
         var component = Render<PipelineProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
-            .Add(p => p.GitHubValidator, _gitHubValidator)
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, id => deletedId = id)));
 
         var deleteButton = component.Find(".btn-delete");
@@ -248,8 +244,7 @@ public class PipelineProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var component = Render<PipelineProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
-            .Add(p => p.GitHubValidator, _gitHubValidator)
+            .Add(p => p.ProviderClient, _mockConfigClient.Object)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
@@ -264,13 +259,97 @@ public class PipelineProviderSectionComponentTests : BunitContext
         Assert.Contains("DB error", statusResult.Value.Message);
     }
 
+    // ── Provider checks through the API (spec 051 2.1c) ─────────────────
+
+    private static List<ProviderConfig> StoredPipelineProvider() =>
+    [
+        new()
+        {
+            Id = "pp-1",
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitHub",
+            DisplayName = "CI",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.abc",
+                [ProviderSettingKeys.InstallationId] = "456",
+                [ProviderSettingKeys.PrivateKeyBase64] = "****",
+                [ProviderSettingKeys.Owner] = "acme",
+                [ProviderSettingKeys.Repo] = "webapp"
+            }
+        }
+    ];
+
+    [Fact]
+    public async Task PipelineProviderSection_SaveEdited_ChecksCredentialsAndActionsInTheApi_ThenSaves()
+    {
+        _mockConfigClient.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(true, "Connected"));
+        _mockConfigClient.Setup(c => c.CheckActionsAccessAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(true, "Actions readable"));
+        var component = RenderSection(StoredPipelineProvider());
+
+        component.Find(".provider-card .btn-edit").Click();
+        await component.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        _mockConfigClient.Verify(c => c.CheckActionsAccessAsync(
+            It.Is<ProviderConfig>(d => d.Id == "pp-1" && d.Settings[ProviderSettingKeys.PrivateKeyBase64] == "****"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockConfigClient.Verify(c => c.SaveProviderConfigAsync(
+            It.Is<ProviderConfig>(d => d.Id == "pp-1" && d.Kind == ProviderKind.Pipeline), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PipelineProviderSection_SaveEdited_NoActionsAccess_ShowsTheReason_AndDoesNotSave()
+    {
+        _mockConfigClient.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(true, "Connected"));
+        _mockConfigClient.Setup(c => c.CheckActionsAccessAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(false, "The App lacks Actions: Read"));
+        var component = RenderSection(StoredPipelineProvider());
+
+        component.Find(".provider-card .btn-edit").Click();
+        await component.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("The App lacks Actions: Read", component.Markup);
+        _mockConfigClient.Verify(c => c.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PipelineProviderSection_SaveEdited_ApiRefuses_ShowsTheReason()
+    {
+        _mockConfigClient.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("The API URL changed: enter the credentials again."));
+        var component = RenderSection(StoredPipelineProvider());
+
+        component.Find(".provider-card .btn-edit").Click();
+        await component.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("The API URL changed", component.Markup);
+        _mockConfigClient.Verify(c => c.CheckActionsAccessAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PipelineProviderSection_FetchRepos_ListsTheApiRepositories()
+    {
+        _mockConfigClient.Setup(c => c.ListRepositoriesAsync(It.Is<ProviderConfig>(d => d.Id == "pp-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiRepository> { new("acme/webapp", "acme", "webapp"), new("acme/api", "acme", "api") });
+        var component = RenderSection(StoredPipelineProvider());
+
+        component.Find(".provider-card .btn-edit").Click();
+        await component.FindAll("button").First(b => b.TextContent.Contains("Fetch Repos"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Credentials valid — 2 repositories found", component.Markup);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private IRenderedComponent<PipelineProviderSection> RenderSection(List<ProviderConfig>? providers = null)
     {
         return Render<PipelineProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers ?? new List<ProviderConfig>())
-            .Add(p => p.ConfigClient, _mockConfigClient.Object)
-            .Add(p => p.GitHubValidator, _gitHubValidator));
+            .Add(p => p.ProviderClient, _mockConfigClient.Object));
     }
 }
