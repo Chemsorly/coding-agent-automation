@@ -43,14 +43,6 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
         await EnsureAcceptedAsync(response, ct);
     }
 
-    /// <summary>Sends a request without a body; a refusal (400, 404) throws with the API's reason.</summary>
-    protected async Task SendAsync(HttpMethod method, string path, CancellationToken ct, HttpContent? content = null)
-    {
-        using var request = new HttpRequestMessage(method, path) { Content = content };
-        using var response = await SendAsync(request, ct);
-        await EnsureAcceptedAsync(response, ct);
-    }
-
     /// <summary>Sends a request and reads its JSON result; a refusal (400, 404) throws with the API's reason.</summary>
     protected async Task<T> SendForResultAsync<T>(HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> type, CancellationToken ct)
     {
@@ -58,6 +50,14 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
         using var response = await SendAsync(request, ct);
         await EnsureAcceptedAsync(response, ct);
         return (await response.Content.ReadFromJsonAsync(type, ct))!;
+    }
+
+    /// <summary>Sends a request without a body; a refusal (400, 404) throws with the API's reason.</summary>
+    protected async Task SendAsync(HttpMethod method, string path, CancellationToken ct, HttpContent? content = null)
+    {
+        using var request = new HttpRequestMessage(method, path) { Content = content };
+        using var response = await SendAsync(request, ct);
+        await EnsureAcceptedAsync(response, ct);
     }
 
     protected async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)

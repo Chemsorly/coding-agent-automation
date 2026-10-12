@@ -5,8 +5,9 @@ namespace CodingAgent.Api.Ui;
 
 /// <summary>
 /// Spec 051 D4: secret values never leave the API on the UI surface, not even for an admin. The
-/// fixed list here covers every project secret and every MCP server env value and header (headers
-/// carry tokens for HTTP servers). Other values are returned in clear.
+/// fixed list here covers every project secret, every MCP server env value and header (headers
+/// carry tokens for HTTP servers), every provider secret and the provider credential settings
+/// (<see cref="ProviderSecretSettings"/>). Other values are returned in clear.
 ///
 /// <para>
 /// Reading replaces each secret value with <see cref="Mask"/>. Writing <see cref="Mask"/> back keeps
@@ -18,6 +19,17 @@ namespace CodingAgent.Api.Ui;
 internal static class UiSecretMask
 {
     public const string Mask = "****";
+
+    /// <summary>Provider Settings keys that hold credentials (D4). Every <see cref="ProviderConfig.Secrets"/> value is one too.</summary>
+    internal static readonly IReadOnlySet<string> ProviderSecretSettings = new HashSet<string>(StringComparer.Ordinal)
+    {
+        ProviderSettingKeys.PrivateKeyBase64,
+        ProviderSettingKeys.Token,
+        ProviderSettingKeys.AccessToken,
+    };
+
+    /// <summary>Provider Settings keys that say where credentials are sent.</summary>
+    private static readonly string[] ProviderUrlSettings = [ProviderSettingKeys.ApiUrl, ProviderSettingKeys.BaseUrl];
 
     public static PipelineProject Redact(PipelineProject project) => project with
     {
@@ -35,6 +47,10 @@ internal static class UiSecretMask
         Env = server.Env.ToDictionary(e => e.Key, _ => Mask),
         Headers = server.Headers.ToDictionary(h => h.Key, _ => Mask),
     };
+
+    public static ProviderConfig Redact(ProviderConfig config) => Copy(config,
+        config.Settings.ToDictionary(s => s.Key, s => ProviderSecretSettings.Contains(s.Key) ? Mask : s.Value),
+        config.Secrets?.ToDictionary(s => s.Key, _ => Mask));
 
     /// <summary>The project to store: masked values replaced by the stored ones. Null with a reason when a mask has nothing behind it.</summary>
     public static (PipelineProject? Restored, string? Error) Restore(PipelineProject incoming, PipelineProject? stored)
@@ -68,21 +84,6 @@ internal static class UiSecretMask
             Headers = RestoreValues(incoming.Headers, stored?.Headers, $"header of MCP server '{incoming.Name}'", errors),
         };
     }
-
-    /// <summary>Provider Settings keys that hold credentials (D4). Every <see cref="ProviderConfig.Secrets"/> value is one too.</summary>
-    internal static readonly IReadOnlySet<string> ProviderSecretSettings = new HashSet<string>(StringComparer.Ordinal)
-    {
-        ProviderSettingKeys.PrivateKeyBase64,
-        ProviderSettingKeys.Token,
-        ProviderSettingKeys.AccessToken,
-    };
-
-    /// <summary>Provider Settings keys that say where credentials are sent.</summary>
-    private static readonly string[] ProviderUrlSettings = [ProviderSettingKeys.ApiUrl, ProviderSettingKeys.BaseUrl];
-
-    public static ProviderConfig Redact(ProviderConfig config) => Copy(config,
-        config.Settings.ToDictionary(s => s.Key, s => ProviderSecretSettings.Contains(s.Key) ? Mask : s.Value),
-        config.Secrets?.ToDictionary(s => s.Key, _ => Mask));
 
     /// <summary>
     /// The provider config to store or to run an operation with: masked values replaced by the stored
