@@ -6,8 +6,7 @@
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
-@inject IPipelineApiWorkItemClient WorkItems
-@inject IUiWorkItemClient WorkItemLists
+@inject IUiWorkItemClient WorkItems
 @inject BlockedIssuesService BlockedIssues
 @inject CockpitState State
 @inject NavigationManager Nav
@@ -432,8 +431,8 @@
     {
         try
         {
-            _active = await WorkItemLists.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
-            _pending = await WorkItemLists.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
@@ -447,8 +446,9 @@
     }
 
     // Cancels an in-flight run or removes a queued item. Both are a WorkItem status transition to
-    // Cancelled via the API (PostStatus → RunLifecycleManager.CancelRunAsync) — the same effect as the
-    // old monitoring page's "Cancel run" / "Remove from queue". WorkItem.Id == run id.
+    // Cancelled via the API (/api/ui/work-items/{id}/cancel → RunLifecycleManager.CancelRunAsync, which
+    // checks the item's stored project) — the same effect as the old monitoring page's "Cancel run" /
+    // "Remove from queue". WorkItem.Id == run id.
     private async Task CancelWorkItemAsync(Guid id)
     {
         if (!_cancelling.Add(id)) return;
@@ -456,7 +456,7 @@
         try
         {
             await Guard.DemandAsync(AccessRole.Operator, ProjectOf(id), "CancelWorkItem");
-            await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
+            await WorkItems.CancelAsync(id, _cts.Token);
             await RefreshQuietAsync();
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
@@ -513,8 +513,8 @@
     {
         try
         {
-            _active = await WorkItemLists.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
-            _pending = await WorkItemLists.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
             _error = null;
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }

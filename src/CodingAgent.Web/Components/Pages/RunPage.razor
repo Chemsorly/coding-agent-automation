@@ -11,6 +11,7 @@
 @using Microsoft.AspNetCore.SignalR.Client
 @inject IUiRunClient RunHistory
 @inject IPipelineApiWorkItemClient WorkItems
+@inject IUiWorkItemClient WorkItemActions
 @inject IUiConfigClient UiConfig
 @inject IPipelineApiTriageClient Triages
 @inject IAgentHubConnection HubConnection
@@ -629,9 +630,9 @@
         });
     }
 
-    // Cancels the active run via the API (WorkItem.Id == PipelineRun.RunId). PostStatus(Cancelled)
-    // drives RunLifecycleManager.CancelRunAsync on the server — the same effect as the old modal's
-    // "Cancel Run". The live OnRunCompleted event will flip the view to its terminal state.
+    // Cancels the active run via /api/ui (WorkItem.Id == PipelineRun.RunId), which checks the run's
+    // stored project and drives RunLifecycleManager.CancelRunAsync on the server — the same effect as
+    // the old modal's "Cancel Run". The live OnRunCompleted event will flip the view to its terminal state.
     private async Task CancelRunAsync()
     {
         if (!Guid.TryParse(RunId, out var id)) return;
@@ -645,7 +646,7 @@
         try
         {
             await Guard.DemandAsync(AccessRole.Operator, _run?.ProjectId, "CancelRun");
-            await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
+            await WorkItemActions.CancelAsync(id, _cts.Token);
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (AccessDeniedException)

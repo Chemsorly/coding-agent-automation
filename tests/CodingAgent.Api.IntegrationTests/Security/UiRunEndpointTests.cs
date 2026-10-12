@@ -29,6 +29,7 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
 
     private static readonly AccessGrant ReaderOfR = TestUserTokens.Scoped(ProjectR, AccessRole.ReadOnly);
     private static readonly AccessGrant GlobalReader = TestUserTokens.Global(AccessRole.ReadOnly);
+    private static readonly AccessGrant OperatorOfR = TestUserTokens.Scoped(ProjectR, AccessRole.Operator);
 
     private sealed class FixedToken(string token) : IUiAccessTokenSource
     {
@@ -64,7 +65,7 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
         return run;
     }
 
-    private Guid SeedWorkItem(string projectId, WorkItemStatus status)
+    private Guid SeedWorkItem(string? projectId, WorkItemStatus status)
     {
         var issue = $"ui-wi-{Guid.NewGuid():N}";
         var request = new JobDistributionRequest
@@ -76,7 +77,7 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
             TaskType = WorkItemTaskType.Implementation,
             AgentSelector = "",
             TimeoutSeconds = 3600,
-            ProjectId = Guid.Parse(projectId),
+            ProjectId = projectId is null ? null : Guid.Parse(projectId),
         };
         using var db = factory.CreateDbContext();
         var entity = new WorkItemEntity
@@ -91,7 +92,7 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
             TimeoutSeconds = 3600,
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
             DispatchedAt = status == WorkItemStatus.Pending ? null : DateTimeOffset.UtcNow.AddMinutes(-5),
-            ProjectId = Guid.Parse(projectId),
+            ProjectId = projectId is null ? null : Guid.Parse(projectId),
         };
         db.WorkItems.Add(entity);
         db.SaveChanges();
@@ -196,5 +197,84 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
     public async Task RunDetail_OfAnUnknownRun_IsNotFound()
     {
         (await Runs(GlobalReader).GetRunAsync(Guid.NewGuid())).Should().BeNull();
+    }
+
+    // ── 2.2b: actions on one work item ──────────────────────────────────
+
+    private WorkItemEntity Stored(Guid id)
+    {
+        using var db = factory.CreateDbContext();
+        return db.WorkItems.AsQueryable().Single(w => w.Id == id);
+    }
+
+    [Fact]
+    public async Task Cancel_ByAnOperatorOfTheItemsProject_CancelsIt()
+    {
+        var queued = SeedWorkItem(ProjectR, WorkItemStatus.Pending);
+
+        await WorkItems(OperatorOfR).CancelAsync(queued);
+
+        Stored(queued).Status.Should().Be(WorkItemStatus.Cancelled);
+    }
+
+    [Fact]
+    public async Task Actions_OnAnotherProjectsItem_AreNotFound_AndChangeNothing()
+    {
+        var itemOfS = SeedWorkItem(ProjectS, WorkItemStatus.Pending);
+
+        var cancel = () => WorkItems(OperatorOfR).CancelAsync(itemOfS);
+        var priority = () => WorkItems(OperatorOfR).SetPriorityAsync(itemOfS, 900);
+
+        (await cancel.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("404");
+        (await priority.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("404");
+        Stored(itemOfS).Status.Should().Be(WorkItemStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Actions_WithReadOnlyAccessToTheItemsProject_AreForbidden()
+    {
+        // The user operates on R, so the endpoint's AnyOperator policy passes; on S they only read.
+        var operatorOfRReaderOfS = new AccessGrant(AccessRole.None,
+            new Dictionary<string, AccessRole> { [ProjectR] = AccessRole.Operator, [ProjectS] = AccessRole.ReadOnly }, []);
+        var itemOfS = SeedWorkItem(ProjectS, WorkItemStatus.Pending);
+
+        (await Http(operatorOfRReaderOfS).PostAsync($"/api/ui/work-items/{itemOfS}/cancel", null)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await Http(ReaderOfR).PostAsync($"/api/ui/work-items/{itemOfS}/cancel", null)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        Stored(itemOfS).Status.Should().Be(WorkItemStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Actions_OnAnItemWithoutAProject_NeedGlobalOperate()
+    {
+        var unscoped = SeedWorkItem(projectId: null, WorkItemStatus.Pending);
+
+        var asOperatorOfR = () => WorkItems(OperatorOfR).CancelAsync(unscoped);
+
+        await asOperatorOfR.Should().ThrowAsync<InvalidOperationException>();
+        await WorkItems(TestUserTokens.Global(AccessRole.Operator)).SetPriorityAsync(unscoped, 10);
+        Stored(unscoped).PriorityWeight.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task SetPriority_UpdatesAQueuedItem_AndARefusalCarriesTheReason()
+    {
+        var queued = SeedWorkItem(ProjectR, WorkItemStatus.Pending);
+        var running = SeedWorkItem(ProjectR, WorkItemStatus.Running);
+
+        await WorkItems(OperatorOfR).SetPriorityAsync(queued, 700);
+        var outOfRange = () => WorkItems(OperatorOfR).SetPriorityAsync(queued, 1001);
+        var notQueued = () => WorkItems(OperatorOfR).SetPriorityAsync(running, 700);
+
+        Stored(queued).PriorityWeight.Should().Be(700);
+        (await outOfRange.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("between 0 and 1000");
+        (await notQueued.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("not in Pending status");
+    }
+
+    [Fact]
+    public async Task Cancel_OfAnUnknownItem_IsNotFound()
+    {
+        var cancel = () => WorkItems(TestUserTokens.Global(AccessRole.Operator)).CancelAsync(Guid.NewGuid());
+
+        await cancel.Should().ThrowAsync<InvalidOperationException>();
     }
 }

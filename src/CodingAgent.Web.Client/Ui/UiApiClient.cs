@@ -35,7 +35,7 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
         return await response.Content.ReadFromJsonAsync(type, ct);
     }
 
-    /// <summary>Sends <paramref name="body"/> as JSON; a refusal (400, 404) throws with the API's reason.</summary>
+    /// <summary>Sends <paramref name="body"/> as JSON; a refusal (400, 404, 409) throws with the API's reason.</summary>
     protected async Task SendJsonAsync<T>(HttpMethod method, string path, T body, JsonTypeInfo<T> type, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(method, path) { Content = JsonContent.Create(body, type) };
@@ -43,7 +43,7 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
         await EnsureAcceptedAsync(response, ct);
     }
 
-    /// <summary>Sends a request and reads its JSON result; a refusal (400, 404) throws with the API's reason.</summary>
+    /// <summary>Sends a request and reads its JSON result; a refusal (400, 404, 409) throws with the API's reason.</summary>
     protected async Task<T> SendForResultAsync<T>(HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> type, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(method, path) { Content = content };
@@ -52,7 +52,7 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
         return (await response.Content.ReadFromJsonAsync(type, ct))!;
     }
 
-    /// <summary>Sends a request without a body; a refusal (400, 404) throws with the API's reason.</summary>
+    /// <summary>Sends a request without a body; a refusal (400, 404, 409) throws with the API's reason.</summary>
     protected async Task SendAsync(HttpMethod method, string path, CancellationToken ct, HttpContent? content = null)
     {
         using var request = new HttpRequestMessage(method, path) { Content = content };
@@ -69,12 +69,12 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
     }
 
     /// <summary>
-    /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/>, but a refusal (400 or 404)
+    /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/>, but a refusal (400, 404 or 409)
     /// throws <see cref="InvalidOperationException"/> with the API's reason, so the page can show it.
     /// </summary>
     private static async Task EnsureAcceptedAsync(HttpResponseMessage response, CancellationToken ct)
     {
-        if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
+        if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.Conflict)
             throw new InvalidOperationException(await ReadReasonAsync(response, ct));
 
         response.EnsureSuccessStatusCode();

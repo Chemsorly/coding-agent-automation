@@ -22,7 +22,14 @@ namespace CodingAgent.Web.UnitTests.Components;
 public class RunPageComponentTests : BunitContext
 {
     // Spec 049: pages read CurrentAccess; a global admin renders every control as before.
-    public RunPageComponentTests() => Services.AddTestAccess();
+    // Spec 051 2.2b: cancelling goes through /api/ui (IUiWorkItemClient), checked against the run's project.
+    private readonly Mock<CodingAgent.Web.Ui.IUiWorkItemClient> _workItemActions = new();
+
+    public RunPageComponentTests()
+    {
+        Services.AddTestAccess();
+        Services.AddSingleton(_workItemActions.Object);
+    }
 
     // ── Shared scaffolding ────────────────────────────────────────────────
 
@@ -702,7 +709,7 @@ public class RunPageComponentTests : BunitContext
 
     /// <summary>
     /// On an active run, clicking "Cancel Pipeline" in the sidebar must show the confirmation
-    /// prompt; PostStatusAsync must NOT be called until "Yes, cancel" is clicked.
+    /// prompt; CancelAsync must NOT be called until "Yes, cancel" is clicked.
     /// </summary>
     // TODO: [WARNING] This test does not assert that the original cancel-pipeline-btn is hidden
     // once the confirmation section is shown. A regression rendering both simultaneously would
@@ -725,23 +732,23 @@ public class RunPageComponentTests : BunitContext
         Assert.NotEmpty(cut.FindAll("[data-testid='confirm-cancel-pipeline-btn']"));
         Assert.NotEmpty(cut.FindAll("[data-testid='dismiss-cancel-pipeline-btn']"));
 
-        // PostStatusAsync must NOT have been called yet
-        mockWorkItems.Verify(
-            w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+        // CancelAsync must NOT have been called yet
+        _workItemActions.Verify(
+            w => w.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
     /// <summary>
-    /// Clicking "Yes, cancel" after the confirmation must call PostStatusAsync once with Cancelled.
+    /// Clicking "Yes, cancel" after the confirmation must call CancelAsync once with Cancelled.
     /// </summary>
     [Fact]
-    public async Task CancelRun_ClickConfirm_CallsPostStatusOnce()
+    public async Task CancelRun_ClickConfirm_CallsCancelOnce()
     {
         var runId = Guid.NewGuid().ToString();
         var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
-        mockWorkItems
-            .Setup(w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        _workItemActions
+            .Setup(w => w.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         RegisterServices(MakeActiveSummary(runId), mockWorkItems);
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
@@ -752,17 +759,14 @@ public class RunPageComponentTests : BunitContext
         // Confirm
         await cut.InvokeAsync(() => cut.Find("[data-testid='confirm-cancel-pipeline-btn']").Click());
 
-        mockWorkItems.Verify(
-            w => w.PostStatusAsync(
-                It.Is<Guid>(g => g.ToString() == runId),
-                It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled"),
-                It.IsAny<CancellationToken>()),
+        _workItemActions.Verify(
+            w => w.CancelAsync(It.Is<Guid>(g => g.ToString() == runId), It.IsAny<CancellationToken>()),
             Times.Once,
-            "PostStatusAsync must be called exactly once with Cancelled after confirming");
+            "CancelAsync must be called exactly once after confirming");
     }
 
     /// <summary>
-    /// Clicking "No" (dismiss) must hide the confirmation and NOT call PostStatusAsync.
+    /// Clicking "No" (dismiss) must hide the confirmation and NOT call CancelAsync.
     /// </summary>
     [Fact]
     public void CancelRun_ClickDismiss_HidesConfirmation_NoCancelCalled()
@@ -782,22 +786,22 @@ public class RunPageComponentTests : BunitContext
         Assert.Empty(cut.FindAll("[data-testid='cancel-pipeline-confirm-section']"));
         Assert.NotEmpty(cut.FindAll("[data-testid='cancel-pipeline-btn']"));
 
-        // PostStatusAsync must not have been called
-        mockWorkItems.Verify(
-            w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+        // CancelAsync must not have been called
+        _workItemActions.Verify(
+            w => w.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
     /// <summary>
-    /// When PostStatusAsync throws, an error callout must be rendered on the RunPage.
+    /// When CancelAsync throws, an error callout must be rendered on the RunPage.
     /// </summary>
     [Fact]
-    public async Task CancelRun_PostStatusFails_ShowsErrorCallout()
+    public async Task CancelRun_CancelFails_ShowsErrorCallout()
     {
         var runId = Guid.NewGuid().ToString();
         var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
-        mockWorkItems
-            .Setup(w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+        _workItemActions
+            .Setup(w => w.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new System.Net.Http.HttpRequestException("503 Service Unavailable"));
         RegisterServices(MakeActiveSummary(runId), mockWorkItems);
 
@@ -942,7 +946,11 @@ public class RunPageComponentTests : BunitContext
 /// </summary>
 public class RunPageReconnectTests : BunitContext
 {
-    public RunPageReconnectTests() => Services.AddTestAccess();
+    public RunPageReconnectTests()
+    {
+        Services.AddTestAccess();
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiWorkItemClient>());
+    }
 
     // ── Shared scaffolding ────────────────────────────────────────────────
 
