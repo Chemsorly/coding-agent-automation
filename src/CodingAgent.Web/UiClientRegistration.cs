@@ -28,6 +28,12 @@ internal static class UiClientRegistration
             client.BaseAddress = new Uri(apiBaseUrl);
             client.Timeout = TimeSpan.FromMinutes(2);
         });
+        // A dispatch reads the issue, its comments and the provider configs before it enqueues.
+        services.AddHttpClient<IUiDispatchClient, UiDispatchClient>(client =>
+        {
+            client.BaseAddress = new Uri(apiBaseUrl);
+            client.Timeout = TimeSpan.FromMinutes(2);
+        });
         // Provider checks call GitHub or GitLab from the API, and fetching models runs a Job there.
         services.AddHttpClient<IUiProviderClient, UiProviderClient>(client =>
         {

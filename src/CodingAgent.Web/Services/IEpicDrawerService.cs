@@ -21,10 +21,7 @@ public interface IEpicDrawerService
 
     Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(
         IssueSummary issue,
-        PipelineJobTemplate template,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+        PipelineJobTemplate template);
 
     // ── Drawer orchestration ──
 
@@ -41,10 +38,7 @@ public interface IEpicDrawerService
         Func<Task>? notifyStateChanged = null);
 
     Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(
-        IssueSummary issue,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+        IssueSummary issue);
 
     // ── Cross-drawer coordination ──
 

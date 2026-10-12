@@ -1,5 +1,4 @@
 using Moq;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
 using CodingAgent.Web.Ui;
@@ -8,8 +7,9 @@ namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Tests for EpicDrawerService in isolation: epic loading with deduplication,
-/// label filtering, dispatch phase selection, close-on-success behavior.
-/// Each test constructs EpicDrawerService with only its own dependencies.
+/// label filtering, dispatch, close-on-success behavior.
+/// Each test constructs EpicDrawerService with only its own dependencies. The API picks the phase and
+/// the epic tracker (spec 051 2.3c); its TemplateDispatchServiceTests cover that.
 /// </summary>
 public class EpicDrawerServiceTests
 {
@@ -17,24 +17,16 @@ public class EpicDrawerServiceTests
     private static readonly string[] BackendLabel = ["backend"];
 
     private readonly Mock<IUiBrowseClient> _mockBrowse;
-    private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
+    private readonly Mock<IUiDispatchClient> _mockDispatch;
     private readonly EpicDrawerService _service;
-
-    private static readonly IReadOnlyList<ProviderConfig> IssueProviders =
-        new List<ProviderConfig> { new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" } };
-
-    private static readonly IReadOnlyList<ProviderConfig> RepoProviders =
-        new List<ProviderConfig> { new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" } };
 
     public EpicDrawerServiceTests()
     {
         _mockBrowse = new Mock<IUiBrowseClient>();
         _mockBrowse.Setup(b => b.GetEpicLabelsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
-        _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
+        _mockDispatch = new Mock<IUiDispatchClient>();
 
-        _service = new EpicDrawerService(
-            _mockBrowse.Object,
-            _mockDispatchOrchestration.Object);
+        _service = new EpicDrawerService(_mockBrowse.Object, _mockDispatch.Object);
     }
 
     private static PipelineJobTemplate MakeTemplate(string id = "t-1") =>
@@ -48,9 +40,7 @@ public class EpicDrawerServiceTests
     [Fact]
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
-        var svc = new EpicDrawerService(
-            new Mock<IUiBrowseClient>().Object,
-            new Mock<IDispatchOrchestrationService>().Object);
+        var svc = new EpicDrawerService(new Mock<IUiBrowseClient>().Object, new Mock<IUiDispatchClient>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
     }
@@ -105,111 +95,31 @@ public class EpicDrawerServiceTests
         Assert.Equal(BackendLabel, _service.DrawerState.Labels);
     }
 
-    // ── DispatchDecompositionAsync — phase type selection ──
+    // ── DispatchDecompositionAsync ──
 
     [Fact]
-    public async Task DispatchDecompositionAsync_UsesDecompositionAnalysis_ForRegularEpic()
+    public async Task DispatchDecompositionAsync_DispatchesTheEpic_AndShowsTheApisMessage()
     {
-        DecompositionDispatchOrchestrationRequest? capturedRequest = null;
-        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<DecompositionDispatchOrchestrationRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(CreateMinimalRequest(WorkItemTaskType.Decomposition));
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
+        _mockDispatch.Setup(d => d.DispatchEpicAsync("t-1", "e-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("⏳ Queued epic #e-1 for analysis — the job controller will start an agent pod for it");
 
-        var issue = MakeEpic("e-1", "agent:epic"); // NOT agent:epic-approved
-        var (success, _, _) = await _service.DispatchDecompositionAsync(issue, MakeTemplate(), IssueProviders, RepoProviders, null);
+        var (success, error, msg) = await _service.DispatchDecompositionAsync(MakeEpic("e-1", "agent:epic"), MakeTemplate());
 
         Assert.True(success);
-        Assert.NotNull(capturedRequest);
-        Assert.Equal(PipelineRunType.DecompositionAnalysis, capturedRequest!.PhaseType);
+        Assert.Null(error);
+        Assert.Equal("⏳ Queued epic #e-1 for analysis — the job controller will start an agent pod for it", msg);
     }
 
     [Fact]
-    public async Task DispatchDecompositionAsync_UsesDecomposition_ForApprovedEpic()
+    public async Task DispatchDecompositionAsync_ReturnsTheApisReason_WhenItRefuses()
     {
-        DecompositionDispatchOrchestrationRequest? capturedRequest = null;
-        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<DecompositionDispatchOrchestrationRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(CreateMinimalRequest(WorkItemTaskType.Decomposition));
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
+        _mockDispatch.Setup(d => d.DispatchEpicAsync("t-1", "e-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("The project's epic issue provider no longer exists."));
 
-        var issue = MakeEpic("e-1", "agent:epic-approved"); // approved
-        var (success, _, _) = await _service.DispatchDecompositionAsync(issue, MakeTemplate(), IssueProviders, RepoProviders, null);
-
-        Assert.True(success);
-        Assert.NotNull(capturedRequest);
-        Assert.Equal(PipelineRunType.Decomposition, capturedRequest!.PhaseType);
-    }
-
-    [Fact]
-    public async Task DispatchDecompositionAsync_ReturnsError_WhenProvidersMissing()
-    {
-        var (success, error, _) = await _service.DispatchDecompositionAsync(
-            MakeEpic("e-1"), MakeTemplate(), new List<ProviderConfig>(), RepoProviders, null);
+        var (success, error, _) = await _service.DispatchDecompositionAsync(MakeEpic("e-1"), MakeTemplate());
 
         Assert.False(success);
-        Assert.Contains("no longer exist", error);
-    }
-
-    // ── DispatchDecompositionAsync — binding to the tracker the epic was listed from ──
-
-    [Fact]
-    public async Task DispatchDecompositionAsync_ProjectWithEpicTracker_BindsRunToEpicTracker()
-    {
-        // The drawer lists the project's epic tracker, so the run must be bound to it,
-        // while the drawer's template executes the epic.
-        var issueProviders = new List<ProviderConfig>
-        {
-            IssueProviders[0],
-            new() { Id = "epic-ip", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Epics" }
-        };
-        var project = new PipelineProject { Id = "p-1", Name = "P", TemplateIds = new[] { "t-1" }, EpicIssueProviderId = "epic-ip" };
-        var capturedRequest = CaptureDecompositionRequest();
-
-        var (success, _, _) = await _service.DispatchDecompositionAsync(
-            MakeEpic("e-1", "agent:epic"), MakeTemplate(), issueProviders, RepoProviders, project);
-
-        Assert.True(success);
-        Assert.Equal("epic-ip", capturedRequest()!.IssueProviderId.Value);
-        Assert.Equal("rp-1", capturedRequest()!.RepoProviderId.Value);
-    }
-
-    [Fact]
-    public async Task DispatchDecompositionAsync_ProjectWithoutEpicTracker_BindsRunToTemplateTracker()
-    {
-        var project = new PipelineProject { Id = "p-1", Name = "P", TemplateIds = new[] { "t-1" } };
-        var capturedRequest = CaptureDecompositionRequest();
-
-        var (success, _, _) = await _service.DispatchDecompositionAsync(
-            MakeEpic("e-1", "agent:epic"), MakeTemplate(), IssueProviders, RepoProviders, project);
-
-        Assert.True(success);
-        Assert.Equal("ip-1", capturedRequest()!.IssueProviderId.Value);
-    }
-
-    [Fact]
-    public async Task DispatchDecompositionAsync_ReturnsError_WhenEpicTrackerMissing()
-    {
-        var project = new PipelineProject { Id = "p-1", Name = "P", TemplateIds = new[] { "t-1" }, EpicIssueProviderId = "deleted-ip" };
-
-        var (success, error, _) = await _service.DispatchDecompositionAsync(
-            MakeEpic("e-1", "agent:epic"), MakeTemplate(), IssueProviders, RepoProviders, project);
-
-        Assert.False(success);
-        Assert.Contains("epic issue provider no longer exists", error);
-    }
-
-    private Func<DecompositionDispatchOrchestrationRequest?> CaptureDecompositionRequest()
-    {
-        DecompositionDispatchOrchestrationRequest? capturedRequest = null;
-        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<DecompositionDispatchOrchestrationRequest, CancellationToken>((r, _) => capturedRequest = r)
-            .ReturnsAsync(CreateMinimalRequest(WorkItemTaskType.Decomposition));
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-        return () => capturedRequest;
+        Assert.Equal("The project's epic issue provider no longer exists.", error);
     }
 
     // ── DispatchFromEpicDrawerAsync ──
@@ -221,13 +131,9 @@ public class EpicDrawerServiceTests
         SetupIssueProviderForEpic(items: new[] { MakeEpic("e-1", "agent:epic") });
         await _service.OpenEpicDrawerAsync("t-1", new[] { template });
         Assert.True(_service.DrawerState.IsOpen);
+        _mockDispatch.Setup(d => d.DispatchEpicAsync("t-1", "e-1", It.IsAny<CancellationToken>())).ReturnsAsync("⏳ Queued epic #e-1 for analysis");
 
-        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMinimalRequest(WorkItemTaskType.Decomposition));
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, _, _) = await _service.DispatchFromEpicDrawerAsync(MakeEpic("e-1"), IssueProviders, RepoProviders, null);
+        var (success, _, _) = await _service.DispatchFromEpicDrawerAsync(MakeEpic("e-1"));
 
         Assert.True(success);
         Assert.False(_service.DrawerState.IsOpen);
@@ -236,11 +142,12 @@ public class EpicDrawerServiceTests
     [Fact]
     public async Task DispatchFromEpicDrawerAsync_ReturnsError_WhenTemplateIsNull()
     {
-        var (success, error, _) = await _service.DispatchFromEpicDrawerAsync(MakeEpic("e-1"), IssueProviders, RepoProviders, null);
+        var (success, error, _) = await _service.DispatchFromEpicDrawerAsync(MakeEpic("e-1"));
 
         Assert.False(success);
         Assert.Contains("template", error, StringComparison.OrdinalIgnoreCase);
         Assert.False(_service.DrawerState.IsDispatching);
+        _mockDispatch.VerifyNoOtherCalls();
     }
 
     // ── Hide / CloseEpicDrawer ──
@@ -263,19 +170,4 @@ public class EpicDrawerServiceTests
                 Items = (items ?? Enumerable.Empty<IssueSummary>()).ToList(),
                 HasMore = false, Page = 1, PageSize = 8
             });
-
-    private static JobDistributionRequest CreateMinimalRequest(WorkItemTaskType taskType = WorkItemTaskType.Decomposition) => new()
-    {
-        IssueIdentifier = "e-1",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        InitiatedBy = "manual",
-        TaskType = taskType,
-        AgentSelector = "dotnet,kiro",
-        TimeoutSeconds = 3600,
-        ProviderConfigs = new List<ProviderConfig>
-        {
-            new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
-        }
-    };
 }

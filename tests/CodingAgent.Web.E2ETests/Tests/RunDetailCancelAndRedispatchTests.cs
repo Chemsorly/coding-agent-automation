@@ -520,11 +520,11 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // TODO [WARNING]: IDispatchOrchestrationService and IWorkDistributor are resolved directly
-        // from Fixture.Factory.Services (the root service provider). If either is registered as
+        // from a root service provider (Fixture.ApiServices, Fixture.Factory.Services). If either is registered as
         // Scoped, this creates a captive-scope instance that is never disposed within the test,
         // leaking any resources it holds for the lifetime of the test fixture. Consider resolving
         // these via Fixture.Factory.Services.CreateScope() and disposing the scope after the call.
-        var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();
+        var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
         var reviewRequest = new ReviewDispatchRequest

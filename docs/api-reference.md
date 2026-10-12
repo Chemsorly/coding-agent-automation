@@ -558,6 +558,18 @@ The dispatch drawers browse a template's providers through `/api/ui/templates/{t
 | `GET …/epic-labels` | The epic tracker's labels, without the epic workflow labels. |
 | `GET …/active-issues` | The issues and pull requests of the template's trackers and repository that already have work, as `[{ issueIdentifier, issueProviderConfigId, status }]`. `Pending` means queued. `Running` covers dispatched and running work, and work that ended within the dedup cooldown. |
 
+### Manual dispatch (operator)
+
+The dispatch drawers enqueue work with `POST /api/ui/templates/{templateId}/…/dispatch`. The request names only the template and the issue or pull request. The API reads the item from the template's providers, with the stored credentials. The caller needs operator on the template's project, and a template of no project needs global operator. A template the user cannot read is `404`; one they can read but not operate is `403`.
+
+The answer is `200` with the message to show, as a JSON string. The work item is queued as `Pending`, and the Scheduler's dispatch loop starts it. A refusal is `409`, and a provider that is gone or fails is `502`; both carry the reason as a JSON string.
+
+| Path | Dispatches |
+|---|---|
+| `POST …/issues/{issueIdentifier}/dispatch` | An issue of the template's tracker, for implementation. An issue with open dependencies, or one awaiting epic review, is refused. A dispatch-ineligible label such as `agent:error` or `agent:done` is replaced with `agent:next` first. |
+| `POST …/pull-requests/{number}/dispatch` | An open pull request of the template's repository, for review. |
+| `POST …/epics/{issueIdentifier}/dispatch` | An epic of the epic tracker (the project's, otherwise the template's own): for analysis, or for decomposition once it carries `agent:epic-approved`. |
+
 ### Settings (admin)
 
 `/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
@@ -661,6 +673,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST, PUT | `/api/ui/work-items/{id}/cancel`, `/api/ui/work-items/{id}/priority` | User token, operator of the item's project | Cancel a run or queued item; set queue priority |
 | GET | `/api/ui/backlog` | User token | Open provider issues with their dispatch readiness (per project) |
 | GET | `/api/ui/templates/{templateId}/…` | User token, read on the template's project | The drawers' issues, readiness, labels, pull requests, epics and active work |
+| POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

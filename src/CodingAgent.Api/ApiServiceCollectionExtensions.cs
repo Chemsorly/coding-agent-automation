@@ -686,6 +686,19 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<CodingAgent.Api.Browse.BacklogService>();
         services.AddSingleton<CodingAgent.Api.Browse.TemplateBrowseService>();
 
+        // ── Manual dispatch (spec 051 2.3c) ────────────────────────────────────
+        // The drawers' dispatch, moved from the web host: the orchestration enqueues through
+        // ApiWorkDistributor, so a dispatched item waits in the Pending queue for the Scheduler.
+        services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
+            new DispatchOrchestrationServiceDependencies(
+                sp.GetRequiredService<DispatchInfrastructure>(),
+                sp.GetRequiredService<IWorkDistributor>(),
+                sp.GetRequiredService<IAgentProfileStore>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
+                sp.GetRequiredService<IPipelineConfigStore>()),
+            Log.Logger));
+        services.AddSingleton<CodingAgent.Api.Dispatch.TemplateDispatchService>();
+
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
         // can delegate template-ownership resolution to it (issue #2914), eliminating the

@@ -129,7 +129,7 @@
                     @* Note: the Dispatch button is intentionally enabled for issues with lifecycle labels
                        (agent:done, agent:error, etc.). Manual dispatch is a force-re-queue workflow that
                        clears the blocking label via AgentLabelOperations.SwapAsync. Do not add disabled
-                       conditions for label-only states without reading IssueDrawerService.DispatchIssueAsync. *@
+                       conditions for label-only states without reading the API's TemplateDispatchService.DispatchIssueAsync. *@
                     @if (CanDispatch)
                     {
                     <button class="btn-save" @onclick="DispatchSelected"

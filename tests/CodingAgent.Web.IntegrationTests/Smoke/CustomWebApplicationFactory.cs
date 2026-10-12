@@ -133,12 +133,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<CodingAgent.Kubernetes.JobTemplateStore>();
             services.AddSingleton(CodingAgent.Kubernetes.JobTemplateStore.CreateEmpty());
 
-            // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
-            // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.
-            // Register a mock to satisfy DI validation in integration tests.
-            var dispatchOrchestrationMock = new Mock<IDispatchOrchestrationService>();
-            services.AddSingleton(dispatchOrchestrationMock.Object);
-
             // Replace IPipelineApiWorkItemClient with a mock to prevent real HTTP calls.
             var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
             workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
