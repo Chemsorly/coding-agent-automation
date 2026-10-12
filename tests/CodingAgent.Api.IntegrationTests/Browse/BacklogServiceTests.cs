@@ -14,6 +14,12 @@ namespace CodingAgent.Api.IntegrationTests.Browse;
 /// </summary>
 public class BacklogServiceTests
 {
+    // Shared arrays: CA1861 flags constant array arguments that are rebuilt on every call.
+    private static readonly int[] BlockedBy5 = [5];
+    private static readonly string[] TemplateT1 = ["t1"];
+    private static readonly string[] BugAndNextLabels = ["bug", "agent:next"];
+    private static readonly string[] Issue10Titles = ["I10", "I10-dup"];
+
     private static BacklogService Backlog(Mock<IPipelineApiConfigClient> config, Mock<IProviderFactory> factory, Mock<IDependencyChecker> dep) =>
         new(new ApiProjectStore(config.Object) { CacheTtlSeconds = 0 }, new ApiProviderConfigStore(config.Object) { CacheTtlSeconds = 0 }, factory.Object, dep.Object);
 
@@ -89,7 +95,7 @@ public class BacklogServiceTests
         var dep = new Mock<IDependencyChecker>();
         dep.Setup(d => d.CheckAsync(It.Is<IssueIdentifier>(i => i.Value == "10"), It.IsAny<string?>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = new[] { 5 }, TotalDependencies = 1 });
+            .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = BlockedBy5, TotalDependencies = 1 });
         dep.Setup(d => d.CheckAsync(It.Is<IssueIdentifier>(i => i.Value == "11"), It.IsAny<string?>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
@@ -100,7 +106,7 @@ public class BacklogServiceTests
 
         Assert.Single(result);
         Assert.Equal("10", result[0].Identifier);
-        Assert.Equal(new[] { 5 }, result[0].BlockedBy);
+        Assert.Equal(BlockedBy5, result[0].BlockedBy);
         Assert.Equal("https://x/issues/10", result[0].Url);
     }
 
@@ -134,7 +140,7 @@ public class BacklogServiceTests
         var dep = new Mock<IDependencyChecker>();
         dep.Setup(d => d.CheckAsync(It.Is<IssueIdentifier>(i => i.Value == "10"), It.IsAny<string?>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = new[] { 5 }, TotalDependencies = 1 });
+            .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = BlockedBy5, TotalDependencies = 1 });
         dep.Setup(d => d.CheckAsync(It.Is<IssueIdentifier>(i => i.Value == "11"), It.IsAny<string?>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
@@ -182,7 +188,7 @@ public class BacklogServiceTests
         config.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { t1, t2 });
         config.Setup(c => c.GetProjectByIdAsync("proj1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineProject { Id = "proj1", Name = "P", TemplateIds = new[] { "t1" } });
+            .ReturnsAsync(new PipelineProject { Id = "proj1", Name = "P", TemplateIds = TemplateT1 });
         config.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[]
             {
@@ -310,7 +316,7 @@ public class BacklogServiceTests
 
         Assert.Single(result.Issues);
         Assert.NotNull(result.Issues[0].Labels);
-        Assert.Equal(new[] { "bug", "agent:next" }, result.Issues[0].Labels);
+        Assert.Equal(BugAndNextLabels, result.Issues[0].Labels);
     }
 
     [Fact]
@@ -649,7 +655,7 @@ public class BacklogServiceTests
         var result = await sut.GetBacklogAsync(projectId: null, CancellationToken.None);
 
         Assert.Equal(4, result.Issues.Count);
-        Assert.Equal(new[] { "I10", "I10-dup" }, result.Issues.Where(b => b.Identifier == "10").Select(b => b.Title));
+        Assert.Equal(Issue10Titles, result.Issues.Where(b => b.Identifier == "10").Select(b => b.Title));
         Assert.Single(result.Issues, b => b.Identifier == "11");
         Assert.Single(result.Issues, b => b.Identifier == "12");
         Assert.False(result.IsTruncated);
