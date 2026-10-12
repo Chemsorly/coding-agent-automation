@@ -19,19 +19,4 @@ public interface IPipelineApiAgentClient
     /// with 403. Callers holding only a derived key must not use this client.
     /// </remarks>
     Task<IReadOnlyList<AgentEntryDto>> GetAgentsAsync(CancellationToken ct = default);
-
-    /// <summary>
-    /// Delivers a chat prompt to the agent identified by <paramref name="agentId"/> via
-    /// <c>POST /api/agents/{agentId}/chat-prompt</c>.
-    ///
-    /// <para>
-    /// The API resolves the agent's SignalR <c>ConnectionId</c> from its live in-process registry
-    /// and calls <c>IHubContext.Clients.Client(...).AssignChatPrompt</c> — the only way to reach
-    /// an agent after the hub moved from the monolith to the API in Spec 044.
-    /// </para>
-    /// </summary>
-    /// <exception cref="HttpRequestException">
-    /// Thrown when the API returns a non-success status code (404 agent not found, 409 disconnected).
-    /// </exception>
-    Task AssignChatPromptAsync(string agentId, ChatPromptMessage message, CancellationToken ct = default);
 }

@@ -1,8 +1,8 @@
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.Services;
+using CodingAgent.Api.Chat;
 
-namespace CodingAgent.Web.UnitTests.Services;
+namespace CodingAgent.Api.IntegrationTests.Chat;
 
 /// <summary>
 /// Unit tests for <see cref="ChatPromptBuilder"/>.
@@ -10,8 +10,6 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// </summary>
 public class ChatPromptBuilderTests
 {
-    private readonly ChatPromptBuilder _sut = new();
-
     private static PipelineProject MakeProject(
         string id = "proj-1",
         string name = "My Project",
@@ -78,7 +76,7 @@ public class ChatPromptBuilderTests
         var project = MakeProject(id: "p-1", name: "Alpha", secrets: secrets, steering: "# Steering");
         var p = BaseParams(isFirstPrompt: true, project: project);
 
-        var msg = _sut.Build(p);
+        var msg = ChatPromptBuilder.Build(p);
 
         msg.ProjectSecrets.Should().BeEquivalentTo(secrets);
         msg.ProjectSteeringContent.Should().Be("# Steering");
@@ -95,7 +93,7 @@ public class ChatPromptBuilderTests
         var project = MakeProject(secrets: secrets, steering: "# Steering");
         var p = BaseParams(isFirstPrompt: false, project: project);
 
-        var msg = _sut.Build(p);
+        var msg = ChatPromptBuilder.Build(p);
 
         msg.ProjectSecrets.Should().BeNull();
         msg.ProjectSteeringContent.Should().BeNull();
@@ -111,7 +109,7 @@ public class ChatPromptBuilderTests
         var profile = MakeProfile(mcpServers: [Stdio("context7"), Stdio("web-search")]);
         var p = BaseParams(profile: profile, project: null);
 
-        var msg = _sut.Build(p);
+        var msg = ChatPromptBuilder.Build(p);
 
         msg.McpServers.Should().HaveCount(2);
         msg.McpServers.Select(s => s.Name).Should().BeEquivalentTo(["context7", "web-search"]);
@@ -127,7 +125,7 @@ public class ChatPromptBuilderTests
         var project = MakeProject(mcpServers: [Stdio("web-search", disabled: true), Stdio("sonarqube-mcp")]);
         var p = BaseParams(profile: profile, project: project);
 
-        var msg = _sut.Build(p);
+        var msg = ChatPromptBuilder.Build(p);
 
         // context7 (from profile) + web-search (project override, disabled) + sonarqube-mcp (new)
         msg.McpServers.Should().HaveCount(3);
@@ -143,7 +141,7 @@ public class ChatPromptBuilderTests
     {
         var p = BaseParams(profile: null, project: null);
 
-        var msg = _sut.Build(p);
+        var msg = ChatPromptBuilder.Build(p);
 
         msg.McpServers.Should().BeEmpty();
     }
@@ -163,7 +161,7 @@ public class ChatPromptBuilderTests
             ResolvedMcpConfigPath: null
         );
 
-        var msg = _sut.Build(p);
+        var msg = ChatPromptBuilder.Build(p);
 
         msg.SessionId.Should().Be("sid-999");
         msg.Prompt.Should().Be("test prompt");
@@ -185,7 +183,7 @@ public class ChatPromptBuilderTests
             ResolvedMcpConfigPath: null,
             ResolvedAuthMode: "subscription");
 
-        _sut.Build(p).AgentAuthMode.Should().Be("subscription");
+        ChatPromptBuilder.Build(p).AgentAuthMode.Should().Be("subscription");
     }
 
     // ── 7. UseResume is false on first prompt, true on subsequent ──
@@ -193,8 +191,8 @@ public class ChatPromptBuilderTests
     [Fact]
     public void Build_UseResume_ReflectsIsFirstPrompt()
     {
-        var first = _sut.Build(BaseParams(isFirstPrompt: true));
-        var subsequent = _sut.Build(BaseParams(isFirstPrompt: false));
+        var first = ChatPromptBuilder.Build(BaseParams(isFirstPrompt: true));
+        var subsequent = ChatPromptBuilder.Build(BaseParams(isFirstPrompt: false));
 
         first.UseResume.Should().BeFalse();
         subsequent.UseResume.Should().BeTrue();
@@ -207,7 +205,7 @@ public class ChatPromptBuilderTests
     {
         var p = BaseParams(mcpConfigPath: "/home/ubuntu/.claude.json");
 
-        var msg = _sut.Build(p);
+        var msg = ChatPromptBuilder.Build(p);
 
         msg.McpConfigPath.Should().Be("/home/ubuntu/.claude.json");
     }
@@ -217,7 +215,7 @@ public class ChatPromptBuilderTests
     [Fact]
     public void Build_NoMcpConfigPath_UsesKiroDefault()
     {
-        var msg = _sut.Build(RawParams(mcpConfigPath: null));
+        var msg = ChatPromptBuilder.Build(RawParams(mcpConfigPath: null));
         msg.McpConfigPath.Should().Be("/home/ubuntu/.kiro/settings/mcp.json");
     }
 }

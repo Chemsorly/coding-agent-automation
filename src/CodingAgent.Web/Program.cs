@@ -139,7 +139,6 @@ builder.Services.AddScoped<CodingAgent.Web.Services.AgentCodingPageService>();
 builder.Services.AddScoped<CodingAgent.Web.Services.NotificationService>();
 builder.Services.AddScoped<CodingAgent.Web.Services.CockpitState>();
 builder.Services.AddScoped<CodingAgent.Web.Services.BlockedIssuesService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.IChatPromptBuilder, CodingAgent.Web.Services.ChatPromptBuilder>();
 
 // User authentication (cookie, local admin, OIDC, role bindings)
 builder.Services.AddUserAuthentication(builder.Configuration);

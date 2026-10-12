@@ -32,18 +32,13 @@ public class WorkDistributionSmokeTests : IClassFixture<DbModeWebApplicationFact
     }
 
     /// <summary>
-    /// IChatJobDispatcher must resolve — <c>AgentChat.razor</c> declares
-    /// <c>@inject IChatJobDispatcher</c>, and a Razor injection is not covered by
-    /// <c>ValidateOnBuild</c>, so a missing registration only surfaces when a user opens the page.
-    ///
-    /// Spec 043 deleted WorkDistributionRegistration.Kubernetes.cs — which held this registration —
-    /// expecting Spec 044 to re-home it in the API. That move never happened, leaving the
-    /// interface registered nowhere and the chat page throwing on first render.
+    /// Spec 051 2.5b: Agent Chat launches, prompts and ends chats through <c>/api/ui/chat</c>, so the
+    /// web host no longer registers an IChatJobDispatcher (the API's dispatches the pods).
     /// </summary>
     [Fact]
-    public void IChatJobDispatcher_Resolves()
+    public void IChatJobDispatcher_IsNotRegistered()
     {
         var service = _factory.Services.GetService<IChatJobDispatcher>();
-        Assert.NotNull(service);
+        Assert.Null(service);
     }
 }

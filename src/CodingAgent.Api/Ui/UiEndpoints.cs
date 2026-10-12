@@ -29,6 +29,7 @@ internal static class UiEndpoints
         group.MapUiBrowseEndpoints();
         group.MapUiDispatchEndpoints();
         group.MapUiAgentEndpoints();
+        group.MapUiChatEndpoints();
         group.MapUiConsolidationEndpoints();
         group.MapUiSettingsEndpoints();
 

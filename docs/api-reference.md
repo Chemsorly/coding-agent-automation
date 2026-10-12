@@ -583,6 +583,18 @@ The answer is `200` with the message to show, as a JSON string. The work item is
 | `GET /api/ui/agents` | The agent registry, in the same shape as `GET /api/agents`. A global reader gets every agent. A project-scoped user gets only the agents running work of their projects, so idle agents and other projects' runs are not shown to them. |
 | `GET /api/ui/agents/credential-pool` | `{ total, available, claimed }` for the Kiro credential pool. `total` is `0` when pooling is not configured. Needs a global role. |
 
+### Agent Chat (operator)
+
+Every path needs an operator role. A chat runs with the MCP servers, secrets and steering of the project it is launched for, so launching it needs operator on that project, and a chat without a project needs global operator. The API records who launched each chat. Only that user can prompt it, keep it alive or end it, as long as they can still operate on its project; an admin can use any chat. Anyone else gets `404`, as for a chat that does not exist, and so does any agent that was not launched here: pipeline agents cannot be prompted. Refusals carry the reason as a JSON string: `409` for a request that cannot be served, and `502` when the pod cannot be started.
+
+| Path | Does |
+|---|---|
+| `GET /api/ui/chat/options` | Returns `{ profiles, connectTimeoutSeconds }`. `profiles` lists the enabled agent profiles whose labels name a job template, as `{ id, displayName, matchLabels }`. |
+| `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId }` with the profile's selector and its provider's model and effort, then waits until the pod connects (up to `connectTimeoutSeconds`). Returns `{ agentId, model }`, where `model` is `auto` when the provider sets none. |
+| `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the `chat-session-{sessionId}` hub group. Returns `204`. |
+| `POST /api/ui/chat/{agentId}/keepalive` | Resets the idle clock of the chat's pod. Returns `204`. |
+| `POST /api/ui/chat/{agentId}/terminate` | Ends the chat and stops its pod. Returns `204`. |
+
 ### Consolidation (global)
 
 The Consolidation page's API. Several templates and projects can share one brain, so a project role is not enough: reading needs a global role and triggering the global `operator` role. The page lists consolidation runs with `GET /api/ui/runs?runType=Consolidation` and cancels a queued one with `POST /api/ui/work-items/{id}/cancel`.
@@ -700,6 +712,8 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |
 | GET | `/api/ui/agents` | User token | Agents (all for global readers; those running their projects' work for scoped users) |
 | GET | `/api/ui/agents/credential-pool` | User token, global read | Kiro credential pool usage |
+| GET, POST | `/api/ui/chat/options`, `/api/ui/chat` | User token, operator of the chosen project (global operator without one) | Launchable chat profiles; launch a chat pod |
+| POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |
 | GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |
 | POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation, refactoring scan or harness suggestions run |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |

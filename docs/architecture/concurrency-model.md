@@ -132,7 +132,7 @@ across process boundaries.
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()`, `UpdateAgentFieldAsync()` |
 | `AgentOrphanRecoveryService` | `AgentGateway/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
-| `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on every chat prompt (`SendChatPrompt`, `POST /api/agents/{agentId}/chat-prompt`) |
+| `ChatService` | `Api/Chat/ChatService.cs` | Sets `ActiveChatSessionId` on every chat prompt (`SendPromptAsync`, `POST /api/ui/chat/{agentId}/prompt`) |
 
 `RunLifecycleManager` changes `ActiveJobId` only through `IAgentRegistryService.UpdateAgentFieldAsync`,
 which takes `SyncRoot` inside `AgentRegistryService`.
