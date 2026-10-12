@@ -37,10 +37,6 @@ public class CockpitLayoutComponentTests : BunitContext
         // Config client: projects (scope switcher) + the keys FirstRunBanner reads.
         _mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<UiProject>());
-        _mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
-        _mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_mockUiConfig.Object);
 

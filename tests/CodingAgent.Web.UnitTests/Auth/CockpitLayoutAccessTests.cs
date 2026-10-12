@@ -41,8 +41,6 @@ public class CockpitLayoutAccessTests : BunitContext
                 new(AlphaId, "alpha", true),
             });
         Services.AddSingleton(_uiConfig.Object);
-        _configClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
-        _configClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _runHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .Callback((RunHistoryQuery query, CancellationToken _) =>
                 _attentionQueries.Add(query.ProjectId))

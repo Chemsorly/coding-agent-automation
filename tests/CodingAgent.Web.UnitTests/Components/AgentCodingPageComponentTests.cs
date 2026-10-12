@@ -892,8 +892,6 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task AgentCoding_RemoveTemplate_Success_RemovesFromList()
     {
-        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(c => c.DeleteTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -1512,8 +1510,6 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task AgentCoding_MoveTemplateToProject_CallsPageService()
     {
-        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -1535,7 +1531,7 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task MoveTemplateToProject_WhenServiceFails_SetsError()
     {
-        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("move failed"));
 
         var component = Render<AgentCoding>();

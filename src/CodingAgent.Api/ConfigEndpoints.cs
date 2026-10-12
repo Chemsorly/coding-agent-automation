@@ -37,6 +37,10 @@ public static class ConfigEndpoints
     /// </summary>
     public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
     {
+        // Spec 051: Settings writes and the first-run state are not mapped here; the web host makes
+        // them as the signed-in admin through /api/ui/settings (UiSettingsEndpoints), which reuses
+        // these handlers. What stays is what the Scheduler and the web host still read or write with
+        // the API key, plus export and import, which operators script with the key (docs/bootstrap.md).
         var group = app.MapGroup("/api/config")
             .RequireAuthorization(ApiAuthPolicies.Operator);
 
@@ -60,39 +64,24 @@ public static class ConfigEndpoints
 
         // ── Agent profiles ──────────────────────────────────────────────
         group.MapGet("/agent-profiles", GetAgentProfiles);
-        group.MapPut("/agent-profiles", SaveAgentProfile);
-        group.MapDelete("/agent-profiles/{id}", DeleteAgentProfile);
 
         // ── Quality gate configs ────────────────────────────────────────
         group.MapGet("/quality-gate-configs", GetQualityGateConfigs);
-        group.MapPut("/quality-gate-configs", SaveQualityGateConfig);
-        group.MapDelete("/quality-gate-configs/{id}", DeleteQualityGateConfig);
 
         // ── Reviewer configs ────────────────────────────────────────────
         group.MapGet("/reviewer-configs", GetReviewerConfigs);
-        group.MapPut("/reviewer-configs", SaveReviewerConfig);
-        group.MapDelete("/reviewer-configs/{id}", DeleteReviewerConfig);
-        group.MapPost("/reviewer-configs/reset-to-defaults", ResetReviewerConfigs);
 
         // ── Projects (requires two store calls — Req 6.3a) ─────────────
         group.MapGet("/projects", GetProjects);
         group.MapGet("/projects/{id}", GetProjectById);
-        group.MapPut("/projects", SaveProject);
-        group.MapDelete("/projects/{id}", DeleteProject);
 
         // ── Templates ───────────────────────────────────────────────────
         group.MapGet("/templates", GetAllTemplates);
         group.MapPost("/templates/move", MoveTemplateFlat);
-        group.MapGet("/projects/has-enabled-templates", HasEnabledTemplates);
         group.MapGet("/projects/{projectId}/templates", GetTemplatesForProject);
         group.MapPut("/projects/{projectId}/templates", SaveTemplate);
         group.MapDelete("/projects/{projectId}/templates/{templateId}", DeleteTemplate);
         group.MapPost("/projects/{sourceProjectId}/templates/{templateId}/move", MoveTemplate);
-
-        // ── Key-value ───────────────────────────────────────────────────
-        group.MapGet("/key-value/{key}", GetKeyValue);
-        group.MapPut("/key-value/{key}", SetKeyValue);
-        group.MapDelete("/key-value/{key}", DeleteKeyValue);
     }
 
     // ── Pipeline config ────────────────────────────────────────────────────
@@ -336,24 +325,6 @@ public static class ConfigEndpoints
 
     // ── Templates ──────────────────────────────────────────────────────────
 
-    internal static async Task<IResult> HasEnabledTemplates(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        // Join to Projects and filter Enabled=true so templates in disabled projects don't count.
-        // This is used as a dispatch-readiness gate; a template in a disabled project should
-        // not signal "ready to dispatch".
-        var hasAny = await db.PipelineJobTemplates
-            .AsNoTracking()
-            .Join(db.Projects.AsNoTracking().Where(p => p.Enabled),
-                t => t.ProjectId,
-                p => p.Id,
-                (t, p) => t)
-            .AnyAsync(ct);
-        return TypedResults.Ok(hasAny);
-    }
-
     internal static Task<IResult> MoveTemplateFlat(
         [FromBody] MoveTemplateFlatRequest request,
         IProjectStore store,
@@ -451,49 +422,6 @@ public static class ConfigEndpoints
         var templates = await store.LoadAllTemplatesAsync(ct);
         var projects = await store.LoadProjectsAsync(ct);
         return TemplateBindingRules.Validate(template, projectId, templates, projects);
-    }
-
-    // ── Key-value ──────────────────────────────────────────────────────────
-
-    internal static async Task<IResult> GetKeyValue(
-        string key,
-        IKeyValueStore store,
-        CancellationToken ct)
-    {
-        var value = await store.GetAsync(key, ct);
-        // Return 200 with null for unset keys rather than 404, because "not yet set" is
-        // a normal state (e.g. first_run_banner_dismissed on first load). Returning 404
-        // causes UseSerilogRequestLogging to emit a Warning on every page load, and the
-        // typed client already maps the result to string? — returning null directly removes
-        // the noise without losing any information.
-        // Also fixes a latent bug: the previous Ok(new { key, value }) object wrapper was
-        // incompatible with ReadFromJsonAsync<string> in the typed client.
-        //
-        // NOTE: TypedResults.Ok<string?>(null) and Results.Json(null) both produce an empty
-        // body in ASP.NET Core rather than the JSON literal "null". Use Results.Content to
-        // write the body explicitly so the typed client's null/empty guard and the integration
-        // test wire-format assertion both work correctly.
-        var body = value is null ? "null" : System.Text.Json.JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
-        return Results.Content(body, "application/json");
-    }
-
-    internal static async Task<IResult> SetKeyValue(
-        string key,
-        [FromBody] KeyValueSetRequest request,
-        IKeyValueStore store,
-        CancellationToken ct)
-    {
-        await store.SetAsync(key, request.Value, ct);
-        return TypedResults.Ok();
-    }
-
-    internal static async Task<IResult> DeleteKeyValue(
-        string key,
-        IKeyValueStore store,
-        CancellationToken ct)
-    {
-        await store.DeleteAsync(key, ct);
-        return TypedResults.Ok();
     }
 
     // ── Model fetch ────────────────────────────────────────────────────────
@@ -905,12 +833,6 @@ public static class ConfigEndpoints
 
 /// <summary>
 /// Response shape for GET /api/config/projects — project plus its templates.
-
-/// <summary>Request body for PUT /api/config/key-value/{key}.</summary>
-public sealed class KeyValueSetRequest
-{
-    public required string Value { get; init; }
-}
 
 // ── DTOs for config import/export bundle ──────────────────────────────────────
 

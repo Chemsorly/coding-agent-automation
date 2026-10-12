@@ -26,7 +26,7 @@ public sealed class UiClientContractTests(ApiWebApplicationFactory factory)
         public ValueTask<string?> GetTokenAsync(CancellationToken ct = default) => ValueTask.FromResult<string?>(token);
     }
 
-    private FixedToken Token(AccessGrant grant) => new(TestUserTokens.For(grant));
+    private static FixedToken Token(AccessGrant grant) => new(TestUserTokens.For(grant));
 
     private UiSettingsClient Settings(AccessGrant? grant = null) =>
         new(factory.CreateClient(), Token(grant ?? TestUserTokens.Global(AccessRole.Admin)));
