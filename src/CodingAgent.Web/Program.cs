@@ -3,7 +3,6 @@ using CodingAgent.Api.Client;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Common.Auth;
-using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Web.Auth;
@@ -158,10 +157,6 @@ var app = builder.Build();
 app.ValidateShutdownBudget();
 app.ValidateDiWiring();
 app.MapApplicationEndpoints();
-
-// Seed the github.api.requests and pipeline.pull_requests.closed series with 0 so Prometheus
-// increase() sees the first real increment after a deploy.
-MetricPreInitialization.Run(app.Services, () => GitHubTelemetry.PreInitialize());
 
 await app.RunAsync();
 
