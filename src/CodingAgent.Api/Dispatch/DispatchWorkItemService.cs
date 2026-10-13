@@ -168,13 +168,6 @@ internal sealed class DispatchWorkItemService
     ///     after the post-lock status re-check. The lock-ordering constraint cannot be enforced
     ///     by this method — it is the caller's responsibility.
     ///   </item>
-    ///   <item>
-    ///     <c>DispatchPendingWorkItem</c>: emit
-    ///     <c>WorkDistributionTelemetry.UpdateCredentialPoolMetrics</c> immediately after this
-    ///     call, using <c>pvcResult.AvailablePvcs.Count</c> and <c>pvcResult.ClaimedCount</c>
-    ///     from the returned tuple. That metric belongs exclusively to the
-    ///     <c>DispatchPendingWorkItem</c> path and must NOT be absorbed here.
-    ///   </item>
     /// </list>
     /// </para>
     /// </summary>
@@ -240,10 +233,10 @@ internal sealed class DispatchWorkItemService
     ///
     /// <para>
     /// <strong>Telemetry note:</strong> this method does NOT emit
-    /// <c>WorkDistributionTelemetry.PvcPoolExhaustions</c> or
-    /// <c>WorkDistributionTelemetry.UpdateCredentialPoolMetrics</c>.
-    /// Those calls are path-specific (<c>DispatchPendingWorkItem</c> only) and must
-    /// remain in the respective handler, outside this method.
+    /// <c>WorkDistributionTelemetry.PvcPoolExhaustions</c>.
+    /// That call is path-specific (<c>DispatchPendingWorkItem</c> only) and must
+    /// remain in the respective handler, outside this method. The credential-pool gauges are
+    /// not emitted from the API at all — the Scheduler leader owns them.
     /// </para>
     ///
     /// <para>
@@ -431,9 +424,7 @@ internal sealed class DispatchWorkItemService
     ///   </item>
     ///   <item>
     ///     Call <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/> and pass the
-    ///     result as <see cref="ResolvedDispatchRequest.PvcResult"/>. The <c>DispatchPendingWorkItem</c> path
-    ///     also emits <c>WorkDistributionTelemetry.UpdateCredentialPoolMetrics</c> immediately
-    ///     after that call — that metric must stay in the handler, not here.
+    ///     result as <see cref="ResolvedDispatchRequest.PvcResult"/>.
     ///   </item>
     ///   <item>
     ///     After this method returns, <c>DispatchPendingWorkItem</c> checks whether the result
@@ -469,8 +460,8 @@ internal sealed class DispatchWorkItemService
         var isKiroAgent = JobTemplateProviderType.IsKiro(template.ProviderType);
 
         // Concurrency gate + PVC gate.
-        // NOTE: PvcPoolExhaustions and UpdateCredentialPoolMetrics are NOT emitted here —
-        // those telemetry calls belong exclusively to the DispatchPendingWorkItem handler.
+        // NOTE: PvcPoolExhaustions is NOT emitted here —
+        // that telemetry call belongs exclusively to the DispatchPendingWorkItem handler.
         var gateResult = ApplyGates(
             request.NormalizedSelector, request.SanitizedSelector, concurrencyBySelector,
             pvcResult, template, isKiroAgent, callerName);
@@ -608,10 +599,6 @@ internal sealed class DispatchWorkItemService
         // BuildDispatchPreambleAsync keys each active item on its template's selector (not the raw
         // stored selector) so active items stored by any path are counted correctly.
         var (concurrencyBySelector, pvcResult) = await BuildDispatchPreambleAsync(db, lifecycle, templateResolver, ct);
-        // Emit credential-pool gauge BEFORE the PVC gate so the metric is always updated
-        // whenever the PVC query runs (including on PVC-exhaustion 503).
-        // This endpoint is the Scheduler-driven dispatch path and the only emitter of this metric.
-        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
 
         if (template is null)
         {

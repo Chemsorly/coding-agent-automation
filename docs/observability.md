@@ -49,7 +49,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `workdistribution.dispatch_latency_seconds` | Histogram | s | `agent_selector` | API | WorkItem creation (or original enqueue) → dispatched |
 | `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error`. `no_template` drives `WorkItemNoJobTemplate` (see [Alerts](#alerts)) |
 | `workdistribution.pod_start_seconds` | Histogram | s | — | API | Dispatched → the agent's first `GET /assignment` |
-| `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | API | Kiro credential PVCs, as last computed during dispatch. Only the API emits them |
+| `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | Scheduler leader | Kiro credential PVCs, polled every 10 s by the Scheduler leader. Emits nothing before the first successful poll and on non-leaders |
 | `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | — | API | A dispatch found no free credential PVC |
 | `workdistribution.progress_write_failures` | Counter | `{failure}` | — | API | Failed `LastProgressAt` writes; sustained failures risk false-positive timeouts |
 | `workdistribution.dispatcher_polls` | Counter | `{poll}` | — | Scheduler | Dispatch poll cycles |
@@ -89,12 +89,18 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `github.api.requests` | Counter | `operation`, `outcome` | API, Scheduler, Web | GitHub API attempts, retries included. `outcome`: `success`, `not_found`, `rate_limited`, `error` |
 | `github.rate_limit.remaining` | ObservableGauge | `resource` (`core`, `graphql`) | API, Scheduler, Web | Remaining rate-limit quota; only emitted after the process made a GitHub call |
 
-### Agent connections (API)
+### Agent connections (Scheduler leader)
+
+<!-- TODO [WARNING]: This heading attributes the whole table to the Scheduler leader, but only the two
+     gauge rows (`agent.jobs.active`, `agent.connections.total`) are emitted there. `agent.hub.auth_rejections`
+     and `token_vending.failures` are counters recorded by API-hosted code. An operator switching
+     `service_name` after the deploy could query the wrong service for those counters. Fix: use a neutral
+     heading (or split into two subsections) and name the Scheduler leader only on the two gauge rows. -->
 
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|
-| `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, from the agent registry |
-| `agent.connections.total` | ObservableGauge | — | Agents registered with the hub |
+| `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, polled from the agent registry by the Scheduler leader |
+| `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
 | `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`, `operator_forbidden` |
 | `token_vending.failures` | Counter | — | Token vending failures |
 

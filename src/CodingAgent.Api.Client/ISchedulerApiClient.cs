@@ -1,9 +1,12 @@
+using CodingAgent.Pipeline.Models;
+
 namespace CodingAgent.Api.Client;
 
 /// <summary>
 /// HTTP client for the Scheduler microservice's loop-control endpoints and maintenance endpoints.
 /// The WebUI uses this to start/stop/resume the loop and poll status.
-/// The Scheduler uses TriggerRetentionSweepAsync and GetWorkItemCountsAsync to call the API.
+/// The Scheduler uses TriggerRetentionSweepAsync, GetWorkItemCountsAsync, GetAgentsAsync and
+/// GetCredentialPoolAsync to call the API.
 /// </summary>
 public interface ISchedulerApiClient
 {
@@ -36,4 +39,18 @@ public interface ISchedulerApiClient
     /// serves to the UI (spec 051 D11).
     /// </summary>
     Task ReportLoopStatusAsync(LoopStatusDto status, CancellationToken ct = default);
+
+    /// <summary>
+    /// GET /api/agents on the API — all registered agents regardless of status.
+    /// Used by <c>WorkItemCountsService</c> to compute the <c>agent.jobs.active</c> and
+    /// <c>agent.connections.total</c> gauges from the Scheduler leader.
+    /// </summary>
+    Task<IReadOnlyList<AgentEntryDto>> GetAgentsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// GET /api/agents/credential-pool on the API — Kiro credential PVC pool snapshot.
+    /// Used by <c>WorkItemCountsService</c> to compute the <c>workdistribution.credential_pool_available</c>
+    /// and <c>workdistribution.credential_pool_claimed</c> gauges from the Scheduler leader.
+    /// </summary>
+    Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default);
 }

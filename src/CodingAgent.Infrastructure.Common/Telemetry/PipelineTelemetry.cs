@@ -712,4 +712,67 @@ public static class PipelineTelemetry
             static (c, key, value) => c[key] = value);
         return carrier.GetValueOrDefault("traceparent");
     }
+
+    // ── Agent observable gauges (Scheduler-leader-emitted) ───────────────────────────────────
+
+    // Callbacks registered once by WorkItemCountsService.
+    // null = no callback registered yet → gauge emits nothing.
+    private static Func<IEnumerable<Measurement<long>>>? _activeJobsCallback;
+    private static Func<IEnumerable<Measurement<long>>>? _totalConnectionsCallback;
+
+    static PipelineTelemetry()
+    {
+        // ObservableGauge instruments must be created on the Meter; creating them in the static
+        // constructor avoids duplicate-instrument warnings if the type is loaded by multiple hosts.
+        Meter.CreateObservableGauge(
+            "agent.jobs.active",
+            // TODO [WARNING]: This lambda reads _activeJobsCallback without Volatile.Read, so no
+            // acquire fence is issued on the OTel collection thread. RegisterAgentGaugeCallbacks
+            // writes the field with Volatile.Write (release fence), but the paired acquire fence is
+            // missing here. On ARM/AArch64 Kubernetes nodes (weakly ordered memory model) the
+            // collection thread may observe a stale null for one collection cycle after registration
+            // completes at startup, producing an empty measurement for that window.
+            // WorkDistributionTelemetry follows the correct pattern:
+            //   var cb = Volatile.Read(ref _credentialPoolAvailableCallback); return cb is null ? [] : cb();
+            // Fix: replace _activeJobsCallback?.Invoke() with
+            //   Volatile.Read(ref _activeJobsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>()
+            observeValues: () => _activeJobsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            unit: "{job}",
+            description: "Currently executing agent jobs");
+
+        Meter.CreateObservableGauge(
+            "agent.connections.total",
+            // TODO [WARNING]: Same missing acquire fence as _activeJobsCallback above.
+            // Fix: replace _totalConnectionsCallback?.Invoke() with
+            //   Volatile.Read(ref _totalConnectionsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>()
+            observeValues: () => _totalConnectionsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            unit: "{connection}",
+            description: "Total registered agents");
+    }
+
+    /// <summary>
+    /// Registers callbacks that supply <c>agent.jobs.active</c> and <c>agent.connections.total</c>
+    /// gauge measurements.
+    /// Called once at startup by <c>WorkItemCountsService</c> on the Scheduler leader.
+    /// The callbacks are invoked on every OTel collection cycle; they should return an empty
+    /// enumerable when the leader has no data yet (before first poll) or is not the leader.
+    /// </summary>
+    public static void RegisterAgentGaugeCallbacks(
+        Func<IEnumerable<Measurement<long>>> activeJobsCallback,
+        Func<IEnumerable<Measurement<long>>> totalConnectionsCallback)
+    {
+        ArgumentNullException.ThrowIfNull(activeJobsCallback);
+        ArgumentNullException.ThrowIfNull(totalConnectionsCallback);
+
+        // NOTE (issue #3555): Unlike RegisterWorkItemsByStatusCallback (which uses Interlocked.CompareExchange
+        // and logs a warning on double-registration), this method unconditionally overwrites the callbacks.
+        // A second call from a misconfigured DI container or a test running in the same process silently
+        // replaces the active callbacks without any diagnostic. Consider using Interlocked.CompareExchange
+        // and emitting a Serilog.Log.Warning on double-registration, matching the pattern in
+        // WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback.
+
+        // Use volatile writes so the collection thread sees the callbacks immediately.
+        Volatile.Write(ref _activeJobsCallback, activeJobsCallback);
+        Volatile.Write(ref _totalConnectionsCallback, totalConnectionsCallback);
+    }
 }
