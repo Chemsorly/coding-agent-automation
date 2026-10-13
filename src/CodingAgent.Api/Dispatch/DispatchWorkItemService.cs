@@ -116,12 +116,17 @@ internal sealed class DispatchWorkItemService
     /// selector first, then the profile fallback, which expands a partial selector such as <c>"dotnet"</c>
     /// to the profile's labels, <c>"dotnet,kiro"</c>. The concurrency snapshot, the gate and the selector lock
     /// all key on that selector.
+    ///
+    /// <para>
+    /// Also used by <c>CreateWorkItem</c> to refuse a consolidation run at enqueue when this lookup finds no
+    /// template. Sharing the lookup guarantees that an item the dispatcher can dispatch is never refused there.
+    /// </para>
     /// </summary>
     /// <returns>
     /// The template, or <c>null</c> when neither lookup finds one; and the template's selector, or the
     /// normalized <paramref name="agentSelector"/> when no template is found.
     /// </returns>
-    private async Task<(JobTemplate? Template, string EffectiveSelector)> ResolveTemplateAsync(
+    internal async Task<(JobTemplate? Template, string EffectiveSelector)> ResolveTemplateAsync(
         string agentSelector,
         DispatchTemplateResolver templateResolver,
         string callerName,

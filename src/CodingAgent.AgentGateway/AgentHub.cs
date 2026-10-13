@@ -58,7 +58,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     public override Task OnConnectedAsync()
     {
-        var agentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+        var agentId = Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(agentId))
         {
             // Check auth_kind claim — operator connections are valid without agentId

@@ -155,16 +155,11 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         var queryAgentId = (string?)null;
         if (agent is null && ctx.Context.Features is not null)
         {
-            // TODO: Query["agentId"].ToString() on a StringValues struct returns a comma-joined string
-            // (e.g. "a,b") when the parameter appears multiple times in the query string. This produces
-            // a silently invalid AgentId that GetByAgentId returns null for rather than throwing.
-            // Prefer Query["agentId"].FirstOrDefault() to pick only the first value. (WARNING — .NET Specialist)
-            //
             // TODO: No format/length validation is applied to queryAgentId before the Redis lookup.
             // Any caller with a valid API key can probe Redis for arbitrary agent keys on a cold pod.
             // Add a max-length and character allowlist check here if Redis key enumeration is a concern.
             // (WARNING — Security Review)
-            queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+            queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
             if (!string.IsNullOrEmpty(queryAgentId))
             {
                 var candidate = _registry.GetByAgentId(new AgentId(queryAgentId));

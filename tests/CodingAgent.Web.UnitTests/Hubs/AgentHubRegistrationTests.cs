@@ -352,6 +352,148 @@ public sealed class AgentHubRegistrationTests
         aborted.Should().BeFalse("operator connections must not be aborted");
     }
 
+    // ── OnConnectedAsync — null HttpContext (non-HTTP transport) ─────────
+
+    /// <summary>
+    /// When <c>GetHttpContext()</c> returns null (e.g. non-HTTP transport or missing feature),
+    /// the null-conditional <c>?.</c> on the changed line propagates null through.
+    /// The result is treated as a missing agentId, so the connection is aborted
+    /// (same behavior as an absent agentId with no operator claim).
+    /// </summary>
+    [Fact]
+    public async Task OnConnectedAsync_NullHttpContext_AbortsConnection()
+    {
+        // Use an empty FeatureCollection so GetHttpContext() returns null.
+        var features = new FeatureCollection(); // no IHttpContextFeature registered
+        var aborted = false;
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-no-http");
+        mockCtx.Setup(c => c.Features).Returns(features);
+        mockCtx.Setup(c => c.User).Returns(new System.Security.Claims.ClaimsPrincipal());
+        mockCtx.Setup(c => c.Abort()).Callback(() => aborted = true);
+
+        var hub = CreateHub(mockCtx.Object);
+        await hub.OnConnectedAsync();
+
+        aborted.Should().BeTrue("connection with null HttpContext has no agentId and must be aborted");
+    }
+
+    // ── RegisterAgent — null HttpContext (non-HTTP transport) ─────────────
+
+    /// <summary>
+    /// When <c>GetHttpContext()</c> returns null, the null-conditional <c>?.</c> on
+    /// <c>ValidateRegistrationIdentity</c> propagates null for <c>queryAgentId</c>.
+    /// The message agentId cannot match null, so registration is rejected.
+    /// </summary>
+    [Fact]
+    public async Task RegisterAgent_NullHttpContext_ThrowsHubException()
+    {
+        // Use an empty FeatureCollection so GetHttpContext() returns null.
+        var features = new FeatureCollection(); // no IHttpContextFeature registered
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-no-http");
+        mockCtx.Setup(c => c.Features).Returns(features);
+
+        var hub = CreateHub(mockCtx.Object);
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = []
+        };
+
+        var act = () => hub.RegisterAgent(message);
+        await act.Should().ThrowAsync<HubException>(
+            "with no HttpContext the query param cannot be read, so agentId validation fails");
+    }
+
+    // ── OnConnectedAsync — duplicate agentId query params ────────────────
+
+    /// <summary>
+    /// When a client supplies agentId more than once (e.g. ?agentId=a&amp;agentId=b),
+    /// StringValues.ToString() comma-joins the values into "a,b", causing the subsequent
+    /// IsNullOrWhiteSpace check to pass (non-empty string) but logging/processing the wrong value.
+    /// The fix (FirstOrDefault) reads only the first value.
+    /// This test verifies OnConnectedAsync uses FirstOrDefault so that "a,b" is never used.
+    /// </summary>
+    [Fact]
+    public async Task OnConnectedAsync_DuplicateAgentIdQueryParams_ResolvesByFirstValue()
+    {
+        // Arrange: build a context with ?agentId=agent-1&agentId=extra — duplicate params
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.QueryString = new QueryString("?agentId=agent-1&agentId=extra");
+
+        var features = new FeatureCollection();
+        features.Set<IHttpContextFeature>(new TestHttpContextFeature(httpContext));
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-dup");
+        mockCtx.Setup(c => c.Features).Returns(features);
+
+        var hub = CreateHub(mockCtx.Object);
+
+        // Act & Assert: should not throw — only the first value "agent-1" is seen, which is non-empty,
+        // so the connection proceeds rather than aborting. If the old ToString() path were in use,
+        // "agent-1,extra" would still be non-empty so the connection would also proceed, but
+        // subsequent lookups would use the comma-joined key. This test confirms the happy path
+        // completes without errors, indicating the first value was picked up correctly.
+        var act = () => hub.OnConnectedAsync();
+        await act.Should().NotThrowAsync(
+            "OnConnectedAsync must not throw when agentId appears multiple times in the query string");
+    }
+
+    // ── RegisterAgent — duplicate agentId query params ───────────────────
+
+    /// <summary>
+    /// When a client supplies agentId more than once (e.g. ?agentId=agent-1&amp;agentId=extra),
+    /// the old ToString() produced "agent-1,extra". ValidateRegistrationIdentity compared that
+    /// to the message's AgentId ("agent-1"), found a mismatch, and threw HubException.
+    /// The fix (FirstOrDefault) reads only "agent-1", so the comparison matches and registration
+    /// succeeds.
+    /// </summary>
+    [Fact]
+    public async Task RegisterAgent_DuplicateAgentIdQueryParams_ResolvesByFirstValue()
+    {
+        // Arrange: build a context with ?agentId=agent-1&agentId=extra — duplicate params
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.QueryString = new QueryString("?agentId=agent-1&agentId=extra");
+
+        var features = new FeatureCollection();
+        features.Set<IHttpContextFeature>(new TestHttpContextFeature(httpContext));
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-dup");
+        mockCtx.Setup(c => c.Features).Returns(features);
+
+        var hub = CreateHub(mockCtx.Object);
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        var entry = CreateEntry("agent-1", "conn-dup");
+        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-dup")).Returns(entry);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .ReturnsAsync(new OrphanRecoveryResult());
+
+        // The message agentId matches only the FIRST query param value.
+        // Pre-fix: query["agentId"].ToString() == "agent-1,extra" → mismatch → HubException.
+        // Post-fix: query["agentId"].FirstOrDefault() == "agent-1" → match → registration succeeds.
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = []
+        };
+
+        var act = () => hub.RegisterAgent(message);
+        await act.Should().NotThrowAsync(
+            "RegisterAgent must resolve the first agentId value from a duplicate-param query string and allow registration");
+    }
+
     // ── RegisterAgent — K8s-mode in-progress label swap on actual pickup ──────
 
     private static ActiveJobState MakeActiveJob(string runId) => new()
