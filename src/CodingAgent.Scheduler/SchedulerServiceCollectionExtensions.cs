@@ -265,12 +265,11 @@ public static class SchedulerServiceCollectionExtensions
             services.AddSingleton<ILoopCommandRelay, NullLoopCommandRelay>();
         }
 
-        // ── LoopWatchdogService — self-heals a dormant-but-leader loop ────────
-        // Polls IsLoopActive every 2 minutes and calls StartLoopAsync() when the loop
-        // is dormant, this pod is the leader, and ClosedLoopAutoStart=true in config.
-        // Covers both the exception-killed-loop scenario and hangs (which no exception
-        // handler can catch). A null leader gate (dev/single-replica mode) causes the
-        // watchdog to treat this instance as the leader — matching WorkItemCountsService.
+        // ── LoopWatchdogService — reconciles the loop with the desired state (spec 051 D11) ──
+        // Every 5 seconds on the leader: starts, stops or resumes the loop to match the pipeline
+        // config that Start, Stop and Resume write, and pushes the loop status to the API. Starting
+        // also self-heals a loop an exception or hang stopped. A null leader gate (dev/single-replica
+        // mode) causes the watchdog to treat this instance as the leader — matching WorkItemCountsService.
         // TODO: DI lifetime skew — IPipelineApiConfigClient is registered as transient (AddHttpClient),
         //   but LoopWatchdogService is a singleton, so the transient instance is captured for the
         //   process lifetime. This prevents socket recycling and bypasses IHttpClientFactory's
@@ -281,8 +280,10 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<LoopWatchdogService>(sp => new LoopWatchdogService(
             sp.GetRequiredService<IPipelineLoopService>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
+            sp.GetRequiredService<ISchedulerApiClient>(),
             sp.GetService<ILeaderElectionService>(),
-            Log.Logger));
+            Log.Logger,
+            time: sp.GetService<TimeProvider>()));
         services.AddHostedService(sp => sp.GetRequiredService<LoopWatchdogService>());
 
         // ── OrphanedLabelRecoveryService ──────────────────────────────────────

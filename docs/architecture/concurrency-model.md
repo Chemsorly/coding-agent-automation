@@ -256,7 +256,7 @@ The five processes communicate strictly via defined interfaces:
 | Orchestrator | Pipeline API | REST (HTTP via `IPipelineApiConfigClient`, `IPipelineApiWorkItemClient`, `IPipelineApiRunHistoryClient`) |
 | Orchestrator | Pipeline API | SignalR hub subscribe (`IAgentHubConnection`, scoped per Blazor circuit) |
 | Orchestrator | Scheduler | REST — `GET /loop/status`, `POST /loop/start`, `/loop/stop`, `/loop/resume` |
-| Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, among others |
+| Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, `PUT /api/scheduler/loop-status` (leader only), among others |
 | Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |
 | Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, `RequestTokenRefresh` (token vending), etc. |
@@ -324,6 +324,29 @@ Redis. With Redis configured, both switch to distributed implementations automat
 `AgentRegistryService` → `DistributedAgentRegistryService`;
 `OrchestratorRunService` uses Redis-backed state.
 
+
+---
+
+## Loop Control as Desired State
+
+Spec 051 D11. `POST /api/ui/loop/start`, `/stop` and `/resume` on the Pipeline API only write the
+pipeline configuration: `ClosedLoopAutoStart` for Start and Stop, a new `LoopResumeRequestedAt`
+for Resume. No pod receives a command. Every 5 s, `LoopWatchdogService` on the Scheduler leader
+reads the configuration and:
+
+1. resumes the loop when `LoopResumeRequestedAt` is newer than the last request it handled (the
+   first value it sees is only noted);
+2. starts the loop if it should run and doesn't, which also self-heals a loop an exception stopped;
+3. stops the loop if it runs and shouldn't;
+4. pushes the loop status to `PUT /api/scheduler/loop-status` when it changed, and at least every
+   30 s.
+
+The API keeps the last status in Redis (in memory without Redis) and serves it on
+`GET /api/ui/loop/status`. A status older than 2 minutes counts as missing, so the UI can tell a
+silent Scheduler from an idle loop.
+
+The `/loop/*` endpoints and the relay below still serve the web host until it switches to
+`/api/ui/loop` (spec 051 2.6b), which deletes them.
 
 ---
 

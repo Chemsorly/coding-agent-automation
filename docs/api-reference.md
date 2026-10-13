@@ -605,6 +605,19 @@ The Consolidation page's API. Several templates and projects can share one brain
 | `GET /api/ui/consolidation/templates/{templateId}/refactoring-scan` | `{ maxProposals, maxProposalsIsProjectOverride, hotspotLookbackDays, reviewEnabled, reviewEnabledIsProjectOverride }`: the values a refactoring scan of the template runs with, which are the global settings with the template's project overrides. |
 | `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch }`. `type` is `BrainConsolidation`, `RefactoringDetection` or `HarnessSuggestions`. `templateId` is `null` for harness suggestions. `autoDispatch` labels a refactoring scan's issues `agent:next`. Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
 
+### Pipeline loop
+
+Loop control is desired state. Start, Stop and Resume only record the request in the pipeline configuration and return `202`. The Scheduler leader checks every 5 seconds: it starts the loop if it should run and doesn't, stops it if it runs and shouldn't, and resumes it after a newer resume request. It then pushes the loop status to the API (`PUT /api/scheduler/loop-status`, operator key) when the status changes, and at least every 30 seconds. A Start the Scheduler refuses appears in the status's `validationErrors` a few seconds later. A Start while the Scheduler is down is applied when it comes back.
+
+| Path | Who | Returns |
+|---|---|---|
+| `GET /api/ui/loop/status` | Any role | `{ isLoopActive, runRequested, statusMessage, currentIssueIdentifier, processedCount, failedCount, queueCount, isCircuitBroken, lastPollError, currentCycleTemplateIndex, currentCycleTemplateCount, validationErrors, templateStatuses, reportedAt }`. `runRequested` is whether Start was the last command; while it differs from `isLoopActive`, a Start or Stop is still being applied. `reportedAt` is `null` when the Scheduler has not reported in the last 2 minutes; the status then says it is waiting for the Scheduler. A project-scoped user gets only their projects' entries in `templateStatuses`, and no messages, errors or current issue, which can name other projects' templates and issues. |
+| `POST /api/ui/loop/start` | Global `operator` | `202`. Asks for the loop to run. |
+| `POST /api/ui/loop/stop` | Global `operator` | `202`. Asks for the loop to stop after the current cycle. |
+| `POST /api/ui/loop/resume` | Global `operator` | `202`. Asks for a loop that its circuit breaker paused to resume. |
+
+Saving the pipeline settings through `PUT /api/ui/settings/pipeline` keeps the stored loop request, so a settings page loaded before a Start or Stop does not undo it.
+
 ### Settings (admin)
 
 `/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
@@ -716,6 +729,9 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |
 | GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |
 | POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation, refactoring scan or harness suggestions run |
+| GET | `/api/ui/loop/status` | User token | Pipeline loop status (template entries filtered for scoped users) |
+| POST | `/api/ui/loop/start`, `/stop`, `/resume` | User token, global operator | Ask the Scheduler leader to start, stop or resume the loop |
+| PUT | `/api/scheduler/loop-status` | OperatorApiKey | The Scheduler leader pushes the loop status |
 | GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

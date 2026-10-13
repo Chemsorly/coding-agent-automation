@@ -1,80 +1,90 @@
+using System.Text.Json;
 using CodingAgent.Api.Client;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using Microsoft.Extensions.Hosting;
-using Serilog;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Scheduler.Services;
 
 /// <summary>
-/// Watchdog that self-heals a dormant-but-leader pipeline loop.
+/// Makes the pipeline loop on the leader match what users asked for, and reports its status (spec 051 D11).
 /// </summary>
 /// <remarks>
 /// <para>
-/// When <see cref="PipelineLoopService"/> is permanently stopped by an unhandled exception
-/// (the "dormant-but-leader" scenario), Kubernetes never evicts the pod because
-/// <c>/healthz</c> always returns 200. This service fills that gap by polling
-/// <see cref="IPipelineLoopService.IsLoopActive"/> on a configurable interval and
-/// restarting the loop when the conditions for self-heal are met:
+/// Loop control is desired state: Start and Stop set <c>ClosedLoopAutoStart</c> in the pipeline config,
+/// and Resume sets <c>LoopResumeRequestedAt</c>. No pod receives a command, so none can reach the wrong
+/// pod. On the leader (or with no leader gate, in single-replica and dev mode), every tick:
 /// </para>
 /// <list type="number">
-///   <item>This pod is the leader (<see cref="ILeaderGate.IsLeader"/> is <c>true</c>
-///         or the gate is <c>null</c> — single-replica / dev mode).</item>
-///   <item>The loop is not running (<see cref="IPipelineLoopService.IsLoopActive"/> is <c>false</c>).</item>
-///   <item>The operator has not deliberately stopped the loop
-///         (<c>ClosedLoopAutoStart</c> is <c>true</c> in the persisted config).</item>
+///   <item>resumes the loop when <c>LoopResumeRequestedAt</c> is newer than the last request handled
+///         (the first value seen is only noted: a request older than this pod's leadership is stale);</item>
+///   <item>starts the loop when it should run and does not. This also self-heals a loop an unhandled
+///         exception stopped, which <c>/healthz</c> cannot see. A refused start leaves its reasons in
+///         the loop's validation errors, which the status carries;</item>
+///   <item>stops the loop when it runs and should not;</item>
+///   <item>pushes the loop status to the API when it changed, and at least every
+///         <see cref="StatusRefreshInterval"/> so the API can tell a silent Scheduler from an idle one.</item>
 /// </list>
 /// <para>
-/// Note on circuit-breaker interaction: when the circuit breaker is open,
-/// <see cref="IPipelineLoopService.IsLoopActive"/> is <c>true</c> (the loop is
-/// paused, not stopped). Condition 2 therefore already prevents the watchdog from
-/// firing during a circuit-breaker pause — no additional guard is needed.
-/// </para>
-/// <para>
-/// Note on null gate: a null <see cref="ILeaderGate"/> means leader election is
-/// not configured (single-replica / dev mode). In that case the watchdog treats
-/// the current instance as the leader and heals unconditionally if conditions 2
-/// and 3 are met — matching the pattern used by <see cref="WorkItemCountsService"/>.
+/// A circuit-breaker pause keeps <see cref="IPipelineLoopService.IsLoopActive"/> true, so the
+/// start rule does not fire during one.
 /// </para>
 /// </remarks>
 public sealed class LoopWatchdogService : BackgroundService
 {
     private readonly IPipelineLoopService _loopService;
     private readonly IPipelineApiConfigClient _configClient;
+    private readonly ISchedulerApiClient _statusClient;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
     private readonly TimeSpan _interval;
+    private readonly TimeProvider _time;
 
-    /// <summary>Default watchdog check interval (2 minutes).</summary>
-    public static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(2);
+    private bool _resumeBaselineTaken;
+    private DateTimeOffset? _handledResumeRequest;
+    private string? _pushedStatus;
+    private DateTimeOffset _pushedAt;
+    private bool _reconcileFailing;
+    private bool _startFailing;
+    private bool _pushFailing;
 
-    /// <param name="loopService">The pipeline loop service to supervise.</param>
-    /// <param name="configClient">Client for reading <c>ClosedLoopAutoStart</c> from the API.</param>
+    /// <summary>Default check interval: Start, Stop and Resume take effect within this time.</summary>
+    public static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>How often an unchanged status is pushed again.</summary>
+    public static readonly TimeSpan StatusRefreshInterval = TimeSpan.FromSeconds(30);
+
+    /// <param name="loopService">The pipeline loop service to reconcile.</param>
+    /// <param name="configClient">Client for reading the desired loop state from the API.</param>
+    /// <param name="statusClient">Client for pushing the loop status to the API.</param>
     /// <param name="leaderGate">
     /// Leader election gate. Pass <c>null</c> in single-replica / dev mode
-    /// (no K8s leader election) — the watchdog will heal unconditionally.
+    /// (no K8s leader election) — this pod then acts as the leader.
     /// </param>
     /// <param name="logger">Serilog logger.</param>
-    /// <param name="interval">
-    /// How often to check the loop state. Pass a small value in tests to make the
-    /// timer fire quickly without real wall-clock waiting. Defaults to
-    /// <see cref="DefaultInterval"/> (2 minutes) when <c>null</c>.
-    /// </param>
+    /// <param name="interval">How often to check; <see cref="DefaultInterval"/> when <c>null</c>.</param>
+    /// <param name="time">Clock for the status refresh; the system clock when <c>null</c>.</param>
     public LoopWatchdogService(
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
+        ISchedulerApiClient statusClient,
         ILeaderGate? leaderGate,
         ILogger logger,
-        TimeSpan? interval = null)
+        TimeSpan? interval = null,
+        TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(loopService);
         ArgumentNullException.ThrowIfNull(configClient);
+        ArgumentNullException.ThrowIfNull(statusClient);
         ArgumentNullException.ThrowIfNull(logger);
         _loopService = loopService;
         _configClient = configClient;
+        _statusClient = statusClient;
         _leaderGate = leaderGate;
         _logger = logger.ForContext<LoopWatchdogService>();
         _interval = interval ?? DefaultInterval;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -83,56 +93,43 @@ public sealed class LoopWatchdogService : BackgroundService
         _logger.Information("LoopWatchdogService started — checking every {Interval}", _interval);
 
         using var timer = new PeriodicTimer(_interval);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        do
         {
-            await CheckAndHealAsync(stoppingToken);
+            await TickAsync(stoppingToken);
         }
+        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     /// <summary>
-    /// Checks whether the loop needs healing and calls <see cref="IPipelineLoopService.StartLoopAsync"/>
-    /// if the self-heal conditions are met. Swallows all exceptions so a transient API failure
-    /// during config fetch does not crash the watchdog.
+    /// One check: on the leader, reconciles the loop with the desired state and pushes its status.
+    /// Never throws except on cancellation, so a failing API does not stop the watchdog.
     /// </summary>
-    internal async Task CheckAndHealAsync(CancellationToken ct)
+    internal async Task TickAsync(CancellationToken ct)
+    {
+        if (_leaderGate is { IsLeader: false })
+        {
+            // Push at once if this pod becomes the leader.
+            _pushedStatus = null;
+            return;
+        }
+
+        await ReconcileAsync(ct);
+        await PushStatusAsync(ct);
+    }
+
+    private async Task ReconcileAsync(CancellationToken ct)
     {
         try
         {
-            // Condition 1: this pod must be the leader (null gate = dev mode = treat as leader).
-            if (_leaderGate is { IsLeader: false })
-                return;
-
-            // Condition 2: the loop must be dormant.
-            if (_loopService.IsLoopActive)
-                return;
-            // TODO: the IsLoopActive read above and the StartLoopAsync() call below are not atomic.
-            //   Between the read and the call, another concurrent watchdog tick or external UI call
-            //   could start the loop, making the call here redundant. This is safe only because
-            //   StartLoopAsync() re-checks IsLoopActive under its own internal lock and returns false
-            //   when already active — making a redundant call a benign no-op. If StartLoopAsync ever
-            //   loses its internal IsLoopActive guard, this watchdog could race to double-start the
-            //   loop (resetting counters, replacing _loopCts). Not a defect today.
-
-            // Condition 3: the operator has not deliberately stopped the loop.
-            // Read from the API on every check so a config change takes effect within one interval.
             var config = await _configClient.GetPipelineConfigAsync(ct);
-            if (!config.ClosedLoopAutoStart)
-            {
-                _logger.Debug(
-                    "LoopWatchdogService: loop is dormant but ClosedLoopAutoStart=false — not healing (deliberate stop)");
-                return;
-            }
+            _reconcileFailing = false;
 
-            // All conditions met — restart the loop.
-            _logger.Warning(
-                "LoopWatchdogService: loop is dormant and this pod is the leader — calling StartLoopAsync() to self-heal");
+            ApplyResumeRequest(config.LoopResumeRequestedAt);
 
-            var started = await _loopService.StartLoopAsync();
-            if (started)
-                _logger.Information("LoopWatchdogService: loop successfully restarted");
-            else
-                _logger.Warning(
-                    "LoopWatchdogService: StartLoopAsync() returned false — loop could not be started (no valid templates?)");
+            if (config.ClosedLoopAutoStart && !_loopService.IsLoopActive)
+                await StartAsync();
+            else if (!config.ClosedLoopAutoStart && _loopService.IsLoopActive)
+                _loopService.StopLoop();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -140,8 +137,68 @@ public sealed class LoopWatchdogService : BackgroundService
         }
         catch (Exception ex)
         {
-            // Swallow all other exceptions: a transient config-fetch failure must not stop the watchdog.
-            _logger.Warning(ex, "LoopWatchdogService: error during watchdog check — will retry next interval");
+            if (!_reconcileFailing)
+                _logger.Warning(ex, "LoopWatchdogService: could not reconcile the loop — will retry every {Interval}", _interval);
+            _reconcileFailing = true;
+        }
+    }
+
+    private void ApplyResumeRequest(DateTimeOffset? requestedAt)
+    {
+        if (!_resumeBaselineTaken)
+        {
+            _resumeBaselineTaken = true;
+            _handledResumeRequest = requestedAt;
+            return;
+        }
+        if (requestedAt is null || requestedAt <= _handledResumeRequest)
+            return;
+
+        _handledResumeRequest = requestedAt;
+        _logger.Information("LoopWatchdogService: resume requested at {RequestedAt} — resuming the loop", requestedAt);
+        _loopService.ResumeLoop();
+    }
+
+    private async Task StartAsync()
+    {
+        if (await _loopService.StartLoopAsync())
+        {
+            _startFailing = false;
+            _logger.Information("LoopWatchdogService: loop started");
+            return;
+        }
+        if (!_startFailing)
+        {
+            _logger.Warning("LoopWatchdogService: the loop should run but did not start: {Errors}",
+                string.Join(" ", _loopService.ValidationErrors));
+        }
+        _startFailing = true;
+    }
+
+    private async Task PushStatusAsync(CancellationToken ct)
+    {
+        var status = SchedulerLoopEndpoints.BuildDto(_loopService);
+        var serialized = JsonSerializer.Serialize(status, PipelineJsonOptions.Default);
+        var now = _time.GetUtcNow();
+        if (serialized == _pushedStatus && now - _pushedAt < StatusRefreshInterval)
+            return;
+
+        try
+        {
+            await _statusClient.ReportLoopStatusAsync(status, ct);
+            _pushedStatus = serialized;
+            _pushedAt = now;
+            _pushFailing = false;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Host is stopping — exit silently.
+        }
+        catch (Exception ex)
+        {
+            if (!_pushFailing)
+                _logger.Warning(ex, "LoopWatchdogService: could not push the loop status to the API — will retry every {Interval}", _interval);
+            _pushFailing = true;
         }
     }
 }

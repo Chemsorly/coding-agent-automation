@@ -27,6 +27,7 @@ GET /api/pipeline-runs/ -> Service: OperatorApiKey
 POST /api/pipeline-runs/ -> Service: OperatorApiKey
 GET /api/pipeline-runs/active-branches -> Service: OperatorApiKey
 GET /api/pipeline-runs/{runId:guid} -> Service: OperatorApiKey
+PUT /api/scheduler/loop-status -> Service: OperatorApiKey
 POST /api/scheduler/maintenance/retention-sweep -> Service: OperatorApiKey
 GET /api/triages/ -> Service: OperatorApiKey
 POST /api/triages/ -> Service: OperatorApiKey
@@ -50,6 +51,10 @@ GET /api/ui/consolidation -> Ui: Ui.AnyAccess, Ui.GlobalRead
 POST /api/ui/consolidation/runs -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 GET /api/ui/consolidation/templates/{templateId}/refactoring-scan -> Ui: Ui.AnyAccess, Ui.GlobalRead
 GET /api/ui/health -> Ui: Ui.AnyAccess
+POST /api/ui/loop/resume -> Ui: Ui.AnyAccess, Ui.GlobalOperate
+POST /api/ui/loop/start -> Ui: Ui.AnyAccess, Ui.GlobalOperate
+GET /api/ui/loop/status -> Ui: Ui.AnyAccess
+POST /api/ui/loop/stop -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 GET /api/ui/me -> Ui: Ui.AnyAccess
 GET /api/ui/pipeline-settings -> Ui: Ui.AnyAccess
 GET /api/ui/projects -> Ui: Ui.AnyAccess
