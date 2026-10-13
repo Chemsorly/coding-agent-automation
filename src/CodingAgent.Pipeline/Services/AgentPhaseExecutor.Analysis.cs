@@ -357,8 +357,11 @@ public partial class AgentPhaseExecutor
             ct);
 
         // The reviewer and the refinement are agent calls of their own; count their tokens too.
-        run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: AnalysisPhase);
-        run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: AnalysisPhase);
+        // TODO: [WARNING] No test covers this call site: every AgentPhaseExecutor test config sets
+        // AnalysisReviewEnabled = false, so reverting these two lines to the TokenUsage overload (dropping
+        // the review/refinement cost from the "analysis" phase and run.TotalCost) would leave the suite green.
+        run.AccumulateTokenUsage(reviewResult.ReviewAgentResult, phase: AnalysisPhase);
+        run.AccumulateTokenUsage(reviewResult.RefinementAgentResult, phase: AnalysisPhase);
 
         if (!reviewResult.RefinementTriggered) return currentAssessment;
 
