@@ -1,22 +1,10 @@
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 
-namespace CodingAgent.Web.Services;
+namespace CodingAgent.Api.Chat;
 
-/// <summary>
-/// Assembles a <see cref="ChatPromptMessage"/> from prompt parameters.
-/// Pure logic — no I/O, injectable and unit-testable.
-/// </summary>
-public interface IChatPromptBuilder
-{
-    /// <summary>
-    /// Builds the full <see cref="ChatPromptMessage"/> for a chat prompt request.
-    /// </summary>
-    ChatPromptMessage Build(ChatPromptParameters parameters);
-}
-
-/// <summary>Input parameters for <see cref="IChatPromptBuilder.Build"/>.</summary>
-public sealed record ChatPromptParameters(
+/// <summary>Input parameters for <see cref="ChatPromptBuilder.Build"/>.</summary>
+internal sealed record ChatPromptParameters(
     string SessionId,
     string Prompt,
     bool IsFirstPrompt,
@@ -27,12 +15,13 @@ public sealed record ChatPromptParameters(
     string? ResolvedAuthMode = null);
 
 /// <summary>
-/// Default implementation of <see cref="IChatPromptBuilder"/>.
-/// Merges MCP servers, gates first-prompt-only fields, and assembles the message.
+/// Assembles a <see cref="ChatPromptMessage"/>: merges MCP servers, gates first-prompt-only fields.
+/// Pure logic. It ran in the web host until spec 051 2.5; the API now builds every chat prompt, so
+/// project secrets never pass through the web host.
 /// </summary>
-public sealed class ChatPromptBuilder : IChatPromptBuilder
+internal static class ChatPromptBuilder
 {
-    public ChatPromptMessage Build(ChatPromptParameters parameters)
+    public static ChatPromptMessage Build(ChatPromptParameters parameters)
     {
         // Merge MCP servers: project-level overrides profile-level.
         // Null project → passthrough profile servers unchanged.

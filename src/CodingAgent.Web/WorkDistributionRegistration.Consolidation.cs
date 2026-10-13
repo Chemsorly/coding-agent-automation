@@ -47,12 +47,6 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<JobTemplateStore>(sp =>
             JobTemplateProviderLoader.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
-        // ── IChatJobDispatcher — API-backed client ────────────────────────────
-        // ChatJobDispatcher lives in the Pipeline API alongside AgentHub and the registry it polls.
-        // ApiChatJobDispatcher delegates to POST /api/chat/dispatch and /terminate, re-mapping
-        // HTTP status codes back to the domain exceptions AgentChat.razor expects.
-        services.AddSingleton<IChatJobDispatcher, ApiChatJobDispatcher>();
-
         Log.Information("WorkDistribution: work distributor and job templates registered");
     }
 

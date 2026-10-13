@@ -11,7 +11,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// <summary>
 /// Tests for the remaining zero-coverage API clients:
 /// PipelineApiRunHistoryClient, PipelineApiAgentClient, PipelineApiConsolidationRunClient,
-/// PipelineApiHarnessSuggestionClient, PipelineApiHealthClient, PipelineApiChatClient.
+/// PipelineApiHarnessSuggestionClient, PipelineApiHealthClient.
 /// </summary>
 public sealed class PipelineApiRemainingClientsTests
 {
@@ -207,37 +207,6 @@ public sealed class PipelineApiRemainingClientsTests
         result.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task AgentClient_AssignChatPromptAsync_SendsPost()
-    {
-        var (client, handler) = Create(h => new PipelineApiAgentClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.AssignChatPromptAsync("agent-1", new ChatPromptMessage
-        {
-            SessionId = "sess-1",
-            Prompt = "Hello"
-        });
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
-        handler.LastRequest.RequestUri!.PathAndQuery.Should().Contain("/api/agents/agent-1/chat-prompt");
-    }
-
-    [Fact]
-    public async Task AgentClient_AssignChatPromptAsync_EscapesAgentId()
-    {
-        var (client, handler) = Create(h => new PipelineApiAgentClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.AssignChatPromptAsync("agent/id with spaces", new ChatPromptMessage
-        {
-            SessionId = "s",
-            Prompt = "Hi"
-        });
-
-        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("agent%2Fid%20with%20spaces");
-    }
-
     private static HarnessSuggestions MakeHarnessSuggestions() => new()
     {
         BasedOnRunCount = 5,
@@ -335,122 +304,6 @@ public sealed class PipelineApiRemainingClientsTests
 
         var result = await client.IsReadyAsync();
         result.Should().BeFalse();
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // PipelineApiChatClient
-    // ─────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task ChatClient_DispatchChatPodAsync_ReturnsAgentId()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => JsonResponse(new { AgentId = "agent-xyz" });
-
-        var result = await client.DispatchChatPodAsync("kiro", "claude", null);
-
-        result.Should().Be("agent-xyz");
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
-        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/chat/dispatch");
-    }
-
-    [Fact]
-    public async Task ChatClient_DispatchChatPodAsync_WhenNullBody_Throws()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => NullJson();
-
-        var act = () => client.DispatchChatPodAsync("kiro", null, null);
-        await act.Should().ThrowAsync<InvalidOperationException>();
-    }
-
-    [Fact]
-    public async Task ChatClient_Dispatch_504WithTimeout_ThrowsWithTimeout()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.GatewayTimeout)
-        {
-            Content = new StringContent(
-                """{"detail":"Chat pod did not connect within 120s.","timeoutSeconds":120}""",
-                Encoding.UTF8, "application/json")
-        };
-
-        var act = () => client.DispatchChatPodAsync("kiro", null, null);
-        var ex = await act.Should().ThrowAsync<ChatDispatchFailedException>(
-            "504 with a structured body must throw ChatDispatchFailedException");
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.GatewayTimeout);
-        ex.Which.TimeoutSeconds.Should().Be(120,
-            "the timeoutSeconds field from the JSON body must be forwarded");
-    }
-
-    [Fact]
-    public async Task ChatClient_Dispatch_500WithDetail_UsesDetailAsMessage()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
-        {
-            Content = new StringContent(
-                """{"detail":"No template for selector 'kiro'"}""",
-                Encoding.UTF8, "application/json")
-        };
-
-        var act = () => client.DispatchChatPodAsync("kiro", null, null);
-        var ex = await act.Should().ThrowAsync<ChatDispatchFailedException>(
-            "500 with a structured body must use the detail field as the message");
-        ex.Which.Message.Should().Be("No template for selector 'kiro'");
-    }
-
-    [Fact]
-    public async Task ChatClient_Dispatch_NonJsonBody_UsesFallbackMessage()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
-        {
-            Content = new StringContent("Internal Server Error", Encoding.UTF8, "text/plain")
-        };
-
-        var act = () => client.DispatchChatPodAsync("kiro", null, null);
-        var ex = await act.Should().ThrowAsync<ChatDispatchFailedException>(
-            "non-JSON error bodies must fall back to a synthesized message");
-        ex.Which.Message.Should().Be(
-            "POST /api/chat/dispatch failed with HTTP 500 (InternalServerError).",
-            "the fallback message must include the status code and reason phrase");
-    }
-
-    [Fact]
-    public async Task ChatClient_SendKeepalive_SendsPost()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.SendKeepaliveAsync("agent-1");
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
-        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/chat/agent-1/keepalive");
-    }
-
-    [Fact]
-    public async Task ChatClient_TerminateChatSessionAsync_SendsPost()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.TerminateChatSessionAsync("agent-1");
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
-        handler.LastRequest.RequestUri!.PathAndQuery
-            .Should().Be("/api/chat/agent-1/terminate");
-    }
-
-    [Fact]
-    public async Task ChatClient_TerminateChatSessionAsync_EscapesAgentId()
-    {
-        var (client, handler) = Create(h => new PipelineApiChatClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.TerminateChatSessionAsync("agent/1");
-
-        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("agent%2F1");
     }
 
     // ─────────────────────────────────────────────────────────────────────

@@ -1,9 +1,5 @@
 GET /api/agents/ -> Service: OperatorApiKey
 GET /api/agents/credential-pool -> Service: OperatorApiKey
-POST /api/agents/{agentId}/chat-prompt -> Service: OperatorApiKey
-POST /api/chat/dispatch -> Service: OperatorApiKey
-POST /api/chat/{agentId}/keepalive -> Service: OperatorApiKey
-POST /api/chat/{agentId}/terminate -> Service: OperatorApiKey
 GET /api/config/agent-profiles -> Service: OperatorApiKey
 GET /api/config/export -> Service: OperatorApiKey
 POST /api/config/import -> Service: OperatorApiKey
@@ -45,6 +41,11 @@ POST /api/triages/{id:guid}/rerun -> Service: OperatorApiKey
 GET /api/ui/agents -> Ui: Ui.AnyAccess
 GET /api/ui/agents/credential-pool -> Ui: Ui.AnyAccess, Ui.GlobalRead
 GET /api/ui/backlog -> Ui: Ui.AnyAccess
+POST /api/ui/chat -> Ui: Ui.AnyAccess, Ui.AnyOperator
+GET /api/ui/chat/options -> Ui: Ui.AnyAccess, Ui.AnyOperator
+POST /api/ui/chat/{agentId}/keepalive -> Ui: Ui.AnyAccess, Ui.AnyOperator
+POST /api/ui/chat/{agentId}/prompt -> Ui: Ui.AnyAccess, Ui.AnyOperator
+POST /api/ui/chat/{agentId}/terminate -> Ui: Ui.AnyAccess, Ui.AnyOperator
 GET /api/ui/consolidation -> Ui: Ui.AnyAccess, Ui.GlobalRead
 POST /api/ui/consolidation/runs -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 GET /api/ui/consolidation/templates/{templateId}/refactoring-scan -> Ui: Ui.AnyAccess, Ui.GlobalRead

@@ -155,7 +155,6 @@ app.MapHarnessSuggestionEndpoints();
 app.MapFeedbackCommentOutboxEndpoints();
 app.MapTriageEndpoints();
 app.MapAgentEndpoints();
-app.MapChatEndpoints();
 app.MapApiSchedulerEndpoints();
 app.MapUiEndpoints();
 

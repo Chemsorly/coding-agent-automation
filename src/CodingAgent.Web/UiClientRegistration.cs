@@ -36,6 +36,13 @@ internal static class UiClientRegistration
             client.BaseAddress = new Uri(apiBaseUrl);
             client.Timeout = TimeSpan.FromMinutes(2);
         });
+        // Launching a chat waits until the pod connects (ChatPodConnectTimeoutSeconds, 120 s by default),
+        // so the client allows well above that and the API's own timeout answers first.
+        services.AddHttpClient<IUiChatClient, UiChatClient>(client =>
+        {
+            client.BaseAddress = new Uri(apiBaseUrl);
+            client.Timeout = TimeSpan.FromMinutes(5);
+        });
         // Provider checks call GitHub or GitLab from the API, and fetching models runs a Job there.
         services.AddHttpClient<IUiProviderClient, UiProviderClient>(client =>
         {

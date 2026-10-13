@@ -804,6 +804,24 @@ public static class ApiServiceCollectionExtensions
         });
         services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
         services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
+
+        // ── Agent Chat page (spec 051 2.5b) ──────────────────────────────────────────────────
+        // Who launched each chat pod, and what its prompts are built from. A record outlives the
+        // longest chat job by an hour; ending the chat deletes it. Clamped like the dispatcher's
+        // options (warnings are logged once, by the dispatcher).
+        services.AddSingleton(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp();
+            return new CodingAgent.Api.Chat.ChatSessionStore(
+                ResolveRedisStoreOrNull(sp), TimeSpan.FromSeconds(options.ChatJobMaxDurationSeconds) + TimeSpan.FromHours(1));
+        });
+        services.AddSingleton(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp();
+            return ActivatorUtilities.CreateInstance<CodingAgent.Api.Chat.ChatService>(sp, options);
+        });
     }
 }
 
