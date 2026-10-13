@@ -415,11 +415,17 @@ public class SettingsPageTests
         // Verify an Issue provider config contains all shared keys
         var issueConfig = new ProviderConfig
         {
-            Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ApiUrl] = "https://api.github.com", [ProviderSettingKeys.ClientId] = "Iv1.abc",
-                [ProviderSettingKeys.InstallationId] = "456", [ProviderSettingKeys.PrivateKeyBase64] = "key", [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo"
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ClientId] = "Iv1.abc",
+                [ProviderSettingKeys.InstallationId] = "456",
+                [ProviderSettingKeys.PrivateKeyBase64] = "key",
+                [ProviderSettingKeys.Owner] = "org",
+                [ProviderSettingKeys.Repo] = "repo"
             }
         };
 
@@ -532,16 +538,20 @@ public class SettingsPageTests
         var repoSettings = new Dictionary<string, string>(sharedSettings) { [ProviderSettingKeys.BaseBranch] = "main" };
         var repoConfig = new ProviderConfig
         {
-            Kind = ProviderKind.Repository, ProviderType = "GitHub",
-            DisplayName = "myorg/myrepo - Repository", Settings = repoSettings
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "myorg/myrepo - Repository",
+            Settings = repoSettings
         };
         await _mockStore.Object.SaveProviderConfigAsync(repoConfig, CancellationToken.None);
 
         // Pipeline provider: shared settings only (no baseBranch)
         var pipelineConfig = new ProviderConfig
         {
-            Kind = ProviderKind.Pipeline, ProviderType = "GitHub",
-            DisplayName = "myorg/myrepo - Pipeline", Settings = new Dictionary<string, string>(sharedSettings)
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitHub",
+            DisplayName = "myorg/myrepo - Pipeline",
+            Settings = new Dictionary<string, string>(sharedSettings)
         };
         await _mockStore.Object.SaveProviderConfigAsync(pipelineConfig, CancellationToken.None);
 
@@ -581,7 +591,9 @@ public class SettingsPageTests
         // Verify that KiroCli agent providers would be excluded.
         var agentConfig = new ProviderConfig
         {
-            Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Kiro Agent",
             Settings = new() { [ProviderSettingKeys.AgentName] = "" }
         };
 

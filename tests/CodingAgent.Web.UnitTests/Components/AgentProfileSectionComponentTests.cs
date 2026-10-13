@@ -302,7 +302,8 @@ public class AgentProfileSectionComponentTests : BunitContext
             Id = "p-1",
             DisplayName = "Legacy Profile",
             AgentProviderConfigId = "ap-1"
-        } with { McpServers = null! };
+        } with
+        { McpServers = null! };
 
         _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile> { profileWithNullMcpServers });
@@ -327,7 +328,8 @@ public class AgentProfileSectionComponentTests : BunitContext
             Name = "legacy-server",
             Type = "stdio",
             Command = "uvx"
-        } with { Headers = null!, Env = null! };
+        } with
+        { Headers = null!, Env = null! };
 
         _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>

@@ -52,9 +52,6 @@
                     <label>Display Name</label>
                     <input type="text" @bind="_form.DisplayName" placeholder="@DisplayNamePlaceholder" />
                 </div>
-                @if (_form.ProviderType == "KiroCli")
-                {
-                }
                 @if (!IsClaudeCode && _form.ProviderType != "KiroCli")
                 {
                     <div class="form-group">
