@@ -1,6 +1,7 @@
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.GitLab;
+using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
@@ -44,7 +45,7 @@ internal static class UiProviderEndpoints
     /// repository and pipeline providers of a repository this way); the URL rule applies to it too.
     /// </summary>
     internal static async Task<IResult> SaveProviderConfig(
-        [FromBody] ProviderConfig draft, IProviderConfigStore store, CancellationToken ct,
+        [FromBody] ProviderConfig draft, IProviderConfigStore store, JobTemplateStore templates, IAgentProfileStore profileStore, CancellationToken ct,
         string? copyFrom = null, ProviderKind? copyFromKind = null)
     {
         var stored = await store.GetProviderConfigByIdAsync(draft.Id, draft.Kind, ct);
@@ -52,7 +53,7 @@ internal static class UiProviderEndpoints
             stored = await store.GetProviderConfigByIdAsync(copyFrom, sourceKind, ct);
 
         var (config, error) = UiSecretMask.Restore(draft, stored);
-        return config is null ? TypedResults.BadRequest(error) : await ConfigEndpoints.SaveProviderConfig(config, store, ct);
+        return config is null ? TypedResults.BadRequest(error) : await ConfigEndpoints.SaveProviderConfig(config, store, templates, profileStore, ct);
     }
 
     /// <summary>POST …/check — the credentials (and, when given, the repository or project) work.</summary>

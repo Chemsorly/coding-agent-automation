@@ -132,9 +132,7 @@ public sealed class AgentProviderFactory : IProviderFactory
     private KiroCliAgentProvider CreateKiroCliAgentProvider(ProviderConfig config)
     {
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
-        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath);
-        if (string.IsNullOrWhiteSpace(executablePath))
-            executablePath = AgentDefaults.KiroCliPath; // the UI saves "" when the field is cleared
+        var executablePath = ResolveCliPath(AgentDefaults.EnvKiroCliPath, AgentDefaults.KiroCliPath);
         var agentName = config.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName);
         var effort = AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort));
 
@@ -150,14 +148,12 @@ public sealed class AgentProviderFactory : IProviderFactory
     }
 
     /// <summary>
-    /// Builds a <see cref="ClaudeCodeAgentProvider"/>. The executable path falls back to
-    /// <c>CLAUDE_CLI_PATH</c> and then the image default; credentials come from the pod environment.
+    /// Builds a <see cref="ClaudeCodeAgentProvider"/>. The executable path comes from
+    /// <c>CLAUDE_CLI_PATH</c> when set, otherwise the image default. Credentials come from the pod environment.
     /// </summary>
     internal static ClaudeCodeAgentProvider CreateClaudeCodeAgentProvider(ProviderConfig config)
     {
-        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath);
-        if (string.IsNullOrWhiteSpace(executablePath))
-            executablePath = Environment.GetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath) ?? AgentDefaults.ClaudeCliPath;
+        var executablePath = ResolveCliPath(AgentDefaults.EnvClaudeCliPath, AgentDefaults.ClaudeCliPath);
 
         return new ClaudeCodeAgentProvider(
             Serilog.Log.Logger,
@@ -166,6 +162,16 @@ public sealed class AgentProviderFactory : IProviderFactory
             AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort)),
             config.Settings.GetValueOrDefault(ProviderSettingKeys.AuthMode),
             config.Settings.GetValueOrDefault(ProviderSettingKeys.McpConfigPath));
+    }
+
+    /// <summary>
+    /// Returns the value of <paramref name="environmentVariable"/> when it is set and not whitespace,
+    /// otherwise returns <paramref name="defaultPath"/>.
+    /// </summary>
+    internal static string ResolveCliPath(string environmentVariable, string defaultPath)
+    {
+        var envValue = Environment.GetEnvironmentVariable(environmentVariable);
+        return !string.IsNullOrWhiteSpace(envValue) ? envValue : defaultPath;
     }
 
     private OpenCodeAgentProvider CreateOpenCodeAgentProvider(ProviderConfig config)

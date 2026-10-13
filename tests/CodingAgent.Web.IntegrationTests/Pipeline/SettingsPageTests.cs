@@ -143,15 +143,19 @@ public class SettingsPageTests
     }
 
     [Fact]
-    public async Task AddAgentProvider_SavesWithExecutablePathAndTimeout()
+    public async Task AddAgentProvider_SavesWithAgentNameModelAndEffort()
     {
-        // Arrange
+        // Verifies that when a KiroCli provider is saved the store receives a config with the
+        // expected keys (agentName, model, effort). The absence of "executablePath" from the
+        // component's BuildSettings output is covered by the bUnit test
+        // AgentProviderSection_Save_ValidForm_CallsConfigClient in AgentProviderSectionComponentTests.cs
+        // which renders the actual Blazor component and verifies !c.Settings.ContainsKey("executablePath").
+        // Mock-based tests cannot test that property here without going through the component.
         ProviderConfig? savedConfig = null;
         _mockStore.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .Callback<ProviderConfig, CancellationToken>((c, _) => savedConfig = c)
             .Returns(Task.CompletedTask);
 
-        // Act — replicate what SaveAgentProvider does
         var config = new ProviderConfig
         {
             Id = Guid.NewGuid().ToString(),
@@ -160,18 +164,19 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
-                [ProviderSettingKeys.AgentName] = "default"
+                [ProviderSettingKeys.Model] = "auto",
+                [ProviderSettingKeys.AgentName] = "default",
+                [ProviderSettingKeys.Effort] = "auto"
             }
         };
         await _mockStore.Object.SaveProviderConfigAsync(config, CancellationToken.None);
 
-        // Assert
         savedConfig.Should().NotBeNull();
         savedConfig!.Kind.Should().Be(ProviderKind.Agent);
         savedConfig.ProviderType.Should().Be("KiroCli");
-        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath).WhoseValue.Should().Be("/root/.local/bin/kiro-cli");
         savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.AgentName).WhoseValue.Should().Be("default");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.Model).WhoseValue.Should().Be("auto");
+        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.Effort).WhoseValue.Should().Be("auto");
     }
 
     [Fact]
@@ -190,7 +195,6 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
                 [ProviderSettingKeys.AgentName] = "default",
                 [ProviderSettingKeys.Model] = "claude-sonnet-4.6"
             }
@@ -578,7 +582,7 @@ public class SettingsPageTests
         var agentConfig = new ProviderConfig
         {
             Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
-            Settings = new() { [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli" }
+            Settings = new() { [ProviderSettingKeys.AgentName] = "" }
         };
 
         agentConfig.ProviderType.Should().NotBe("GitHub");

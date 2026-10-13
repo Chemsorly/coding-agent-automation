@@ -1,4 +1,5 @@
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -77,13 +78,13 @@ internal static class UiSettingsEndpoints
     internal static async Task<IResult> GetAgentProfiles(IAgentProfileStore store, CancellationToken ct) =>
         TypedResults.Ok((await store.LoadAgentProfilesAsync(ct)).Select(UiSecretMask.Redact).ToList());
 
-    internal static async Task<IResult> SaveAgentProfile([FromBody] AgentProfile profile, IAgentProfileStore store, CancellationToken ct)
+    internal static async Task<IResult> SaveAgentProfile([FromBody] AgentProfile profile, IAgentProfileStore store, JobTemplateStore templates, IProviderConfigStore providerStore, CancellationToken ct)
     {
         var stored = (await store.LoadAgentProfilesAsync(ct)).FirstOrDefault(p => p.Id == profile.Id);
         var (restored, error) = UiSecretMask.Restore(profile, stored);
         return restored is null
             ? TypedResults.BadRequest(error)
-            : await ConfigEndpoints.SaveAgentProfile(restored, store, ct);
+            : await ConfigEndpoints.SaveAgentProfile(restored, store, templates, providerStore, ct);
     }
 
     internal static async Task<IResult> GetProjects(IProjectStore store, CancellationToken ct) =>

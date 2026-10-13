@@ -159,7 +159,7 @@ public class TokenVendingServiceCancellationTests
             DisplayName = "Agent",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
+                ["executablePath"] = "/usr/bin/kiro-cli",
             }
         };
         var nonCriticalGitHub = MakeGitHubConfig("repo-brain");
