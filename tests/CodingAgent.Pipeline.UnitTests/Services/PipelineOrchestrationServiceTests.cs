@@ -1242,7 +1242,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var config = configs[0];
         config.Id.Should().Be(PipelineConfigurationDefaults.DefaultReviewerConfigurationId);
-        config.Id.Should().Be("default-reviewers");
+        Guid.TryParse(config.Id, out _).Should().BeTrue("the store keys reviewer configs by GUID");
         config.DisplayName.Should().Be("Default Reviewers");
         config.MatchLabels.Should().BeEmpty("default config applies globally");
         config.Enabled.Should().BeTrue();

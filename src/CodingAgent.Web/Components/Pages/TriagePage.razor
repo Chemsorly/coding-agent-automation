@@ -8,7 +8,7 @@
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
 @inject IPipelineApiTriageClient Triages
-@inject IPipelineApiConfigClient ConfigClient
+@inject IUiConfigClient UiConfig
 @inject CurrentAccess Access
 @inject IAccessGuard Guard
 
@@ -438,7 +438,7 @@
     private bool _busy;
     private Panel _panel;
     private int? _retentionDays;
-    private IReadOnlyList<PipelineJobTemplate> _templates = [];
+    private IReadOnlyList<UiTemplate> _templates = [];
     private IReadOnlyList<string> _repositories = [];
 
     private readonly HashSet<string> _selected = new(StringComparer.Ordinal);
@@ -521,13 +521,13 @@
 
             if (_retentionDays is null)
             {
-                try { _retentionDays = (await ConfigClient.GetPipelineConfigAsync(_cts.Token)).TriageRetentionDays; }
+                try { _retentionDays = (await UiConfig.GetPipelineSettingsAsync(_cts.Token)).TriageRetentionDays; }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex) { Serilog.Log.Debug(ex, "TriageDetail: failed to load the retention setting"); }
             }
             try
             {
-                _templates = await ConfigClient.GetTemplatesForProjectAsync(_detail.Record.ProjectId, _cts.Token);
+                _templates = await UiConfig.GetTemplatesAsync(_detail.Record.ProjectId, _cts.Token);
                 _repositories = TemplateOrder.ByName(_templates.Where(t => t.Enabled), t => t.Name, t => t.Id).Select(t => t.Name).ToList();
             }
             catch (OperationCanceledException) { throw; }

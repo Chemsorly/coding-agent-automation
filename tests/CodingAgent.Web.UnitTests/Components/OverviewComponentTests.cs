@@ -4,6 +4,7 @@ using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,9 +44,9 @@ public class OverviewComponentTests : BunitContext
     /// <see cref="Render{Overview}"/> does not throw a DI exception.
     /// </summary>
     private void RegisterOverviewServices(
-        Mock<IPipelineApiAgentClient> mockAgents,
-        Mock<IPipelineApiRunHistoryClient>? mockRunHistory = null,
-        Mock<IPipelineApiWorkItemClient>? mockWorkItems = null)
+        Mock<IUiAgentClient> mockAgents,
+        Mock<CodingAgent.Web.Ui.IUiRunClient>? mockRunHistory = null,
+        Mock<CodingAgent.Web.Ui.IUiWorkItemClient>? mockWorkItems = null)
     {
         mockRunHistory ??= BuildEmptyRunHistoryMock();
         mockWorkItems ??= BuildEmptyWorkItemsMock();
@@ -60,17 +61,17 @@ public class OverviewComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
-    private static Mock<IPipelineApiRunHistoryClient> BuildEmptyRunHistoryMock()
+    private static Mock<CodingAgent.Web.Ui.IUiRunClient> BuildEmptyRunHistoryMock()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
         return mock;
     }
 
-    private static Mock<IPipelineApiWorkItemClient> BuildEmptyWorkItemsMock()
+    private static Mock<CodingAgent.Web.Ui.IUiWorkItemClient> BuildEmptyWorkItemsMock()
     {
-        var mock = new Mock<IPipelineApiWorkItemClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiWorkItemClient>();
         mock.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>());
         mock.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -88,7 +89,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void AgentsStatCard_WhenOneAgentConnected_ShowsOnlyOnlineCountWithoutDenominator()
     {
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto> { MakeConnectedAgent() });
 
@@ -125,7 +126,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void Header_HasTheSharedRefreshBarWithAPersistedInterval()
     {
-        RegisterOverviewServices(new Mock<IPipelineApiAgentClient>());
+        RegisterOverviewServices(new Mock<IUiAgentClient>());
 
         var cut = Render<Overview>();
 
@@ -148,7 +149,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void AgentsStatCard_WhenNoAgentsRegistered_ShowsZeroWithoutDenominator()
     {
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -182,7 +183,7 @@ public class OverviewComponentTests : BunitContext
     [Fact]
     public void SuccessRateStatCard_ShowsLastHundredLabel()
     {
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -226,7 +227,7 @@ public class OverviewComponentTests : BunitContext
             MakeFailedRun(issueId, now,               "latest failure"),
         };
 
-        var mockHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
@@ -236,7 +237,7 @@ public class OverviewComponentTests : BunitContext
                 HasMore = false
             });
 
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -283,7 +284,7 @@ public class OverviewComponentTests : BunitContext
             },
         };
 
-        var mockHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
@@ -293,7 +294,7 @@ public class OverviewComponentTests : BunitContext
                 HasMore = false
             });
 
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
@@ -367,17 +368,17 @@ public class OverviewComponentTests : BunitContext
         StartedAtOffset = startedAt,
     };
 
-    private static Mock<IPipelineApiRunHistoryClient> HistoryMock(List<PipelineRunSummary> runs)
+    private static Mock<CodingAgent.Web.Ui.IUiRunClient> HistoryMock(List<PipelineRunSummary> runs)
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runs, Page = 1, PageSize = 100, HasMore = false });
         return mock;
     }
 
-    private static Mock<IPipelineApiAgentClient> EmptyAgentsMock()
+    private static Mock<IUiAgentClient> EmptyAgentsMock()
     {
-        var mock = new Mock<IPipelineApiAgentClient>();
+        var mock = new Mock<IUiAgentClient>();
         mock.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<AgentEntryDto>());
         return mock;
     }
@@ -440,7 +441,7 @@ public class OverviewComponentTests : BunitContext
     public void Access_ScopedUser_SeesNoLoopCardAndNoAgents()
     {
         Services.AddTestAccess(TestAccess.Scoped(("6f1c2a9e-0000-0000-0000-00000000000a", AccessRole.ReadOnly)));
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         RegisterOverviewServices(mockAgents);
 
         var cut = Render<Overview>();

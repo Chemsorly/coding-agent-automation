@@ -561,7 +561,7 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch as a review run
-        var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();
+        var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None)
             ?? throw new InvalidOperationException("Default project not found");

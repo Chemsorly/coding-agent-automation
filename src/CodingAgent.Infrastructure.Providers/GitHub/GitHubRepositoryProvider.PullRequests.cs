@@ -405,51 +405,71 @@ public partial class GitHubRepositoryProvider
         var prIssues = prsFetched.Take(pageSize).ToList();
 
         // Fetch full PR details for each matching issue to get Draft, Head, Base, AutoMerge.
-        // Uses raw IConnection.Get<T> with a minimal DTO to capture auto_merge, which
-        // Octokit's typed PullRequest model does not expose.
-        // Octokit's SimpleJsonSerializer maps PascalCase → ruby_case automatically
-        // (e.g. AutoMerge → auto_merge, HtmlUrl → html_url) so no [Parameter] attributes needed.
         var items = new List<PullRequestSummary>();
         foreach (var issue in prIssues)
         {
-            var pr = await ExecuteWithResilienceAsync(
-                async client =>
-                {
-                    var uri = new Uri(client.Connection.BaseAddress,
-                        $"repos/{Owner}/{Repo}/pulls/{issue.Number}");
-                    var response = await client.Connection.Get<GitHubPrDetailDto>(
-                        uri, null, "application/vnd.github+json", ct);
-                    return response.Body;
-                },
-                "ListOpenPullRequests.GetDetail", ct);
+            var pr = await FetchPullRequestDetailAsync(issue.Number, "ListOpenPullRequests.GetDetail", ct);
 
             // Guard against the Issues API eventual-consistency window: a PR that merged
             // between the Issues fetch (Step A) and this detail fetch (Step B) will have
             // state="closed" here. Filtering it out prevents merged PRs from entering
             // the housekeeping agentDonePrs list and triggering spurious rework swaps.
             // null state (field absent in response) → treat as non-open and filter out.
-            if (!string.Equals(pr.State, "open", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            items.Add(new PullRequestSummary
-            {
-                Number = pr.Number,
-                Identifier = pr.Number.ToString(),
-                Title = pr.Title ?? string.Empty,
-                Description = pr.Body ?? string.Empty,
-                Labels = pr.Labels?.Select(l => l.Name ?? string.Empty).ToArray() ?? [],
-                BranchName = pr.Head?.Ref ?? string.Empty,
-                TargetBranch = pr.Base?.Ref ?? string.Empty,
-                Url = pr.HtmlUrl ?? string.Empty,
-                IsDraft = pr.Draft,
-                Author = pr.User?.Login,
-                CreatedAt = pr.CreatedAt.UtcDateTime,
-                HasAutoMerge = pr.AutoMerge is not null,
-            });
+            if (IsOpen(pr))
+                items.Add(ToSummary(pr));
         }
 
         return SharedPrOperations.BuildPagedResult(items, page, pageSize, hasMore);
     }
+
+    /// <inheritdoc />
+    public async Task<PullRequestSummary?> GetOpenPullRequestAsync(int prNumber, CancellationToken ct)
+    {
+        try
+        {
+            var pr = await FetchPullRequestDetailAsync(prNumber, "GetOpenPullRequest", ct);
+            return IsOpen(pr) ? ToSummary(pr) : null;
+        }
+        catch (NotFoundException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A pull request's details, read with raw IConnection.Get&lt;T&gt; and a minimal DTO to capture
+    /// auto_merge, which Octokit's typed PullRequest model does not expose. Octokit's
+    /// SimpleJsonSerializer maps PascalCase → ruby_case automatically (e.g. AutoMerge → auto_merge,
+    /// HtmlUrl → html_url) so no [Parameter] attributes are needed.
+    /// </summary>
+    private Task<GitHubPrDetailDto> FetchPullRequestDetailAsync(int prNumber, string operationName, CancellationToken ct) =>
+        ExecuteWithResilienceAsync(
+            async client =>
+            {
+                var uri = new Uri(client.Connection.BaseAddress, $"repos/{Owner}/{Repo}/pulls/{prNumber}");
+                var response = await client.Connection.Get<GitHubPrDetailDto>(
+                    uri, null, "application/vnd.github+json", ct);
+                return response.Body;
+            },
+            operationName, ct);
+
+    private static bool IsOpen(GitHubPrDetailDto pr) => string.Equals(pr.State, "open", StringComparison.OrdinalIgnoreCase);
+
+    private static PullRequestSummary ToSummary(GitHubPrDetailDto pr) => new()
+    {
+        Number = pr.Number,
+        Identifier = pr.Number.ToString(),
+        Title = pr.Title ?? string.Empty,
+        Description = pr.Body ?? string.Empty,
+        Labels = pr.Labels?.Select(l => l.Name ?? string.Empty).ToArray() ?? [],
+        BranchName = pr.Head?.Ref ?? string.Empty,
+        TargetBranch = pr.Base?.Ref ?? string.Empty,
+        Url = pr.HtmlUrl ?? string.Empty,
+        IsDraft = pr.Draft,
+        Author = pr.User?.Login,
+        CreatedAt = pr.CreatedAt.UtcDateTime,
+        HasAutoMerge = pr.AutoMerge is not null,
+    };
 
     private async Task<List<Octokit.Issue>> FetchOpenPullRequestIssuesAsync(
         RepositoryIssueRequest request, int page, int pageSize, CancellationToken ct)

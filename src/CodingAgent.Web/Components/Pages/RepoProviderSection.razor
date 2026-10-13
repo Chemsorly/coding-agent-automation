@@ -1,10 +1,7 @@
 @using System.Text.RegularExpressions
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
-@using CodingAgent.Infrastructure.GitHub
-@using CodingAgent.Infrastructure.GitLab
 
 <section class="settings-section">
     <h2>Repository Providers</h2>
@@ -320,9 +317,8 @@
         "## Build Commands\n- Build: ./gradlew build\n- Test: ./gradlew test\n- Lint: ./gradlew spotlessCheck";
 
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
-    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
-    [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
-    [Parameter] public GitLabValidationService? GitLabValidator { get; set; }
+    // Spec 051 2.1c: the API checks and saves providers with the stored credentials; this section only holds them masked.
+    [Parameter, EditorRequired] public IUiProviderClient ProviderClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
@@ -430,7 +426,7 @@
         _validationSuccess = true;
         StateHasChanged();
 
-        if (!long.TryParse(_form.InstallationId, out var installationId))
+        if (!long.TryParse(_form.InstallationId, out _))
         {
             _validationMessage = "Installation ID must be a valid number.";
             _validationSuccess = false;
@@ -438,18 +434,7 @@
             return;
         }
 
-        var (success, message) = await GitHubValidator.ValidateAppCredentialsAsync(
-            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None,
-            _form.Owner, _form.Repo);
-
-        if (!success)
-        {
-            _validationMessage = message;
-            _validationSuccess = false;
-            _saving = false;
-            return;
-        }
-
+        // Local checks first: building the config needs unique secret keys and valid setup steps.
         if (!ValidateSecrets())
         {
             _saving = false;
@@ -488,7 +473,15 @@
 
         try
         {
-            await ConfigClient.SaveProviderConfigAsync(config, CancellationToken.None);
+            var (success, message) = await ProviderClient.CheckAsync(config, CancellationToken.None);
+            if (!success)
+            {
+                _validationMessage = message;
+                _validationSuccess = false;
+                return;
+            }
+
+            await ProviderClient.SaveProviderConfigAsync(config, CancellationToken.None);
             _showForm = false;
             _availableRepos.Clear();
             _validationMessage = null;
@@ -523,7 +516,7 @@
             return;
         }
 
-        if (!long.TryParse(_form.InstallationId, out var installationId))
+        if (!long.TryParse(_form.InstallationId, out _))
         {
             _validationMessage = "Installation ID must be a valid number.";
             _validationSuccess = false;
@@ -534,23 +527,40 @@
         _validationMessage = null;
         StateHasChanged();
 
-        var (credOk, credMsg) = await GitHubValidator.ValidateAppCredentialsAsync(
-            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None);
-        if (!credOk)
+        try
         {
-            _validationMessage = credMsg;
-            _validationSuccess = false;
-            _loadingRepos = false;
-            return;
+            // The API checks the credentials first (a masked private key is filled in there).
+            var repos = await ProviderClient.ListRepositoriesAsync(CredentialsDraft(), CancellationToken.None);
+            _availableRepos = repos.Select(r => (r.FullName, r.Owner, r.Name)).ToList();
+            _validationMessage = $"Credentials valid — {repos.Count} repositories found";
+            _validationSuccess = true;
         }
-
-        var repos = await GitHubValidator.ListRepositoriesWithAppAsync(
-            _form.ApiUrl, _form.ClientId, installationId, _form.PrivateKeyBase64, CancellationToken.None);
-        _availableRepos = repos.ToList();
-        _validationMessage = $"{credMsg} — {repos.Count} repositories found";
-        _validationSuccess = true;
-        _loadingRepos = false;
+        catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)
+        {
+            _validationMessage = ex.Message;
+            _validationSuccess = false;
+        }
+        finally
+        {
+            _loadingRepos = false;
+        }
     }
+
+    /// <summary>The GitHub App credentials of the form, enough for the API to list the installation's repositories.</summary>
+    private ProviderConfig CredentialsDraft() => new()
+    {
+        Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
+        Kind = ProviderKind.Repository,
+        ProviderType = _form.ProviderType,
+        DisplayName = _form.DisplayName,
+        Settings = new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.ApiUrl] = _form.ApiUrl,
+            [ProviderSettingKeys.ClientId] = _form.ClientId,
+            [ProviderSettingKeys.InstallationId] = _form.InstallationId,
+            [ProviderSettingKeys.PrivateKeyBase64] = _form.PrivateKeyBase64,
+        }
+    };
 
     private sealed class RepoProviderForm
     {
@@ -630,24 +640,6 @@
                 ? ProviderSettingKeys.DefaultGitLabApiUrl
                 : _form.GitLabApiUrl;
 
-            if (GitLabValidator is not null)
-            {
-                var result = await GitLabValidator.ValidateAsync(
-                    apiUrl, _form.GitLabAccessToken, _form.GitLabProjectId, CancellationToken.None);
-
-                if (!result.Success)
-                {
-                    _validationMessage = result.ErrorMessage;
-                    _validationSuccess = false;
-                    _saving = false;
-                    return;
-                }
-
-                // TODO: Add Icon component to child form components — emoji was removed but no visual indicator replaces it (#912)
-                _validationMessage = $"Connected to {result.ProjectPath} (access: {result.AccessLevel})";
-                _validationSuccess = true;
-            }
-
             var baseBranch = string.IsNullOrWhiteSpace(_form.BaseBranch)
                 ? ProviderSettingKeys.DefaultBaseBranch
                 : _form.BaseBranch;
@@ -685,7 +677,19 @@
                 }
             };
 
-            await ConfigClient.SaveProviderConfigAsync(config, CancellationToken.None);
+            var (success, message) = await ProviderClient.CheckAsync(config, CancellationToken.None);
+            if (!success)
+            {
+                _validationMessage = message;
+                _validationSuccess = false;
+                return;
+            }
+
+            // TODO: Add Icon component to child form components — emoji was removed but no visual indicator replaces it (#912)
+            _validationMessage = message;
+            _validationSuccess = true;
+
+            await ProviderClient.SaveProviderConfigAsync(config, CancellationToken.None);
             _showForm = false;
             _availableRepos.Clear();
             _validationMessage = null;

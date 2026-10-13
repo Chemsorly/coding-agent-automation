@@ -109,19 +109,6 @@ public static class PipelineApiClientServiceCollectionExtensions
             client.Timeout = TimeSpan.FromMinutes(2);
         });
 
-        // Chat client — authenticated (operator tier; master key required).
-        // Chat pod dispatch blocks until the pod connects (up to ChatPodConnectTimeoutSeconds),
-        // so the default 30 s HttpClient timeout is too short — set it generously above the
-        // maximum pod connect timeout (default 120 s) to avoid a client-side cancellation
-        // racing the API's own timeout handling.
-        services.AddHttpClient<IPipelineApiChatClient, PipelineApiChatClient>(client =>
-        {
-            client.BaseAddress = new Uri(options.BaseUrl);
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
-            client.Timeout = TimeSpan.FromMinutes(5);
-        });
-
         // Hub connection — transient so each caller owns its own connection lifecycle
         services.AddTransient<IAgentHubConnection>(_ =>
             new AgentHubConnection($"{options.BaseUrl.TrimEnd('/')}/hubs/agent", options.AgentApiKey));

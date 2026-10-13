@@ -76,8 +76,13 @@ public static class WorkItemQueryEndpoints
 
         // Optional project scope. WorkItem.ProjectId is a uuid column while the switcher passes the
         // project's id as a string (PipelineProject.Id is a Guid-string), so parse before comparing.
-        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+        // A scope that is not a GUID matches no work item; it must not widen the list to every project.
+        if (!string.IsNullOrEmpty(projectId))
+        {
+            if (!Guid.TryParse(projectId, out var scopeProjectId))
+                return TypedResults.Ok(Array.Empty<PendingWorkItemDto>());
             pending = pending.Where(w => w.ProjectId == scopeProjectId);
+        }
 
         var raw = await pending
             .ApplyDispatchOrder(dispatchOrder)
@@ -169,9 +174,13 @@ public static class WorkItemQueryEndpoints
                          // (Correctness review [WARNING])
                          || (w.DispatchedAt == null && w.CreatedAt < cutoff)));
         // Optional project scope (not passed by reconciliation). ProjectId is a uuid column; parse the
-        // switcher's Guid-string id before comparing.
-        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+        // switcher's Guid-string id before comparing. A scope that is not a GUID matches nothing.
+        if (!string.IsNullOrEmpty(projectId))
+        {
+            if (!Guid.TryParse(projectId, out var scopeProjectId))
+                return TypedResults.Ok(Array.Empty<ActiveWorkItemDto>());
             active = active.Where(w => w.ProjectId == scopeProjectId);
+        }
 
         var items = await active
             .Select(w => new
@@ -335,21 +344,11 @@ public static class WorkItemQueryEndpoints
     /// </summary>
     internal static async Task<IResult> GetWorkItemStatus(
         Guid id,
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var status = await db.WorkItems
-            .AsNoTracking()
-            .Where(w => w.Id == id)
-            .Select(w => (WorkItemStatus?)w.Status)
-            .FirstOrDefaultAsync(ct);
-
-        if (status is null)
-            return TypedResults.NotFound();
-
-        return TypedResults.Ok(new { status });
-    }
+        WorkItemStore store,
+        CancellationToken ct) =>
+        await store.GetStatusAsync(id, ct) is { } status
+            ? TypedResults.Ok(new { status })
+            : TypedResults.NotFound();
 
     // ── GET /active-decomposition-count ──────────────────────────────────
 
@@ -361,24 +360,7 @@ public static class WorkItemQueryEndpoints
     /// 200 with { count: int }.
     /// </summary>
     internal static async Task<IResult> GetActiveDecompositionCount(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        // TODO [WARNING]: The doc comment above mentions "Decomposition and DecompositionAnalysis WorkItems",
-        // but this query filters on WorkItemTaskType.Decomposition only. At runtime this is correct because
-        // both the analysis and decomposition phases are stored as WorkItemTaskType.Decomposition (confirmed
-        // by WorkItemTaskTypeExtensions.ToDefaultRunType). If a separate WorkItemTaskType.DecompositionAnalysis
-        // enum value is added in future, this query must be updated to include it — otherwise active analysis-
-        // phase items will be undercounted and MaxConcurrentDecompositions enforcement will break silently.
-        var count = await db.WorkItems
-            .AsNoTracking()
-            .CountAsync(w =>
-                (w.TaskType == WorkItemTaskType.Decomposition) &&
-                (w.Status == WorkItemStatus.Pending ||
-                 w.Status == WorkItemStatus.Dispatched ||
-                 w.Status == WorkItemStatus.Running),
-                ct);
-        return TypedResults.Ok(new { count });
-    }
+        WorkItemStore store,
+        CancellationToken ct) =>
+        TypedResults.Ok(new { count = await store.GetActiveDecompositionCountAsync(ct) });
 }

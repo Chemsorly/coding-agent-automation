@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
@@ -12,11 +13,11 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class PipelineDecompositionSectionComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiConfigClient> _mockStore;
+    private readonly Mock<IUiSettingsClient> _mockStore;
 
     public PipelineDecompositionSectionComponentTests()
     {
-        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore = new Mock<IUiSettingsClient>();
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))

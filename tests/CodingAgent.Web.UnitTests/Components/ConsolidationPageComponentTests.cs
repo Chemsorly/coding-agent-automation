@@ -3,11 +3,13 @@ using AwesomeAssertions;
 using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Api.Client;
+using CodingAgent.Api.Consolidation;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Components.Pages;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.AgentGateway;
 using CodingAgent.Web.Services;
+using CodingAgent.Web.Ui;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,14 +20,16 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// <summary>
 /// bUnit component tests for the Consolidation page.
 /// Validates Requirements 1.1, 1.2, 1.3, 1.4, 1.5, 8.2, 8.5, 10.2.
-/// After issue #3028, the page reads run history from IPipelineApiRunHistoryClient
-/// (not IConsolidationService.GetRunHistoryAsync / GetLastRunAsync).
+/// The page reads its cards and suggestions from IUiConsolidationClient and its run history from
+/// IUiRunClient (spec 051 2.4b).
 /// </summary>
 public class ConsolidationPageComponentTests : BunitContext
 {
-    private readonly Mock<IConsolidationService> _mockConsolidationService = new(MockBehavior.Strict);
-    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
-    private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
+    private const string Queued = "Consolidation queued — waiting for an idle agent.";
+    private const string Rejected = "Brain consolidation rejected for Test Template — already running, a configuration error occurred, or template not found.";
+
+    private readonly Mock<IUiConsolidationClient> _mockConsolidationClient = new();
+    private readonly Mock<IUiRunClient> _mockRunHistoryClient = new();
     private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
 
     public ConsolidationPageComponentTests()
@@ -38,18 +42,32 @@ public class ConsolidationPageComponentTests : BunitContext
         _mockHubConnection.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
     }
 
+    /// <summary>
+    /// Serves the page from stored-style templates, projects and settings: the overview and the scan
+    /// settings are built by the API's own <see cref="ConsolidationPageService"/> builders, so these tests
+    /// cover what the page shows for a configuration. Without <paramref name="projects"/>, one enabled
+    /// project holds every template.
+    /// </summary>
     private void RegisterServices(
         IReadOnlyList<PipelineJobTemplate>? templates = null,
         IReadOnlyList<PipelineRunSummary>? runHistory = null,
         HarnessSuggestions? harnessSuggestions = null,
-        PipelineConfiguration? pipelineConfig = null)
+        PipelineConfiguration? pipelineConfig = null,
+        IReadOnlyList<PipelineProject>? projects = null)
     {
         var config = pipelineConfig ?? new PipelineConfiguration();
+        var allTemplates = templates ?? Array.Empty<PipelineJobTemplate>();
+        var allProjects = projects ?? (allTemplates.Count == 0
+            ? Array.Empty<PipelineProject>()
+            : [new PipelineProject { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = allTemplates.Select(t => t.Id).ToList(), Enabled = true }]);
 
-        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(config);
+        _mockConsolidationClient.Setup(s => s.GetOverviewAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ConsolidationPageService.BuildOverview(allProjects, allTemplates, config, harnessSuggestions));
+        _mockConsolidationClient.Setup(s => s.GetRefactoringScanSettingsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string templateId, CancellationToken _) => ConsolidationPageService.BuildRefactoringScanSettings(
+                config, allProjects.FirstOrDefault(p => p.TemplateIds.Contains(templateId))));
 
-        // GetRunHistoryAsync (IPipelineApiRunHistoryClient) — main history source after #3028
+        // The run history (IUiRunClient) — the page's only source of runs since #3028
         _mockRunHistoryClient
             .Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
@@ -60,30 +78,10 @@ public class ConsolidationPageComponentTests : BunitContext
                 HasMore = false
             });
 
-        // Strict mock: GetRunHistoryAsync and GetLastRunAsync must NOT be called on IConsolidationService
-        _mockConsolidationService
-            .Setup(s => s.GetHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(harnessSuggestions);
-
-        Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
-        Services.AddSingleton(_mockConfigClient.Object);
-        Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
+        Services.AddSingleton(_mockConsolidationClient.Object);
+        Services.AddSingleton(_mockRunHistoryClient.Object);
         Services.AddSingleton<IAgentHubConnection>(_mockHubConnection.Object);
-        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
-
-        var mockConfigClientForProjects = _mockConfigClient;
-        mockConfigClientForProjects.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
-            {
-                var templateIds = (templates ?? Array.Empty<PipelineJobTemplate>()).Select(t => t.Id).ToList();
-                if (templateIds.Count == 0) return Array.Empty<PipelineProject>();
-                return new List<PipelineProject>
-                {
-                    new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = templateIds, Enabled = true }
-                };
-            });
-        mockConfigClientForProjects.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => templates ?? Array.Empty<PipelineJobTemplate>());
+        Services.AddSingleton(new Mock<IUiWorkItemClient>().Object);
     }
 
     private static PipelineJobTemplate CreateTemplate(
@@ -131,11 +129,9 @@ public class ConsolidationPageComponentTests : BunitContext
     /// <summary>
     /// Issue #3028 acceptance criterion:
     /// After the backfill runs, the Consolidation page renders a consolidation run sourced
-    /// from the pipeline-run read path (not ConsolidationRuns / IConsolidationService).
+    /// from the pipeline-run read path (not ConsolidationRuns).
     ///
-    /// Proof: IConsolidationService is set up with MockBehavior.Strict — any call to
-    /// GetRunHistoryAsync or GetLastRunAsync will throw, causing the test to fail.
-    /// The page must read run data exclusively from IPipelineApiRunHistoryClient.
+    /// The page must read run data exclusively from IUiRunClient.
     /// </summary>
     [Fact]
     public void AfterBackfill_ConsolidationPage_RendersRunSourcedFromPipelineRunReadPath()
@@ -187,9 +183,8 @@ public class ConsolidationPageComponentTests : BunitContext
         Assert.Contains("Brain Consolidation", rows[0].TextContent);
         Assert.Contains("Succeeded", rows[0].TextContent);
 
-        // Proof: IConsolidationService.GetRunHistoryAsync and GetLastRunAsync were NOT called.
-        // MockBehavior.Strict means any unexpected call throws — the test passing is the proof.
-        _mockConsolidationService.Verify(s => s.GetHarnessSuggestionsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        // The cards come from the overview, loaded once.
+        _mockConsolidationClient.Verify(s => s.GetOverviewAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ═══ Requirement 1.2: Per-template cards render ═══
@@ -533,9 +528,9 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((ConsolidationTriggerResult?)null);
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException(Rejected));
 
         var cut = Render<Consolidation>();
 
@@ -637,17 +632,9 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationTriggerResult(
-                RunId: "run-1",
-                Type: ConsolidationRunType.RefactoringDetection,
-                TemplateId: null,
-                TemplateName: null,
-                ProjectId: null,
-                ProjectName: null,
-                StartedAtUtc: DateTimeOffset.UtcNow,
-                WorkItemId: null));
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
@@ -658,8 +645,8 @@ public class ConsolidationPageComponentTests : BunitContext
         var startButton = cut.Find(".modal-card .btn-save");
         startButton.Click();
 
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<CancellationToken>(), false), Times.Once);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            ConsolidationRunType.RefactoringDetection, "t1", false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -671,17 +658,9 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationTriggerResult(
-                RunId: "run-1",
-                Type: ConsolidationRunType.RefactoringDetection,
-                TemplateId: null,
-                TemplateName: null,
-                ProjectId: null,
-                ProjectName: null,
-                StartedAtUtc: DateTimeOffset.UtcNow,
-                WorkItemId: null));
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
@@ -695,8 +674,8 @@ public class ConsolidationPageComponentTests : BunitContext
         var startButton = cut.Find(".modal-card .btn-save");
         startButton.Click();
 
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<CancellationToken>(), true), Times.Once);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            ConsolidationRunType.RefactoringDetection, "t1", true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -719,8 +698,8 @@ public class ConsolidationPageComponentTests : BunitContext
         cancelButton.Click();
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -732,17 +711,9 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationTriggerResult(
-                RunId: "run-1",
-                Type: ConsolidationRunType.BrainConsolidation,
-                TemplateId: null,
-                TemplateName: null,
-                ProjectId: null,
-                ProjectName: null,
-                StartedAtUtc: DateTimeOffset.UtcNow,
-                WorkItemId: null));
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
@@ -751,8 +722,8 @@ public class ConsolidationPageComponentTests : BunitContext
         brainButton.Click();
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false), Times.Once);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -764,17 +735,9 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationTriggerResult(
-                RunId: "run-1",
-                Type: ConsolidationRunType.HarnessSuggestions,
-                TemplateId: null,
-                TemplateName: null,
-                ProjectId: null,
-                ProjectName: null,
-                StartedAtUtc: DateTimeOffset.UtcNow,
-                WorkItemId: null));
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
@@ -783,8 +746,8 @@ public class ConsolidationPageComponentTests : BunitContext
         suggestionsButton.Click();
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions, null, It.IsAny<CancellationToken>(), false), Times.Once);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ═══ Issue #1772: Modal focus and Enter-key bubble fixes ═══
@@ -865,8 +828,8 @@ public class ConsolidationPageComponentTests : BunitContext
         checkbox.Change(true);
 
         Assert.NotEmpty(cut.FindAll(".modal-overlay"));
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -878,17 +841,9 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationTriggerResult(
-                RunId: "run-1",
-                Type: ConsolidationRunType.RefactoringDetection,
-                TemplateId: null,
-                TemplateName: null,
-                ProjectId: null,
-                ProjectName: null,
-                StartedAtUtc: DateTimeOffset.UtcNow,
-                WorkItemId: null));
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
@@ -898,8 +853,8 @@ public class ConsolidationPageComponentTests : BunitContext
         cut.Find(".modal-overlay").TriggerEvent("onkeydown", new KeyboardEventArgs { Key = "Enter" });
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            ConsolidationRunType.RefactoringDetection, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -919,8 +874,8 @@ public class ConsolidationPageComponentTests : BunitContext
         cut.Find(".modal-overlay").TriggerEvent("onkeydown", new KeyboardEventArgs { Key = "Escape" });
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
-        _mockConsolidationService.Verify(s => s.TriggerAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ═══ Dispatch tests ═══
@@ -933,28 +888,17 @@ public class ConsolidationPageComponentTests : BunitContext
             CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")
         };
         RegisterServices(templates: templates);
-
-        var pendingRun = new ConsolidationTriggerResult(
-            RunId: "run-dispatch-test",
-            Type: ConsolidationRunType.BrainConsolidation,
-            TemplateId: null,
-            TemplateName: null,
-            ProjectId: null,
-            ProjectName: null,
-            StartedAtUtc: DateTimeOffset.UtcNow,
-            WorkItemId: null);
-
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false))
-            .ReturnsAsync(pendingRun);
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
         cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Brain Consolidation")).Click();
 
-        _mockConsolidationService.Verify(
+        _mockConsolidationClient.Verify(
             s => s.TriggerAsync(
-                ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false),
+                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()),
             Times.Once,
             "TriggerAsync must be called exactly once");
     }
@@ -968,16 +912,16 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((ConsolidationTriggerResult?)null);
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException(Rejected));
 
         var cut = Render<Consolidation>();
 
         cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Brain Consolidation")).Click();
 
-        _mockConsolidationService.Verify(
-            s => s.TriggerAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+        _mockConsolidationClient.Verify(
+            s => s.TriggerAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -989,29 +933,18 @@ public class ConsolidationPageComponentTests : BunitContext
             CreateTemplate(issueProviderId: "issue-1", repoProviderId: "repo-1")
         };
         RegisterServices(templates: templates);
-
-        var pendingRun = new ConsolidationTriggerResult(
-            RunId: "run-refactor-dispatch",
-            Type: ConsolidationRunType.RefactoringDetection,
-            TemplateId: null,
-            TemplateName: null,
-            ProjectId: null,
-            ProjectName: null,
-            StartedAtUtc: DateTimeOffset.UtcNow,
-            WorkItemId: null);
-
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(pendingRun);
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
         cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Refactoring Scan")).Click();
         cut.Find(".modal-card .btn-save").Click();
 
-        _mockConsolidationService.Verify(
+        _mockConsolidationClient.Verify(
             s => s.TriggerAsync(
-                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -1023,27 +956,16 @@ public class ConsolidationPageComponentTests : BunitContext
             CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")
         };
         RegisterServices(templates: templates);
-
-        var pendingRun = new ConsolidationTriggerResult(
-            RunId: "run-harness-dispatch",
-            Type: ConsolidationRunType.HarnessSuggestions,
-            TemplateId: null,
-            TemplateName: null,
-            ProjectId: null,
-            ProjectName: null,
-            StartedAtUtc: DateTimeOffset.UtcNow,
-            WorkItemId: null);
-
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.HarnessSuggestions, null, It.IsAny<CancellationToken>(), false))
-            .ReturnsAsync(pendingRun);
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
         cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Generate Suggestions")).Click();
 
-        _mockConsolidationService.Verify(
-            s => s.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, It.IsAny<CancellationToken>(), false),
+        _mockConsolidationClient.Verify(
+            s => s.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -1056,17 +978,9 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        _mockConsolidationService.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false))
-            .ReturnsAsync(new ConsolidationTriggerResult(
-                RunId: "run-status-msg",
-                Type: ConsolidationRunType.BrainConsolidation,
-                TemplateId: null,
-                TemplateName: null,
-                ProjectId: null,
-                ProjectName: null,
-                StartedAtUtc: DateTimeOffset.UtcNow,
-                WorkItemId: null));
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
 
@@ -1090,11 +1004,6 @@ public class ConsolidationPageComponentTests : BunitContext
         // The project owning template "t1" overrides both to non-default values.
         var template = CreateTemplate(id: "t1", issueProviderId: "issue-1", repoProviderId: "repo-1");
         var globalConfig = new PipelineConfiguration(); // MaxRefactoringProposals=3, RefactoringReviewEnabled=true
-        RegisterServices(templates: [template], pipelineConfig: globalConfig);
-
-        // Override GetProjectsAsync AFTER RegisterServices — Moq last-wins replaces the setup
-        // for ALL callers of this mock (LoadDataAsync, LoadReadOnlyBrainTemplatesAsync, OpenRefactoringModal).
-        // Safe: LoadReadOnlyBrainTemplatesAsync only checks BrainReadOnly, which is not overridden here.
         var projectWithOverrides = new PipelineProject
         {
             Id = WellKnownIds.DefaultProjectId,
@@ -1104,9 +1013,7 @@ public class ConsolidationPageComponentTests : BunitContext
             MaxRefactoringProposals = 7,
             RefactoringReviewEnabled = false
         };
-        _mockConfigClient
-            .Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject> { projectWithOverrides });
+        RegisterServices(templates: [template], pipelineConfig: globalConfig, projects: [projectWithOverrides]);
 
         var cut = Render<Consolidation>();
 

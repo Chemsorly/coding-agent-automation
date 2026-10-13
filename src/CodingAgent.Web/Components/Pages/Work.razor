@@ -6,7 +6,7 @@
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
-@inject IPipelineApiWorkItemClient WorkItems
+@inject IUiWorkItemClient WorkItems
 @inject BlockedIssuesService BlockedIssues
 @inject CockpitState State
 @inject NavigationManager Nav
@@ -15,7 +15,7 @@
 
 @*
     Work — the app-side work queue (see docs/frontend-redesign-handoff.md).
-    Data: IPipelineApiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight).
+    Data: IUiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight), from /api/ui/work-items.
     Browsing the provider's issue backlog with dependency-based readiness + dispatch is the
     dispatch-drawer flow (Pipelines → Browse Issues) — linked, not duplicated here.
 *@
@@ -446,8 +446,9 @@
     }
 
     // Cancels an in-flight run or removes a queued item. Both are a WorkItem status transition to
-    // Cancelled via the API (PostStatus → RunLifecycleManager.CancelRunAsync) — the same effect as the
-    // old monitoring page's "Cancel run" / "Remove from queue". WorkItem.Id == run id.
+    // Cancelled via the API (/api/ui/work-items/{id}/cancel → RunLifecycleManager.CancelRunAsync, which
+    // checks the item's stored project) — the same effect as the old monitoring page's "Cancel run" /
+    // "Remove from queue". WorkItem.Id == run id.
     private async Task CancelWorkItemAsync(Guid id)
     {
         if (!_cancelling.Add(id)) return;
@@ -455,7 +456,7 @@
         try
         {
             await Guard.DemandAsync(AccessRole.Operator, ProjectOf(id), "CancelWorkItem");
-            await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
+            await WorkItems.CancelAsync(id, _cts.Token);
             await RefreshQuietAsync();
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }

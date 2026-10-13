@@ -166,9 +166,10 @@ Edited under Settings → Providers → Agent, in the Kiro provider form in Kube
 
 ### Internal Fields
 
-The stored configuration has four fields that are not settings, and no page offers them:
+The stored configuration has five fields that are not settings, and no page offers them:
 
-- `closedLoopAutoStart` records whether the loop runs; the loop controls set it.
+- `closedLoopAutoStart` records whether the loop should run; Start and Stop set it, and the Scheduler leader starts or stops the loop to match.
+- `loopResumeRequestedAt` records when a user last asked the loop to resume after its circuit breaker opened; Resume sets it.
 - `pipelineInjectedPaths` is filled in at runtime from the agent provider.
 - `transientRetryDelay` is the wait after a provider rate limit or overload (30 seconds); tests set it to zero.
 - `workspaceBaseDirectory` is where agents create run workspaces: `./workspaces`, which is `/app/workspaces` in the agent images.

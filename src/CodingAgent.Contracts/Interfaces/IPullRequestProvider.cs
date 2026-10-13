@@ -66,4 +66,12 @@ public interface IPullRequestProvider : IAsyncDisposable
         int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support ListOpenPullRequestsAsync.");
+
+    /// <summary>
+    /// The open pull request with this number, or null when there is none or it is no longer open.
+    /// Default throws <see cref="NotSupportedException"/>.
+    /// </summary>
+    Task<PullRequestSummary?> GetOpenPullRequestAsync(int prNumber, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support GetOpenPullRequestAsync.");
 }

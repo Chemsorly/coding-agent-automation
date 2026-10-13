@@ -1,5 +1,4 @@
 using System.Reflection;
-using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Services;
@@ -27,8 +26,6 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData(typeof(IPipelineRunHistoryService))]
     [InlineData(typeof(IAgentPhaseExecutor))]
     [InlineData(typeof(IQualityGateExecutor))]
-    [InlineData(typeof(IssueDescriptionParser))]
-    [InlineData(typeof(GitHubValidationService))]
     public void Key_Service_Resolves_Without_Error(Type serviceType)
     {
         using var scope = _factory.Services.CreateScope();
@@ -48,17 +45,6 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
         var second = _factory.Services.GetRequiredService(serviceType);
 
         Assert.Same(first, second);
-    }
-
-    [Fact]
-    public void Transient_Service_Returns_Different_Instances()
-    {
-        using var scope = _factory.Services.CreateScope();
-
-        var first = scope.ServiceProvider.GetRequiredService<IssueDescriptionParser>();
-        var second = scope.ServiceProvider.GetRequiredService<IssueDescriptionParser>();
-
-        Assert.NotSame(first, second);
     }
 
     /// <summary>

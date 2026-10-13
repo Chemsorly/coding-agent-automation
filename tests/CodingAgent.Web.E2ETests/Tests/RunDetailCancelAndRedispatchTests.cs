@@ -355,7 +355,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     ///   <item>A run completes as Failed (terminal Implementation run).</item>
     ///   <item>Navigate to /runs/{runId}; assert re-dispatch card and button are visible.</item>
     ///   <item>Click "Re-dispatch" then "Confirm re-dispatch" via the browser UI (<see cref="RunDetailPage.RedispatchAsync"/>).</item>
-    ///   <item>Assert: "Re-dispatched successfully" is shown on the page.</item>
+    ///   <item>Assert: the "queued" message is shown on the page (the API enqueues the re-dispatch).</item>
     ///   <item>Assert: a new WorkItem is created for the same issue and a new run id is assigned.</item>
     ///   <item>Assert: the fake agent receives the new job assignment.</item>
     /// </list>
@@ -402,8 +402,9 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // redispatch-btn click → confirm prompt → redispatch-confirm-btn click → RedispatchAsync handler.
         await runPage.RedispatchAsync(confirm: true);
 
-        // Assert: "Re-dispatched successfully" appears on the page
-        await runPage.WaitForRedispatchSuccessAsync(TimeSpan.FromSeconds(15));
+        // Assert: the queued message appears on the page
+        var message = await runPage.WaitForRedispatchSuccessAsync(TimeSpan.FromSeconds(15));
+        Assert.Contains($"Queued #{issueId}", message);
 
         // Assert: a new WorkItem was created for the same issue
         await WaitUntilAsync(async () =>
@@ -520,11 +521,11 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // TODO [WARNING]: IDispatchOrchestrationService and IWorkDistributor are resolved directly
-        // from Fixture.Factory.Services (the root service provider). If either is registered as
+        // from a root service provider (Fixture.ApiServices, Fixture.Factory.Services). If either is registered as
         // Scoped, this creates a captive-scope instance that is never disposed within the test,
         // leaking any resources it holds for the lifetime of the test fixture. Consider resolving
         // these via Fixture.Factory.Services.CreateScope() and disposing the scope after the call.
-        var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();
+        var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
         var reviewRequest = new ReviewDispatchRequest
@@ -715,8 +716,8 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             "Re-dispatch card should be visible (run is terminal)");
 
         // Inject a Pending WorkItem for the same issue to block re-dispatch.
-        // The dedup guard in POST /api/work-items/dispatch checks for active (non-terminal)
-        // WorkItems with the same (IssueIdentifier, IssueProviderConfigId).
+        // The queue keeps one live WorkItem per (IssueIdentifier, IssueProviderConfigId), so the
+        // re-dispatch finds it and is refused.
         await using (var dbInject = await Fixture.DbContextFactory.CreateDbContextAsync())
         {
             dbInject.WorkItems.Add(new WorkItemEntity
@@ -767,10 +768,10 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
 
         // Assert: the page shows "Re-dispatch failed: …" when the user triggers re-dispatch
         // through the browser UI while the injected Pending WorkItem is still blocking it.
-        // The Blazor RedispatchAsync handler calls WorkItems.DispatchAsync → POST /api/work-items/dispatch.
-        // The API returns 409 Conflict; DispatchAsync calls EnsureSuccessStatusCode() and throws
-        // HttpRequestException, which the catch block stores in _redispatchError and renders inside
-        // div.summary-failure-callout[role=alert] within data-testid="redispatch-card".
+        // The Blazor RedispatchAsync handler calls POST /api/ui/runs/{id}/redispatch. The API refuses
+        // with 409 and the reason; the client throws InvalidOperationException with it, which the catch
+        // block stores in _redispatchError and renders inside div.summary-failure-callout[role=alert]
+        // within data-testid="redispatch-card".
         await runPage.NavigateAsync(originalRunId);
         Assert.True(await runPage.IsRedispatchCardVisibleAsync(),
             "Re-dispatch card should still be visible (run itself is still terminal/Failed)");
@@ -792,12 +793,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
                 "Timed out waiting for the re-dispatch error callout " +
                 "('[data-testid=\"redispatch-card\"] .summary-failure-callout[role=\"alert\"]') to appear. " +
                 "This indicates a Blazor wiring regression: the RedispatchAsync handler likely caught " +
-                "the 409 HttpRequestException but did not set _redispatchError or did not call " +
+                "the 409 refusal but did not set _redispatchError or did not call " +
                 "StateHasChanged. Inspect the page HTML snippet below for clues.\n\n" +
                 $"Page HTML (truncated to 2000 chars):\n{pageHtml[..Math.Min(2000, pageHtml.Length)]}");
             return; // unreachable; satisfies the compiler
         }
 
         Assert.Contains("Re-dispatch failed", errorText);
+        Assert.Contains("already has queued or running work", errorText);
     }
 }

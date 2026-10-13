@@ -1,12 +1,10 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
-using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Infrastructure.GitHub;
+using CodingAgent.Contracts.Ui;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
@@ -16,15 +14,11 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class ProviderSectionComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiConfigClient> _mockStore;
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly GitHubValidationService _gitHubValidator;
+    private readonly Mock<CodingAgent.Web.Ui.IUiProviderClient> _mockStore;
 
     public ProviderSectionComponentTests()
     {
-        _mockStore = new Mock<IPipelineApiConfigClient>();
-        _mockProviderFactory = new Mock<IProviderFactory>();
-        _gitHubValidator = new GitHubValidationService();
+        _mockStore = new Mock<CodingAgent.Web.Ui.IUiProviderClient>();
     }
 
     // ═══ RepoProviderSection ═══
@@ -34,8 +28,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("Repository Providers", cut.Markup);
     }
@@ -45,8 +38,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("+ Add Repository Provider", cut.Markup);
     }
@@ -74,8 +66,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("My Repo", cut.Markup);
         Assert.Contains("GitHub", cut.Markup);
@@ -108,8 +99,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("kiro", cut.Markup);
         Assert.Contains("dotnet", cut.Markup);
@@ -139,8 +129,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.DoesNotContain("should-not-show", cut.Markup);
     }
@@ -167,8 +156,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var editButtons = cut.FindAll(".btn-edit");
         var deleteButtons = cut.FindAll(".btn-delete");
@@ -181,8 +169,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var addButton = cut.Find(".btn-add");
         addButton.Click();
@@ -201,8 +188,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var addButton = cut.Find(".btn-add");
         addButton.Click();
@@ -215,8 +201,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         cut.Find(".btn-add").Click();
         Assert.Contains("Display Name", cut.Markup);
@@ -251,8 +236,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         cut.Find(".btn-edit").Click();
 
@@ -284,8 +268,7 @@ public class ProviderSectionComponentTests : BunitContext
         string? deletedId = null;
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
+            .Add(s => s.ProviderClient, _mockStore.Object)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, v => deletedId = v)));
 
         var deleteButton = cut.Find(".btn-delete");
@@ -305,9 +288,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("Issue Providers", cut.Markup);
     }
@@ -317,9 +298,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("+ Add Issue Provider", cut.Markup);
     }
@@ -345,9 +324,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("My Issues", cut.Markup);
         Assert.Contains("GitHub", cut.Markup);
@@ -375,9 +352,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         Assert.Contains("Initialize Provider", cut.Markup);
     }
@@ -403,9 +378,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var editButtons = cut.FindAll(".btn-edit");
         var deleteButtons = cut.FindAll(".btn-delete");
@@ -439,9 +412,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var initializeButtons = cut.FindAll(".btn-initialize");
         var editButtons = cut.FindAll(".btn-edit");
@@ -468,9 +439,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var addButton = cut.Find(".btn-add");
         addButton.Click();
@@ -487,9 +456,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         cut.Find(".btn-add").Click();
         Assert.Contains("Display Name", cut.Markup);
@@ -520,9 +487,7 @@ public class ProviderSectionComponentTests : BunitContext
         string? deletedId = null;
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object)
+            .Add(s => s.ProviderClient, _mockStore.Object)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, v => deletedId = v)));
 
         var deleteButton = cut.Find(".btn-delete");
@@ -538,17 +503,9 @@ public class ProviderSectionComponentTests : BunitContext
     [Fact]
     public async Task IssueSection_InitializeRepository_ShowsSuccessStatus()
     {
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider
-            .Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-        mockIssueProvider
-            .Setup(p => p.DisposeAsync())
-            .Returns(ValueTask.CompletedTask);
-
-        _mockProviderFactory
-            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
+        _mockStore
+            .Setup(c => c.InitializeAsync(It.Is<ProviderConfig>(d => d.Id == "ip-init-success"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(true, "Repository initialized successfully."));
 
         var providers = new List<ProviderConfig>
         {
@@ -568,9 +525,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var initButton = cut.FindAll("button").First(b => b.TextContent.Contains("Initialize Provider"));
         await initButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -581,17 +536,10 @@ public class ProviderSectionComponentTests : BunitContext
     [Fact]
     public async Task IssueSection_InitializeRepository_ShowsErrorOnFailure()
     {
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider
-            .Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+        // The API refuses with the reason (400), which the client throws.
+        _mockStore
+            .Setup(c => c.InitializeAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Auth failed"));
-        mockIssueProvider
-            .Setup(p => p.DisposeAsync())
-            .Returns(ValueTask.CompletedTask);
-
-        _mockProviderFactory
-            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
 
         var providers = new List<ProviderConfig>
         {
@@ -611,9 +559,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         var initButton = cut.FindAll("button").First(b => b.TextContent.Contains("Initialize Provider"));
         await initButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -625,18 +571,10 @@ public class ProviderSectionComponentTests : BunitContext
     [Fact]
     public async Task IssueSection_InitializeRepository_DisablesAllButtonsDuringInit()
     {
-        var tcs = new TaskCompletionSource<bool>();
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider
-            .Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
+        var tcs = new TaskCompletionSource<UiProviderCheck>();
+        _mockStore
+            .Setup(c => c.InitializeAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .Returns(tcs.Task);
-        mockIssueProvider
-            .Setup(p => p.DisposeAsync())
-            .Returns(ValueTask.CompletedTask);
-
-        _mockProviderFactory
-            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
 
         var providers = new List<ProviderConfig>
         {
@@ -660,9 +598,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         // Click Initialize on the first provider (does not complete yet)
         var initButtons = cut.FindAll("button").Where(b => b.TextContent.Contains("Initialize Provider")).ToList();
@@ -676,7 +612,7 @@ public class ProviderSectionComponentTests : BunitContext
         Assert.All(allInitButtons, btn => Assert.True(btn.HasAttribute("disabled")));
 
         // Complete the operation
-        tcs.SetResult(true);
+        tcs.SetResult(new UiProviderCheck(true, "Repository initialized successfully."));
     }
 
     [Fact]
@@ -709,8 +645,7 @@ public class ProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
+            .Add(s => s.ProviderClient, _mockStore.Object)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
@@ -754,9 +689,7 @@ public class ProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator)
-            .Add(s => s.ProviderFactory, _mockProviderFactory.Object)
+            .Add(s => s.ProviderClient, _mockStore.Object)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
@@ -799,8 +732,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         cut.Find(".btn-edit").Click();
 
@@ -835,8 +767,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         cut.Find(".btn-edit").Click();
 
@@ -848,11 +779,220 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigClient, _mockStore.Object)
-            .Add(s => s.GitHubValidator, _gitHubValidator));
+            .Add(s => s.ProviderClient, _mockStore.Object));
 
         cut.Find(".btn-add").Click();
 
         Assert.Contains("These instructions are provided to agents working on this repository", cut.Markup);
+    }
+
+    // ═══ Provider checks through the API (spec 051 2.1c) ═══
+
+    private static ProviderConfig StoredGitHubProvider(ProviderKind kind, string id) => new()
+    {
+        Id = id,
+        Kind = kind,
+        ProviderType = "GitHub",
+        DisplayName = "Stored",
+        Settings = new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+            [ProviderSettingKeys.ClientId] = "Iv1.abc",
+            [ProviderSettingKeys.InstallationId] = "456",
+            [ProviderSettingKeys.PrivateKeyBase64] = "****",
+            [ProviderSettingKeys.Owner] = "acme",
+            [ProviderSettingKeys.Repo] = "webapp"
+        }
+    };
+
+    private static bool IsMaskedDraft(ProviderConfig draft, string id) =>
+        draft.Id == id && draft.Settings[ProviderSettingKeys.PrivateKeyBase64] == "****";
+
+    [Fact]
+    public async Task IssueSection_SaveEdited_ChecksTheMaskedDraftInTheApi_ThenSaves()
+    {
+        _mockStore.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(true, "Connected to acme/webapp"));
+        ProviderConfig? saved = null;
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Issue, "ip-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object)
+            .Add(s => s.OnSaved, EventCallback.Factory.Create<ProviderConfig>(this, c => saved = c)));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        // The web host never holds the key: the stored "****" goes to the API, which fills it in.
+        _mockStore.Verify(c => c.CheckAsync(It.Is<ProviderConfig>(d => IsMaskedDraft(d, "ip-1")), It.IsAny<CancellationToken>()), Times.Once);
+        _mockStore.Verify(c => c.SaveProviderConfigAsync(It.Is<ProviderConfig>(d => IsMaskedDraft(d, "ip-1")), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal("ip-1", saved?.Id);
+    }
+
+    [Fact]
+    public async Task IssueSection_SaveEdited_CheckFails_ShowsTheReason_AndDoesNotSave()
+    {
+        _mockStore.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(false, "Bad credentials"));
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Issue, "ip-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Bad credentials", cut.Markup);
+        _mockStore.Verify(c => c.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task IssueSection_SaveEdited_ApiRefuses_ShowsTheReason()
+    {
+        // E.g. the API URL was changed while the key stayed masked (D4 URL rule): the API answers 400.
+        _mockStore.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("The API URL changed: enter the credentials again."));
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Issue, "ip-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("The API URL changed", cut.Markup);
+        _mockStore.Verify(c => c.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task IssueSection_FetchRepos_ListsTheApiRepositories()
+    {
+        _mockStore.Setup(c => c.ListRepositoriesAsync(It.Is<ProviderConfig>(d => IsMaskedDraft(d, "ip-1")), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiRepository> { new("acme/webapp", "acme", "webapp"), new("acme/api", "acme", "api") });
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Issue, "ip-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.FindAll("button").First(b => b.TextContent.Contains("Fetch Repos"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Credentials valid — 2 repositories found", cut.Markup);
+        Assert.Contains("acme/api", cut.Markup);
+    }
+
+    [Fact]
+    public async Task IssueSection_FetchRepos_CredentialsFail_ShowsTheApiReason()
+    {
+        _mockStore.Setup(c => c.ListRepositoriesAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Installation 456 not found"));
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Issue, "ip-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.FindAll("button").First(b => b.TextContent.Contains("Fetch Repos"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Installation 456 not found", cut.Markup);
+    }
+
+    [Fact]
+    public async Task IssueSection_SaveEditedGitLab_ChecksInTheApi_ThenSaves()
+    {
+        var gitLab = new ProviderConfig
+        {
+            Id = "ip-gl",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitLab",
+            DisplayName = "GitLab Issues",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.example.com/api/v4",
+                [ProviderSettingKeys.AccessToken] = "****",
+                [ProviderSettingKeys.ProjectId] = "42"
+            }
+        };
+        _mockStore.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(true, "Connected to group/project (access: Maintainer)"));
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { gitLab })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        _mockStore.Verify(c => c.SaveProviderConfigAsync(
+            It.Is<ProviderConfig>(d => d.Id == "ip-gl" && d.Settings[ProviderSettingKeys.AccessToken] == "****"
+                && d.Settings[ProviderSettingKeys.ApiUrl] == "https://gitlab.example.com/api/v4"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task IssueSection_InitializeRepository_LabelsMissing_ShowsTheWarning()
+    {
+        _mockStore.Setup(c => c.InitializeAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(false, "Credentials validated but some labels could not be created."));
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Issue, "ip-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        await cut.FindAll("button").First(b => b.TextContent.Contains("Initialize Provider"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("some labels could not be created", cut.Markup);
+        Assert.NotNull(cut.Find(".settings-status.status-error"));
+    }
+
+    [Fact]
+    public async Task RepoSection_SaveEdited_ChecksTheMaskedDraftInTheApi_ThenSaves()
+    {
+        var stored = StoredGitHubProvider(ProviderKind.Repository, "rp-1");
+        stored = new ProviderConfig
+        {
+            Id = stored.Id, Kind = stored.Kind, ProviderType = stored.ProviderType, DisplayName = stored.DisplayName,
+            Settings = stored.Settings, Secrets = new Dictionary<string, string> { ["NPM_TOKEN"] = "****" }
+        };
+        _mockStore.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(true, "Connected to acme/webapp"));
+        var cut = Render<RepoProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { stored })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        _mockStore.Verify(c => c.SaveProviderConfigAsync(
+            It.Is<ProviderConfig>(d => IsMaskedDraft(d, "rp-1") && d.Secrets!["NPM_TOKEN"] == "****"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RepoSection_SaveEdited_CheckFails_ShowsTheReason_AndDoesNotSave()
+    {
+        _mockStore.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiProviderCheck(false, "Repository acme/webapp not accessible"));
+        var cut = Render<RepoProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Repository, "rp-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Repository acme/webapp not accessible", cut.Markup);
+        _mockStore.Verify(c => c.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RepoSection_FetchRepos_ListsTheApiRepositories()
+    {
+        _mockStore.Setup(c => c.ListRepositoriesAsync(It.Is<ProviderConfig>(d => IsMaskedDraft(d, "rp-1")), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UiRepository> { new("acme/webapp", "acme", "webapp") });
+        var cut = Render<RepoProviderSection>(p => p
+            .Add(s => s.Providers, new List<ProviderConfig> { StoredGitHubProvider(ProviderKind.Repository, "rp-1") })
+            .Add(s => s.ProviderClient, _mockStore.Object));
+
+        cut.Find(".provider-card .btn-edit").Click();
+        await cut.FindAll("button").First(b => b.TextContent.Contains("Fetch Repos"))
+            .ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains("Credentials valid — 1 repositories found", cut.Markup);
     }
 }

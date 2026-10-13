@@ -1,4 +1,3 @@
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Orchestration
@@ -253,12 +252,14 @@
 
 @code {
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
-    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    // Spec 051 2.1c: providers and models through the API as the signed-in admin; the model-fetch timeout is a pipeline setting.
+    [Parameter, EditorRequired] public IUiProviderClient ProviderClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter, EditorRequired] public IUiSettingsClient SettingsClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
     // ModelFetchService and ModelFetchJobService removed (Spec 045 Req 7a.3):
-    // model fetching now routes through ConfigClient.GetModelsAsync (GET /api/config/models).
+    // model fetching routes through ProviderClient.GetModelsAsync (GET /api/ui/settings/models).
     /// <summary>When true, Fetch Models uses the API's model-fetch endpoint (K8s Job dispatch).</summary>
     [Parameter] public bool IsKubernetesMode { get; set; }
 
@@ -283,7 +284,7 @@
     {
         if (IsKubernetesMode)
         {
-            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+            var config = await SettingsClient.GetPipelineConfigAsync(CancellationToken.None);
             _modelFetchTimeoutSeconds = config.ModelFetchTimeoutSeconds;
         }
     }
@@ -357,12 +358,12 @@
 
         try
         {
-            await ConfigClient.SaveProviderConfigAsync(config, _cts.Token);
+            await ProviderClient.SaveProviderConfigAsync(config, _cts.Token);
 
             // Save k8s model-fetch timeout when in k8s mode (global setting, not per-provider)
             if (IsKubernetesMode)
             {
-                await ConfigClient.UpdatePipelineConfigAsync(
+                await SettingsClient.UpdatePipelineConfigAsync(
                     current => current with { ModelFetchTimeoutSeconds = _modelFetchTimeoutSeconds },
                     _cts.Token);
             }
@@ -429,7 +430,7 @@
         {
             // Spec 045 Req 7a.3: delegate to GET /api/config/models (Option A passthrough).
             // The API endpoint dispatches a one-shot K8s Job and returns results via the hub.
-            var (models, error) = await ConfigClient.GetModelsAsync(_cts.Token);
+            var (models, error) = await ProviderClient.GetModelsAsync(_cts.Token);
 
             if (error is not null)
             {

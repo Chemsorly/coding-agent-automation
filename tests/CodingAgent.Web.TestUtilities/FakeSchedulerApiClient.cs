@@ -87,4 +87,7 @@ public sealed class FakeSchedulerApiClient : ISchedulerApiClient
 
     public Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default)
         => Task.FromResult(new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null));
+
+    public Task ReportLoopStatusAsync(LoopStatusDto status, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
