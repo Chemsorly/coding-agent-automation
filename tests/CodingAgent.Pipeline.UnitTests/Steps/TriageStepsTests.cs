@@ -203,6 +203,40 @@ public sealed class TriageStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task Investigation_ReviewAndRefinementCost_IsAddedToTheRun()
+    {
+        var context = Context(config: Config(review: true));
+        var reviewPath = Path.Combine(_workspace, AgentWorkspacePaths.TriageReviewFilePath);
+        var usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 };
+        var call = 0;
+        _agent.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                switch (call++)
+                {
+                    case 0:                                                                          // investigation
+                        File.WriteAllText(ResultPath, ValidResult);
+                        return new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 1.00m };
+                    case 1:                                                                          // review
+                        File.WriteAllText(reviewPath, "[CRITICAL] E1 has no source");
+                        return new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.25m };
+                    default:                                                                         // refinement
+                        File.WriteAllText(ResultPath, ValidResult);
+                        return new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.10m };
+                }
+            });
+
+        var result = await new TriageInvestigationStep(false).ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        call.Should().Be(3);
+        context.Run.TotalCost.Should().Be(1.35m,
+            because: "the run cost is the investigation (1.00) plus the review (0.25) and the refinement (0.10)");
+        context.Run.Metrics.PhaseBreakdown["triage_review"].Cost.Should().Be(0.25m);
+        context.Run.Metrics.PhaseBreakdown["triage_refinement"].Cost.Should().Be(0.10m);
+    }
+
+    [Fact]
     public async Task Investigation_AgentExitsNonZero_FailsTheRun()
     {
         var context = Context(config: Config(review: false));

@@ -90,4 +90,10 @@ public sealed class FakeSchedulerApiClient : ISchedulerApiClient
 
     public Task ReportLoopStatusAsync(LoopStatusDto status, CancellationToken ct = default)
         => Task.CompletedTask;
+
+    public Task<IReadOnlyList<AgentEntryDto>> GetAgentsAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<AgentEntryDto>>(Array.Empty<AgentEntryDto>());
+
+    public Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default)
+        => Task.FromResult(new CredentialPoolStatus(0, 0, 0));
 }

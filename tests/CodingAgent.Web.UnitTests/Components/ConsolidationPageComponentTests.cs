@@ -542,6 +542,43 @@ public class ConsolidationPageComponentTests : BunitContext
         Assert.Contains("rejected", statusMessage.TextContent.ToLowerInvariant());
     }
 
+    // A refused run gives the operator no reason beyond the message, so each rejection message must name every
+    // cause the service can give: a selector with no job template is one of them (issue #3642).
+    [Theory]
+    [InlineData("Brain Consolidation", false, "Brain consolidation rejected")]
+    [InlineData("Refactoring Scan", true, "Refactoring scan rejected")]
+    [InlineData("Generate Suggestions", false, "Harness suggestions rejected")]
+    public void TriggerRejection_NamesMissingJobTemplateAsPossibleCause(string buttonText, bool confirmInModal, string expectedStart)
+    {
+        RegisterServices(templates: [CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")]);
+        // Simulate a refused trigger: the API returns 409 → client throws InvalidOperationException with the
+        // rejection message. The message now names a missing job template as one of the possible causes (#3642).
+        // TODO: These message strings are embedded directly in the mock, so the server-side
+        // ConsolidationPageService.TriggerAsync rejection messages (ConsolidationPageService.cs:104–112) are
+        // not executed by any test. A regression in those strings — e.g. reverting the "no job template
+        // matches the agent profile" clause — would not fail any test. Consider adding a unit or integration
+        // test that exercises ConsolidationPageService.TriggerAsync directly and asserts on the returned
+        // message content. See review finding (TestQualityReviewer, WARNING).
+        _mockConsolidationClient
+            .Setup(s => s.TriggerAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((ConsolidationRunType type, string? _, bool __, CancellationToken ___) =>
+                Task.FromException<string>(new InvalidOperationException(type switch
+                {
+                    ConsolidationRunType.BrainConsolidation => "Brain consolidation rejected for Test Template — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
+                    ConsolidationRunType.RefactoringDetection => "Refactoring scan rejected for Test Template — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
+                    _ => "Harness suggestions rejected — already running, a configuration error occurred, or no job template matches the agent profile."
+                })));
+
+        var cut = Render<Consolidation>();
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains(buttonText)).Click();
+        if (confirmInModal)
+            cut.Find(".modal-card .btn-save").Click();
+
+        var message = cut.Find(".consolidation-status-message").TextContent;
+        Assert.StartsWith(expectedStart, message);
+        Assert.Contains("no job template matches the agent profile", message);
+    }
+
     // ═══ Refactoring Scan Pre-Flight Modal (Issue #1435) ═══
 
     [Fact]
