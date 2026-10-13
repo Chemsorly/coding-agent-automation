@@ -64,6 +64,14 @@ public static class WorkItemDispatchEndpoints
     /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
     /// <para>
+    /// A Consolidation request whose agent selector has no job template — directly or through the profile
+    /// fallback, resolved exactly as <c>DispatchPendingWorkItem</c> does — is refused with 422 before any row
+    /// or in-memory run exists (issue #3642). The dispatcher could never start it: it would stay Pending for
+    /// ever and be deferred as <c>no_template</c> every cycle. Templates are read from a ConfigMap at start-up,
+    /// so unlike a transient dispatch failure the next cycle cannot fix it. Other task types are not checked
+    /// here; their missing-template case is still deferred by the pending-dispatch path.
+    /// </para>
+    /// <para>
     /// Only identity fields are serialized to <c>WorkItems.Payload</c> (issue #2171).
     /// Mutable config (ProviderConfigs, QualityGateConfigs, RepoSteeringContent, etc.) is stripped
     /// from the stored payload; <c>GET /api/work-items/{id}/assignment</c> fetches it fresh at
@@ -73,8 +81,26 @@ public static class WorkItemDispatchEndpoints
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
         WorkItemStore store,
+        DispatchWorkItemService dispatchService,
+        DispatchTemplateResolver templateResolver,
         CancellationToken ct = default)
     {
+        // Refuse a consolidation run the dispatcher could never start, before anything is written. The lookup is
+        // the dispatcher's own (direct, then the profile fallback). It runs without the expansion warning: the
+        // dispatcher logs that when it dispatches, and consolidation selectors are routinely partial.
+        if (request.TaskType == WorkItemTaskType.Consolidation)
+        {
+            var (template, _) = await dispatchService.ResolveTemplateAsync(
+                request.AgentSelector ?? "", templateResolver, "CreateWorkItem", warnOnExpansion: false, ct);
+            if (template is null)
+            {
+                Log.Warning("CreateWorkItem: no job template for consolidation selector {Selector} — returning 422",
+                    LogSanitizer.SanitizeForLog(request.AgentSelector));
+                // 422 Unprocessable Entity — permanent config error, distinct from 409 (a live run already exists).
+                return TypedResults.StatusCode(StatusCodes.Status422UnprocessableEntity);
+            }
+        }
+
         var (outcome, workItemId) = await store.CreateAsync(request, ct);
         return outcome == WorkItemCreateOutcome.LiveItemExists
             ? DispatchWorkItemService.HandleUniqueViolationFallback()

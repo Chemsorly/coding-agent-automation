@@ -1493,6 +1493,35 @@ public sealed class WorkItemEndpointTests
     // ── PriorityWeight — AC tests for issue #2172 ────────────────────────────
 
     /// <summary>
+    /// Issue #3642: a Consolidation request whose selector has no job template is refused with 422 and leaves
+    /// no row. The shared host's template store is empty, so no selector has one. The same request with a
+    /// template, and the other task types, are covered by <c>ConsolidationEnqueueEndpointTests</c> and
+    /// <c>CreateWorkItemConsolidationTemplateGateTests</c>.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_Consolidation_NoJobTemplate_Returns422_AndInsertsNoRow()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"HarnessSuggestions:{Guid.NewGuid():N}"),
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Consolidation,
+            RunType = PipelineRunType.Consolidation,
+            AgentSelector = "kiro,python,python312",
+            TimeoutSeconds = 3600
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity,
+            "a consolidation run that the dispatcher could never start must be refused at enqueue");
+        using var db = _factory.CreateDbContext();
+        db.WorkItems.Where(w => w.IssueIdentifier == request.IssueIdentifier.Value).Should().BeEmpty();
+    }
+
+    /// <summary>
     /// AC: POST /api/work-items with InitiatedBy="manual" creates entity with PriorityWeight=100.
     /// </summary>
     [Fact]

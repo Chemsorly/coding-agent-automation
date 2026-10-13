@@ -100,10 +100,8 @@ public sealed class TriageInvestigationStep : IPipelineStep
                 logger,
                 ct);
 
-            if (review.ReviewTokenUsage is not null)
-                run.AccumulateTokenUsage(review.ReviewTokenUsage, phase: "triage_review");
-            if (review.RefinementTokenUsage is not null)
-                run.AccumulateTokenUsage(review.RefinementTokenUsage, phase: "triage_refinement");
+            run.AccumulateTokenUsage(review.ReviewAgentResult, phase: "triage_review");
+            run.AccumulateTokenUsage(review.RefinementAgentResult, phase: "triage_refinement");
 
             if (!review.ReviewExecuted)
             {

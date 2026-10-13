@@ -102,9 +102,9 @@ internal sealed class ConsolidationPageService(
             : (await projects.LoadAllTemplatesAsync(ct)).FirstOrDefault(t => t.Id == request.TemplateId)?.Name ?? request.TemplateId;
         throw new DispatchRefusedException(request.Type switch
         {
-            ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running, a configuration error occurred, or template not found.",
-            ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, or template not found.",
-            ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running or a configuration error occurred.",
+            ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
+            ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
+            ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running, a configuration error occurred, or no job template matches the agent profile.",
             _ => "Consolidation rejected.",
         });
     }
