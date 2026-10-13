@@ -165,6 +165,40 @@ public class AdversarialReviewHelperTests : IDisposable
     }
 
     [Fact]
+    public async Task CriticalFinding_ResultCarriesTheCostOfBothCalls()
+    {
+        var callCount = 0;
+        var reviewUsage = new TokenUsage { InputTokens = 200, OutputTokens = 100 };
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    // Discriminator writes findings file with CRITICAL
+                    File.WriteAllText(AbsoluteReviewPath, "[CRITICAL] x");
+                    return new AgentResult { ExitCode = 0, OutputLines = [], Usage = reviewUsage, Cost = 0.25m };
+                }
+                // Refinement call
+                return new AgentResult { ExitCode = 0, OutputLines = [], Cost = 0.10m };
+            });
+
+        var result = await AdversarialReviewHelper.ExecuteReviewAsync(
+            _mockAgent.Object,
+            _workspacePath,
+            new AdversarialReviewPrompts("review prompt", "refinement prompt", _reviewFilePath),
+            _enabledConfig,
+            CaptureOutput,
+            _mockLogger.Object,
+            CancellationToken.None);
+
+        result.RefinementTriggered.Should().BeTrue();
+        result.ReviewAgentResult!.Cost.Should().Be(0.25m);
+        result.RefinementAgentResult!.Cost.Should().Be(0.10m);
+        result.ReviewTokenUsage.Should().BeSameAs(reviewUsage);
+    }
+
+    [Fact]
     public async Task WarningFinding_TriggersRefinement()
     {
         var callCount = 0;

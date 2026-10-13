@@ -31,9 +31,6 @@ public static class PipelineTelemetry
     /// <summary>
     /// Counter: terminal pipeline run outcomes, recorded once per transition in the API.
     /// Tags: run_type, outcome (closed set), failure_reason, pipeline.project_name.
-    /// Pre-initialized at process start for the 3 closed-tag dimensions (run_type × outcome × failure_reason)
-    /// so that <c>increase()</c> is visible from the first event after a deploy for those dimensions.
-    /// <c>pipeline.project_name</c> is excluded from pre-initialization (unbounded cardinality) per Requirement 7.
     /// </summary>
     public static readonly Counter<long> RunOutcomes = Meter.CreateCounter<long>(
         "pipeline.run.outcomes", UnitRun, "Terminal pipeline run outcome counts");
@@ -52,7 +49,6 @@ public static class PipelineTelemetry
     /// <summary>
     /// Histogram: per-step duration recorded by the API on each step transition.
     /// Tags: run_type, step (PipelineStep name).
-    /// Not pre-initialized (histograms cannot be pre-initialized).
     /// Recorded once per step visit in <c>HandleStepTransition</c>.
     /// </summary>
     public static readonly Histogram<double> RunStepDuration = Meter.CreateHistogram<double>(
@@ -65,7 +61,6 @@ public static class PipelineTelemetry
     /// <summary>
     /// Counter: sub-issues created or failed per decomposition run. Recorded once per run.
     /// Tags: result (created / failed).
-    /// Pre-initialized in <c>Program.EmitPreInitCounters</c> for all 2 tag combinations.
     /// </summary>
     public static readonly Counter<long> RunSubIssues = Meter.CreateCounter<long>(
         "pipeline.run.sub_issues", "{issue}", "Sub-issue creation results per decomposition run");
@@ -73,7 +68,6 @@ public static class PipelineTelemetry
     /// <summary>
     /// Counter: brain update result per run (pushed / none). Recorded once per non-consolidation run.
     /// Tags: result (pushed / none).
-    /// Pre-initialized in <c>Program.EmitPreInitCounters</c> for all 2 tag combinations.
     /// </summary>
     // TODO: [WARNING] Unit is UnitRun = "{run}" (confirmed correct per OTel spec). If this constant is
     // ever changed (e.g. to "run" without braces), the Prometheus exporter will emit a non-standard unit
@@ -91,7 +85,6 @@ public static class PipelineTelemetry
     /// Counter: total tokens consumed per run, broken down by phase and provider.
     /// Recorded once per run at terminal status time by the API.
     /// Tags: run_type, phase, provider.
-    /// Pre-initialized at process start for run_type × phase × provider combinations.
     /// </summary>
     public static readonly Counter<long> RunTokens = Meter.CreateCounter<long>(
         "pipeline.run.tokens", "{token}", "LLM tokens consumed per pipeline run phase");
@@ -100,7 +93,6 @@ public static class PipelineTelemetry
     /// Counter: total LLM cost in USD per run, broken down by phase and provider.
     /// Recorded once per run at terminal status time by the API.
     /// Tags: run_type, phase, provider.
-    /// Pre-initialized at process start for run_type × phase × provider combinations.
     /// </summary>
     public static readonly Counter<double> RunCostUsd = Meter.CreateCounter<double>(
         "pipeline.run.cost_usd", "{usd}", "LLM cost in USD per pipeline run phase");
@@ -109,7 +101,6 @@ public static class PipelineTelemetry
     /// Counter: number of agent CLI sessions (invocations) per run, broken down by phase, provider, and model.
     /// Recorded once per run at terminal status time by the API.
     /// Tags: run_type, phase, provider, model.
-    /// Pre-initialized at process start for run_type × phase × provider (model excluded per Req 7).
     /// </summary>
     public static readonly Counter<long> RunAgentSessions = Meter.CreateCounter<long>(
         "pipeline.run.agent_sessions", "{session}", "Agent CLI sessions per pipeline run phase");
@@ -118,7 +109,6 @@ public static class PipelineTelemetry
     /// Counter: total agent execution time in seconds per run, broken down by phase and provider.
     /// Recorded once per run at terminal status time by the API.
     /// Tags: run_type, phase, provider.
-    /// Pre-initialized at process start for run_type × phase × provider combinations.
     /// </summary>
     public static readonly Counter<double> RunAgentTime = Meter.CreateCounter<double>(
         "pipeline.run.agent_time", "s", "Agent execution time in seconds per pipeline run phase");
@@ -130,21 +120,20 @@ public static class PipelineTelemetry
     /// <summary>
     /// Counter: tokens consumed per run, split by token type.
     /// Tags: run_type, provider, token_type (<see cref="TokenTypes"/>).
-    /// Pre-initialized at process start for run_type × provider × token_type.
     /// </summary>
     public static readonly Counter<long> RunTokenUsage = Meter.CreateCounter<long>(
         "pipeline.run.token_usage", "{token}", "LLM tokens consumed per pipeline run, by token type");
 
     /// <summary>
     /// Counter: agent turns (model round trips) per run, from providers that report them.
-    /// Tags: run_type, provider. Pre-initialized at process start.
+    /// Tags: run_type, provider.
     /// </summary>
     public static readonly Counter<long> RunAgentTurns = Meter.CreateCounter<long>(
         "pipeline.run.agent_turns", "{turn}", "Agent turns (model round trips) per pipeline run");
 
     /// <summary>
     /// Counter: web search requests the model made per run, from providers that report them.
-    /// Tags: run_type, provider. Pre-initialized at process start.
+    /// Tags: run_type, provider.
     /// </summary>
     public static readonly Counter<long> RunWebSearchRequests = Meter.CreateCounter<long>(
         "pipeline.run.web_search_requests", "{request}", "Web search requests made by the model per pipeline run");
@@ -152,14 +141,14 @@ public static class PipelineTelemetry
     /// <summary>
     /// Counter: provider-reported LLM cost in USD per run, split by how the calls were paid for.
     /// billing=api is billed per token; billing=subscription is an estimate under a flat plan.
-    /// Tags: run_type, provider, billing (<see cref="AgentBillingModes"/>). Pre-initialized at process start.
+    /// Tags: run_type, provider, billing (<see cref="AgentBillingModes"/>).
     /// </summary>
     public static readonly Counter<double> RunBillingCostUsd = Meter.CreateCounter<double>(
         "pipeline.run.billing_cost_usd", "{usd}", "LLM cost in USD per pipeline run, by billing mode");
 
     /// <summary>
     /// Counter: subscription rate-limit readings reported at run end (latest per window).
-    /// Tags: provider, window, status. Pre-initialized for the claude provider.
+    /// Tags: provider, window, status.
     /// </summary>
     public static readonly Counter<long> RunRateLimitEvents = Meter.CreateCounter<long>(
         "pipeline.run.rate_limit_events", UnitEvent, "Subscription rate-limit readings per pipeline run, by window and status");
@@ -229,7 +218,7 @@ public static class PipelineTelemetry
         public const string Decomposition = "decomposition";
         public const string Other = "other";
 
-        /// <summary>All closed-set phase values for pre-initialization.</summary>
+        /// <summary>All closed-set phase values.</summary>
         public static readonly string[] All =
         [
             Analysis, AnalysisReview, CodeGen, Review, QualityGate, AcceptanceCriteria,
@@ -245,7 +234,7 @@ public static class PipelineTelemetry
         public const string Claude = "claude";
         public const string Unknown = "unknown";
 
-        /// <summary>All closed-set provider values for pre-initialization.</summary>
+        /// <summary>All closed-set provider values.</summary>
         public static readonly string[] All = [Kiro, OpenCode, Claude, Unknown];
     }
 
@@ -300,7 +289,6 @@ public static class PipelineTelemetry
     /// Counter: individual gate evaluation outcomes, recorded by the API when ReportQualityGateResult
     /// arrives from the agent. Tags: run_type, gate (compilation|tests|external_ci),
     /// result (pass|fail), infrastructure_failure (true|false).
-    /// Pre-initialized at process start for closed tag combinations.
     /// </summary>
     public static readonly Counter<long> RunQualityGateResults = Meter.CreateCounter<long>(
         "pipeline.run.quality_gate.results", "{evaluation}",
@@ -310,7 +298,6 @@ public static class PipelineTelemetry
     /// Counter: CI re-trigger commits (empty commit + push to restart CI that never started).
     /// Recorded by the API when the agent reports a re-trigger event via ReportPipelineRunEvent.
     /// Tags: run_type.
-    /// Pre-initialized at process start.
     /// </summary>
     public static readonly Counter<long> RunCiNotStartedRetriggers = Meter.CreateCounter<long>(
         "pipeline.run.ci.not_started_retriggers", "{retrigger}",
@@ -321,7 +308,6 @@ public static class PipelineTelemetry
     /// the CI wait duration via ReportPipelineRunEvent.
     /// Tags: run_type, stage (pre_pr|post_pr), result (pass|fail).
     /// Buckets sized for CI pipeline wait times (1 min → 4 h).
-    /// Not pre-initialized (histograms cannot be pre-initialized).
     /// </summary>
     public static readonly Histogram<double> RunCiWait = Meter.CreateHistogram<double>(
         "pipeline.run.ci.wait", "s",
@@ -334,7 +320,6 @@ public static class PipelineTelemetry
     /// <summary>
     /// Counter: agent stall events recorded by the API when the agent reports a stall event
     /// via ReportPipelineRunEvent. Tags: run_type, phase, kind (stall_kill|process_death|process_timeout).
-    /// Pre-initialized at process start for phase × kind combinations.
     /// </summary>
     public static readonly Counter<long> RunAgentStalls = Meter.CreateCounter<long>(
         "pipeline.run.agent_stalls", "{stall}",
@@ -410,7 +395,6 @@ public static class PipelineTelemetry
     /// <summary>
     /// Counter: PRs that have been closed (merged or closed-without-merge) during a housekeeping cycle.
     /// Tags: outcome (merged | closed_unmerged).
-    /// Pre-initialized at startup via <c>GitHubTelemetry.PreInitialize()</c>.
     /// </summary>
     public static readonly Counter<long> PullRequestsClosed = Meter.CreateCounter<long>(
         "pipeline.pull_requests.closed", "{pr}",

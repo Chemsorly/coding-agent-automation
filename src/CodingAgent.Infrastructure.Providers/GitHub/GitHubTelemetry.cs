@@ -1,5 +1,4 @@
 using System.Diagnostics.Metrics;
-using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Infrastructure.GitHub;
 
@@ -15,11 +14,6 @@ public static class GitHubTelemetry
     /// <summary>Meter name registered in the OTel configuration of each long-lived process.</summary>
     public const string MeterName = "CodingAgent.GitHub";
 
-    // TODO: The Meter instance is static and is never reset between test classes. If PreInitialize()
-    // is called in one test class, subsequent tests using a MeterListener on this meter will observe
-    // the pre-seeded zero-value measurements. Only ResetRateLimitStore() currently resets static
-    // state. If test isolation issues arise, consider adding a ResetCounterState() helper (or
-    // guarding PreInitialize() with a flag) so test constructors can fully reset GitHubTelemetry.
     // TODO: Meter implements IDisposable but is never disposed here. In production this is benign
     // (process-lifetime static), but the live Meter instance and its registered instruments
     // accumulate across all test classes sharing the same AppDomain. ResetRateLimitStore() resets
@@ -55,8 +49,6 @@ public static class GitHubTelemetry
     /// Observable gauge for remaining GitHub API rate-limit quota.
     /// Tags: <c>resource</c> (core | graphql).
     /// Emits no measurement until at least one API call has been made in this process.
-    /// Must NOT be pre-initialized — doing so would permanently emit a 0 value from boot,
-    /// violating the "only emit after a call" requirement.
     /// </summary>
     public static readonly ObservableGauge<double> RateLimitRemaining =
         Meter.CreateObservableGauge<double>(
@@ -102,135 +94,5 @@ public static class GitHubTelemetry
             yield return new Measurement<double>(
                 (double)graphql,
                 new KeyValuePair<string, object?>("resource", "graphql"));
-    }
-
-    // ── Operation name constants ──────────────────────────────────────────────
-
-    /// <summary>
-    /// All GitHub API operation names passed to <c>ExecuteWithResilienceAsync</c>.
-    /// Used for pre-initializing <c>github.api.requests</c> counter tag combinations at process
-    /// startup so that rare outcomes (e.g. <c>rate_limited</c>) appear as zero-value series
-    /// before the first real increment, enabling Prometheus <c>increase()</c> to work correctly.
-    /// </summary>
-    // TODO: There is no compile-time enforcement tying the entries below to the actual operationName
-    // strings passed at each ExecuteWithResilienceAsync call site. A rename at a call site silently
-    // desynchs this list: the pre-initialized zero-value series exists under the old name while real
-    // increments go to the new (unregistered) name, causing Prometheus increase() to miss the first
-    // increment. To detect drift, consider a test that reflects over all ExecuteWithResilienceAsync
-    // call sites (e.g. via Roslyn or a source-file grep) and asserts each operationName literal
-    // appears in AllOperationNames.
-    public static readonly string[] AllOperationNames =
-    [
-        // GitHubProviderBase
-        "ValidateRepository",
-
-        // GitHubRepositoryProvider.PullRequests.cs
-        "IsPullRequestBehindBase",
-        "ListAgentBranches",
-        "DeleteBranch",
-        "CreatePullRequest",
-        "GetAgentPullRequests.Search",
-        "GetAgentPullRequests.Get",
-        "GetAgentPullRequests.ReviewComments",
-        "GetAgentPullRequests.ConversationComments",
-        "GetAgentPullRequests.Reviews",
-        "ListOpenPullRequests",
-        "ListOpenPullRequests.GetDetail",
-        "AddPrLabel",
-        "RemovePrLabel",
-        "ExtractLinkedIssues.Timeline",
-        "ExtractLinkedIssues.GetPr",
-        "ListPrComments.IssueComments",
-        "ListPrComments.ReviewComments",
-        "ListPrComments.Reviews",
-        "UpdatePullRequest",
-        "GetPullRequestForDraftCheck",
-        "GetPullRequestForDraftConversion",
-        "GetPullRequestBody",
-        "ClosePullRequest",
-        "GetPullRequestMergedState",
-
-        // GitHubRepositoryProvider.Reviews.cs
-        "SubmitPullRequestReview",
-        "SubmitPullRequestReviewWithComments",
-        "DismissPreviousReview.GetAllReviews",
-        "DismissPreviousReview.Dismiss",
-        "FindExistingReviewComment",
-        "UpdateReviewComment",
-
-        // GitHubRepositoryProvider.Commits.cs
-        "GetCommitCountSince",
-
-        // GitHubIssueProvider.cs
-        "GetIssue",
-        "ListOpenIssues",
-        "ListClosedIssues",
-        "PostComment",
-        "UpdateComment",
-        "ListComments",
-        "AddLabels",
-        "RemoveLabel",
-        "ListRepositoryLabels",
-        "HasAgentLabels",
-        "EnsureAgentLabels",
-        "IsIssueClosed",
-        "CloseIssue",
-        "CreateIssue",
-
-        // GitHubActionsPipelineProvider.cs
-        "GetRunStatus.ListRuns",
-        "GetRunStatus.ListJobs",
-    ];
-
-    /// <summary>Closed set of outcome tag values for <c>github.api.requests</c>.</summary>
-    public static readonly string[] OutcomeValues = ["success", "not_found", "rate_limited", "error"];
-
-    /// <summary>Closed set of outcome tag values for <c>pipeline.pull_requests.closed</c>.</summary>
-    public static readonly string[] PrOutcomeValues = ["merged", "closed_unmerged"];
-
-    /// <summary>
-    /// Pre-initializes all counter tag combinations by emitting <c>Add(0)</c> for:
-    /// <list type="bullet">
-    ///   <item><description>
-    ///     Each <c>(operation × outcome)</c> pair for <c>github.api.requests</c>.
-    ///   </description></item>
-    ///   <item><description>
-    ///     Each <c>outcome</c> value for <c>pipeline.pull_requests.closed</c>
-    ///     (<see cref="PrOutcomeValues"/>: <c>merged</c>, <c>closed_unmerged</c>).
-    ///   </description></item>
-    /// </list>
-    ///
-    /// Call this at process startup through <c>MetricPreInitialization.Run</c>, which builds the
-    /// MeterProvider first: measurements made before that are dropped.
-    /// This ensures Prometheus <c>increase()</c> can detect the first real increment — without
-    /// pre-initialization, a series that has never been incremented does not exist in the
-    /// TSDB and <c>increase()</c> over the first window returns no data.
-    ///
-    /// The <c>github.rate_limit.remaining</c> ObservableGauge is intentionally excluded:
-    /// pre-initializing it would permanently emit a 0 value from boot, violating the
-    /// "only emit after a call" requirement.
-    /// </summary>
-    public static void PreInitialize()
-    {
-        // Seed github.api.requests: every (operation × outcome) combination.
-        foreach (var operation in AllOperationNames)
-        {
-            foreach (var outcome in OutcomeValues)
-            {
-                ApiRequests.Add(0,
-                    new KeyValuePair<string, object?>("operation", operation),
-                    new KeyValuePair<string, object?>("outcome", outcome));
-            }
-        }
-
-        // Seed pipeline.pull_requests.closed: every outcome value.
-        // PullRequestsClosed lives on PipelineTelemetry.Meter (registered in the same processes).
-        // Without this, the first increment of a rare outcome (e.g. closed_unmerged on a fresh
-        // replica) is invisible to Prometheus increase() because the series does not yet exist.
-        foreach (var outcome in PrOutcomeValues)
-        {
-            PipelineTelemetry.PullRequestsClosed.Add(0,
-                new KeyValuePair<string, object?>("outcome", outcome));
-        }
     }
 }

@@ -81,10 +81,6 @@ builder.Services.AddHostOpenTelemetry(
 
 var app = builder.Build();
 
-// Seed the github.api.requests and pipeline.pull_requests.closed series with 0 so Prometheus
-// increase() sees the first real increment after a deploy.
-MetricPreInitialization.Run(app.Services, () => GitHubTelemetry.PreInitialize());
-
 // ── Health probes ─────────────────────────────────────────────────────────
 // /healthz — startup/liveness, /readyz — readiness, /health — Dockerfile HEALTHCHECK compat.
 // Endpoint lambdas live in SchedulerHealthEndpoints so tests can call the same method

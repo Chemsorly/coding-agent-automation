@@ -47,7 +47,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | Metric | Type | Unit | Tags | Recorded by | Description |
 |--------|------|------|------|-------------|-------------|
 | `workdistribution.dispatch_latency_seconds` | Histogram | s | `agent_selector` | API | WorkItem creation (or original enqueue) → dispatched |
-| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error` |
+| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error`. `no_template` drives `WorkItemNoJobTemplate` (see [Alerts](#alerts)) |
 | `workdistribution.pod_start_seconds` | Histogram | s | — | API | Dispatched → the agent's first `GET /assignment` |
 | `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | API | Kiro credential PVCs, as last computed during dispatch. Only the API emits them |
 | `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | — | API | A dispatch found no free credential PVC |
@@ -152,14 +152,24 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `decomposition`, `decomposition_*` | `decomposition` |
 | anything else, empty, null (incl. `unknown` from older agents, and the triage phases `triage`, `triage_review`, `triage_refinement`, which `run_type=triage` already separates) | `other` |
 
-#### Counter pre-initialization
+#### Counting events exactly
 
-A Prometheus series that starts at 1 shows no `increase()`, so counters with closed tag sets are seeded with `Add(0)` at startup. `MetricPreInitialization.Run` builds the host's `MeterProvider` first — measurements made before a provider listens to a meter are dropped, so seeding straight after `builder.Build()` records nothing — then emits the zero series and flushes them.
+Counters are not seeded at startup. Seeding every closed-tag combination with `Add(0)` produced about 1,600 zero-value series per API replica and about 200 per Scheduler and Web replica. Every restart created them again under a new `service_instance_id`, and Grafana Cloud kept counting the old copies for 1–3 h, so the daily deploy pushed the stack over its in-memory series limit and metrics were dropped for hours. Do not add `Add(0)` seeding for new counters.
 
-- **API** (`Program.EmitPreInitCounters`): `pipeline.run.outcomes` (6 run types × 15 outcome/failure_reason combinations; `pipeline.project_name` is left out because it is unbounded), `pipeline.run.sub_issues`, `pipeline.run.brain_updates`, `pipeline.run.quality_gate.results`, `pipeline.run.ci.not_started_retriggers`, `pipeline.run.agent_stalls` (run type × phase × kind), the four per-phase usage counters (run type × phase × provider; `pipeline.run.agent_sessions` is seeded with `model="unknown"` only, because real model names are unbounded), `pipeline.run.token_usage`, `pipeline.run.billing_cost_usd`, `pipeline.run.agent_turns`, `pipeline.run.web_search_requests`, `pipeline.run.rate_limit_events` (`provider=claude`), and `workdistribution.dispatch.attempts`.
-- **API, Scheduler, Web** (`GitHubTelemetry.PreInitialize`): `github.api.requests` (operation × outcome) and `pipeline.pull_requests.closed`.
+`increase()` and `rate()` miss the first increment of a series that starts in a new process. To count events exactly, take each instance's maximum in the window minus its value at the window start, which is 0 for a series that started inside the window:
 
-Histograms and gauges are not pre-initialized.
+```promql
+sum by (outcome) (
+  max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range]))
+  - (
+    max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (last_over_time(pipeline_run_outcomes_total[6h] offset $__range))
+    or
+    max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range])) * 0
+  )
+)
+```
+
+The inner `max by (…, service_instance_id)` must list every tag of the counter. It only merges the copies of one instance that arrive with and without `k8s_*` labels.
 
 #### Histogram buckets
 
@@ -238,6 +248,22 @@ Stall kills and process deaths are also reported to the API, which records `pipe
 | Brain update rates | `increase(pipeline_run_brain_updates_total[24h])` |
 
 **Removed metrics.** `workdistribution.workitems_terminated` and `workdistribution.job_execution_duration_seconds` recorded the same transition as `pipeline.run.outcomes` / `pipeline.run.duration` and were removed; use the `pipeline.run.*` pair. The agent-side `quality_gate.*` (`retries`, `duration`, `evaluations`, `process.*`, `stall.*`, `external_ci.duration`, `post_pr_ci.duration`), `agent.heartbeat.failures`, `agent.reconnections`, `agent.signalr.failures` and `brain.push.retries` instruments were removed because agent pods export no metrics, so none of them ever reached Prometheus after issue #2980; `pipeline.run.quality_gate.results`, `pipeline.run.agent_stalls` and `pipeline.run.ci.wait` are the API-side replacements.
+
+### Alerts
+
+The Helm chart defines its alert rules in `helm/coding-agent-automation/templates/prometheusrules.yaml`. They render only when `monitoring.prometheusRules.enabled` is `true` (default `false`) and need the Prometheus Operator, which provides the `PrometheusRule` resource. A deployment that sends its metrics to Grafana Cloud and alerts there must create the same rules in Grafana Cloud: that is outside this repository.
+
+| Alert | Expression | For | Severity | Fires when |
+|-------|------------|-----|----------|------------|
+| `WorkItemNoJobTemplate` | `sum(increase(workdistribution_dispatch_attempts_total{reason="no_template"}[10m])) > 0` | 10m | `warning` | The dispatcher keeps deferring work because no job template matches an agent selector |
+
+**`WorkItemNoJobTemplate` covers the permanent no-template case.** A work item whose agent selector has no job template, neither directly nor through its agent profile, is deferred on every dispatch cycle and stays Pending. The templates come from `jobTemplates[]` in the Helm values and change only with a redeploy, so this does not clear by itself. It is not one of the transient dispatch failures (no free credential PVC, a Kubernetes error) that the next cycle retries without an alert; the rule fires only after the deferrals have gone on for 10 minutes. It needs no threshold and no zero baseline: the dispatcher retries every cycle, so the series keeps incrementing after it first appears, and `increase()` over the window sees that. It counts items the dispatcher attempts in a cycle.
+
+The counter has no selector label. The API logs `DispatchPendingWorkItem: no job template for selector <selector>` with the selector. To fix it, add a `jobTemplates[]` entry for that selector and redeploy, or change the agent profile (Settings → Label Routing → Agent Profiles) or the repository labels so the selector matches an existing template.
+
+**`WorkItemsPendingTooLong` only sees items that dispatch.** It is a quantile of `workdistribution_dispatch_latency_seconds`, which the API records when an item moves from Pending to Dispatched. An item that never dispatches never enters that histogram, so the alert cannot fire for it.
+
+**There is no pending-age alert.** A threshold on `workdistribution.pending.oldest_age_seconds` would fire on waits that are not a fault: the lowest dispatch tier can wait many hours and then dispatch. The `no_template` counter is the signal for the permanent case.
 
 ## Traces
 
@@ -475,15 +501,15 @@ See `.env.example` for a reference of available variables.
 
 ### Metrics
 
-Right after an API restart, the pre-initialized counters are visible at zero:
+After a run finishes, its outcome appears in `pipeline_run_outcomes_total`:
 
 ```promql
-count by (run_type) (pipeline_run_outcomes_total)
+count by (run_type, outcome) (pipeline_run_outcomes_total)
 ```
 
-Each run type should return at least 15 series (the pre-initialized ones; live series add `pipeline.project_name`). After a run finishes, `increase(pipeline_run_outcomes_total[1h])` shows it under its `outcome`.
+Right after a restart this returns nothing until the first run finishes, because counters are not seeded with zero series. For totals over a window, use the query in "Counting events exactly".
 
-`ApiTelemetryExportTests` (`tests/CodingAgent.Api.IntegrationTests`) checks the same in-process: it builds the real API host with an in-memory exporter and asserts that the pre-initialized series are exported and the noise spans are not.
+`ApiTelemetryExportTests` (`tests/CodingAgent.Api.IntegrationTests`) builds the real API host with an in-memory exporter and asserts that no counter series are exported before the first event and that the noise spans are not exported.
 
 ### Traces
 

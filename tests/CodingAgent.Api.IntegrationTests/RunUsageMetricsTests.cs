@@ -88,6 +88,11 @@ public sealed class RunUsageMetricsTests
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
+            // TODO [WARNING]: This zero filter existed only to skip the Add(0) startup seeding, which no longer
+            // exists. It now hides a reintroduced zero emission, so PhaseBreakdown_ZeroTokens_DoesNotEmitTokensCounter
+            // passes even if production emitted Add(0). Remove the filter here and in SetupDoubleListener below.
+            // The same dead filter is in PipelineRunOutcomeMetricsTests, WorkItemStatusTransitionServiceTests
+            // (Api.IntegrationTests) and PipelineRunStepAndRunMetricsTests (Pipeline.UnitTests).
             if (value == 0) return;
             bag.Add((value, tags.ToArray().ToDictionary(t => t.Key, t => t.Value)));
         });
@@ -112,6 +117,7 @@ public sealed class RunUsageMetricsTests
         };
         listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
         {
+            // TODO [WARNING]: Dead zero filter left over from the removed Add(0) seeding; see SetupLongListener.
             if (value == 0) return;
             bag.Add((value, tags.ToArray().ToDictionary(t => t.Key, t => t.Value)));
         });
@@ -321,75 +327,6 @@ public sealed class RunUsageMetricsTests
             CancellationToken.None, awaitTelemetry: true);
 
         tokensBag.Should().BeEmpty("zero tokens must not emit a counter increment");
-    }
-
-    [Fact]
-    public void PreInitCounters_IncludeAllRunUsageCounters()
-    {
-        var tokenSeries = new ConcurrentBag<(long Value, Dictionary<string, object?> Tags)>();
-        var sessionSeries = new ConcurrentBag<(long Value, Dictionary<string, object?> Tags)>();
-
-        using var listener = new MeterListener();
-        listener.InstrumentPublished = (instrument, l) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName
-                && (instrument.Name == "pipeline.run.tokens" || instrument.Name == "pipeline.run.agent_sessions"))
-                l.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
-        {
-            var tagDict = tags.ToArray().ToDictionary(t => t.Key, t => t.Value);
-            if (instrument.Name == "pipeline.run.tokens")
-                tokenSeries.Add((value, tagDict));
-            else if (instrument.Name == "pipeline.run.agent_sessions")
-                sessionSeries.Add((value, tagDict));
-        });
-        listener.Start();
-
-        Program.EmitPreInitCounters();
-
-        // 6 run_types × 10 phases × 4 providers = 240 series
-        tokenSeries.Should().HaveCount(240,
-            "6 run_types × 10 phases × 4 providers = 240 pre-init series for pipeline.run.tokens");
-
-        sessionSeries.Should().HaveCount(240,
-            "pipeline.run.agent_sessions: model='unknown' is fixed in pre-init, same 240 series");
-
-        // Verify all 10 phases are present
-        var phases = tokenSeries.Select(m => m.Tags.GetValueOrDefault("phase")?.ToString())
-            .Where(p => p is not null).Distinct().Order().ToList();
-        phases.Should().BeEquivalentTo(PipelineTelemetry.RunPhases.All);
-
-        // Verify all 4 providers are present
-        var providers = tokenSeries.Select(m => m.Tags.GetValueOrDefault("provider")?.ToString())
-            .Where(p => p is not null).Distinct().Order().ToList();
-        providers.Should().BeEquivalentTo(PipelineTelemetry.RunProviders.All);
-    }
-
-    [Fact]
-    public void PreInitCounters_IncludeUsageDetailCounters()
-    {
-        var counts = new ConcurrentDictionary<string, int>();
-        using var listener = new MeterListener();
-        listener.InstrumentPublished = (instrument, l) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName
-                && instrument.Name is "pipeline.run.token_usage" or "pipeline.run.agent_turns"
-                    or "pipeline.run.web_search_requests" or "pipeline.run.billing_cost_usd"
-                    or "pipeline.run.rate_limit_events")
-                l.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) => counts.AddOrUpdate(instrument.Name, 1, (_, c) => c + 1));
-        listener.SetMeasurementEventCallback<double>((instrument, _, _, _) => counts.AddOrUpdate(instrument.Name, 1, (_, c) => c + 1));
-        listener.Start();
-
-        Program.EmitPreInitCounters();
-
-        counts["pipeline.run.token_usage"].Should().Be(120, "6 run_types × 4 providers × 5 token types");
-        counts["pipeline.run.billing_cost_usd"].Should().Be(72, "6 run_types × 4 providers × 3 billing modes");
-        counts["pipeline.run.agent_turns"].Should().Be(24, "6 run_types × 4 providers");
-        counts["pipeline.run.web_search_requests"].Should().Be(24, "6 run_types × 4 providers");
-        counts["pipeline.run.rate_limit_events"].Should().Be(15, "claude × 5 windows × 3 statuses");
     }
 
     [Fact]
