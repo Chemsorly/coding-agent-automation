@@ -2,12 +2,11 @@
 @attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
 @layout CockpitLayout
 @implements IAsyncDisposable
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
-@inject IPipelineApiRunHistoryClient RunHistory
+@inject IUiRunClient RunHistory
 @inject CockpitState State
 
 @*

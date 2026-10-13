@@ -27,7 +27,7 @@ public class TriageSurroundingsComponentTests : BunitContext
                 Items = [ListItem(TriageStatus.NeedsReview, "Orders stuck", drafts: 2), ListItem(TriageStatus.NeedsInput, "Slow login")],
                 Total = 2,
             });
-        var history = new Mock<IPipelineApiRunHistoryClient>();
+        var history = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         history.Setup(h => h.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false });
         var state = new CockpitState();
@@ -35,7 +35,7 @@ public class TriageSurroundingsComponentTests : BunitContext
         Services.AddSingleton(triages.Object);
         Services.AddSingleton(history.Object);
         Services.AddSingleton(state);
-        Services.AddSingleton(new BlockedIssuesService(Mock.Of<IPipelineApiConfigClient>(), Mock.Of<IProviderFactory>(), Mock.Of<IDependencyChecker>()));
+        Services.AddSingleton(new BlockedIssuesService(Mock.Of<CodingAgent.Web.Ui.IUiBrowseClient>()));
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
         var cut = Render<Attention>();
@@ -51,8 +51,8 @@ public class TriageSurroundingsComponentTests : BunitContext
     public void RunPage_TriageRun_LinksItsTriage()
     {
         var runId = Guid.NewGuid();
-        var history = new Mock<IPipelineApiRunHistoryClient>();
-        history.Setup(h => h.GetRunAsync(runId, It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineRunSummary
+        var history = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        history.Setup(h => h.GetRunAsync(runId, It.IsAny<CancellationToken>())).ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(new PipelineRunSummary
         {
             RunId = runId.ToString(),
             IssueIdentifier = TriageConstants.IssueIdentifierFor(TriageId),
@@ -62,7 +62,7 @@ public class TriageSurroundingsComponentTests : BunitContext
             StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-10),
             CompletedAtOffset = DateTimeOffset.UtcNow,
             ProjectId = ShopProjectId,
-        });
+        }, null));
         var triages = new Mock<IPipelineApiTriageClient>();
         triages.Setup(t => t.FindByRunAsync(runId.ToString(), It.IsAny<CancellationToken>())).ReturnsAsync(TriageId);
         var hub = new Mock<IAgentHubConnection>();
@@ -72,10 +72,13 @@ public class TriageSurroundingsComponentTests : BunitContext
         Services.AddTestAccess();
         Services.AddSingleton(history.Object);
         Services.AddSingleton(triages.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiWorkItemClient>());
         Services.AddSingleton(hub.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiWorkItemClient>());
         Services.AddSingleton(config.Object);
-        Services.AddSingleton(Mock.Of<IConfigurationStore>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
+            c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>())
+                == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 

@@ -5,8 +5,8 @@
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
 @using Serilog
-@inject IPipelineApiConfigClient ConfigClient
-@inject IPipelineApiRunHistoryClient RunHistory
+@inject IUiConfigClient UiConfig
+@inject IUiRunClient RunHistory
 @inject IPipelineApiTriageClient Triages
 @inject CockpitState State
 @inject IFaroService Faro
@@ -190,7 +190,7 @@
 <ShortcutHelpOverlay IsVisible="_showShortcutHelp" OnClose="CloseShortcutHelp" />
 
 @code {
-    private IReadOnlyList<PipelineProject> _projects = [];
+    private IReadOnlyList<UiProject> _projects = [];
 
     // Spec 049: set once the access grant and (for scoped users) the project scope are known.
     private bool _accessReady;
@@ -233,7 +233,7 @@
 
         try
         {
-            _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+            _projects = await UiConfig.GetProjectsAsync(CancellationToken.None);
         }
         catch (Exception ex)
         {

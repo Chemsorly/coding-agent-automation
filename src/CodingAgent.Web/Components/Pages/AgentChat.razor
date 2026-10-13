@@ -2,30 +2,16 @@
 @attribute [Authorize(Policy = AccessPolicies.AnyOperator)]
 @layout CockpitLayout
 @implements IAsyncDisposable
-@using CodingAgent.Pipeline
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
-@using CodingAgent.Pipeline.Services
-@using CodingAgent.Orchestration
-@using CodingAgent.Orchestration.Dispatch
-@using CodingAgent.Kubernetes
-@using CodingAgent.Orchestration.Health
-@using CodingAgent.Web.Services
 @using CodingAgent.Api.Client
-@using CodingAgent.Infrastructure.Common
-@using Microsoft.Extensions.Configuration
 @using Microsoft.AspNetCore.SignalR.Client
 @using Serilog
-@inject IConfigurationStore ConfigStore
-@inject IPipelineApiAgentClient AgentClient
+@inject IUiChatClient Chat
+@inject IUiConfigClient UiConfig
 @inject IJSRuntime JS
-@inject IChatJobDispatcher ChatDispatcher
-@inject JobTemplateStore? TemplateStore
-@inject IConfiguration Configuration
 @inject IAgentHubConnection HubConnection
-@inject IChatPromptBuilder ChatPromptBuilder
 @inject CurrentAccess Access
-@inject IAccessGuard Guard
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
 
@@ -152,13 +138,7 @@
     private bool _isWaitingForResponse;
     private string _currentPrompt = "";
     private string? _activeSessionId;
-    private bool _isFirstPrompt = true;
-    private AgentProfile? _resolvedProfile;
-    private string _resolvedMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
     private string _resolvedModel = "auto";
-
-    // Per-chat-window stable ID (generated once in StartChat, included in every prompt)
-    private string _chatWindowId = "";
 
     // ── Hub event subscriptions ──────────────────────────────────────────────
     private IDisposable? _chatResponseSub;
@@ -167,19 +147,18 @@
     private Func<string?, Task>? _reconnectedHandler;
 
     // ── Project context (optional) ───────────────────────────────────────────
-    private IReadOnlyList<PipelineProject> _projects = [];
+    private IReadOnlyList<UiProject> _projects = [];
     private string _selectedProjectId = "";  // empty = no project selected
-    private PipelineProject? _selectedProject;
+    private UiProject? _selectedProject;
 
     private readonly List<ChatMessage> _messages = new();
     private readonly System.Text.StringBuilder _streamingContent = new();
     private ElementReference _messagesContainer;
 
     // ── K8s-mode state ───────────────────────────────────────────────────────
-    // Profiles a chat can be launched for: enabled, and their labels name a job template — the same
-    // profile → template lookup pipeline dispatch uses. The profile also supplies model, effort,
-    // auth mode and MCP servers, so a template without a profile is never offered.
-    private IReadOnlyList<AgentProfile> _chatProfiles = [];
+    // Profiles a chat can be launched for, from the API: enabled, and their labels name a job
+    // template. The API takes the model, effort, auth mode and MCP servers from the profile.
+    private IReadOnlyList<UiChatProfile> _chatProfiles = [];
     private bool _profilesLoaded;
     private string _selectedProfileId = "";
     private bool _launching;
@@ -191,34 +170,32 @@
     // knows the circuit is still live and doesn't idle-kill the pod.
     private System.Threading.Timer? _keepaliveTimer;
 
-    // Connect-timeout shown in the counter — read from config in OnInitialized.
+    // Connect-timeout shown in the counter — the API's, loaded with the profiles.
     private int _options_connectTimeout = 120;
-
-    protected override void OnInitialized()
-    {
-        _options_connectTimeout = Configuration.GetValue<int>(
-            "WorkDistribution:Dispatch:ChatPodConnectTimeoutSeconds", 120);
-    }
 
     protected override async Task OnInitializedAsync()
     {
-        // A profile without labels is skipped: a chat pod needs a non-empty selector.
-        var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
-        _chatProfiles = profiles
-            .Where(p => p.Enabled && p.MatchLabels.Count > 0
-                && TemplateStore?.Resolve(AgentSelectorKey.From(p.MatchLabels)) is not null)
-            .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        _profilesLoaded = true;
+        try
+        {
+            var options = await Chat.GetOptionsAsync();
+            _chatProfiles = options.Profiles;
+            _options_connectTimeout = options.ConnectTimeoutSeconds;
+            _profilesLoaded = true;
 
-        // Load available projects for the optional project context dropdown.
-        // Runs after OnInitialized so the synchronous setup completes first.
-        // Spec 049 (D13): a chat runs with its project's MCP servers and secrets, so only projects
-        // the user operates are offered; without a global role a project is mandatory.
-        _projects = (await ConfigStore.LoadProjectsAsync(CancellationToken.None))
-            .Where(p => Access.CanOperate(p.Id))
-            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            // Load available projects for the optional project context dropdown.
+            // Spec 049 (D13): a chat runs with its project's MCP servers and secrets, so only projects
+            // the user operates are offered; without a global role a project is mandatory.
+            _projects = (await UiConfig.GetProjectsAsync())
+                .Where(p => Access.CanOperate(p.Id))
+                .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            // The page still renders; nothing can be launched until a reload succeeds.
+            Log.Warning(ex, "AgentChat: failed to load the chat profiles or projects");
+            _launchError = "Could not load the agent profiles and projects. Reload the page.";
+        }
         if (!Access.HasGlobalOperate && _projects.Count > 0)
         {
             _selectedProjectId = _projects[0].Id;
@@ -314,26 +291,25 @@
 
         try
         {
-            // The selected project comes from the browser; _selectedProject only holds an operable one.
-            await Guard.DemandAsync(AccessRole.Operator, _selectedProject?.Id, "LaunchChatPod");
-            var profile = await ResolvePodLaunchProfileAsync();
-
-            var agentId = await ChatDispatcher.DispatchChatPodAsync(
-                AgentSelectorKey.From(profile.MatchLabels), _resolvedPodModel, _resolvedPodEffort, _cts.Token);
-
-            _selectedAgentId = agentId;
+            // The API checks operator on the project, resolves the profile and waits for the pod.
+            var session = await Chat.StartAsync(_selectedProfileId, _selectedProject?.Id, _cts.Token);
+            _selectedAgentId = session.AgentId;
+            _resolvedModel = session.Model;
             await StartChat();
         }
-        catch (AccessDeniedException)
+        catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
         {
-            _launchError = AccessDeniedException.UserMessage;
+            _launchError = "Launch cancelled.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Refused, or the pod could not be started: the API's reason.
+            _launchError = ex.Message;
         }
         catch (Exception ex)
         {
-            var classified = ClassifyLaunchError(ex);
-            _launchError = classified ?? $"Launch failed: {ex.Message}";
-            if (classified is null)
-                Log.Warning(ex, "AgentChat: unexpected error launching chat pod");
+            _launchError = $"Launch failed: {ex.Message}";
+            Log.Warning(ex, "AgentChat: unexpected error launching chat pod");
         }
         finally
         {
@@ -343,86 +319,15 @@
         }
     }
 
-    // Transient fields set by ResolvePodLaunchProfileAsync for use in LaunchChatPod
-    private string? _resolvedPodModel;
-    private string? _resolvedPodEffort;
-    // Claude Code credential mode from the agent provider config, sent with every chat prompt.
-    private string? _resolvedAuthMode;
-
-    private async Task<AgentProfile> ResolvePodLaunchProfileAsync()
-    {
-        _resolvedPodModel = null;
-        _resolvedPodEffort = null;
-        _resolvedAuthMode = null;
-        // Reset to safe default so stale state from a previous session never leaks into this one.
-        // Mirrors the _resolvedPodModel = null / _resolvedPodEffort = null pattern above.
-        _resolvedMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
-
-        var profile = _chatProfiles.FirstOrDefault(p => p.Id == _selectedProfileId)
-            ?? throw new InvalidOperationException("The selected agent profile is no longer available. Reload the page.");
-        _resolvedProfile = profile;
-
-        // A launch with defaults would silently drop the profile's model, effort and auth mode.
-        var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
-                profile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None)
-            ?? throw new InvalidOperationException(
-                $"Agent profile '{profile.DisplayName}' points to an agent provider config that does not exist. " +
-                "Fix it in Settings → Label Routing → Agent Profiles.");
-
-        _resolvedPodModel = agentConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
-        _resolvedPodEffort = agentConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Effort);
-        _resolvedAuthMode = agentConfig.Settings.GetValueOrDefault(ProviderSettingKeys.AuthMode);
-        _resolvedModel = _resolvedPodModel ?? "auto";
-
-        if (agentConfig.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path)
-            && !string.IsNullOrWhiteSpace(path))
-        {
-            _resolvedMcpConfigPath = path;
-        }
-        else
-        {
-            // Derive the default MCP config path from the provider type.
-            // ToLowerInvariant() is load-bearing: ProviderConfig.ProviderType is stored as
-            // "OpenCode" (PascalCase) by the UI, so normalisation is required for the match.
-            // This mirrors OpenCodeAgentProvider.McpConfigPath / KiroCliAgentProvider.McpConfigPath
-            // which WriteMcpConfigStep already uses correctly in the pipeline job path.
-            // Without a provider type the switch falls back to the Kiro path, which leaves an
-            // OpenCode or Claude pod without its MCP servers, so say so in the log.
-            if (string.IsNullOrWhiteSpace(agentConfig.ProviderType))
-                Log.Warning("AgentChat: agent provider config {ProviderConfig} has no provider type; using the Kiro MCP config path",
-                    LogSanitizer.SanitizeForLog(agentConfig.DisplayName));
-            _resolvedMcpConfigPath = agentConfig.ProviderType?.ToLowerInvariant() switch
-            {
-                "opencode" => "/home/ubuntu/.opencode/opencode.json",
-                "claudecode" => AgentDefaults.ClaudeMcpConfigPath,
-                _ => "/home/ubuntu/.kiro/settings/mcp.json"
-            };
-        }
-
-        return profile;
-    }
-
-    private string? ClassifyLaunchError(Exception ex) => ex switch
-    {
-        OperationCanceledException when _cts?.IsCancellationRequested == true => "Launch cancelled.",
-        NoPvcAvailableException => "No agent credentials available. Try again later.",
-        ChatPodTimeoutException tEx when tEx.TimeoutSeconds > 0 => $"Pod did not connect within {tEx.TimeoutSeconds}s. Check cluster logs.",
-        ChatPodTimeoutException => "Pod did not connect in time. Check cluster logs.",
-        _ => null // caller logs unexpected
-    };
-
     // ── StartChat (K8s mode) ──────────────────────────────────────────────────
 
     private async Task StartChat()
     {
         // _selectedAgentId is always set by LaunchChatPod before this is called —
         // the guard that was here was a SignalR-era remnant and is unreachable.
-
-        // Generate a stable chat window ID for this session
-        _chatWindowId = Guid.NewGuid().ToString();
+        // The API keeps the chat window ID and whether a prompt was sent yet.
 
         _isChatActive = true;
-        _isFirstPrompt = true;
         _messages.Clear();
         _streamingContent.Clear();
 
@@ -459,12 +364,12 @@
         // is still open. Interval is 30s — well within the 90s default idle timeout.
         // The timer captures _selectedAgentId by value at creation time; if the field ever
         // changes (it doesn't in the current flow) the timer would send to the old agent,
-        // which is harmless (server no-ops unknown agentIds).
+        // which the API answers with 404, logged and ignored.
         var agentIdForKeepalive = _selectedAgentId;
         _keepaliveTimer = new System.Threading.Timer(_ =>
         {
             if (!string.IsNullOrEmpty(agentIdForKeepalive))
-                ChatDispatcher.SendClientKeepalive(agentIdForKeepalive);
+                _ = SendKeepaliveAsync(agentIdForKeepalive);
         }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
         // Re-join the chat session group after every hub reconnect so in-flight responses
@@ -511,7 +416,6 @@
             await UnsubscribePreviousSessionAsync();
             _activeSessionId = Guid.NewGuid().ToString();
             await SubscribeAndSendPromptAsync(prompt);
-            _isFirstPrompt = false;
         }
         catch (Exception ex)
         {
@@ -520,7 +424,7 @@
             _messages.Add(new ChatMessage
             {
                 Role = ChatRole.System,
-                Content = ex is AccessDeniedException ? $"❌ {AccessDeniedException.UserMessage}" : $"❌ Failed to send prompt: {ex.Message}",
+                Content = $"❌ Failed to send prompt: {ex.Message}",
                 Timestamp = DateTime.UtcNow
             });
             _isWaitingForResponse = false;
@@ -539,23 +443,21 @@
 
     private async Task SubscribeAndSendPromptAsync(string prompt)
     {
-        await Guard.DemandAsync(AccessRole.Operator, _selectedProject?.Id, "SendChatPrompt");
-        // Agent existence validated server-side; 404/409 surfaces as HttpRequestException.
-        var message = ChatPromptBuilder.Build(new ChatPromptParameters(
-            SessionId: _activeSessionId ?? throw new InvalidOperationException("_activeSessionId must be set before calling SubscribeAndSendPromptAsync"),
-            Prompt: prompt,
-            IsFirstPrompt: _isFirstPrompt,
-            ChatWindowId: _chatWindowId,
-            ResolvedProfile: _resolvedProfile,
-            SelectedProject: _selectedProject,
-            ResolvedMcpConfigPath: _resolvedMcpConfigPath,
-            ResolvedAuthMode: _resolvedAuthMode
-        ));
+        var sessionId = _activeSessionId ?? throw new InvalidOperationException("_activeSessionId must be set before calling SubscribeAndSendPromptAsync");
 
         if (HubConnection.State == HubConnectionState.Connected)
-            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None);
+            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChatSession, sessionId, CancellationToken.None);
 
-        await AgentClient.AssignChatPromptAsync(_selectedAgentId, message, CancellationToken.None);
+        // The API builds the prompt (MCP servers, secrets, steering) and checks the chat is ours;
+        // a refusal surfaces as InvalidOperationException with the reason.
+        await Chat.SendPromptAsync(_selectedAgentId, sessionId, prompt);
+    }
+
+    // Best effort: a missed keepalive only shortens the idle window, and the next follows in 30s.
+    private async Task SendKeepaliveAsync(string agentId)
+    {
+        try { await Chat.KeepaliveAsync(agentId); }
+        catch (Exception ex) { Log.Debug(ex, "AgentChat: keepalive failed for agent {AgentId}", agentId); }
     }
 
     private async Task UnsubscribeCurrentSessionOnErrorAsync()
@@ -596,7 +498,6 @@
         _activeSessionId = null;
         _messages.Clear();
         _streamingContent.Clear();
-        _isFirstPrompt = true;
     }
 
     private async Task EndChatK8sModeAsync()
@@ -606,11 +507,11 @@
         {
             try
             {
-                await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
+                await Chat.TerminateAsync(_selectedAgentId);
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed for agent {AgentId}", _selectedAgentId);
+                Log.Warning(ex, "AgentChat: ending the chat failed for agent {AgentId}", _selectedAgentId);
             }
         }
     }
@@ -682,11 +583,11 @@
         // K8s mode: terminate the pod regardless of _isWaitingForResponse
         try
         {
-            await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
+            await Chat.TerminateAsync(_selectedAgentId);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed on dispose for agent {AgentId}", _selectedAgentId);
+            Log.Warning(ex, "AgentChat: ending the chat failed on dispose for agent {AgentId}", _selectedAgentId);
         }
     }
 

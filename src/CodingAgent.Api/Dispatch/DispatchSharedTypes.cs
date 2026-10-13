@@ -35,20 +35,7 @@ internal sealed record DispatchLifecycleContext(
     bool IsKiro,
     List<string> AvailablePvcs,
     Dictionary<string, int> ConcurrencyBySelector,
-    string LogPrefix)
-{
-    /// <summary>
-    /// The status the WorkItem is expected to have when loaded from the database.
-    /// The lifecycle aborts if the loaded status differs (race-condition guard).
-    /// <para>
-    /// <see cref="WorkItemStatus.Pending"/> (default) is used by the consolidation dispatch path,
-    /// which creates items as Pending and relies on <c>ClaimWorkItem</c> to transition them.
-    /// <see cref="WorkItemStatus.Dispatched"/> is used by the synchronous dispatch endpoint
-    /// (POST /api/work-items/dispatch, issue #2322), which creates items directly as Dispatched.
-    /// </para>
-    /// </summary>
-    public WorkItemStatus ExpectedInitialStatus { get; init; } = WorkItemStatus.Pending;
-}
+    string LogPrefix);
 
 /// <summary>
 /// Discriminated outcome returned by
@@ -62,15 +49,11 @@ internal enum DispatchInterpretOutcome
     /// <summary>
     /// Success result — <c>DispatchPendingWorkItemAsync</c>
     /// emits <c>RecordDispatchAttempt("dispatched","none")</c> and returns the structured success body.
-    /// On the <c>DispatchWorkItem</c> path, also used for a 409 pass-through
-    /// (rewriteConcurrencyLimitAsDeferred=false).
     /// </summary>
     PassThrough,
 
     /// <summary>
     /// A 409 Conflict was rewritten to 200 DispatchPendingResponse(false,"concurrency_limit").
-    /// Only set when <c>rewriteConcurrencyLimitAsDeferred=true</c>
-    /// (<c>DispatchPendingWorkItemAsync</c> path).
     /// </summary>
     ConcurrencyLimitRewritten,
 

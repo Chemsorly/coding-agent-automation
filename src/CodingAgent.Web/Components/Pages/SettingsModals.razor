@@ -1,5 +1,4 @@
 @using CodingAgent.Pipeline
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
 
@@ -73,8 +72,8 @@
 }
 
 @code {
-    [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
-    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    // Spec 051 2.1c: labels and related providers are set up by the API, with the stored credentials.
+    [Parameter, EditorRequired] public IUiProviderClient ProviderClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public List<ProviderConfig> IssueProviders { get; set; } = new();
     [Parameter] public List<ProviderConfig> RepoProviders { get; set; } = new();
     [Parameter] public List<ProviderConfig> PipelineProviders { get; set; } = new();
@@ -96,6 +95,7 @@
     private string _relatedModalBaseBranch = "main";
     private List<RelatedProviderItem> _relatedModalItems = new();
     private Dictionary<string, string> _relatedModalSharedSettings = new();
+    private (string Id, ProviderKind Kind) _relatedModalSource;
     private string? _relatedModalStatus;
     private bool _relatedModalIsError;
     private bool _relatedModalSaving;
@@ -118,6 +118,7 @@
         if (savedConfig.ProviderType != "GitHub" && savedConfig.ProviderType != "GitLab") return;
 
         _relatedModalProviderType = savedConfig.ProviderType;
+        _relatedModalSource = (savedConfig.Id, savedConfig.Kind);
         var sourceKind = savedConfig.Kind;
         var targetKinds = new[] { ProviderKind.Issue, ProviderKind.Repository, ProviderKind.Pipeline }
             .Where(k => k != sourceKind).ToList();
@@ -196,8 +197,7 @@
 
         try
         {
-            await using var provider = ProviderFactory.CreateIssueProvider(_configureLabelsProviderConfig);
-            var success = await provider.EnsureAgentLabelsAsync(CancellationToken.None);
+            var success = await ProviderClient.EnsureAgentLabelsAsync(_configureLabelsProviderConfig.Id, CancellationToken.None);
             _configureLabelsStatus = success
                 ? "Agent labels configured successfully."
                 : "Some labels could not be created. Check app permissions.";
@@ -263,7 +263,8 @@
                     Settings = settings
                 };
 
-                await ConfigClient.SaveProviderConfigAsync(config, CancellationToken.None);
+                // The shared settings carry the source provider's credentials, masked; the API copies the real ones.
+                await ProviderClient.CopyProviderConfigAsync(config, _relatedModalSource.Id, _relatedModalSource.Kind, CancellationToken.None);
                 item.Selected = false;
                 created++;
             }

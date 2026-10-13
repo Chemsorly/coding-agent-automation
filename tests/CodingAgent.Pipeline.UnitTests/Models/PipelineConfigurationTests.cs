@@ -69,6 +69,7 @@ public class PipelineConfigurationTests
             AnalysisCommitThreshold = 50,
             BrainReadOnly = true,
             ClosedLoopAutoStart = true,
+            LoopResumeRequestedAt = new DateTimeOffset(2026, 10, 13, 12, 0, 0, TimeSpan.Zero),
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
             ClosedLoopMaxRunsPerCycle = 5,
             ClosedLoopMaxConsecutivePollFailures = 10,
@@ -125,7 +126,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(64,
+        keyPropertyCount.Should().Be(65,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }

@@ -42,8 +42,7 @@ internal sealed class DispatchLifecycleService : IDisposable
     }
 
     /// <summary>
-    /// Returns the configured Kiro PVC pool. Used by <c>POST /api/work-items/dispatch</c> to
-    /// check PVC availability before creating the WorkItem.
+    /// Returns the configured Kiro PVC pool, for the PVC availability check before a dispatch.
     /// </summary>
     public IReadOnlyList<string> GetPvcPool() => _options.KiroPvcPool;
 
@@ -118,7 +117,8 @@ internal sealed class DispatchLifecycleService : IDisposable
         try
         {
             workItem = await db.WorkItems.FindAsync([item.Id], ct);
-            if (workItem is null || workItem.Status != ctx.ExpectedInitialStatus)
+            // Every dispatch claims a Pending item; any other status means another process got there first.
+            if (workItem is null || workItem.Status != WorkItemStatus.Pending)
             {
                 // Item was modified by another process
                 ReleaseClaimedPvc(claimedPvc, availablePvcs);
@@ -501,7 +501,7 @@ internal sealed class DispatchLifecycleService : IDisposable
 
     /// <summary>
     /// Clears the change tracker, re-fetches the WorkItem, and checks for race conditions.
-    /// If the WorkItem is no longer in <see cref="DispatchLifecycleContext.ExpectedInitialStatus"/>, releases the PVC
+    /// If the WorkItem is no longer Pending, releases the PVC
     /// and deletes the orphaned K8s Job.
     /// Returns (true, reloadedWorkItem) if the caller should continue, or (false, null) if the caller
     /// should return early due to a detected race condition.
@@ -516,7 +516,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         var workItemId = ctx.Item.Id;
         var availablePvcs = ctx.AvailablePvcs;
         var logPrefix = ctx.LogPrefix;
-        var expectedStatus = ctx.ExpectedInitialStatus;
+        const WorkItemStatus expectedStatus = WorkItemStatus.Pending;
         db.ChangeTracker.Clear();
         var workItem = await db.WorkItems.FindAsync([workItemId], ct);
         if (workItem is null || workItem.Status != expectedStatus)

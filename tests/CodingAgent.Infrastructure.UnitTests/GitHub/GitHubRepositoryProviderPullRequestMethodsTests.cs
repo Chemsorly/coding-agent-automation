@@ -242,6 +242,51 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
         result.Items.Should().BeEmpty("a PR whose detail returns state=closed must be filtered out");
     }
 
+    // ── GetOpenPullRequestAsync ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetOpenPullRequestAsync_OpenPr_ReturnsItsSummary()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/12"),
+            BuildDetailedPR(12, "feature/review-me", draft: true, body: "Closes #3"));
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetOpenPullRequestAsync(12, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Number.Should().Be(12);
+        result.Identifier.Should().Be("12");
+        result.BranchName.Should().Be("feature/review-me");
+        result.TargetBranch.Should().Be("main");
+        result.Description.Should().Be("Closes #3");
+        result.Url.Should().Be($"https://github.com/{Owner}/{Repo}/pull/12");
+        result.Author.Should().Be("testuser");
+        result.IsDraft.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetOpenPullRequestAsync_ClosedPr_ReturnsNull()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/13"),
+            BuildDetailedPR(13, "feature/done", draft: false, state: "closed"));
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetOpenPullRequestAsync(13, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetOpenPullRequestAsync_On404_ReturnsNull()
+    {
+        StubError(ApiPath($"/repos/{Owner}/{Repo}/pulls/999"), 404, new { message = "Not Found" });
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetOpenPullRequestAsync(999, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
     // ── AddPrLabelAsync ───────────────────────────────────────────────────────
 
     [Fact]

@@ -108,11 +108,11 @@ public class AgentCodingPageServiceTests
         // initialization. A regression in PropagateProviderContext (wrong list, missing call) would not
         // be detected here. Dedicated integration-style tests using concrete drawer service instances
         // would be needed to validate end-to-end provider context propagation.
-        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { MakeProvider("ip-1") });
-        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { MakeProvider("rp-1", ProviderKind.Repository) });
-        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { MaxRetries = 5 });
@@ -139,7 +139,7 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task InitializeAsync_ReturnsError_WhenExceptionThrown()
     {
-        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("connection failed"));
 
         var error = await _service.InitializeAsync();
@@ -359,7 +359,6 @@ public class AgentCodingPageServiceTests
         _mockConfigClient.Verify(s => s.MoveTemplateAsync(
             It.Is<ProjectId>(p => p.Value == "proj-src"), It.Is<ProjectId>(p => p.Value == "proj-tgt"), "t-1", It.IsAny<CancellationToken>()),
             Times.Once);
-        _mockConfigClient.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -491,7 +490,7 @@ public class AgentCodingPageServiceTests
         _service.Templates.Add(template);
 
         _mockEpicDrawerService
-            .Setup(s => s.OpenEpicDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<IReadOnlyList<PipelineProject>>(), It.IsAny<Func<Task>?>()))
+            .Setup(s => s.OpenEpicDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<Func<Task>?>()))
             .ReturnsAsync((string?)null);
 
         await _service.OpenEpicDrawerAsync("t-1");
@@ -604,26 +603,14 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
-    public async Task IsIssueDistributedAsync_DelegatesToIssueDrawerService()
-    {
-        _mockIssueDrawerService.Setup(s => s.IsIssueDistributedAsync((IssueIdentifier)"42", (ProviderConfigId)"ip-1"))
-            .ReturnsAsync(true);
-
-        var result = await _service.IsIssueDistributedAsync("42", "ip-1");
-
-        Assert.True(result);
-        _mockIssueDrawerService.Verify(s => s.IsIssueDistributedAsync((IssueIdentifier)"42", (ProviderConfigId)"ip-1"), Times.Once);
-    }
-
-    [Fact]
     public async Task RefreshActiveIssuesAsync_DelegatesToIssueDrawerService()
     {
-        _mockIssueDrawerService.Setup(s => s.RefreshActiveIssuesAsync())
+        _mockIssueDrawerService.Setup(s => s.RefreshActiveIssuesAsync("t-1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        await _service.RefreshActiveIssuesAsync();
+        await _service.RefreshActiveIssuesAsync("t-1");
 
-        _mockIssueDrawerService.Verify(s => s.RefreshActiveIssuesAsync(), Times.Once);
+        _mockIssueDrawerService.Verify(s => s.RefreshActiveIssuesAsync("t-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -657,7 +644,7 @@ public class AgentCodingPageServiceTests
         IReadOnlyList<PipelineProject>? projects = null,
         IReadOnlyList<PipelineJobTemplate>? templates = null)
     {
-        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
@@ -681,7 +668,7 @@ public class AgentCodingPageServiceTests
     /// <summary>Project P owns template t-p, project Q owns t-q.</summary>
     private void SetupTwoProjects()
     {
-        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
@@ -762,7 +749,7 @@ public class AgentCodingPageServiceTests
     {
         SetupTwoProjects();
         _mockIssueDrawerService
-            .Setup(s => s.DispatchFromIssueDrawerAsync(It.IsAny<IssueSummary>(), It.IsAny<List<ProviderConfig>>(), It.IsAny<List<ProviderConfig>>(), It.IsAny<PipelineProject?>()))
+            .Setup(s => s.DispatchFromIssueDrawerAsync(It.IsAny<IssueSummary>()))
             .ReturnsAsync((true, null, "dispatched"));
         var service = CreateService(TestAccess.Scoped((AccessProjectP, role)));
         await service.InitializeAsync();

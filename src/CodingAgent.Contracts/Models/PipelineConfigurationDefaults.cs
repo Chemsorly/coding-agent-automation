@@ -30,11 +30,13 @@ public static class PipelineConfigurationDefaults
     /// <summary>
     /// Well-known ID for the default reviewer configuration.
     /// Used by the reset-to-defaults feature to identify/replace the factory configuration.
+    /// A GUID, because the store keys reviewer configs by GUID: the former "default-reviewers" could
+    /// not be saved or deleted after a reset.
     /// </summary>
-    public const string DefaultReviewerConfigurationId = "default-reviewers";
+    public const string DefaultReviewerConfigurationId = "d3fa0175-0000-4000-8000-000000000001";
 
-    /// <summary>Well-known ID for the default .NET reviewer configuration.</summary>
-    public const string DefaultDotNetReviewerConfigurationId = "dotnet-reviewers";
+    /// <summary>Well-known ID for the default .NET reviewer configuration (a GUID, see <see cref="DefaultReviewerConfigurationId"/>).</summary>
+    public const string DefaultDotNetReviewerConfigurationId = "d3fa0175-0000-4000-8000-000000000002";
 
     /// <summary>
     /// Factory-default reviewer configurations: the stack-agnostic reviewers for every repository, and the

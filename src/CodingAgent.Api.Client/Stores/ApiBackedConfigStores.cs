@@ -80,17 +80,11 @@ public sealed class ApiProviderConfigStore : IProviderConfigStore
         return all.FirstOrDefault(p => p.Id == id);
     }
 
-    public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
-    {
-        await _client.SaveProviderConfigAsync(config, ct);
-        lock (_cacheLock) _providerCache.Clear();
-    }
+    public Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
+        => SettingsWrites.NotHere("Saving a provider config");
 
-    public async Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
-    {
-        await _client.DeleteProviderConfigAsync(id, kind, ct);
-        lock (_cacheLock) _providerCache.Clear();
-    }
+    public Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
+        => SettingsWrites.NotHere("Deleting a provider config");
 }
 
 /// <summary>
@@ -189,17 +183,11 @@ public sealed class ApiProjectStore : IProjectStore
     public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
         => await _client.GetProjectByIdAsync(id, ct);
 
-    public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
-    {
-        await _client.SaveProjectAsync(project, ct);
-        lock (_cacheLock) { _projectsCache.Clear(); }
-    }
+    public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
+        => SettingsWrites.NotHere("Saving a project");
 
-    public async Task DeleteProjectAsync(string id, CancellationToken ct)
-    {
-        await _client.DeleteProjectAsync(id, ct);
-        lock (_cacheLock) { _projectsCache.Clear(); }
-    }
+    public Task DeleteProjectAsync(string id, CancellationToken ct)
+        => SettingsWrites.NotHere("Deleting a project");
 
     public async Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
         => await _client.GetTemplatesForProjectAsync(projectId, ct);
@@ -229,8 +217,8 @@ public sealed class ApiProjectStore : IProjectStore
         }
     }
 
-    public async Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
-        => await _client.HasEnabledTemplatesAsync(ct);
+    public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
+        => SettingsWrites.NotHere<bool>("The first-run check");
 
     private Task<T> LoadCachedAsync<T>(TtlCache<T> cache, Func<CancellationToken, Task<T>> fetch, CancellationToken ct)
         where T : class => cache.LoadAsync(_cacheLock, () => CacheTtlSeconds, fetch, ct);
@@ -322,33 +310,33 @@ public sealed class ApiConfigurationStore : IConfigurationStore
         => LoadCachedAsync(_profiles, _client.GetAgentProfilesAsync, ct);
 
     public Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
-        => WriteThenInvalidateAsync(_client.SaveAgentProfileAsync(profile, ct), _profiles);
+        => SettingsWrites.NotHere("Saving an agent profile");
 
     public Task DeleteAgentProfileAsync(string id, CancellationToken ct)
-        => WriteThenInvalidateAsync(_client.DeleteAgentProfileAsync(id, ct), _profiles);
+        => SettingsWrites.NotHere("Deleting an agent profile");
 
     // ── IQualityGateConfigStore ──────────────────────────────────────────
     public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
         => LoadCachedAsync(_qualityGates, _client.GetQualityGateConfigsAsync, ct);
 
     public Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
-        => WriteThenInvalidateAsync(_client.SaveQualityGateConfigAsync(config, ct), _qualityGates);
+        => SettingsWrites.NotHere("Saving a quality gate config");
 
     public Task DeleteQualityGateConfigAsync(string id, CancellationToken ct)
-        => WriteThenInvalidateAsync(_client.DeleteQualityGateConfigAsync(id, ct), _qualityGates);
+        => SettingsWrites.NotHere("Deleting a quality gate config");
 
     // ── IReviewerConfigStore ─────────────────────────────────────────────
     public Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
         => LoadCachedAsync(_reviewers, _client.GetReviewerConfigsAsync, ct);
 
     public Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
-        => WriteThenInvalidateAsync(_client.SaveReviewerConfigAsync(config, ct), _reviewers);
+        => SettingsWrites.NotHere("Saving a reviewer config");
 
     public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
-        => WriteThenInvalidateAsync(_client.DeleteReviewerConfigAsync(id, ct), _reviewers);
+        => SettingsWrites.NotHere("Deleting a reviewer config");
 
     public Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct)
-        => WriteThenInvalidateAsync(_client.ResetReviewerConfigsToDefaultAsync(ct), _reviewers);
+        => SettingsWrites.NotHere("Resetting the reviewer configs");
 
     // ── IProjectStore ────────────────────────────────────────────────────
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
@@ -385,12 +373,6 @@ public sealed class ApiConfigurationStore : IConfigurationStore
 
     private Task<T> LoadCachedAsync<T>(TtlCache<T> cache, Func<CancellationToken, Task<T>> fetch, CancellationToken ct)
         where T : class => cache.LoadAsync(_cacheLock, () => CacheTtlSeconds, fetch, ct);
-
-    private async Task WriteThenInvalidateAsync<T>(Task write, TtlCache<T> cache) where T : class
-    {
-        await write;
-        lock (_cacheLock) cache.Clear();
-    }
 }
 
 /// <summary>

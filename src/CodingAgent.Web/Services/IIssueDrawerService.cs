@@ -26,12 +26,8 @@ public interface IIssueDrawerService
 
     // ── Dispatch ──
 
-    Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(
-        IssueSummary issue,
-        PipelineJobTemplate template,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+    /// <summary>Dispatches the issue of the template through the API; the error or success message is shown as it is.</summary>
+    Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(IssueSummary issue, PipelineJobTemplate template);
 
     // ── Drawer orchestration ──
 
@@ -47,18 +43,13 @@ public interface IIssueDrawerService
         IReadOnlyList<PipelineJobTemplate> templates,
         Func<Task>? notifyStateChanged = null);
 
-    Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(
-        IssueSummary issue,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+    Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue);
 
     // ── Active issues ──
 
-    Task RefreshActiveIssuesAsync();
+    Task RefreshActiveIssuesAsync(TemplateId templateId, CancellationToken ct = default);
     bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
     WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
-    Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
 
     // ── Cross-drawer coordination ──
 

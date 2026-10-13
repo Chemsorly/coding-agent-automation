@@ -14,6 +14,7 @@ public class SettingsDocumentationTests
     private static readonly string[] InternalSettings =
     [
         nameof(PipelineConfiguration.ClosedLoopAutoStart),
+        nameof(PipelineConfiguration.LoopResumeRequestedAt),
         nameof(PipelineConfiguration.PipelineInjectedPaths),
         nameof(PipelineConfiguration.TransientRetryDelay),
         nameof(PipelineConfiguration.WorkspaceBaseDirectory),

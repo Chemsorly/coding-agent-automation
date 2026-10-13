@@ -17,7 +17,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class KnowledgePageTests : BunitContext
 {
-    private readonly Mock<IPipelineApiRunHistoryClient> _mockHistory = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiRunClient> _mockHistory = new();
 
     private static PagedResult<PipelineRunSummary> PagedHistory(params PipelineRunSummary[] items) => new()
     {

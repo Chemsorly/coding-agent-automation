@@ -9,14 +9,14 @@
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
 @using Microsoft.AspNetCore.SignalR.Client
-@inject IPipelineApiRunHistoryClient RunHistory
+@inject IUiRunClient RunHistory
 @inject CockpitState State
 @inject NavigationManager Nav
 @inject IAgentHubConnection HubConnection
 
 @*
     Runs — the list behind the Run Page (see docs/frontend-redesign-handoff.md).
-    Data: IPipelineApiRunHistoryClient.GetRunHistoryAsync → PagedResult<PipelineRunSummary>.
+    Data: IUiRunClient.GetRunHistoryAsync → PagedResult<PipelineRunSummary> (GET /api/ui/runs).
     Consolidation runs are excluded from run history until #2567 lands; they are not
     displayed here and are not offered as filter options.
 

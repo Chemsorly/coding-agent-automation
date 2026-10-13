@@ -22,7 +22,7 @@ namespace CodingAgent.Api;
 
 /// <summary>
 /// Minimal API endpoints for control-plane Work Item dispatch and lifecycle routes:
-/// create, claim, dispatch (both paths), requeue, label-swap, last-progress, priority,
+/// create, claim, dispatch a Pending item, requeue, label-swap, last-progress, priority,
 /// k8s-job-name, is-distributed, and active-identifiers.
 /// </summary>
 public static class WorkItemDispatchEndpoints
@@ -48,12 +48,6 @@ public static class WorkItemDispatchEndpoints
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/priority", PostPriorityWeight).RequireAuthorization(ApiAuthPolicies.Operator);
 
-        // Synchronous dispatch endpoint — called by KubernetesWorkDistributor instead of POST /.
-        // Atomically performs PVC selection, K8s Job creation, and Dispatched state write in a
-        // single request. Returns 200+WorkItemId on success, 409 if at concurrency limit,
-        // 503 if no PVC available or K8s failure.
-        group.MapPost("/dispatch", DispatchWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
-
         group.MapGet("/{id:guid}/k8s-job-name", GetK8sJobName).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/is-distributed", GetIsDistributed).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/active-identifiers", GetActiveIdentifiers).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -64,6 +58,8 @@ public static class WorkItemDispatchEndpoints
     /// <summary>
     /// POST /api/work-items
     /// Creates a new WorkItem with Status=Pending from a JobDistributionRequest.
+    /// The work is done by <see cref="WorkItemStore.CreateAsync"/>, which the in-process
+    /// <see cref="ApiWorkDistributor"/> shares.
     /// Also materialises an in-memory <see cref="PipelineRun"/> in <see cref="IOrchestratorRunService"/>
     /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
@@ -76,78 +72,13 @@ public static class WorkItemDispatchEndpoints
     /// </summary>
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        IOrchestratorRunService runService,
+        WorkItemStore store,
         CancellationToken ct = default)
     {
-        // Use RunId from request if provided (ensures WorkItem.Id == PipelineRun.RunId for hub routing).
-        // Fall back to a new GUID when no RunId is set (e.g., direct API calls without orchestration).
-        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
-            ? parsedRunId
-            : Guid.NewGuid();
-
-        var entity = BuildWorkItemEntity(request, workItemId);
-
-        try
-        {
-            await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-            // Pre-check to avoid the EF Error log produced by a Postgres 23505 unique violation
-            // on the happy-path (common re-dispatch of the same RunId or concurrent issue).
-            // The unique-violation catch below remains as the race backstop for concurrent inserts.
-            // (issue #2956)
-            //
-            // NOTE (issue #3243): The two pre-check queries are a TOCTOU: a concurrent request can
-            // insert a conflicting row between the AnyAsync calls and SaveChangesAsync, causing
-            // the unique-violation catch to fire anyway. This only affects log-noise suppression,
-            // not correctness (the catch backstop handles it). Additionally, the active-conflict
-            // check reproduces the partial unique index predicate in application code — these can
-            // drift if the index conditions change. Consider whether a single try/catch with a
-            // lighter pre-check (PK only) is sufficient.
-            //
-            // 1. Idempotent PK retry: same RunId was already created → return 201.
-            var existingById = await db.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
-            if (existingById)
-                return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
-
-            // 2. Active item for the same issue/provider → 409 (partial unique index predicate).
-            var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
-            var activeConflict = await db.WorkItems.AnyAsync(
-                w => w.IssueIdentifier == entity.IssueIdentifier
-                  && w.IssueProviderConfigId == entity.IssueProviderConfigId
-                  && activeStatuses.Contains(w.Status),
-                ct);
-            if (activeConflict)
-                return DispatchWorkItemService.HandleUniqueViolationFallback();
-
-            db.WorkItems.Add(entity);
-            await db.SaveChangesAsync(ct);
-        }
-        catch (Exception ex) when (IsUniqueViolation(ex))
-        {
-            // Distinguish idempotent PK retry from business-rule unique index conflict.
-            // Delegates to DispatchWorkItemService.HandleUniqueViolationAsync which opens
-            // a fresh DbContext (this context is faulted after the exception) to re-query:
-            // - If a row with workItemId already exists → 201 (idempotent PK retry).
-            // - Otherwise → 409 via HandleUniqueViolationFallback (partial unique index on
-            //   (IssueIdentifier, IssueProviderConfigId) — a different run is already live).
-            return await DispatchWorkItemService.HandleUniqueViolationAsync(dbFactory, workItemId, isNewlyCreated: true, ct);
-        }
-
-        // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
-        // can subscribe to hub events and display the run immediately (Req 1a.1 Option A).
-        // WorkItem.Id == PipelineRun.RunId for deterministic hub-group routing.
-        // NOTE (issue #3243): The comment "Consolidation WorkItems return null" was removed (issue #3023).
-        // PipelineRunFactory.CreateFromWorkItem now returns a real PipelineRun for consolidation
-        // work items (TaskType == Consolidation || RunType == Consolidation branch). The run is added
-        // to IOrchestratorRunService here and removed when RunLifecycleManager reaches a terminal
-        // state. Do not restore the early-return for consolidation — CancelRunAsync, CompleteRunAsync,
-        // and the history query all depend on the in-memory run being present.
-        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
-        if (run is not null)
-            runService.AddRun(run);
-
-        return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
+        var (outcome, workItemId) = await store.CreateAsync(request, ct);
+        return outcome == WorkItemCreateOutcome.LiveItemExists
+            ? DispatchWorkItemService.HandleUniqueViolationFallback()
+            : TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
     }
 
     /// <summary>
@@ -280,11 +211,6 @@ public static class WorkItemDispatchEndpoints
     /// different Pending items of the same selector both observe capacity available.
     /// </para>
     ///
-    /// <para>
-    /// Unlike <c>POST /api/work-items/dispatch</c> (<see cref="DispatchWorkItem"/>), this endpoint
-    /// does NOT create a new WorkItem — it claims an already-Pending row.
-    /// </para>
-    ///
     /// Returns:
     /// <list type="bullet">
     ///   <item>200 <c>{ "dispatched": true }</c> — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
@@ -310,204 +236,9 @@ public static class WorkItemDispatchEndpoints
         return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, templateResolver, lockProvider, ct);
     }
 
-    // ── POST /dispatch — synchronous dispatch endpoint ────────────────────
-
-    /// <summary>
-    /// POST /api/work-items/dispatch
-    /// Synchronous dispatch path: atomically performs PVC selection, K8s Job creation, and
-    /// <c>Dispatched</c> state write in a single request. Called by <c>KubernetesWorkDistributor</c>
-    /// instead of the two-step <c>POST /api/work-items</c> + DispatchLoop path.
-    ///
-    /// Returns:
-    /// <list type="bullet">
-    ///   <item>200 + WorkItemId — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
-    ///   <item>409 Conflict — concurrency limit reached for this selector</item>
-    ///   <item>503 Service Unavailable — no PVC available or K8s Job creation failed</item>
-    /// </list>
-    /// </summary>
-    internal static async Task<IResult> DispatchWorkItem(
-        [FromBody] JobDistributionRequest request,
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        IOrchestratorRunService runService,
-        DispatchLifecycleService lifecycle,
-        DispatchWorkItemService dispatchService,
-        DispatchTemplateResolver templateResolver,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        // Template resolution: selector → JobTemplate
-        var template = dispatchService.ResolveTemplate(request.AgentSelector ?? "");
-        if (template is null)
-        {
-            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",
-                LogSanitizer.SanitizeForLog(request.AgentSelector));
-            // 422 Unprocessable Entity — permanent config error (no job template for this selector).
-            // Distinct from 409 Conflict (transient capacity limit) so callers can differentiate
-            // permanent failures (cascade run to Failed) from transient ones (leave Queued, retry later).
-            return TypedResults.StatusCode(StatusCodes.Status422UnprocessableEntity);
-        }
-
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-        // Build the concurrency snapshot and PVC availability result via the shared preamble.
-        // NOTE: No PvcPoolExhaustions counter here — that metric belongs exclusively to DispatchPendingWorkItem.
-        // NOTE (issue #3243): This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
-        // requests can both observe availablePvcs.Count > 0, pass the gate, create their Dispatched rows,
-        // and both enter ExecuteDispatchLifecycleAsync. SelectPvcAsync (inside the lock) dequeues from
-        // each caller's in-memory availablePvcs list — it does NOT re-query the database. In a
-        // single-process deployment _pvcSelectLock ensures exactly one 200 and one 503, because all
-        // callers share the same in-memory list. In a multi-replica deployment each pod holds its own
-        // list; _pvcSelectLock cannot serialise across replicas. Both replicas can dequeue the same PVC
-        // and create a K8s Job. The race is detected by HandleOrphanedJobIfRaceDetectedAsync (status
-        // mismatch after K8s Job creation) or a DbUpdateConcurrencyException in FinalizeDispatchAsync.
-        // SafelyCancelOrphanedDispatchedWorkItemAsync transitions the orphaned Dispatched row to Failed.
-        // The 503 is self-healing: the issue label never advanced to agent:in-progress on this path,
-        // so it stays agent:next and the Scheduler re-picks it on the next poll (default 60s).
-        // See docs/architecture/concurrency-model.md — "PVC Dispatch Race in Multi-Replica Deployments".
-        // A distributed lock (Postgres advisory lock) would be required to guarantee the one-200/one-503
-        // invariant across replicas.
-        // This path has no profile fallback, but the snapshot must still count the active items that
-        // DispatchPendingWorkItem dispatched through it under this template's selector (issue #2777),
-        // hence the resolver.
-        var (concurrencyBySelector, pvcResult) = await dispatchService.BuildDispatchPreambleAsync(db, lifecycle, templateResolver, ct);
-
-        // Normalize and sanitize the selector for the gate check and log messages.
-        var normalizedReqSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
-        var sanitizedReqSelector = LogSanitizer.SanitizeForLog(request.AgentSelector);
-
-        // Run the gate check BEFORE creating the entity so a 409/503 rejection does not
-        // leave an orphaned Dispatched row in the database. DispatchResolvedWorkItemAsync
-        // (called below after entity creation) re-runs the gate; it will pass a second time
-        // since capacity cannot shrink between these two calls on the same request.
-        // isKiroAgent is computed inside DispatchWorkItemService.IsKiroAgent (no literal here — AC3).
-        // NOTE (issue #3243): IsKiroAgent is evaluated here AND again inside DispatchResolvedWorkItemAsync on the same
-        // template. Both are pure/deterministic today, so results are always consistent. If IsKiroAgent ever
-        // becomes context-dependent, the two calls could diverge and produce inconsistent gate decisions without
-        // any test catching it. Consider passing the computed value as a parameter to DispatchResolvedWorkItemAsync
-        // to make the single-evaluation contract explicit. (TestQualityReviewer, DotNetSpecialist review [WARNING])
-        // NOTE (issue #3243): pvcResult.AvailablePvcs is a mutable List<string> passed by reference. The early gate
-        // reads its Count here; DispatchResolvedWorkItemAsync → SelectPvcAsync will later mutate/drain that same
-        // list. Both calls currently occur on the same request before any PVC selection, so the count is stable
-        // in practice. However, if SelectPvcAsync or any future refactor moves list mutation before the second
-        // gate check inside DispatchResolvedWorkItemAsync, the second gate could observe a stale (lower) count
-        // after the Dispatched row has already been persisted, producing a 503 with an orphaned entity.
-        // Verify that AvailablePvcs is not mutated between the two gate evaluations, or snapshot it immutably.
-        // (Correctness, DotNetSpecialist review [WARNING])
-        var earlyGateResult = dispatchService.ApplyGates(
-            normalizedReqSelector, sanitizedReqSelector, concurrencyBySelector,
-            pvcResult, template, JobTemplateProviderType.IsKiro(template.ProviderType), "DispatchWorkItem");
-        if (earlyGateResult is not null)
-            return earlyGateResult;
-
-        // Capacity checks passed — create the WorkItem directly as Dispatched.
-        // Issue #2322 requirement: no WorkItem is ever written as Pending on the live dispatch path.
-        // The item is created as Dispatched atomically with the lifecycle call that creates the K8s Job.
-        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
-            ? parsedRunId
-            : Guid.NewGuid();
-
-        var minimalPayload = BuildMinimalPayload(request);
-        var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
-
-        // Use the shared entity factory (parameterised by Status/DispatchedAt) to replace the
-        // near-identical construction that previously appeared in CreateWorkItem and here.
-        var entity = DispatchWorkItemService.CreateWorkItemEntity(
-            workItemId,
-            request,
-            WorkItemStatus.Dispatched,
-            DateTimeOffset.UtcNow,
-            payloadJson);
-
-        // Pre-check: return 409 if an active WorkItem already exists for the same
-        // (IssueIdentifier, IssueProviderConfigId). This mirrors the pre-check in CreateWorkItem
-        // and is necessary for correctness on non-Postgres stores (EF InMemory, SQLite) that do
-        // not enforce partial unique indexes. On Postgres the unique-violation catch below also
-        // handles concurrent inserts that slip through this check.
-        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
-        var activeConflict = await db.WorkItems.AnyAsync(
-            w => w.IssueIdentifier == entity.IssueIdentifier
-              && w.IssueProviderConfigId == entity.IssueProviderConfigId
-              && activeStatuses.Contains(w.Status),
-            ct);
-        if (activeConflict)
-            return DispatchWorkItemService.HandleUniqueViolationFallback();
-
-        try
-        {
-            db.WorkItems.Add(entity);
-            await db.SaveChangesAsync(ct);
-        }
-        catch (Exception ex) when (IsUniqueViolation(ex))
-        {
-            // Idempotent retry: a work item with this ID already exists.
-            // Delegates to DispatchWorkItemService.HandleUniqueViolationAsync which opens
-            // a fresh DbContext (this context is faulted after the exception) to re-query
-            // the existing item's status:
-            // - Active (Dispatched/Running) → 200 OK.
-            // - Non-active → 409 Conflict (Scheduler must re-queue).
-            // - Not found → 409 via HandleUniqueViolationFallback (IssueIdentifier conflict).
-            return await DispatchWorkItemService.HandleUniqueViolationAsync(dbFactory, workItemId, isNewlyCreated: false, ct);
-        }
-
-        // Register PipelineRun so the UI can subscribe to hub events immediately.
-        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
-        // NOTE (issue #3243): If PipelineRunFactory.CreateFromWorkItem returns null, the WorkItem will be
-        // dispatched (K8s Job running, WorkItem=Dispatched) but no PipelineRun is registered in
-        // IOrchestratorRunService. The UI will not receive live run events for this WorkItem. The
-        // requirement states registration is mandatory for SignalR hub routing. Add a log warning
-        // and investigate why CreateFromWorkItem returns null (missing required fields in the request).
-        if (run is not null)
-            runService.AddRun(run);
-
-        // Build the projection for the shared dispatch helper (issue #2988).
-        var projection = DispatchWorkItemService.BuildProjectionFromEntity(entity);
-
-        // Gate + context construction + lifecycle execution via shared helper (issue #2890).
-        // ExpectedInitialStatus is Dispatched — the WorkItem was created directly as Dispatched
-        // (issue #2322: no Pending write on live path). The lifecycle race-guard checks this
-        // status when reloading the item after K8s Job creation.
-        // SafelyCancelOrphanedDispatchedWorkItemAsync is passed as onDispatchFailure — the item
-        // was created as Dispatched; without cleanup it stays orphaned with no running Job.
-        // InterpretDispatchResult (issue #3235): delegates 409/503 result-interpretation to the
-        // shared helper with rewriteConcurrencyLimitAsDeferred=false — 409 passes through as-is
-        // (the client receives the raw 409). PvcPoolExhaustions and RecordDispatchAttempt("dispatched")
-        // are not emitted here — those belong exclusively to the DispatchPendingWorkItem path.
-        var syncDispatchResult = await dispatchService.DispatchResolvedWorkItemAsync(
-            new ResolvedDispatchRequest
-            {
-                Db = db,
-                Template = template,
-                Projection = projection,
-                NormalizedSelector = normalizedReqSelector,
-                SanitizedSelector = sanitizedReqSelector,
-                ConcurrencyBySelector = concurrencyBySelector,
-                PvcResult = pvcResult,
-                ExpectedInitialStatus = WorkItemStatus.Dispatched,
-                LogPrefix = "sync-dispatch ",
-                OnDispatchFailure = (id, reason) => SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, id, reason),
-                OnSuccess = id => TypedResults.Ok(id),
-                WorkItemId = workItemId,
-                CallerName = "DispatchWorkItem"
-            },
-            lifecycle,
-            ct);
-        // NOTE (issue #3243): InterpretDispatchResult unconditionally emits RecordDispatchAttempt("transient",
-        // "pvc_unavailable"|"k8s_error") for 503 results regardless of the rewriteConcurrencyLimitAsDeferred
-        // flag. On the original DispatchWorkItem path no such telemetry was emitted — the raw 503 was
-        // returned directly. This change adds a new metric emission on the sync-dispatch path that can
-        // double-count transient dispatch attempts when both paths are monitored together.
-        // If this is intentional, document it; otherwise guard the 503 telemetry in InterpretDispatchResult
-        // with the same rewriteConcurrencyLimitAsDeferred flag used for the 409 branch.
-        // See review finding: Correctness @ line 616.
-        var (syncResult, _) = DispatchWorkItemService.InterpretDispatchResult(syncDispatchResult, pvcResult, JobTemplateProviderType.IsKiro(template.ProviderType), rewriteConcurrencyLimitAsDeferred: false);
-        return syncResult;
-    }
-
     /// <summary>
     /// Loads project secrets for a work item if a project is configured.
-    /// Shared by <see cref="DispatchPendingWorkItem"/> and <see cref="DispatchWorkItem"/> to
-    /// eliminate the duplicated prepareVariant lambda body.
+    /// The prepareVariant body of <see cref="DispatchPendingWorkItem"/>.
     /// Called by <see cref="CodingAgent.Api.Dispatch.DispatchWorkItemService.RunDispatchLifecycleAsync"/>
     /// to invoke the shared variant preparation logic without a delegate parameter.
     /// </summary>
@@ -523,35 +254,6 @@ public static class WorkItemDispatchEndpoints
         return (shouldContinue: true, projectSecrets);
     }
 
-    /// <summary>
-    /// Attempts to transition an orphaned Dispatched work item to Cancelled/Failed.
-    /// Called when <c>DispatchWorkItem</c> returns 503 and the item may still be in <c>Dispatched</c>
-    /// state with no running K8s Job (e.g. PVC race where the lifecycle returned early without
-    /// cleaning up, or an unhandled exception during the dispatch lifecycle).
-    /// If the lifecycle already moved the item to <c>Failed</c>, the transition is a no-op.
-    /// Uses <see cref="CancellationToken.None"/> so the cleanup always completes regardless of
-    /// the originating request's lifetime (the request token may already be cancelled if the
-    /// client disconnected before the lifecycle completed).
-    /// Swallows all exceptions — this is a best-effort cleanup that must not mask the 503.
-    /// </summary>
-    private static async Task SafelyCancelOrphanedDispatchedWorkItemAsync(
-        DispatchLifecycleService lifecycle,
-        Guid workItemId,
-        string reason)
-    {
-        try
-        {
-            // FailWorkItemAsync uses WorkItemTransitionService.TransitionAsync which is a no-op
-            // (returns false) when the item is not in Dispatched state, so this is safe to call
-            // even if the lifecycle already transitioned the item to Failed.
-            await lifecycle.FailWorkItemAsync(workItemId, reason, CancellationToken.None);
-            Log.Information("DispatchWorkItem: cancelled orphaned Dispatched WorkItem {WorkItemId} after 503 response", workItemId);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DispatchWorkItem: failed to cancel orphaned Dispatched WorkItem {WorkItemId} — item may linger in Dispatched state", workItemId);
-        }
-    }
 
     // ── POST /{id}/claim ──────────────────────────────────────────────────
 
@@ -822,34 +524,9 @@ public static class WorkItemDispatchEndpoints
     internal static async Task<IResult> GetIsDistributed(
         string issueIdentifier,
         string issueProviderConfigId,
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-        // TODO: recentTerminalCutoff is still recomputed inline here and in GetActiveIdentifiers.
-        // The activeStatuses local was removed (now inside WhereActiveOrRecentlyTerminal), but the
-        // cutoff DateTimeOffset calculation remains in both callers. Consider moving the cutoff
-        // computation into WhereActiveOrRecentlyTerminal (e.g. as an overload that accepts a
-        // TimeSpan or reads PipelineConstants directly) so the "active or recently terminal"
-        // semantics are fully self-contained in one place.
-        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
-
-        // Single query evaluates both conditions at the same database snapshot, eliminating
-        // the narrow TOCTOU window that existed when the active-status check and the
-        // recently-terminal check were two sequential AnyAsync round-trips. A WorkItem that
-        // transitions from an active status to a terminal status between two separate reads
-        // could cause both reads to return false and the endpoint to incorrectly report
-        // isDistributed = false.
-        var isDistributed = await db.WorkItems
-            .AsNoTracking()
-            .Where(w => w.IssueIdentifier == issueIdentifier &&
-                        w.IssueProviderConfigId == issueProviderConfigId)
-            .WhereActiveOrRecentlyTerminal(recentTerminalCutoff)
-            .AnyAsync(ct);
-
-        return TypedResults.Ok(new { isDistributed });
-    }
+        WorkItemStore store,
+        CancellationToken ct) =>
+        TypedResults.Ok(new { isDistributed = await store.IsDistributedAsync(issueIdentifier, issueProviderConfigId, ct) });
 
     // ── GET /active-identifiers ───────────────────────────────────────────
 
@@ -861,33 +538,11 @@ public static class WorkItemDispatchEndpoints
     /// 200 with array of { issueIdentifier, issueProviderConfigId }.
     /// </summary>
     internal static async Task<IResult> GetActiveIdentifiers(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-        // TODO: recentTerminalCutoff is still recomputed inline here and in GetIsDistributed.
-        // The activeStatuses local was removed (now inside WhereActiveOrRecentlyTerminal), but the
-        // cutoff DateTimeOffset calculation remains in both callers. Consider moving the cutoff
-        // computation into WhereActiveOrRecentlyTerminal (e.g. as an overload that accepts a
-        // TimeSpan or reads PipelineConstants directly) so the "active or recently terminal"
-        // semantics are fully self-contained in one place.
-        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
-
-        // Single query with WhereActiveOrRecentlyTerminal eliminates the TOCTOU window that existed
-        // when active and recently-terminal pairs were fetched in two sequential ToListAsync calls.
-        // A WorkItem that transitioned between the two queries could produce a false negative.
-        // Distinct() deduplicates pairs that appear under both the active-status and the
-        // recently-terminal branch (e.g. an active item that also has CompletedAt set).
-        var result = await db.WorkItems
-            .AsNoTracking()
-            .WhereActiveOrRecentlyTerminal(recentTerminalCutoff)
-            .Select(w => new ActiveIdentifierDto(w.IssueIdentifier, w.IssueProviderConfigId))
-            .Distinct()
-            .ToListAsync(ct);
-
-        return TypedResults.Ok((IReadOnlyList<ActiveIdentifierDto>)result);
-    }
+        WorkItemStore store,
+        CancellationToken ct) =>
+        TypedResults.Ok((IReadOnlyList<ActiveIdentifierDto>)(await store.GetActiveIdentifiersAsync(ct))
+            .Select(p => new ActiveIdentifierDto(p.IssueIdentifier, p.IssueProviderConfigId))
+            .ToList());
 
     /// <summary>
     /// DTO returned by <see cref="GetActiveIdentifiers"/>. Named type eliminates the

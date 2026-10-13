@@ -21,7 +21,7 @@ namespace CodingAgent.Pipeline.UnitTests.Dispatch;
 ///
 /// <para>
 /// These tests target the service methods directly. The handler-level behaviour is covered
-/// by the existing tests in <see cref="CodingAgent.Pipeline.UnitTests.Services.SynchronousDispatchEndpointTests"/>,
+/// by the existing tests in <see cref="CodingAgent.Pipeline.UnitTests.Services.DispatchPendingWorkItemEndpointTests"/>,
 /// which continue to exercise the full dispatch pipeline (including the new service).
 /// </para>
 /// </summary>
@@ -380,120 +380,6 @@ public sealed class DispatchWorkItemServiceTests
             .Should().BeFalse("null selector uses empty key, not in map → 0 active");
     }
 
-    // ── CreateWorkItemEntity ──────────────────────────────────────────────────
-
-    [Fact]
-    public void CreateWorkItemEntity_WithStatusPending_HasNullDispatchedAt()
-    {
-        var workItemId = Guid.NewGuid();
-        var request = new JobDistributionRequest
-        {
-            IssueIdentifier = new IssueIdentifier("test-issue-1"),
-            IssueProviderConfigId = "prov-1",
-            RepoProviderConfigId = "repo-1",
-            InitiatedBy = "test",
-            TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "kiro,dotnet",
-            TimeoutSeconds = 3600,
-            RunId = Guid.NewGuid().ToString()
-        };
-        const string payloadJson = "{}";
-
-        var entity = DispatchWorkItemService.CreateWorkItemEntity(
-            workItemId, request, WorkItemStatus.Pending, dispatchedAt: null, payloadJson);
-
-        entity.Id.Should().Be(workItemId);
-        entity.Status.Should().Be(WorkItemStatus.Pending);
-        entity.DispatchedAt.Should().BeNull("Pending path does not set DispatchedAt");
-        entity.IssueIdentifier.Should().Be("test-issue-1");
-        entity.TaskType.Should().Be(WorkItemTaskType.Implementation);
-        entity.AgentSelector.Should().Be(JobTemplateStore.NormalizeLabels("kiro,dotnet"));
-        entity.TimeoutSeconds.Should().Be(3600);
-        entity.Payload.Should().Be(payloadJson);
-        // TODO [WARNING]: Missing assertions for CreatedAt, IssueProviderConfigId, and ProjectId.
-        // CreatedAt is a required persistence field — a regression setting it to default(DateTimeOffset)
-        // would cause DB constraint failures and would not be caught here.
-        // IssueProviderConfigId and ProjectId are identity fields used in the partial unique index
-        // guarding against duplicate live items; a mapping omission would cause silent data corruption.
-    }
-
-    [Fact]
-    public void CreateWorkItemEntity_WithStatusDispatched_PopulatesDispatchedAt()
-    {
-        var workItemId = Guid.NewGuid();
-        var dispatchedAt = DateTimeOffset.UtcNow;
-        var request = new JobDistributionRequest
-        {
-            IssueIdentifier = new IssueIdentifier("test-issue-2"),
-            IssueProviderConfigId = "prov-1",
-            RepoProviderConfigId = "repo-1",
-            InitiatedBy = "test",
-            TaskType = WorkItemTaskType.Review,
-            AgentSelector = "dotnet,kiro",
-            TimeoutSeconds = 7200,
-            RunId = Guid.NewGuid().ToString()
-        };
-        const string payloadJson = "{\"schema\":1}";
-
-        var entity = DispatchWorkItemService.CreateWorkItemEntity(
-            workItemId, request, WorkItemStatus.Dispatched, dispatchedAt, payloadJson);
-
-        entity.Status.Should().Be(WorkItemStatus.Dispatched);
-        entity.DispatchedAt.Should().Be(dispatchedAt);
-        entity.AgentSelector.Should().Be(JobTemplateStore.NormalizeLabels("dotnet,kiro"),
-            "AgentSelector must be normalized");
-    }
-
-    [Fact]
-    public void CreateWorkItemEntity_ManualInitiatedBy_SetsPriorityWeight100()
-    {
-        var request = new JobDistributionRequest
-        {
-            IssueIdentifier = new IssueIdentifier("manual-issue"),
-            IssueProviderConfigId = "prov-1",
-            RepoProviderConfigId = "repo-1",
-            InitiatedBy = InitiatedByConstants.Manual, // manual dispatch
-            TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "kiro,dotnet",
-            TimeoutSeconds = 3600,
-            RunId = Guid.NewGuid().ToString()
-        };
-
-        var entity = DispatchWorkItemService.CreateWorkItemEntity(
-            Guid.NewGuid(), request, WorkItemStatus.Pending, null, "{}");
-
-        entity.PriorityWeight.Should().Be(100,
-            "manually-initiated dispatches receive priority weight 100");
-    }
-
-    [Fact]
-    public void CreateWorkItemEntity_AutoInitiatedBy_SetsPriorityWeightZero()
-    {
-        var request = new JobDistributionRequest
-        {
-            IssueIdentifier = new IssueIdentifier("auto-issue"),
-            IssueProviderConfigId = "prov-1",
-            RepoProviderConfigId = "repo-1",
-            InitiatedBy = "closed-loop", // automated
-            TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "kiro,dotnet",
-            TimeoutSeconds = 3600,
-            RunId = Guid.NewGuid().ToString()
-        };
-
-        var entity = DispatchWorkItemService.CreateWorkItemEntity(
-            Guid.NewGuid(), request, WorkItemStatus.Pending, null, "{}");
-
-        entity.PriorityWeight.Should().Be(0,
-            "closed-loop dispatches receive priority weight 0");
-        // TODO [WARNING]: No test covers the TraceParent field of CreateWorkItemEntity.
-        // The factory has a two-branch expression:
-        //   request.TraceContext?.GetValueOrDefault("traceparent") ?? PipelineTelemetry.FormatTraceParent(Activity.Current)
-        // Neither the "trace context provided" branch nor the "fall back to Activity.Current" branch
-        // is exercised by any test. A regression in either branch (wrong key, wrong fallback) would
-        // be undetected. Add tests for both the populated-TraceContext and the null-TraceContext paths.
-    }
-
     // ── HandleUniqueViolationFallback ─────────────────────────────────────────
 
     [Fact]
@@ -575,50 +461,6 @@ public sealed class DispatchWorkItemServiceTests
             "pvc-0 is claimed; only pvc-1 is available");
         pvcResult.AvailablePvcs.Should().Contain("pvc-1");
         pvcResult.ClaimedCount.Should().Be(1, "one PVC (pvc-0) is claimed");
-    }
-
-    // ── BuildProjectionFromEntity ─────────────────────────────────────────────
-
-    /// <summary>
-    /// Verifies that <see cref="DispatchWorkItemService.BuildProjectionFromEntity"/> maps the 9 projection
-    /// fields of <see cref="PendingWorkItemProjection"/> correctly from a <see cref="WorkItemEntity"/>.
-    /// </summary>
-    [Fact]
-    public void BuildProjectionFromEntity_MapsAllFieldsCorrectly()
-    {
-        // Arrange: a WorkItemEntity with distinctive values for every mapped field
-        var id = Guid.NewGuid();
-        var projectId = Guid.NewGuid();
-        var createdAt = new DateTimeOffset(2025, 6, 15, 10, 30, 0, TimeSpan.Zero);
-        var entity = new WorkItemEntity
-        {
-            Id = id,
-            AgentSelector = "dotnet,kiro",
-            CreatedAt = createdAt,
-            TimeoutSeconds = 7200,
-            TaskType = WorkItemTaskType.Review,
-            ProjectId = projectId,
-            IssueIdentifier = "GH-42",
-            IssueProviderConfigId = "provider-abc",
-            PriorityWeight = 100,
-            // Additional fields on WorkItemEntity that must NOT affect the projection
-            Status = WorkItemStatus.Dispatched,
-            Payload = "{}"
-        };
-
-        // Act
-        var projection = DispatchWorkItemService.BuildProjectionFromEntity(entity);
-
-        // Assert: all 9 fields mapped correctly
-        projection.Id.Should().Be(id, "Id must come from entity.Id");
-        projection.AgentSelector.Should().Be("dotnet,kiro", "AgentSelector must come from entity.AgentSelector");
-        projection.CreatedAt.Should().Be(createdAt, "CreatedAt must come from entity.CreatedAt");
-        projection.TimeoutSeconds.Should().Be(7200, "TimeoutSeconds must come from entity.TimeoutSeconds");
-        projection.TaskType.Should().Be(WorkItemTaskType.Review, "TaskType must come from entity.TaskType");
-        projection.ProjectId.Should().Be(projectId, "ProjectId must come from entity.ProjectId");
-        projection.IssueIdentifier.Should().Be("GH-42", "IssueIdentifier must come from entity.IssueIdentifier");
-        projection.IssueProviderConfigId.Should().Be("provider-abc", "IssueProviderConfigId must come from entity.IssueProviderConfigId");
-        projection.PriorityWeight.Should().Be(100, "PriorityWeight must come from entity.PriorityWeight");
     }
 
     // ── BuildProjectionFromQuickCheck ─────────────────────────────────────────

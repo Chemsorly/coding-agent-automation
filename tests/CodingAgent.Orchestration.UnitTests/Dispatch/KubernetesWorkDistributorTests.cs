@@ -75,8 +75,6 @@ public sealed class KubernetesWorkDistributorTests
 
         _client.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once,
             "DistributeAsync must call CreateAsync to create a Pending WorkItem visible in the UI queue");
-        _client.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never,
-            "DistributeAsync must NOT call DispatchAsync — that skips the Pending queue entirely");
     }
 
     [Fact]
@@ -134,7 +132,6 @@ public sealed class KubernetesWorkDistributorTests
         result.Success.Should().BeTrue();
         result.Queued.Should().BeTrue("consolidation uses Pending enqueue path, not synchronous dispatch");
         _client.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _client.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
@@ -240,11 +237,6 @@ public sealed class KubernetesWorkDistributorTests
                     r.IssueProviderConfigId == request.IssueProviderConfigId),
                 It.IsAny<CancellationToken>()),
             Times.Once);
-
-        // Verify DispatchAsync was NOT called (synchronous dispatch path is retired)
-        _client.Verify(
-            c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
     }
 
     [Fact]

@@ -66,7 +66,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         string? projectId = null,
         CancellationToken ct = default)
     {
-        var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();
+        var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
 
         projectId ??= WellKnownIds.DefaultProjectId;
@@ -154,13 +154,13 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         string? projectId = null,
         CancellationToken ct = default)
     {
-        // TODO: Both services are resolved from the root IServiceProvider (Fixture.Factory.Services).
+        // TODO: Both services are resolved from a root IServiceProvider (the API host's and Fixture.Factory.Services).
         // If either IDispatchOrchestrationService or IWorkDistributor is registered as Scoped,
         // resolving from the root container causes a DI lifetime mismatch (single instance outliving
         // any request scope, with potential ObjectDisposedException on a disposed dependency). This
         // mirrors the existing DispatchIssueAsync pattern. Verify both are Singleton/Transient; if
         // either is Scoped, wrap the resolution and use in a CreateScope() block.
-        var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();
+        var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
 
         projectId ??= WellKnownIds.DefaultProjectId;

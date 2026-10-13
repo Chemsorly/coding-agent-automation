@@ -30,4 +30,10 @@ public interface ISchedulerApiClient
     /// <summary>GET /api/work-items/counts-by-status on the API — work item counts grouped by status,
     /// plus the oldest Pending item's creation timestamp for the pending-age gauge.</summary>
     Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// PUT /api/scheduler/loop-status on the API — the Scheduler leader's loop status, which the API
+    /// serves to the UI (spec 051 D11).
+    /// </summary>
+    Task ReportLoopStatusAsync(LoopStatusDto status, CancellationToken ct = default);
 }
