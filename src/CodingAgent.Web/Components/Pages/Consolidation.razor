@@ -5,17 +5,14 @@
 @using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
-@using CodingAgent.Pipeline.Services
 @using CodingAgent.AgentGateway
 @using CodingAgent.Web.Services
 @using Serilog
-@inject IConsolidationService ConsolidationService
-@inject IPipelineApiConfigClient ConfigClient
-@inject IPipelineApiWorkItemClient WorkItems
-@inject IPipelineApiRunHistoryClient RunHistoryClient
+@inject IUiConsolidationClient ConsolidationApi
+@inject IUiRunClient RunHistory
+@inject IUiWorkItemClient WorkItems
 @inject IAgentHubConnection HubConnection
 @inject CurrentAccess Access
-@inject IAccessGuard Guard
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
@@ -50,9 +47,9 @@
             <div class="consolidation-cards">
                 @foreach (var template in _templates)
                 {
-                    var supportsBrain = ConsolidationTemplateFilter.SupportsBrainConsolidation(template);
-                    var supportsRefactoring = ConsolidationTemplateFilter.SupportsRefactoringDetection(template);
-                    var brainReadOnly = _readOnlyBrainTemplates.Contains(template.Id);
+                    var supportsBrain = template.SupportsBrainConsolidation;
+                    var supportsRefactoring = template.SupportsRefactoringDetection;
+                    var brainReadOnly = template.BrainReadOnly;
                     var lastBrain = _lastRuns.GetValueOrDefault((ConsolidationRunType.BrainConsolidation, template.Id));
                     var lastRefactoring = _lastRuns.GetValueOrDefault((ConsolidationRunType.RefactoringDetection, template.Id));
 
@@ -113,7 +110,7 @@
                             {
                                 <button class="btn-trigger" disabled="@(brainReadOnly || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
                                         title="@(brainReadOnly ? BrainReadOnlyHint : null)"
-                                        @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id, template.Name)">
+                                        @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id)">
                                     <Icon Name="brain" Size="14" /> Brain Consolidation
                                 </button>
                             }
@@ -171,7 +168,7 @@
         {
             <div class="consolidation-card-actions" style="margin-top: 12px;">
                 <button class="btn-trigger" disabled="@(_isLoading || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
-                        @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
+                        @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null)">
                     <Icon Name="sparkles" Size="14" /> Generate Suggestions
                 </button>
             </div>
@@ -304,15 +301,12 @@
     private const string BrainReadOnlyHint =
         "The brain is read-only for this template. Trigger brain consolidation from a template that writes to this brain.";
 
-    private IReadOnlyList<PipelineJobTemplate> _templates = [];
+    private IReadOnlyList<UiConsolidationTemplate> _templates = [];
     private readonly Dictionary<(ConsolidationRunType, string?), PipelineRunSummary?> _lastRuns = new();
 
     // Brain consolidation works on a brain, and several templates can share one: the last run and the
     // running state shown for a template are those of its brain. Keyed by template id, all templates.
-    private Dictionary<string, string> _brainByTemplate = new(StringComparer.Ordinal);
-
-    // Templates whose brain is read-only: brain consolidation does not run from them.
-    private HashSet<string> _readOnlyBrainTemplates = new(StringComparer.Ordinal);
+    private IReadOnlyDictionary<string, string> _brainByTemplate = new Dictionary<string, string>(StringComparer.Ordinal);
     private IReadOnlyList<PipelineRunSummary> _runHistory = [];
     private bool _anyRunCancellable;
     private HarnessSuggestions? _harnessSuggestions;
@@ -384,38 +378,24 @@
     {
         try
         {
-            var allTemplates = await ConfigClient.GetAllTemplatesAsync(CancellationToken.None);
-            var projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
-            var templateLookup = allTemplates.ToDictionary(t => t.Id);
-
-            _templates = projects
-                .Where(p => p.Enabled)
-                .OrderBy(p => p.Name, StringComparer.Ordinal)
-                .SelectMany(p => p.TemplateIds)
-                .Where(tid => templateLookup.ContainsKey(tid))
-                .Select(tid => templateLookup[tid])
-                .Where(t => t.Enabled)
-                .ToList();
-
-            _brainByTemplate = allTemplates
-                .Where(t => !string.IsNullOrEmpty(t.BrainProviderId))
-                .ToDictionary(t => t.Id, t => t.BrainProviderId!, StringComparer.Ordinal);
-
-            await LoadReadOnlyBrainTemplatesAsync(projects);
+            // The API works out each card's capabilities and loads the harness suggestions (spec 051 2.4b).
+            var overview = await ConsolidationApi.GetOverviewAsync();
+            _templates = overview.Templates;
+            _brainByTemplate = overview.BrainProviderByTemplate;
+            _harnessSuggestions = overview.HarnessSuggestions;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load templates for consolidation page");
             _templates = [];
-            _brainByTemplate = new(StringComparer.Ordinal);
-            _readOnlyBrainTemplates = new(StringComparer.Ordinal);
+            _brainByTemplate = new Dictionary<string, string>(StringComparer.Ordinal);
+            _harnessSuggestions = null;
         }
 
         try
         {
             // Read consolidation run history from the pipeline-run read path (issue #3028).
-            // This replaces the former IConsolidationService.GetRunHistoryAsync call.
-            var result = await RunHistoryClient.GetRunHistoryAsync(
+            var result = await RunHistory.GetRunHistoryAsync(
                 new RunHistoryQuery(Page: 1, PageSize: 200, FeedbackOnly: false, IncludeActive: true,
                     RunType: PipelineRunType.Consolidation),
                 CancellationToken.None);
@@ -427,16 +407,6 @@
             Log.Warning(ex, "Failed to load consolidation run history from pipeline-run read path");
             _runHistory = [];
             _anyRunCancellable = false;
-        }
-
-        try
-        {
-            _harnessSuggestions = await ConsolidationService.GetHarnessSuggestionsAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to load harness suggestions");
-            _harnessSuggestions = null;
         }
 
         // Last runs per template and type, from the history loaded above (no per-template API calls).
@@ -458,29 +428,6 @@
     }
 
     /// <summary>
-    /// Loads which templates have a read-only brain: the template's own flag, or the global setting with
-    /// the project's override. On failure no button is disabled; the trigger still refuses the run.
-    /// </summary>
-    private async Task LoadReadOnlyBrainTemplatesAsync(IReadOnlyList<PipelineProject> projects)
-    {
-        try
-        {
-            var globalConfig = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
-            _readOnlyBrainTemplates = _templates
-                .Where(ConsolidationTemplateFilter.SupportsBrainConsolidation)
-                .Where(t => ConsolidationTemplateFilter.IsBrainReadOnly(
-                    t, projects.FirstOrDefault(p => p.TemplateIds.Contains(t.Id)), globalConfig))
-                .Select(t => t.Id)
-                .ToHashSet(StringComparer.Ordinal);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to load the configuration for brain read-only checks on the consolidation page");
-            _readOnlyBrainTemplates = new(StringComparer.Ordinal);
-        }
-    }
-
-    /// <summary>
     /// Whether <paramref name="run"/> worked on what the template's consolidation of the same type works on:
     /// the same brain for brain consolidation, the same template otherwise.
     /// </summary>
@@ -499,27 +446,16 @@
 
     private async Task OpenRefactoringModal(string templateId, string templateName)
     {
-        // Load fresh config values when opening the modal, applying any project overrides
-        // so the modal shows the same values the scan will actually use.
+        // Load fresh values when opening the modal: the API applies the project's overrides, so the
+        // modal shows the values the scan will actually use.
         try
         {
-            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
-            var projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
-            var project = projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
-            var effective = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-            _modalMaxProposals = effective.MaxRefactoringProposals;
-            _modalMaxProposalsIsOverride = project is not null
-                && project.MaxRefactoringProposals.HasValue
-                && effective.MaxRefactoringProposals != config.MaxRefactoringProposals;
-
-            // HotspotAnalysisLookback is not [ProjectOverridable] — always use global value
-            _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
-
-            _modalReviewEnabled = effective.RefactoringReviewEnabled;
-            _modalReviewEnabledIsOverride = project is not null
-                && project.RefactoringReviewEnabled.HasValue
-                && effective.RefactoringReviewEnabled != config.RefactoringReviewEnabled;
+            var settings = await ConsolidationApi.GetRefactoringScanSettingsAsync(templateId);
+            _modalMaxProposals = settings.MaxProposals;
+            _modalMaxProposalsIsOverride = settings.MaxProposalsIsProjectOverride;
+            _modalHotspotDays = settings.HotspotLookbackDays;
+            _modalReviewEnabled = settings.ReviewEnabled;
+            _modalReviewEnabledIsOverride = settings.ReviewEnabledIsProjectOverride;
         }
         catch (Exception ex)
         {
@@ -541,7 +477,7 @@
     private async Task ConfirmRefactoringModal()
     {
         _showRefactoringModal = false;
-        await TriggerConsolidation(ConsolidationRunType.RefactoringDetection, _modalTemplateId, _modalTemplateName, _modalAutoDispatch);
+        await TriggerConsolidation(ConsolidationRunType.RefactoringDetection, _modalTemplateId, _modalAutoDispatch);
     }
 
     private void DismissRefactoringModal()
@@ -566,41 +502,22 @@
         }
     }
 
-    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, string? templateName, bool autoDispatch = false)
+    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, bool autoDispatch = false)
     {
         _statusMessage = null;
         _statusIsError = false;
 
         try
         {
-            await Guard.DemandAsync(AccessRole.Operator, null, "TriggerConsolidation");
-            TemplateId? typedTemplateId = !string.IsNullOrEmpty(templateId)
-                ? (TemplateId)templateId
-                : (TemplateId?)null;
-            var run = await ConsolidationService.TriggerAsync(type, typedTemplateId, CancellationToken.None, autoDispatch);
-            if (run == null)
-            {
-                _statusMessage = type switch
-                {
-                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running, a configuration error occurred, or template not found.",
-                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, or template not found.",
-                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running or a configuration error occurred.",
-                    _ => "Consolidation rejected."
-                };
-                _statusIsError = true;
-            }
-            else
-            {
-                // The WorkItem was already created as Pending by TriggerAsync.
-                // The K8s Scheduler will dispatch it; the K8s Job transitions to Running
-                // asynchronously after the agent starts.
-                _statusMessage = $"{FormatRunType(type)} queued — waiting for an idle agent.";
-                await LoadDataAsync();
-            }
+            // The API enqueues the run as Pending (global operator); the Scheduler dispatches it, and
+            // the Job turns it Running once the agent starts.
+            _statusMessage = await ConsolidationApi.TriggerAsync(type, templateId, autoDispatch);
+            await LoadDataAsync();
         }
-        catch (AccessDeniedException)
+        catch (InvalidOperationException ex)
         {
-            _statusMessage = AccessDeniedException.UserMessage;
+            // Refused: already running, a configuration error, or the template is gone.
+            _statusMessage = ex.Message;
             _statusIsError = true;
         }
         catch (Exception ex)
@@ -632,15 +549,9 @@
 
         try
         {
-            await Guard.DemandAsync(AccessRole.Operator, null, "CancelConsolidationRun");
-            await WorkItems.PostStatusAsync(run.WorkItemId.Value, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, CancellationToken.None);
+            await WorkItems.CancelAsync(run.WorkItemId.Value);
             _statusMessage = "Queued run cancelled.";
             _statusIsError = false;
-        }
-        catch (AccessDeniedException)
-        {
-            _statusMessage = AccessDeniedException.UserMessage;
-            _statusIsError = true;
         }
         catch (Exception ex)
         {

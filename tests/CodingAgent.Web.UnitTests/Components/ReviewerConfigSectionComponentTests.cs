@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
@@ -13,11 +14,11 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class ReviewerConfigSectionComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiConfigClient> _mockStore;
+    private readonly Mock<IUiSettingsClient> _mockStore;
 
     public ReviewerConfigSectionComponentTests()
     {
-        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore = new Mock<IUiSettingsClient>();
         _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>());
     }

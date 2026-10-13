@@ -229,17 +229,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result?.Count ?? 0;
     }
 
-    public async Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
-    {
-        var response = await _http.PostAsJsonAsync(
-            "/api/work-items/dispatch",
-            request,
-            PipelineJsonOptions.Default,
-            ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
-    }
-
     public async Task<DispatchPendingResult> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)
     {
         using var response = await _http.PostAsync(

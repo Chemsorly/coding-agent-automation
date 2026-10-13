@@ -93,7 +93,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
+    [Parameter, EditorRequired] public IUiSettingsClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<string> OnNavigateToProject { get; set; }
     [Parameter] public EventCallback OnProjectsChanged { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }

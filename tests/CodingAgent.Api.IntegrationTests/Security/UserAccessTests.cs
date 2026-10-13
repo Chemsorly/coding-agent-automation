@@ -92,6 +92,27 @@ public sealed class UserAccessTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void DemandList_WithoutAProject_IsForbiddenForAScopedUser(string? projectId)
+    {
+        var act = () => For(TestUserTokens.Scoped(ProjectA, AccessRole.Admin)).DemandList(projectId);
+
+        act.Should().Throw<UiAccessDeniedException>().Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        For(TestUserTokens.Global(AccessRole.ReadOnly)).Invoking(a => a.DemandList(projectId)).Should().NotThrow();
+    }
+
+    [Fact]
+    public void DemandList_ForAProject_NeedsReadOnIt()
+    {
+        var access = For(TestUserTokens.Scoped(ProjectA, AccessRole.ReadOnly));
+
+        access.Invoking(a => a.DemandList(ProjectA)).Should().NotThrow();
+        access.Invoking(a => a.DemandList(ProjectB)).Should().Throw<UiAccessDeniedException>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status404NotFound);
+    }
+
+    [Theory]
     [InlineData(StatusCodes.Status404NotFound)]
     [InlineData(StatusCodes.Status403Forbidden)]
     public async Task Filter_TurnsADenialIntoItsStatusCode(int statusCode)

@@ -1,38 +1,28 @@
-using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Models;
-
 namespace CodingAgent.Web.Services;
 
 /// <summary>
-/// Static helpers shared by all three drawer services for the orchestration dispatch flow.
-/// Extracted to avoid duplication across IssueDrawerService, PrReviewDrawerService, and EpicDrawerService.
+/// Shared by the three drawer services: their dispatch runs in the API (spec 051 2.3c).
 /// </summary>
 internal static class DrawerDispatchHelper
 {
     /// <summary>
-    /// Shared orchestration dispatch flow: resolve project → prepare request → distribute →
-    /// return result tuple.
+    /// Runs a dispatch call and turns its answer into the drawers' result: the API's message on
+    /// success and on a refusal, "Could not dispatch — …" when the API cannot be reached.
     /// </summary>
-    public static async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchWithOrchestrationAsync(
-        IDispatchOrchestrationService dispatchOrchestration,
-        Func<PipelineProject, Task<JobDistributionRequest?>> prepareAsync,
-        PipelineProject project,
-        string distributionFailedError,
-        string queuedMessage,
-        string dispatchedMessage)
+    public static async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchAsync(Func<Task<string>> dispatch)
     {
-        var request = await prepareAsync(project);
-
-        if (request is null)
-            return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
-
-        var outcome = await dispatchOrchestration.DistributeAndFinalizeAsync(request, CancellationToken.None);
-        if (!outcome.Success)
-            return (false, distributionFailedError, null);
-
-        return (true, null, outcome.Queued ? queuedMessage : dispatchedMessage);
+        try
+        {
+            return (true, null, await dispatch());
+        }
+        catch (InvalidOperationException ex)
+        {
+            return (false, ex.Message, null);
+        }
+        // The call has no caller token, so a cancellation here is the client's timeout.
+        catch (Exception ex)
+        {
+            return (false, $"Could not dispatch — {ex.Message}", null);
+        }
     }
-
-    /// <summary>Returns the initiator string used for all manual dispatches.</summary>
-    public static string ManualInitiator => InitiatedByConstants.Manual;
 }

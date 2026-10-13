@@ -113,14 +113,6 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
             "After Spec 041, Kubernetes is the only work distribution mode");
     }
 
-    [Fact]
-    public void IDispatchOrchestrationService_IsRegistered_InDbMode()
-    {
-        var service = _factory.Services.GetService<IDispatchOrchestrationService>();
-        service.Should().NotBeNull(
-            "IDispatchOrchestrationService must be registered — drawer services depend on it");
-    }
-
     // ── Removed services ─────────────────────────────────────────────────
     // ILoopStateStore: removed per Spec 045 Req 1.2 (F6) Option B — loop state persisted
     //   in PipelineConfiguration.ClosedLoopAutoStart via API, not a dedicated store.

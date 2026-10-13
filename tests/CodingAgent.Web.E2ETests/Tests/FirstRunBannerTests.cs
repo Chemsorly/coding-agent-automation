@@ -10,7 +10,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// Scenarios tested:
 /// 1. Banner is visible when no templates exist.
 /// 2. The banner link navigates to the Pipelines page.
-/// 3. Dismiss — with no templates the banner stays visible (Req 8.2).
+/// 3. Dismiss hides the banner, also after a reload.
 /// 4. Banner is hidden once a template is configured.
 ///
 /// Isolation note: <see cref="InMemoryPipelineApiConfigClient"/> stores the dismiss flag in its
@@ -84,44 +84,28 @@ public sealed class FirstRunBannerTests : E2ETestBase
     }
 
     /// <summary>
-    /// Scenario 3: Dismiss behavior when no templates exist.
-    ///
-    /// Req 8.2: dismissal has no visible effect when there are no templates. The show condition
-    /// is <c>noEnabledTemplates AND !onPipelines AND (!dismissed OR noEnabledTemplates)</c>.
-    /// When noEnabledTemplates is true the third clause is always true, so the banner remains
-    /// visible regardless of the dismiss flag.
+    /// Scenario 3: Dismiss hides the banner for good. (It used to have no visible effect: the old show
+    /// condition kept the banner up whenever no template existed, which is the only time it shows.)
     /// </summary>
     [Fact]
-    public async Task Banner_Dismiss_HasNoVisibleEffect_WhenNoTemplatesExist()
+    public async Task Banner_Dismiss_HidesIt_AlsoAfterAReload()
     {
         // Arrange
         Fixture.Factory.ApiConfigClient.Reset();
 
-        // Act: navigate to overview and wait for banner
         await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var banner = Page.Locator(".first-run-banner");
         await banner.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 10_000 });
 
         // Act: click dismiss
-        var dismissButton = Page.Locator(".first-run-banner-dismiss");
-        await dismissButton.ClickAsync();
+        await Page.Locator(".first-run-banner-dismiss").ClickAsync();
 
-        // Allow Blazor Server to process the click via SignalR round-trip and re-render
-        await Page.WaitForTimeoutAsync(2000);
-        // TODO [WARNING]: Fixed sleep is unreliable under load or on slow CI runners. The dismiss
-        // click may not have propagated via SignalR before the assertion runs, making the subsequent
-        // WaitForAsync(Visible) a false positive (banner still visible for the wrong reason).
-        // Consider waiting for a deterministic state change instead (e.g. dismiss button briefly
-        // disabled, or network idle) to confirm the round-trip completed before asserting.
-
-        // Assert: Req 8.2 — banner is still visible because no templates exist.
-        // The dismiss flag is stored but the show condition's third clause
-        // (!_dismissed || noEnabledTemplates) evaluates to true when noEnabledTemplates is true,
-        // so dismissal is intentionally overridden.
-        await banner.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 5_000 });
-        var bannerText = await banner.TextContentAsync();
-        Assert.Contains("No job templates configured", bannerText);
+        // Assert: the banner goes away, and a fresh page load does not bring it back
+        await banner.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Detached, Timeout = 10_000 });
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
+        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        Assert.Equal(0, await banner.CountAsync());
     }
 
     /// <summary>

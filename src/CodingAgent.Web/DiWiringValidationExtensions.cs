@@ -13,10 +13,9 @@ internal static class DiWiringValidationExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        // Validate services critical to the dispatch + pipeline loop path.
+        // Validate services critical to the consolidation dispatch and run history paths.
         // GetRequiredService throws InvalidOperationException if the service is not registered,
         // which ASP.NET Core surfaces as a startup failure with a clear message.
-        _ = app.Services.GetRequiredService<Pipeline.Interfaces.IDispatchOrchestrationService>();
         _ = app.Services.GetRequiredService<Pipeline.Interfaces.IWorkDistributor>();
         _ = app.Services.GetRequiredService<Pipeline.Interfaces.IPipelineRunHistoryService>();
 

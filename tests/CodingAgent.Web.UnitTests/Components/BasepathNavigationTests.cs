@@ -8,6 +8,7 @@ using CodingAgent.Web.Components.Shared;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -101,15 +102,15 @@ public class BasepathNavigationTests : BunitContext
     [Fact]
     public void Overview_DoesNotRenderAbsoluteInternalHrefs()
     {
-        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
-        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        var mockAgents = new Mock<IUiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
 
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
+        var mockWorkItems = new Mock<CodingAgent.Web.Ui.IUiWorkItemClient>();
         mockWorkItems.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>());
         mockWorkItems.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -140,7 +141,7 @@ public class BasepathNavigationTests : BunitContext
     [Fact]
     public void Work_DoesNotRenderAbsoluteInternalHrefs()
     {
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
+        var mockWorkItems = new Mock<CodingAgent.Web.Ui.IUiWorkItemClient>();
         mockWorkItems.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>());
         mockWorkItems.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -149,13 +150,14 @@ public class BasepathNavigationTests : BunitContext
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         Services.AddSingleton(mockWorkItems.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiWorkItemClient>()); // cancel and priority
         Services.AddSingleton(mockConfigClient.Object);
-        Services.AddSingleton(Mock.Of<IProviderFactory>());
-        Services.AddSingleton(Mock.Of<IDependencyChecker>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiBrowseClient>(b =>
+            b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()) == Task.FromResult(new BacklogResult(Array.Empty<BacklogIssue>(), false))));
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
@@ -181,21 +183,21 @@ public class BasepathNavigationTests : BunitContext
     [Fact]
     public void Attention_DoesNotRenderAbsoluteInternalHrefs()
     {
-        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockConfigClient.Object);
-        Services.AddSingleton(Mock.Of<IProviderFactory>());
-        Services.AddSingleton(Mock.Of<IDependencyChecker>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiBrowseClient>(b =>
+            b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()) == Task.FromResult(new BacklogResult(Array.Empty<BacklogIssue>(), false))));
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
@@ -229,9 +231,9 @@ public class BasepathNavigationTests : BunitContext
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType, It.IsAnyType>>())).Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
-        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((PipelineRunSummary?)null);
+            .ReturnsAsync((CodingAgent.Contracts.Ui.UiRunDetail?)null);
         mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
@@ -242,12 +244,8 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(Array.Empty<AgentProfile>());
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
-
-        // IConfigurationStore: RunPage uses GetProviderConfigByIdAsync when a run is present.
-        // Since GetRunAsync returns null, the run-level code is never reached — a loose mock suffices.
-        var mockConfigStore = Mock.Of<IConfigurationStore>();
 
         var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
         mockWorkItems.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -255,9 +253,10 @@ public class BasepathNavigationTests : BunitContext
 
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiWorkItemClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
-        Services.AddSingleton(mockConfigStore);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>());
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(new CockpitState());
 
@@ -287,15 +286,14 @@ public class BasepathNavigationTests : BunitContext
         Services.AddTestAccess();
         var mockLogger = new Mock<ILogger>();
 
-        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
-        mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>());
-        mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
-        mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        var mockUiConfig = new Mock<CodingAgent.Web.Ui.IUiConfigClient>();
+        mockUiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CodingAgent.Contracts.Ui.UiProject>());
+        Services.AddSingleton(mockUiConfig.Object);
 
-        var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
+        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+
+        var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
@@ -310,6 +308,8 @@ public class BasepathNavigationTests : BunitContext
             sp.GetRequiredService<IFaroService>()));
 
         Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new FakeUiHealthClient());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
+            s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(true, false))));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
@@ -338,12 +338,8 @@ public class BasepathNavigationTests : BunitContext
     public void FirstRunBanner_SettingsLink_UsesRelativeHref()
     {
         // No enabled templates — banner will be shown
-        var configClient = new Mock<IPipelineApiConfigClient>();
-        configClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-        configClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
-        Services.AddSingleton(configClient.Object);
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
+            s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(false, false))));
 
         // Current route is home so the banner is visible
         var nav = Services.GetRequiredService<NavigationManager>();

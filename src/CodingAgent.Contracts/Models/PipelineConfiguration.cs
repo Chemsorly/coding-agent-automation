@@ -13,7 +13,7 @@ namespace CodingAgent.Pipeline.Models;
 /// settings are saved or imported. Setters never throw, so a stored value outside its range still loads.
 /// </para>
 /// <para>
-/// Internal properties (no settings field): <see cref="ClosedLoopAutoStart"/> is loop state,
+/// Internal properties (no settings field): <see cref="ClosedLoopAutoStart"/> and <see cref="LoopResumeRequestedAt"/> are loop state,
 /// <see cref="PipelineInjectedPaths"/> is filled in at runtime, <see cref="TransientRetryDelay"/> lets tests skip the wait,
 /// and <see cref="WorkspaceBaseDirectory"/> is part of the agent image layout.
 /// </para>
@@ -122,11 +122,18 @@ public sealed record PipelineConfiguration
     // ── Closed-loop settings ────────────────────────────────────────────
 
     /// <summary>
-    /// Internal: whether the pipeline loop runs, and so starts on application startup.
-    /// Set to true when user starts the loop, false when user stops it.
+    /// Internal: whether the pipeline loop should run. Start and Stop set it; the Scheduler leader
+    /// starts or stops the loop to match (spec 051 D11).
     /// </summary>
     [Key(15)]
     public bool ClosedLoopAutoStart { get; init; }
+
+    /// <summary>
+    /// Internal: when a user last asked the loop to resume after its circuit breaker opened. The
+    /// Scheduler leader resumes the loop when this is newer than the last request it handled.
+    /// </summary>
+    [Key(92)]
+    public DateTimeOffset? LoopResumeRequestedAt { get; init; }
 
     /// <summary>
     /// Poll interval for the closed pipeline loop when checking for new agent:next issues.

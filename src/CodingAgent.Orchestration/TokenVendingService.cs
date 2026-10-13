@@ -35,8 +35,8 @@ public sealed partial class TokenVendingService : ITokenVendingService
     // This mirrors GitHubAppAuthService and avoids the Lazy<Task> footgun where a
     // faulted task is retained indefinitely, preventing retries.
     //
-    // Thread-safety: TokenVendingService is registered as a singleton in all three
-    // hosts (Api, Web/Orchestrator, Scheduler). ConcurrentDictionary operations are
+    // Thread-safety: TokenVendingService is registered as a singleton in both
+    // hosts (Api, Scheduler). ConcurrentDictionary operations are
     // individually atomic; the SemaphoreSlim gates concurrent mints for the same key.
 
     private readonly ConcurrentDictionary<TokenCacheKey, TokenCacheEntry> _tokenCache = new();

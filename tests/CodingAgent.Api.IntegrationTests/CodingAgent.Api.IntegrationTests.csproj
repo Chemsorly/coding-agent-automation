@@ -34,6 +34,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Web.Client\CodingAgent.Web.Client.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Providers\CodingAgent.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Persistence\CodingAgent.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />

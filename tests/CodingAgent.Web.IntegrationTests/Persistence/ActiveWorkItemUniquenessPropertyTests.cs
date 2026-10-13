@@ -48,9 +48,8 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
             ctx.Database.EnsureCreated();
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
 
-        // API client: routes by TaskType.
-        // Implementation/Review → CreateAsync (Pending enqueue path).
-        // Consolidation → DispatchAsync (synchronous path).
+        // API client: every task type is enqueued as Pending.
+        // CreateAsync (Pending enqueue path).
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
             .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -59,16 +58,6 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
                 var newId = Guid.NewGuid();
                 await using var db = await _dbFactory.CreateDbContextAsync(ct);
                 db.WorkItems.Add(new WorkItemEntity { Id = newId, IssueIdentifier = req.IssueIdentifier, IssueProviderConfigId = req.IssueProviderConfigId, Status = WorkItemStatus.Pending, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = req.AgentSelector, TimeoutSeconds = req.TimeoutSeconds });
-                await db.SaveChangesAsync(ct);
-                return newId;
-            });
-        mockApiClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .Returns(async (JobDistributionRequest req, CancellationToken ct) =>
-            {
-                var newId = Guid.NewGuid();
-                await using var db = await _dbFactory.CreateDbContextAsync(ct);
-                db.WorkItems.Add(new WorkItemEntity { Id = newId, IssueIdentifier = req.IssueIdentifier, IssueProviderConfigId = req.IssueProviderConfigId, Status = WorkItemStatus.Dispatched, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = req.AgentSelector, TimeoutSeconds = req.TimeoutSeconds, DispatchedAt = DateTimeOffset.UtcNow });
                 await db.SaveChangesAsync(ct);
                 return newId;
             });

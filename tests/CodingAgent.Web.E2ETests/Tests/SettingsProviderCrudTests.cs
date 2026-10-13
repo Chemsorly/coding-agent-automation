@@ -15,9 +15,9 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///
 /// All tests that interact with provider forms use the GitLab type to avoid triggering live
 /// GitHub credential validation (GitHubValidationService is a real production service in the
-/// E2E harness). GitLab validation is null in the harness, so its null-guard path skips
-/// credential checking. Note that SaveGitLabProvider() still requires non-empty AccessToken
-/// and ProjectId — all helpers pass dummy values to satisfy these guards.
+/// E2E harness). GitLab validation is faked in the API host (spec 051 2.1c: Settings checks
+/// providers there), so any GitLab credentials pass. SaveGitLabProvider() still requires a
+/// non-empty AccessToken and ProjectId — all helpers pass dummy values to satisfy these guards.
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
@@ -375,7 +375,7 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
 
         // ── Step 8: Dispatch the issue (UI save happened before this — payload frozen at dispatch time) ──
 
-        var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();
+        var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, ct)
             ?? throw new InvalidOperationException("Default project not found");

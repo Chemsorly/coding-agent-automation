@@ -64,4 +64,10 @@ public sealed class HttpSchedulerApiClient : ISchedulerApiClient
             "/api/work-items/counts-by-status", PipelineJsonOptions.Default, ct);
         return result ?? new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null);
     }
+
+    public async Task ReportLoopStatusAsync(LoopStatusDto status, CancellationToken ct = default)
+    {
+        var response = await _http.PutAsJsonAsync("/api/scheduler/loop-status", status, PipelineJsonOptions.Default, ct);
+        response.EnsureSuccessStatusCode();
+    }
 }

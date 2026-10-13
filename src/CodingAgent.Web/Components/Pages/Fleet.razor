@@ -5,11 +5,11 @@
 @using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Components.Shared
-@inject IPipelineApiAgentClient AgentClient
+@inject IUiAgentClient AgentClient
 
 @*
     Fleet — registered agents split out of Monitoring (see docs/frontend-redesign-handoff.md).
-    Data: IPipelineApiAgentClient.GetAgentsAsync → AgentEntryDto[]. Status is Idle / Busy / Disconnected.
+    Data: IUiAgentClient.GetAgentsAsync → AgentEntryDto[]. Status is Idle / Busy / Disconnected.
     Enrichment fields (ActiveIssueUrl, ActiveRunId, ActivePullRequestUrl, etc.) are populated by the
     API endpoint from IOrchestratorRunService and rendered as inline chips in the agent row.
 *@
