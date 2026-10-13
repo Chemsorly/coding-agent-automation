@@ -21,17 +21,13 @@ public interface IEpicDrawerService
 
     Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(
         IssueSummary issue,
-        PipelineJobTemplate template,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+        PipelineJobTemplate template);
 
     // ── Drawer orchestration ──
 
     Task<string?> OpenEpicDrawerAsync(
         TemplateId templateId,
         IReadOnlyList<PipelineJobTemplate> templates,
-        IReadOnlyList<PipelineProject> projects,
         Func<Task>? notifyStateChanged = null);
 
     void CloseEpicDrawer();
@@ -39,14 +35,10 @@ public interface IEpicDrawerService
     Task<string?> SwitchToEpicDrawerAsync(
         TemplateId templateId,
         IReadOnlyList<PipelineJobTemplate> templates,
-        IReadOnlyList<PipelineProject> projects,
         Func<Task>? notifyStateChanged = null);
 
     Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(
-        IssueSummary issue,
-        IReadOnlyList<ProviderConfig> issueProviders,
-        IReadOnlyList<ProviderConfig> repoProviders,
-        PipelineProject? parentProject);
+        IssueSummary issue);
 
     // ── Cross-drawer coordination ──
 

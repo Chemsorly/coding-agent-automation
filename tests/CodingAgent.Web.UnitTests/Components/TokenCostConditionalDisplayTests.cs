@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -47,7 +48,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
 
     // ─── Insights ────────────────────────────────────────────────────────────
 
-    private void RegisterInsightsServices(Mock<IPipelineApiRunHistoryClient> mockHistory)
+    private void RegisterInsightsServices(Mock<CodingAgent.Web.Ui.IUiRunClient> mockHistory)
     {
         Services.AddSingleton(mockHistory.Object);
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
@@ -58,7 +59,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     [Fact]
     public void Insights_HidesTokenStatAndCostCard_WhenAllRunsHaveZeroTokens()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterInsightsServices(mock);
@@ -79,7 +80,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     [Fact]
     public void Insights_ShowsTokenStatAndCostCard_WhenSomeRunsHaveTokens()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 5000), MakeRun("r2", tokens: 0)));
         RegisterInsightsServices(mock);
@@ -98,9 +99,9 @@ public class TokenCostConditionalDisplayTests : BunitContext
     // ─── Overview ────────────────────────────────────────────────────────────
 
     private void RegisterOverviewServices(
-        Mock<IPipelineApiRunHistoryClient> mockRunHistory,
-        Mock<IPipelineApiAgentClient>? mockAgents = null,
-        Mock<IPipelineApiWorkItemClient>? mockWorkItems = null)
+        Mock<CodingAgent.Web.Ui.IUiRunClient> mockRunHistory,
+        Mock<IUiAgentClient>? mockAgents = null,
+        Mock<CodingAgent.Web.Ui.IUiWorkItemClient>? mockWorkItems = null)
     {
         mockAgents ??= BuildEmptyAgentsMock();
         mockWorkItems ??= BuildEmptyWorkItemsMock();
@@ -115,17 +116,17 @@ public class TokenCostConditionalDisplayTests : BunitContext
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
-    private static Mock<IPipelineApiAgentClient> BuildEmptyAgentsMock()
+    private static Mock<IUiAgentClient> BuildEmptyAgentsMock()
     {
-        var mock = new Mock<IPipelineApiAgentClient>();
+        var mock = new Mock<IUiAgentClient>();
         mock.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentEntryDto>());
         return mock;
     }
 
-    private static Mock<IPipelineApiWorkItemClient> BuildEmptyWorkItemsMock()
+    private static Mock<CodingAgent.Web.Ui.IUiWorkItemClient> BuildEmptyWorkItemsMock()
     {
-        var mock = new Mock<IPipelineApiWorkItemClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiWorkItemClient>();
         mock.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>());
         mock.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -136,7 +137,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     [Fact]
     public void Overview_HidesTokensRecentTile_WhenNoRunHasTokens()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterOverviewServices(mock);
@@ -151,7 +152,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     [Fact]
     public void Overview_ShowsTokensRecentTile_WhenSomeRunsHaveTokens()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(
                 MakeRun("r1", tokens: 12345),
@@ -167,7 +168,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
 
     // ─── Runs ────────────────────────────────────────────────────────────────
 
-    private void RegisterRunsServices(Mock<IPipelineApiRunHistoryClient> mockHistory)
+    private void RegisterRunsServices(Mock<CodingAgent.Web.Ui.IUiRunClient> mockHistory)
     {
         var mockHub = new Mock<IAgentHubConnection>();
         mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
@@ -189,7 +190,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     [Fact]
     public void Runs_HidesTokensColumn_WhenNoRunHasTokens()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterRunsServices(mock);
@@ -204,7 +205,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     [Fact]
     public void Runs_ShowsTokensColumn_WhenSomeRunsHaveTokens()
     {
-        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 7777), MakeRun("r2", tokens: 0)));
         RegisterRunsServices(mock);

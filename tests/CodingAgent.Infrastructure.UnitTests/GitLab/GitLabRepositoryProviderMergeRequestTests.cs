@@ -699,6 +699,54 @@ public class GitLabRepositoryProviderMergeRequestTests
 
     #endregion
 
+    #region GetOpenPullRequestAsync
+
+    [Fact]
+    public async Task GetOpenPullRequestAsync_OpenMr_ReturnsItsSummary()
+    {
+        var (client, projectId) = CreateServerWithMergeRequest(
+            "Review me", "Closes #3", "src-branch", "main");
+        var iid = (int)client.GetMergeRequest(projectId).All.Single().Iid;
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        var result = await provider.GetOpenPullRequestAsync(iid, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Number.Should().Be(iid);
+        result.Title.Should().Be("Review me");
+        result.Description.Should().Be("Closes #3");
+        result.BranchName.Should().Be("src-branch");
+        result.TargetBranch.Should().Be("main");
+    }
+
+    [Fact]
+    public async Task GetOpenPullRequestAsync_ClosedMr_ReturnsNull()
+    {
+        var (client, projectId) = CreateServerWithMergeRequest(
+            "Done", "desc", "src-branch", "main");
+        var mergeRequests = client.GetMergeRequest(projectId);
+        var iid = mergeRequests.All.Single().Iid;
+        mergeRequests.Close(iid);
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        var result = await provider.GetOpenPullRequestAsync((int)iid, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetOpenPullRequestAsync_UnknownMr_ReturnsNull()
+    {
+        var (client, projectId) = CreateServerWithProject();
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        var result = await provider.GetOpenPullRequestAsync(999, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    #endregion
+
     #region GetAgentPullRequestsAsync
 
     [Fact]

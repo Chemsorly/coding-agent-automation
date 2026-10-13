@@ -304,7 +304,7 @@ public static class ApiServiceCollectionExtensions
         return async (issueId, providerConfigId, ct) =>
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
-            // Mirror WorkItemDispatchEndpoints.GetIsDistributed: single query covering
+            // Mirror WorkItemStore.IsDistributedAsync: single query covering
             // active status OR recently completed in one atomic DB read, eliminating
             // the TOCTOU window that existed with two sequential AnyAsync round-trips.
             // A WorkItem that transitions from active to terminal between two separate
@@ -363,6 +363,10 @@ public static class ApiServiceCollectionExtensions
         // ── IProviderFactory (not registered by Infrastructure — must be explicit) ──
         services.AddSingleton<IProviderFactory>(sp =>
             new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
+
+        // Spec 051 2.1c: the Settings provider checks run here, with the stored credentials.
+        services.AddTransient(sp => new CodingAgent.Infrastructure.GitHub.GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
+        services.AddTransient<CodingAgent.Infrastructure.GitLab.GitLabValidationService>();
 
         // ── AgentRegistryService + IAgentRegistryService ────────────────────
         // Use DistributedAgentRegistryService when Redis is available (multi-replica mode);
@@ -442,15 +446,6 @@ public static class ApiServiceCollectionExtensions
 
     /// <summary>
     /// Registers lifecycle, consolidation, agent communication, and run management services.
-    ///
-    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 5 required
-    /// arguments only (no <c>IWorkDistributor</c>, <c>IConsolidationSelectorResolver</c> or
-    /// <c>IPipelineConfigStore</c>). The Web host's <c>AddConsolidationServices</c> passes those too. These are
-    /// intentionally different — do NOT unify them.
-    // TODO [WARNING]: The required-argument count in this comment was "7" before IPipelineRunHistoryService
-    // and IConsolidationFeedbackCache were removed from ConsolidationServiceDependencies in issue #3030,
-    // then "6" before the count was corrected to "5" in issue #3264.
-    // Update this count if ConsolidationServiceDependencies gains or loses required parameters in future.
     /// </summary>
     private static void AddLifecycleAndConsolidation(IServiceCollection services)
     {
@@ -464,14 +459,24 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IChatNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
 
         // ── IConsolidationService ────────────────────────────────────────────
-        // IMPORTANT: intentionally the minimal-argument form — not the Web host's full form.
+        // Spec 051 2.4: the API triggers consolidation for the Consolidation page. Before 2.4a it only
+        // saved harness suggestions for the hub and had no IWorkDistributor, so it registered a form
+        // that could not trigger. A trigger enqueues through ApiWorkDistributor (AddDispatch) and reads
+        // the saved settings from IPipelineConfigStore; the empty configuration is only the fallback for
+        // a host without that store.
+        services.AddSingleton<IConsolidationSelectorResolver>(sp => new ConsolidationSelectorResolver(
+            sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<IPipelineConfigStore>()));
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new ConsolidationServiceDependencies(
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
-                sp.GetRequiredService<IProviderConfigStore>())));
+                sp.GetRequiredService<IProviderConfigStore>(),
+                WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
+                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
+                PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
 
         // ── IAgentCommunication → SignalRAgentCommunication ──────────────────
         // Registered before ModelFetchService which depends on it.
@@ -495,6 +500,10 @@ public static class ApiServiceCollectionExtensions
 
         // ── ConsolidationBadgeService ────────────────────────────────────────
         services.AddSingleton<ConsolidationBadgeService>();
+
+        // ── LoopStatusStore — the Scheduler leader's last loop status (spec 051 D11) ──
+        services.AddSingleton(sp => new CodingAgent.Api.Loop.LoopStatusStore(
+            ResolveRedisStoreOrNull(sp), sp.GetRequiredService<TimeProvider>()));
 
         // ── IActiveRunQueryService ────────────────────────────────────────────
         services.AddSingleton<IActiveRunQueryService>(sp => new PostgresActiveRunQueryService(
@@ -654,8 +663,8 @@ public static class ApiServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the dispatch subsystem: resolvers, infrastructure, enricher, and
-    /// the synchronous dispatch services used by POST /api/work-items/dispatch.
+    /// Registers the dispatch subsystem: resolvers, infrastructure, enricher, the queue, manual
+    /// dispatch, and the services POST /api/work-items/{id}/dispatch uses to start a Pending item.
     /// </summary>
     private static void AddDispatch(IServiceCollection services)
     {
@@ -668,6 +677,36 @@ public static class ApiServiceCollectionExtensions
         // The API host does not have a IPipelineApiWorkItemClient in this host,
         // so includeWorkItemClient is false (workItemClient = null).
         services.AddDispatchResolutionServices(includeWorkItemClient: false);
+
+        // ── Queue (spec 051 2.3a) ──────────────────────────────────────────────
+        // WorkItemStore backs the /api/work-items enqueue, status and dedup handlers. ApiWorkDistributor
+        // is IWorkDistributor in this process, over the same store, for the dispatch logic that moves
+        // into the API; nothing here resolved an IWorkDistributor before.
+        services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
+        services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
+
+        // ── Browse (spec 051 2.3b) ─────────────────────────────────────────────
+        // The pages' provider browsing runs here with the stored credentials.
+        services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
+        services.AddSingleton<CodingAgent.Api.Browse.BacklogService>();
+        services.AddSingleton<CodingAgent.Api.Browse.TemplateBrowseService>();
+
+        // ── Manual dispatch (spec 051 2.3c) ────────────────────────────────────
+        // The drawers' dispatch, moved from the web host: the orchestration enqueues through
+        // ApiWorkDistributor, so a dispatched item waits in the Pending queue for the Scheduler.
+        services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
+            new DispatchOrchestrationServiceDependencies(
+                sp.GetRequiredService<DispatchInfrastructure>(),
+                sp.GetRequiredService<IWorkDistributor>(),
+                sp.GetRequiredService<IAgentProfileStore>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
+                sp.GetRequiredService<IPipelineConfigStore>()),
+            Log.Logger));
+        services.AddSingleton<CodingAgent.Api.Dispatch.ManualDispatchService>();
+
+        // ── Consolidation page (spec 051 2.4b) ───────────────────────────────
+        // Reads the cards and triggers through IConsolidationService (AddLifecycleAndConsolidation).
+        services.AddSingleton<CodingAgent.Api.Consolidation.ConsolidationPageService>();
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
@@ -688,7 +727,7 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IHarnessSuggestionStore>()),
             sp.GetRequiredService<ITriageStore>()));
 
-        // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
+        // ── Pending dispatch services (POST /api/work-items/{id}/dispatch) ───────────────────
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
         // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
         // Used by WorkItemDispatchLoop (Scheduler) via POST /api/work-items/{id}/dispatch.
@@ -699,8 +738,8 @@ public static class ApiServiceCollectionExtensions
             if (jobClient is null)
                 throw new InvalidOperationException(
                     "API: IKubernetesJobClient is not registered. " +
-                    "POST /api/work-items/dispatch requires a Kubernetes client. " +
-                    "Register IKubernetesJobClient in DI or disable the synchronous dispatch endpoint.");
+                    "POST /api/work-items/{id}/dispatch requires a Kubernetes client. " +
+                    "Register IKubernetesJobClient in DI.");
             return new CodingAgent.Api.Dispatch.DispatchLifecycleService(
                 jobClient,
                 sp.GetRequiredService<WorkItemTransitionService>(),
@@ -712,9 +751,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<JobTemplateStore>()));
 
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
-        // Shared helpers for the two synchronous dispatch handlers (DispatchWorkItem and
-        // DispatchPendingWorkItem): concurrency-snapshot query, gate block, entity factory,
-        // and unique-violation fallback. Singleton — stateless, depends only on JobTemplateStore.
+        // The dispatch of a Pending item (DispatchPendingWorkItem): concurrency-snapshot query,
+        // gate block and lifecycle. Singleton — stateless, depends only on JobTemplateStore.
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchWorkItemService>(sp =>
             new CodingAgent.Api.Dispatch.DispatchWorkItemService(
                 sp.GetRequiredService<JobTemplateStore>()));
@@ -770,6 +808,24 @@ public static class ApiServiceCollectionExtensions
         });
         services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
         services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
+
+        // ── Agent Chat page (spec 051 2.5b) ──────────────────────────────────────────────────
+        // Who launched each chat pod, and what its prompts are built from. A record outlives the
+        // longest chat job by an hour; ending the chat deletes it. Clamped like the dispatcher's
+        // options (warnings are logged once, by the dispatcher).
+        services.AddSingleton(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp();
+            return new CodingAgent.Api.Chat.ChatSessionStore(
+                ResolveRedisStoreOrNull(sp), TimeSpan.FromSeconds(options.ChatJobMaxDurationSeconds) + TimeSpan.FromHours(1));
+        });
+        services.AddSingleton(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp();
+            return ActivatorUtilities.CreateInstance<CodingAgent.Api.Chat.ChatService>(sp, options);
+        });
     }
 }
 

@@ -441,8 +441,13 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var entities = await db.ReviewerConfigs.AsNoTracking().ToListAsync(ct);
 
+        // The row's key is the ID. Rows seeded before the defaults had GUID IDs carry
+        // "default-reviewers" in their JSON under a random key; reading that ID made them impossible
+        // to save or delete.
         var result = entities
-            .Select(e => DeserializeFromEntity<ReviewerConfiguration>(e.Configuration))
+            .Select(e => DeserializeFromEntity<ReviewerConfiguration>(e.Configuration) is { } config
+                ? config with { Id = e.Id.ToString() }
+                : null)
             .Where(c => c is not null)
             .Cast<ReviewerConfiguration>()
             .ToList()

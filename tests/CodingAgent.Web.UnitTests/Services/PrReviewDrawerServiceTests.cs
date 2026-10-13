@@ -1,35 +1,30 @@
 using Moq;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
+using CodingAgent.Web.Ui;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Tests for PrReviewDrawerService in isolation: PR loading, label filtering,
 /// pagination, dispatch, and close-on-success behavior.
-/// Each test constructs PrReviewDrawerService with only its own dependencies.
+/// Each test constructs PrReviewDrawerService with only its own dependencies. Since spec 051 2.3b and
+/// 2.3c the API lists and dispatches the pull requests (<see cref="IUiBrowseClient"/>,
+/// <see cref="IUiDispatchClient"/>); its TemplateBrowseServiceTests and ManualDispatchServiceTests cover that.
 /// </summary>
 public class PrReviewDrawerServiceTests
 {
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
+    private readonly Mock<IUiBrowseClient> _mockBrowse;
+    private readonly Mock<IUiDispatchClient> _mockDispatch;
     private readonly PrReviewDrawerService _service;
-
-    private static readonly IReadOnlyList<ProviderConfig> IssueProviders =
-        new List<ProviderConfig> { new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" } };
-
-    private static readonly IReadOnlyList<ProviderConfig> RepoProviders =
-        new List<ProviderConfig> { new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" } };
 
     public PrReviewDrawerServiceTests()
     {
-        _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
+        _mockBrowse = new Mock<IUiBrowseClient>();
+        _mockBrowse.Setup(b => b.GetLabelsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
+        _mockDispatch = new Mock<IUiDispatchClient>();
 
-        _service = new PrReviewDrawerService(
-            _mockProviderFactory.Object,
-            _mockDispatchOrchestration.Object);
+        _service = new PrReviewDrawerService(_mockBrowse.Object, _mockDispatch.Object);
     }
 
     private static PipelineJobTemplate MakeTemplate(string id = "t-1") =>
@@ -43,9 +38,7 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
-        var svc = new PrReviewDrawerService(
-            new Mock<IProviderFactory>().Object,
-            new Mock<IDispatchOrchestrationService>().Object);
+        var svc = new PrReviewDrawerService(new Mock<IUiBrowseClient>().Object, new Mock<IUiDispatchClient>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
     }
@@ -55,7 +48,6 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task LoadPrDrawerPageAsync_LoadsData_WhenRepoProviderExists()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
         SetupRepoProvider(items: new[] { MakePr("1"), MakePr("2") }, hasMore: true);
 
@@ -68,15 +60,15 @@ public class PrReviewDrawerServiceTests
     }
 
     [Fact]
-    public async Task LoadPrDrawerPageAsync_ReturnsErrorAndEmptyList_WhenRepoProviderNotFound()
+    public async Task LoadPrDrawerPageAsync_ReturnsTheApisReasonAndEmptyList_WhenItRefuses()
     {
-        _service.SetProviderContext(IssueProviders, new List<ProviderConfig>());
         var template = MakeTemplate();
+        _mockBrowse.Setup(b => b.GetPullRequestsAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Repository provider not found for this template."));
 
         var error = await _service.LoadPrDrawerPageAsync(template, 1);
 
-        Assert.NotNull(error);
-        Assert.Contains("Repository provider configuration not loaded", error);
+        Assert.Equal("Repository provider not found for this template.", error);
         Assert.Empty(_service.DrawerState.Items);
     }
 
@@ -85,7 +77,6 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task ClearPrDrawerLabelFilter_ClearsItemsAndPage()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
         SetupRepoProvider(items: new[] { MakePr("10") }, hasMore: true);
         await _service.LoadPrDrawerPageAsync(template, 2);
@@ -103,52 +94,28 @@ public class PrReviewDrawerServiceTests
     // ── DispatchPrReviewAsync ──
 
     [Fact]
-    public async Task DispatchPrReviewAsync_DbMode_ReturnsSuccess_WhenOrchestrationSucceeds()
+    public async Task DispatchPrReviewAsync_DispatchesThePrNumber_AndShowsTheApisMessage()
     {
-        // TODO: [WARNING] This test asserts only Assert.True(success) and does not check the returned
-        // msg string. Swapping the queuedMessage and dispatchedMessage arguments in
-        // DispatchWithOrchestrationAsync would not be caught. Add: var (success, _, msg) = ...
-        // and Assert.DoesNotContain("Queued", msg) to complement the queued-message test.
+        _mockDispatch.Setup(d => d.DispatchPullRequestAsync("t-1", 3363, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("⏳ Queued PR #3363 for review — the job controller will start an agent pod for it");
 
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, _, _) = await _service.DispatchPrReviewAsync(MakePr(), MakeTemplate(), IssueProviders, RepoProviders, null);
+        var (success, error, msg) = await _service.DispatchPrReviewAsync(MakePr("3363"), MakeTemplate());
 
         Assert.True(success);
-        _mockDispatchOrchestration.Verify(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Null(error);
+        Assert.Equal("⏳ Queued PR #3363 for review — the job controller will start an agent pod for it", msg);
     }
 
     [Fact]
-    public async Task DispatchPrReviewAsync_DbMode_QueuedMessage_WhenQueued()
+    public async Task DispatchPrReviewAsync_ReturnsTheApisReason_WhenItRefuses()
     {
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, true, null));
+        _mockDispatch.Setup(d => d.DispatchPullRequestAsync("t-1", 5, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("PR #5 is already being processed or queued."));
 
-        var (success, _, msg) = await _service.DispatchPrReviewAsync(MakePr(), MakeTemplate(), IssueProviders, RepoProviders, null);
+        var (success, error, _) = await _service.DispatchPrReviewAsync(MakePr(), MakeTemplate());
 
-        Assert.True(success);
-        Assert.Contains("Queued", msg);
-    }
-
-    [Fact]
-    public async Task DispatchPrReviewAsync_PassesThePrNumberToTheReviewDispatch()
-    {
-        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMinimalRequest());
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        await _service.DispatchPrReviewAsync(MakePr("3363"), MakeTemplate(), IssueProviders, RepoProviders, null);
-
-        _mockDispatchOrchestration.Verify(d => d.PrepareReviewDistributionRequestAsync(
-            It.Is<ReviewDispatchRequest>(r => r.PrNumber == 3363), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.False(success);
+        Assert.Equal("PR #5 is already being processed or queued.", error);
     }
 
     // ── DispatchFromPrDrawerAsync ──
@@ -156,31 +123,26 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task DispatchFromPrDrawerAsync_ReturnsError_WhenTemplateIsNull()
     {
-        var (success, error, _) = await _service.DispatchFromPrDrawerAsync(MakePr(), IssueProviders, RepoProviders, null);
+        var (success, error, _) = await _service.DispatchFromPrDrawerAsync(MakePr());
 
         Assert.False(success);
         Assert.Contains("template", error, StringComparison.OrdinalIgnoreCase);
         Assert.False(_service.DrawerState.IsDispatching);
+        _mockDispatch.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task DispatchFromPrDrawerAsync_DoesNotCloseDrawer_OnSuccess()
     {
         // PR drawer stays open after dispatch (unlike issue/epic)
-        _service.SetProviderContext(IssueProviders, RepoProviders);
 
         var template = MakeTemplate();
         SetupRepoProvider(items: new[] { MakePr() });
         await _service.OpenPrDrawerAsync("t-1", new[] { template });
         Assert.True(_service.DrawerState.IsOpen);
+        _mockDispatch.Setup(d => d.DispatchPullRequestAsync("t-1", 5, It.IsAny<CancellationToken>())).ReturnsAsync("⏳ Queued PR #5 for review");
 
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, _, _) = await _service.DispatchFromPrDrawerAsync(MakePr(), IssueProviders, RepoProviders, null);
+        var (success, _, _) = await _service.DispatchFromPrDrawerAsync(MakePr());
 
         Assert.True(success);
         Assert.True(_service.DrawerState.IsOpen); // PR drawer stays open
@@ -191,7 +153,6 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task ClosePrDrawer_NullsTemplate()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         SetupRepoProvider(items: new[] { MakePr() });
         await _service.OpenPrDrawerAsync("t-1", new[] { MakeTemplate() });
         Assert.NotNull(_service.DrawerState.Template);
@@ -211,34 +172,12 @@ public class PrReviewDrawerServiceTests
 
     // ── Helpers ──
 
-    private void SetupRepoProvider(IEnumerable<PullRequestSummary>? items = null, bool hasMore = false)
-    {
-        var mockRepo = new Mock<IRepositoryProvider>();
-        mockRepo.Setup(r => r.ListOpenPullRequestsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+    /// <summary>Makes the API return <paramref name="items"/> as the template's pull requests.</summary>
+    private void SetupRepoProvider(IEnumerable<PullRequestSummary>? items = null, bool hasMore = false) =>
+        _mockBrowse.Setup(b => b.GetPullRequestsAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = (items ?? Enumerable.Empty<PullRequestSummary>()).ToList(),
                 HasMore = hasMore, Page = 1, PageSize = 15
             });
-        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(mockRepo.Object);
-
-        var mockIssue = new Mock<IIssueProvider>();
-        mockIssue.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockIssue.Object);
-    }
-
-    private static JobDistributionRequest CreateMinimalRequest() => new()
-    {
-        IssueIdentifier = "5",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        InitiatedBy = "manual",
-        TaskType = WorkItemTaskType.Review,
-        AgentSelector = "dotnet,kiro",
-        TimeoutSeconds = 3600,
-        ProviderConfigs = new List<ProviderConfig>
-        {
-            new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
-        }
-    };
 }

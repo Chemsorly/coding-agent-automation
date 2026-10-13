@@ -23,22 +23,24 @@ public class CockpitLayoutAccessTests : BunitContext
     private const string AlphaId = "6f1c2a9e-0000-0000-0000-00000000000c";
 
     private readonly Mock<IPipelineApiConfigClient> _configClient = new();
-    private readonly Mock<IPipelineApiRunHistoryClient> _runHistory = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _uiConfig = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiRunClient> _runHistory = new();
     private readonly Mock<IJSRuntime> _js = new();
     private readonly CockpitState _state = new();
     private readonly List<string?> _attentionQueries = [];
 
     public CockpitLayoutAccessTests()
     {
-        _configClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
+        // The API filters the list to the readable projects; the layout filters it again, so the
+        // full list here also checks that second filter.
+        _uiConfig.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CodingAgent.Contracts.Ui.UiProject>
             {
-                new() { Id = PaymentsId, Name = "payments" },
-                new() { Id = BillingId, Name = "billing" },
-                new() { Id = AlphaId, Name = "alpha" },
+                new(PaymentsId, "payments", true),
+                new(BillingId, "billing", true),
+                new(AlphaId, "alpha", true),
             });
-        _configClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
-        _configClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        Services.AddSingleton(_uiConfig.Object);
         _runHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .Callback((RunHistoryQuery query, CancellationToken _) =>
                 _attentionQueries.Add(query.ProjectId))
@@ -52,6 +54,8 @@ public class CockpitLayoutAccessTests : BunitContext
         Services.AddSingleton<NotificationService>();
         Services.AddSingleton(sp => new NotificationFaroBridge(sp.GetRequiredService<NotificationService>(), sp.GetRequiredService<IFaroService>()));
         Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new CodingAgent.Web.UnitTests.Components.FakeUiHealthClient());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
+            s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(true, false))));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(new Mock<ILogger>().Object));
         Services.AddSingleton(_js.Object);
     }
@@ -158,7 +162,7 @@ public class CockpitLayoutAccessTests : BunitContext
         cut.FindAll(".cockpit-project-switcher").Should().BeEmpty();
         cut.FindAll("[data-testid=user-menu]").Should().ContainSingle("a no-access user still reaches the profile and logout");
         _attentionQueries.Should().BeEmpty();
-        _configClient.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _uiConfig.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]

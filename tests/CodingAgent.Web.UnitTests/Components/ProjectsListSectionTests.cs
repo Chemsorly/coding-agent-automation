@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using Bunit;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,11 +15,11 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class ProjectsListSectionTests : BunitContext
 {
-    private readonly Mock<IPipelineApiConfigClient> _mockStore;
+    private readonly Mock<IUiSettingsClient> _mockStore;
 
     public ProjectsListSectionTests()
     {
-        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore = new Mock<IUiSettingsClient>();
         _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))

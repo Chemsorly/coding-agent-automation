@@ -88,8 +88,8 @@ public static class PipelineRunEndpoints
         var activeRuns = runService.GetActiveRuns();
 
         // Resolve WorkItem status for active runs to exclude Pending (queued) items from the
-        // merge. RunId == WorkItem.Id.ToString() by contract (enforced in CreateWorkItem and
-        // DispatchWorkItem). Runs with no matching WorkItem row (rehydrated/orphaned) are
+        // merge. RunId == WorkItem.Id.ToString() by contract (enforced in CreateWorkItem).
+        // Runs with no matching WorkItem row (rehydrated/orphaned) are
         // treated conservatively as non-Pending and included. See issue #2528.
         // TODO [WARNING]: The LINQ chain below parses each GUID string twice — once in the
         // Where predicate (result discarded) and once in the Select projection. Consider
@@ -227,17 +227,17 @@ public static class PipelineRunEndpoints
         IOrchestratorRunService runService,
         CancellationToken ct = default)
     {
-        var summary = await history.GetRunAsync(runId, ct);
+        var summary = await FindRunAsync(runId, history, runService, ct);
+        return summary is null ? TypedResults.NotFound() : TypedResults.Ok(summary);
+    }
 
-        summary ??= runService.GetActiveRuns()
+    /// <summary>The run from history, or else the in-flight run with that ID; null when neither exists.</summary>
+    internal static async Task<PipelineRunSummary?> FindRunAsync(
+        Guid runId, IPipelineRunHistoryService history, IOrchestratorRunService runService, CancellationToken ct) =>
+        await history.GetRunAsync(runId, ct)
+        ?? runService.GetActiveRuns()
             .FirstOrDefault(r => string.Equals(r.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase))
             ?.ToSummary();
-
-        if (summary is null)
-            return TypedResults.NotFound();
-
-        return TypedResults.Ok(summary);
-    }
 
     // ── GET /api/export/runs.json — operator-authenticated download ───
 

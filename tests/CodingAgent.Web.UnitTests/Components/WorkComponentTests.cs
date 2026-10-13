@@ -23,9 +23,8 @@ namespace CodingAgent.Web.UnitTests.Components;
 public class WorkComponentTests : BunitContext
 {
     private readonly Mock<IPipelineApiWorkItemClient> _mockWorkItems = new();
-    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
-    private readonly Mock<IProviderFactory> _mockProviderFactory = new();
-    private readonly Mock<IDependencyChecker> _mockDependencyChecker = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiWorkItemClient> _mockLists = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiBrowseClient> _mockBrowse = new();
 
     // Static label arrays reused across multiple tests. Using static readonly avoids allocating a
     // new array per test invocation (CA1861).
@@ -51,28 +50,23 @@ public class WorkComponentTests : BunitContext
     public WorkComponentTests()
     {
         Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
-        // IPipelineApiWorkItemClient — mocked; default stubs return empty lists.
-        _mockWorkItems
+        // Spec 051 2.2a: the lists come from /api/ui (IUiWorkItemClient); cancel and priority still use the API key client.
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        // IPipelineApiConfigClient — needed by BlockedIssuesService (sealed, no interface).
-        // Returning empty templates makes GetBacklogAsync a no-op, keeping test setup minimal.
-        _mockConfigClient
-            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
-        _mockConfigClient
-            .Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ProviderConfig>());
+        // Spec 051 2.3b: the API computes the backlog; an empty one keeps the setup minimal.
+        _mockBrowse
+            .Setup(b => b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BacklogResult([], IsTruncated: false));
 
         Services.AddSingleton<IPipelineApiWorkItemClient>(_mockWorkItems.Object);
-        Services.AddSingleton<IPipelineApiConfigClient>(_mockConfigClient.Object);
-        Services.AddSingleton(_mockProviderFactory.Object);
-        Services.AddSingleton(_mockDependencyChecker.Object);
-        // BlockedIssuesService is sealed — let DI construct the real instance from the mocks above.
+        Services.AddSingleton(_mockLists.Object);
+        Services.AddSingleton(_mockBrowse.Object);
+        // BlockedIssuesService is sealed — let DI construct the real instance over the browse client.
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
@@ -86,7 +80,7 @@ public class WorkComponentTests : BunitContext
     public void WorkQueueTable_HasPriorityColumnHeader()
     {
         var itemId = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
 
@@ -104,7 +98,7 @@ public class WorkComponentTests : BunitContext
     public void WorkQueueTable_RendersPriorityWeight_ForPendingRow()
     {
         var itemId = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId, priorityWeight: 450)]);
 
@@ -127,10 +121,10 @@ public class WorkComponentTests : BunitContext
     public async Task WorkQueueTable_Onchange_CallsSetPriorityAsync()
     {
         var itemId = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 750, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -142,7 +136,7 @@ public class WorkComponentTests : BunitContext
             await input.ChangeAsync(new ChangeEventArgs { Value = "750" });
         });
 
-        _mockWorkItems.Verify(c => c.SetPriorityAsync(itemId, 750, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLists.Verify(c => c.SetPriorityAsync(itemId, 750, It.IsAny<CancellationToken>()), Times.Once);
         // TODO: This only verifies the API was called — it does not assert that the displayed value
         // (input attribute or _pending state) was subsequently updated after RefreshQuietAsync ran.
         // AC states "on successful update the displayed value reflects the new weight without a full
@@ -161,7 +155,7 @@ public class WorkComponentTests : BunitContext
     public async Task WorkQueueTable_OnSetPriority_OutOfRange_DoesNotCallSetPriorityAsync()
     {
         var itemId = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
 
@@ -173,7 +167,7 @@ public class WorkComponentTests : BunitContext
             await input.ChangeAsync(new ChangeEventArgs { Value = "1001" });
         });
 
-        _mockWorkItems.Verify(
+        _mockLists.Verify(
             c => c.SetPriorityAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a value outside 0–1000 must not be forwarded to the API");
@@ -185,10 +179,10 @@ public class WorkComponentTests : BunitContext
     public async Task WorkQueueTable_OnSetPriorityFailure_ShowsErrorMessage()
     {
         var itemId = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 100, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("400 Bad Request"));
 
@@ -211,14 +205,14 @@ public class WorkComponentTests : BunitContext
     {
         var itemId = Guid.NewGuid();
         var pendingCallCount = 0;
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 pendingCallCount++;
                 return [MakePendingItem(itemId)];
             });
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 200, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("409 Conflict"));
 
@@ -249,10 +243,10 @@ public class WorkComponentTests : BunitContext
     public async Task WorkQueueTable_OnSetPrioritySuccess_ClearsPriorityError()
     {
         var itemId = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePendingItem(itemId)]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.SetPriorityAsync(itemId, 300, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -303,7 +297,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightTable_DisplaysIssueTitleAlongsideNumber_WhenTitleIsPresent()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2231", "Add Grafana traces panel")]);
 
@@ -321,7 +315,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightTable_DoesNotShowTitleSpan_WhenTitleIsNull()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2231", issueTitle: null)]);
 
@@ -345,7 +339,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightRow_RowHasClickableClass()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2231", "Some issue")]);
 
@@ -370,7 +364,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightRow_Click_NavigatesToRunDetailPage()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2231", "Some issue")]);
 
@@ -389,12 +383,12 @@ public class WorkComponentTests : BunitContext
     public void InFlightRow_CancelButton_DoesNotNavigate()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2231", "Some issue")]);
-        _mockWorkItems
-            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        _mockLists
+            .Setup(c => c.CancelAsync(id, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var navMan = Services.GetRequiredService<NavigationManager>();
         var initialUri = navMan.Uri;
@@ -412,7 +406,7 @@ public class WorkComponentTests : BunitContext
 
     /// <summary>
     /// Clicking "Cancel" on an in-flight run must show a confirmation prompt (not immediately cancel).
-    /// The confirm/Yes and dismiss/No buttons must appear; PostStatusAsync must NOT be called yet.
+    /// The confirm/Yes and dismiss/No buttons must appear; CancelAsync must NOT be called yet.
     /// </summary>
     // TODO: [WARNING] This test does not assert that the original cancel-btn-{id} is hidden once
     // the confirmation is shown. A regression that renders both simultaneously would pass this test.
@@ -422,7 +416,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightCancel_ClickCancel_ShowsConfirmation_AndDoesNotCallPostStatus()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2937", "Live run")]);
 
@@ -435,26 +429,26 @@ public class WorkComponentTests : BunitContext
         Assert.NotEmpty(cut.FindAll($"[data-testid='confirm-cancel-btn-{id}']"));
         Assert.NotEmpty(cut.FindAll($"[data-testid='dismiss-cancel-btn-{id}']"));
 
-        // PostStatusAsync must NOT have been called yet
-        _mockWorkItems.Verify(
-            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+        // CancelAsync must NOT have been called yet
+        _mockLists.Verify(
+            c => c.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never,
-            "PostStatusAsync must not be called when only the Cancel button is clicked");
+            "CancelAsync must not be called when only the Cancel button is clicked");
     }
 
     /// <summary>
-    /// Clicking "Yes" after the confirmation prompt must call PostStatusAsync once with the correct id.
+    /// Clicking "Yes" after the confirmation prompt must call CancelAsync once with the correct id.
     /// </summary>
     [Fact]
     public async Task InFlightCancel_ClickConfirm_CallsPostStatusOnce()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2937", "Live run")]);
-        _mockWorkItems
-            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        _mockLists
+            .Setup(c => c.CancelAsync(id, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var cut = Render<Work>();
 
@@ -464,20 +458,20 @@ public class WorkComponentTests : BunitContext
         // Click Yes (confirm)
         await cut.InvokeAsync(() => cut.Find($"[data-testid='confirm-cancel-btn-{id}']").Click());
 
-        _mockWorkItems.Verify(
-            c => c.PostStatusAsync(id, It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled"), It.IsAny<CancellationToken>()),
+        _mockLists.Verify(
+            c => c.CancelAsync(id, It.IsAny<CancellationToken>()),
             Times.Once,
-            "PostStatusAsync must be called exactly once with Cancelled after confirming");
+            "CancelAsync must be called exactly once with Cancelled after confirming");
     }
 
     /// <summary>
-    /// Clicking "No" (dismiss) after the confirmation prompt must hide the confirmation and NOT call PostStatusAsync.
+    /// Clicking "No" (dismiss) after the confirmation prompt must hide the confirmation and NOT call CancelAsync.
     /// </summary>
     [Fact]
     public void InFlightCancel_ClickDismiss_HidesConfirmation_AndDoesNotCallPostStatus()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2937", "Live run")]);
 
@@ -494,11 +488,11 @@ public class WorkComponentTests : BunitContext
         Assert.Empty(cut.FindAll($"[data-testid='dismiss-cancel-btn-{id}']"));
         Assert.NotEmpty(cut.FindAll($"[data-testid='cancel-btn-{id}']"));
 
-        // PostStatusAsync must not have been called
-        _mockWorkItems.Verify(
-            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+        // CancelAsync must not have been called
+        _mockLists.Verify(
+            c => c.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never,
-            "PostStatusAsync must not be called when the dismiss button is clicked");
+            "CancelAsync must not be called when the dismiss button is clicked");
     }
 
     // ── In-flight Initiated by column (issue #2540) ───────────────────────────
@@ -507,7 +501,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightTable_HasInitiatedByColumnHeader()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, initiatedBy: "loop:issue")]);
 
@@ -522,7 +516,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightTable_RendersInitiatedByChip_WhenInitiatedByIsSet()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, initiatedBy: "loop:issue")]);
 
@@ -538,7 +532,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightTable_RendersDash_WhenInitiatedByIsNull()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, initiatedBy: null)]);
 
@@ -571,7 +565,7 @@ public class WorkComponentTests : BunitContext
     {
         var id = Guid.NewGuid();
         const string issueUrl = "https://github.com/owner/repo/issues/2947";
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2947", "Issue with URL", issueUrl: issueUrl)]);
 
@@ -599,7 +593,7 @@ public class WorkComponentTests : BunitContext
     public void InFlightRow_WithoutIssueUrl_RendersIssueNumberAsPlainSpan()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2947", "No URL issue", issueUrl: null)]);
 
@@ -640,48 +634,25 @@ public class WorkComponentTests : BunitContext
 
     // ── Provider backlog card (issue #2487) ───────────────────────────────────
 
-    /// <summary>
-    /// Sets up config+provider+dep mocks so GetBacklogAsync returns the given issues
-    /// with HasMore=false (not truncated).
-    /// </summary>
-    private void SetupBacklogProvider(IReadOnlyList<IssueSummary> issues)
+    /// <summary>Labels the API treats as not ready (BacklogService.NotReadyLabels).</summary>
+    private static readonly HashSet<string> s_notReadyLabels = new(StringComparer.OrdinalIgnoreCase)
     {
-        var template = new PipelineJobTemplate
-        {
-            Id = "t1",
-            Name = "T",
-            IssueProviderId = "prov1",
-            RepoProviderId = "repo1",
-            Enabled = true
-        };
-        _mockConfigClient
-            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { template });
-        _mockConfigClient
-            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+        AgentLabels.Done, AgentLabels.Error, AgentLabels.NeedsRefinement, AgentLabels.WontDo, AgentLabels.Cancelled,
+        AgentLabels.InProgress, AgentLabels.Next, AgentLabels.Epic, AgentLabels.EpicApproved, AgentLabels.EpicReview, "backlog",
+    };
 
-        var pagedResult = new PagedResult<IssueSummary>
-        {
-            Items = issues,
-            Page = 1,
-            PageSize = 50,
-            HasMore = false
-        };
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(pagedResult);
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(pagedResult);
-
-        _mockProviderFactory
-            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockProvider.Object);
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+    /// <summary>
+    /// Makes GetBacklogAsync return the given issues as the API computes them: no open dependencies,
+    /// so an issue is ready unless a lifecycle label rules it out.
+    /// </summary>
+    private void SetupBacklogProvider(IReadOnlyList<IssueSummary> issues, bool isTruncated = false)
+    {
+        var backlog = issues
+            .Select(i => new BacklogIssue(i.Identifier, i.Title, i.Url, !(i.Labels ?? []).Any(s_notReadyLabels.Contains), [], i.Labels, i.LabelColors))
+            .ToList();
+        _mockBrowse
+            .Setup(b => b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BacklogResult(backlog, isTruncated));
     }
 
     [Fact]
@@ -717,58 +688,19 @@ public class WorkComponentTests : BunitContext
     [Fact]
     public async Task BacklogCard_ShowsTruncationIndicator_WhenResultIsTruncated()
     {
-        // Set up provider to always return HasMore=true (service hits MaxIssuesPerProvider cap).
-        var template = new PipelineJobTemplate
-        {
-            Id = "t1",
-            Name = "T",
-            IssueProviderId = "prov1",
-            RepoProviderId = "repo1",
-            Enabled = true
-        };
-        _mockConfigClient
-            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { template });
-        _mockConfigClient
-            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
-
-        // Derive page content from the 'page' argument so both overloads produce the same
-        // deterministic result without a shared mutable counter that could be double-incremented
-        // when both the 3-arg and 4-arg Moq setups are live simultaneously.
-        PagedResult<IssueSummary> MakeInfinitePage(int pageArg) => new PagedResult<IssueSummary>
-        {
-            Items = Enumerable.Range((pageArg - 1) * 50 + 1, 50)
+        // The API stopped at its per-provider cap while more pages existed.
+        SetupBacklogProvider(
+            Enumerable.Range(1, 200)
                 .Select(i => new IssueSummary { Identifier = i.ToString(), Title = $"I{i}", Labels = Array.Empty<string>(), Description = "", Url = null })
-                .ToArray(),
-            Page = pageArg,
-            PageSize = 50,
-            HasMore = true
-        };
-
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider
-            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((int pg, int _, CancellationToken _) => MakeInfinitePage(pg));
-        mockProvider
-            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((int pg, int _, IReadOnlyList<string>? _, CancellationToken _) => MakeInfinitePage(pg));
-
-        _mockProviderFactory
-            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockProvider.Object);
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+                .ToList(),
+            isTruncated: true);
 
         var cut = Render<Work>();
 
         // Wait for the backlog to finish loading (OnAfterRenderAsync sets _backlogLoading=false).
         await cut.WaitForStateAsync(
             () => !cut.Markup.Contains("checking…"),
-            TimeSpan.FromSeconds(30)); // 200 dep-check calls are mocked but may take time
+            TimeSpan.FromSeconds(5));
 
         var headerSpan = cut.FindAll(".cockpit-card-header span").Last();
         // Header should contain a "+" to indicate truncation.
@@ -782,9 +714,7 @@ public class WorkComponentTests : BunitContext
     [Fact]
     public async Task BacklogCard_ShowsEmptyMessage_WhenNoIssuesFound()
     {
-        // Default config setup: empty templates → GetBacklogAsync returns empty Issues, IsTruncated=false.
-        // The constructor already stubs GetAllTemplatesAsync with empty templates; this confirms the
-        // empty-state div is shown.
+        // The constructor stubs an empty backlog; this confirms the empty-state div is shown.
         var cut = Render<Work>();
 
         // Wait for the backlog to finish loading.
@@ -801,14 +731,9 @@ public class WorkComponentTests : BunitContext
     [Fact]
     public async Task BacklogCard_IssueWithInProgressLabel_ShowsInProgressBadge_NotReady()
     {
-        // An issue with agent:in-progress must NOT show "Ready" — BlockedIssuesService sets IsReady=false.
-        // TODO: [WARNING] This test verifies rendering given the IsReady flag computed by the real
-        //   BlockedIssuesService (wired through DI via SetupBacklogProvider). If BlockedIssuesService
-        //   stopped setting IsReady=false for agent:in-progress but the component still read the label
-        //   directly and rendered "In progress", the NotContain(">Ready<") assertion would still pass
-        //   for the wrong reason. Consider adding an assertion on the BacklogIssue.IsReady value
-        //   (or a dedicated BlockedIssuesService unit test for this label) to pin the intermediate
-        //   computation — which already exists in BlockedIssuesServiceTests.GetBacklogAsync_IssueWithInProgressLabel_IsNotReady.
+        // An issue with agent:in-progress must NOT show "Ready". The API's BacklogService sets IsReady=false
+        // for it (BacklogServiceTests.GetBacklogAsync_IssueWithInProgressLabel_IsNotReady pins that);
+        // SetupBacklogProvider mirrors the rule, so this test covers the rendering given that flag.
         SetupBacklogProvider(new[]
         {
             new IssueSummary { Identifier = "42", Title = "Running issue", Labels = s_inProgressLabels, Description = "", Url = null },
@@ -868,7 +793,7 @@ public class WorkComponentTests : BunitContext
         });
 
         // Seed an active work item for the same issue
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), issueIdentifier) });
 
@@ -893,7 +818,7 @@ public class WorkComponentTests : BunitContext
             new IssueSummary { Identifier = readyIssueId, Title = "Ready issue", Labels = Array.Empty<string>(), Description = "", Url = null },
         });
 
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), activeIssueId) });
 
@@ -933,10 +858,10 @@ public class WorkComponentTests : BunitContext
             new IssueSummary { Identifier = "42", Title = "Pending issue", Labels = Array.Empty<string>(), Description = "", Url = null },
         });
 
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { MakePendingItem(Guid.NewGuid()) });
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ActiveWorkItemDto>());
 
@@ -965,7 +890,7 @@ public class WorkComponentTests : BunitContext
         //   self-documenting guarantee that a Dispatched item in _active is not matched by a stale
         //   pending list. Consider adding an explicit ReturnsAsync(Array.Empty<PendingWorkItemDto>())
         //   setup to make the intent unambiguous.
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), "42") with { Status = WorkItemStatus.Dispatched } });
 
@@ -989,7 +914,7 @@ public class WorkComponentTests : BunitContext
             new IssueSummary { Identifier = "42", Title = "Error+active issue", Labels = new[] { AgentLabels.Error }, Description = "", Url = null },
         });
 
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), "42") });
 
@@ -1021,7 +946,7 @@ public class WorkComponentTests : BunitContext
             new IssueSummary { Identifier = "43", Title = "Ready issue", Labels = Array.Empty<string>(), Description = "", Url = null },
         });
 
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             // TODO: [WARNING] MakePendingItem hardcodes IssueIdentifier = "42" (a shared constant in the
             //   helper). This test relies on that implicit coupling: issue "42" is the pending one and "43"
@@ -1048,13 +973,13 @@ public class WorkComponentTests : BunitContext
 
     private void SetupItemsOfBothProjects(Guid pendingP, Guid pendingQ, Guid activeP, Guid activeQ)
     {
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([
                 MakePendingItem(pendingP, 10) with { ProjectId = Guid.Parse(AccessProjectP) },
                 MakePendingItem(pendingQ, 20) with { ProjectId = Guid.Parse(AccessProjectQ) },
             ]);
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([
                 MakeActiveItem(activeP, "1") with { ProjectId = Guid.Parse(AccessProjectP) },
@@ -1096,7 +1021,7 @@ public class WorkComponentTests : BunitContext
     public void Access_ItemWithoutProject_NeedsAGlobalRole()
     {
         var id = Guid.NewGuid();
-        _mockWorkItems
+        _mockLists
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id)]);
         Services.AddTestAccess(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));

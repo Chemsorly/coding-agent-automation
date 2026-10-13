@@ -48,7 +48,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
+    [Parameter, EditorRequired] public IUiSettingsClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private int _maxDecompositionSubIssues = 10;

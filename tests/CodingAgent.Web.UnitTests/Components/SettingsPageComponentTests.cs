@@ -1,7 +1,6 @@
 using System.Reflection;
 using Bunit;
 using Moq;
-using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
@@ -25,18 +24,20 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class SettingsPageComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiConfigClient> _mockStore;
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
+    private readonly Mock<CodingAgent.Web.Ui.IUiProviderClient> _mockStore;
 
     public SettingsPageComponentTests()
     {
-        _mockStore = new Mock<IPipelineApiConfigClient>();
-        _mockProviderFactory = new Mock<IProviderFactory>();
+        _mockStore = new Mock<CodingAgent.Web.Ui.IUiProviderClient>();
         SetupDefaults();
         Services.AddSingleton(_mockStore.Object);
-        Services.AddSingleton(new CodingAgent.Infrastructure.GitHub.GitHubValidationService());
-        Services.AddSingleton(new CodingAgent.Infrastructure.GitLab.GitLabValidationService());
-        Services.AddSingleton(_mockProviderFactory.Object);
+        // Spec 051 2.1b/2.1c: Settings reads and writes go through the /api/ui/settings clients.
+        var settings = new Mock<CodingAgent.Web.Ui.IUiSettingsClient>();
+        settings.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
+        settings.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        settings.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineProject>());
+        Services.AddSingleton(settings.Object);
         Services.AddScoped<NotificationService>();
         // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests
         Services.AddSingleton<JobTemplateStore>(JobTemplateStore.CreateEmpty());
@@ -46,13 +47,6 @@ public class SettingsPageComponentTests : BunitContext
 
     private void SetupDefaults()
     {
-        // Settings.razor loads provider configs through GetProviderConfigsWithSecretsAsync — it is the
-        // config editor and must round-trip live Settings/Secrets values, not the "****" masked form.
-        // Forward the with-secrets accessor to the masked one so every per-test GetProviderConfigsAsync
-        // setup below (including ThrowsAsync) applies to both without being duplicated.
-        _mockStore.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.GetProviderConfigsAsync(kind, ct));
-
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
@@ -61,12 +55,6 @@ public class SettingsPageComponentTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineProject>());
     }
 
     [Fact]

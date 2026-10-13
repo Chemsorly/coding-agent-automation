@@ -17,7 +17,7 @@ public class SettingsTreeNavComponentTests : BunitContext
 {
     public SettingsTreeNavComponentTests()
     {
-        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        var mockConfigClient = new Mock<CodingAgent.Web.Ui.IUiSettingsClient>();
         mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
         Services.AddSingleton(mockConfigClient.Object);
@@ -151,7 +151,7 @@ public class SettingsTreeNavComponentTests : BunitContext
     [Fact]
     public void TreeNav_SelectedProjectNode_IsActiveAndLinksToProject()
     {
-        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        var mockConfigClient = new Mock<CodingAgent.Web.Ui.IUiSettingsClient>();
         mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new PipelineProject { Id = "p-1", Name = "Alpha" } });
         Services.AddSingleton(mockConfigClient.Object);

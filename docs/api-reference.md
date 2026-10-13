@@ -508,6 +508,147 @@ Database and Redis state of the answering API replica, for the web UI's sidebar.
 { "databaseConnected": true, "redisConnected": true }
 ```
 
+### Configuration reads (any role)
+
+These return slim views of the configuration for pages outside Settings. They never contain prompts, secrets or MCP servers.
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/projects` | The projects the user can read, as `{ id, name, enabled }`, by name. A global reader gets all of them; a project-scoped user gets only its own. |
+| `GET /api/ui/projects/{projectId}/templates` | The project's job templates as `{ id, name, enabled }`. `404` when the user cannot read the project or it does not exist. |
+| `GET /api/ui/pipeline-settings` | `{ maxRetries, triageRetentionDays }`: global values, without project overrides. |
+
+### Runs and work items (any role)
+
+The lists take an optional `projectId`:
+- Without it, the user needs global read; a project-scoped user gets `403`.
+- With it, the user needs read on that project; otherwise `404`.
+
+The run detail is checked against the run's own project. A run the user cannot read is `404`, like a missing one.
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/runs` | Run history, newest first. It has the same query parameters as `GET /api/pipeline-runs`: `page`, `pageSize`, `feedbackOnly`, `includeActive`, `finalStep`, `projectId`, `since` and `runType`. |
+| `GET /api/ui/runs/{runId}` | `{ run, agentProviderName }`: the run, and the display name of the agent provider it ran with. |
+| `GET /api/ui/work-items/pending?maxResults=&projectId=` | The queue, in dispatch order. |
+| `GET /api/ui/work-items/active?olderThanSeconds=&projectId=` | Dispatched and running work items. |
+
+The actions on one work item need the `operator` role on the work item's stored project. A user who can only read that project gets `403`; a user who cannot see it gets `404`. A run's ID is its work item's ID, so cancelling a run uses the same endpoint.
+
+| Path | Does |
+|---|---|
+| `POST /api/ui/work-items/{id}/cancel` | Cancels a queued item or an in-flight run. Returns `204` when it had already ended. |
+| `PUT /api/ui/work-items/{id}/priority` | Sets the dispatch weight of a queued item from `{ priorityWeight }` (0–1000). Returns `400` outside that range and `409` once the item has left the queue. |
+
+Re-dispatch needs the `operator` role on the run's stored project, with the same `403` and `404` rules.
+
+| Path | Does |
+|---|---|
+| `POST /api/ui/runs/{runId}/redispatch` | Queues a new implementation run for the issue of a failed, cancelled or conflicted implementation run, with the run's providers and project. Returns `200` with the message to show, as a JSON string. Any other run, or an issue that already has queued or running work, is refused with `409` and the reason. Blocking labels such as `agent:error` are not cleared. |
+
+### Backlog (any role)
+
+`GET /api/ui/backlog?projectId=` returns the open issues of the enabled templates' issue providers, as `{ issues, isTruncated }`. Each issue says whether it is ready to dispatch. It is not ready when it has open dependencies (`blockedBy`, `blockedByUrls`) or carries a lifecycle label such as `agent:in-progress` or `backlog`. The API calls the providers with the stored credentials. `isTruncated` is set when a provider had more than 200 open issues. The `projectId` rule is the same as for the lists above.
+
+### Template browse (any role)
+
+The dispatch drawers browse a template's providers through `/api/ui/templates/{templateId}/…`. A template needs read on the project that owns it, and a template of no project needs global read. A template the user cannot read is `404`, like a missing one. When the template's provider is gone or fails, the API answers `502` with the message to show, as a JSON string. Pages hold 15 issues or pull requests. `labels` can be repeated and is passed to the provider's label filter.
+
+| Path | Returns |
+|---|---|
+| `GET …/issues?page=&labels=` | A page of the template tracker's open issues, as `{ items, page, pageSize, hasMore }`. |
+| `GET …/issues/readiness?page=&labels=` | The dependency readiness of the same page's issues, by identifier. The checks are best-effort: when one fails, the issues checked so far are returned. |
+| `GET …/labels` | The labels of the template's issue tracker. |
+| `GET …/pull-requests?page=&labels=` | A page of the template repository's open pull requests. |
+| `GET …/epics?page=&labels=` | The new and the approved epics (8 of each per page), merged. They come from the project's epic tracker when it has one, otherwise from the template's tracker. |
+| `GET …/epic-labels` | The epic tracker's labels, without the epic workflow labels. |
+| `GET …/active-issues` | The issues and pull requests of the template's trackers and repository that already have work, as `[{ issueIdentifier, issueProviderConfigId, status }]`. `Pending` means queued. `Running` covers dispatched and running work, and work that ended within the dedup cooldown. |
+
+### Manual dispatch (operator)
+
+The dispatch drawers enqueue work with `POST /api/ui/templates/{templateId}/…/dispatch`. The request names only the template and the issue or pull request. The API reads the item from the template's providers, with the stored credentials. The caller needs operator on the template's project, and a template of no project needs global operator. A template the user cannot read is `404`; one they can read but not operate is `403`.
+
+The answer is `200` with the message to show, as a JSON string. The work item is queued as `Pending`, and the Scheduler's dispatch loop starts it. A refusal is `409`, and a provider that is gone or fails is `502`; both carry the reason as a JSON string.
+
+| Path | Dispatches |
+|---|---|
+| `POST …/issues/{issueIdentifier}/dispatch` | An issue of the template's tracker, for implementation. An issue with open dependencies, or one awaiting epic review, is refused. A dispatch-ineligible label such as `agent:error` or `agent:done` is replaced with `agent:next` first. |
+| `POST …/pull-requests/{number}/dispatch` | An open pull request of the template's repository, for review. |
+| `POST …/epics/{issueIdentifier}/dispatch` | An epic of the epic tracker (the project's, otherwise the template's own): for analysis, or for decomposition once it carries `agent:epic-approved`. |
+
+### Agents
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/agents` | The agent registry, in the same shape as `GET /api/agents`. A global reader gets every agent. A project-scoped user gets only the agents running work of their projects, so idle agents and other projects' runs are not shown to them. |
+| `GET /api/ui/agents/credential-pool` | `{ total, available, claimed }` for the Kiro credential pool. `total` is `0` when pooling is not configured. Needs a global role. |
+
+### Agent Chat (operator)
+
+Every path needs an operator role. A chat runs with the MCP servers, secrets and steering of the project it is launched for, so launching it needs operator on that project, and a chat without a project needs global operator. The API records who launched each chat. Only that user can prompt it, keep it alive or end it, as long as they can still operate on its project; an admin can use any chat. Anyone else gets `404`, as for a chat that does not exist, and so does any agent that was not launched here: pipeline agents cannot be prompted. Refusals carry the reason as a JSON string: `409` for a request that cannot be served, and `502` when the pod cannot be started.
+
+| Path | Does |
+|---|---|
+| `GET /api/ui/chat/options` | Returns `{ profiles, connectTimeoutSeconds }`. `profiles` lists the enabled agent profiles whose labels name a job template, as `{ id, displayName, matchLabels }`. |
+| `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId }` with the profile's selector and its provider's model and effort, then waits until the pod connects (up to `connectTimeoutSeconds`). Returns `{ agentId, model }`, where `model` is `auto` when the provider sets none. |
+| `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the `chat-session-{sessionId}` hub group. Returns `204`. |
+| `POST /api/ui/chat/{agentId}/keepalive` | Resets the idle clock of the chat's pod. Returns `204`. |
+| `POST /api/ui/chat/{agentId}/terminate` | Ends the chat and stops its pod. Returns `204`. |
+
+### Consolidation (global)
+
+The Consolidation page's API. Several templates and projects can share one brain, so a project role is not enough: reading needs a global role and triggering the global `operator` role. The page lists consolidation runs with `GET /api/ui/runs?runType=Consolidation` and cancels a queued one with `POST /api/ui/work-items/{id}/cancel`.
+
+| Path | Returns |
+|---|---|
+| `GET /api/ui/consolidation` | `{ templates, brainProviderByTemplate, harnessSuggestions }`. `templates` lists the enabled templates of enabled projects, by project name, as `{ id, name, supportsBrainConsolidation, supportsRefactoringDetection, brainReadOnly }`. `brainProviderByTemplate` maps every template that has a brain to its brain provider. `harnessSuggestions` is `null` until suggestions have been generated. |
+| `GET /api/ui/consolidation/templates/{templateId}/refactoring-scan` | `{ maxProposals, maxProposalsIsProjectOverride, hotspotLookbackDays, reviewEnabled, reviewEnabledIsProjectOverride }`: the values a refactoring scan of the template runs with, which are the global settings with the template's project overrides. |
+| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch }`. `type` is `BrainConsolidation`, `RefactoringDetection` or `HarnessSuggestions`. `templateId` is `null` for harness suggestions. `autoDispatch` labels a refactoring scan's issues `agent:next`. Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
+
+### Pipeline loop
+
+Loop control is desired state. Start, Stop and Resume only record the request in the pipeline configuration and return `202`. The Scheduler leader checks every 5 seconds: it starts the loop if it should run and doesn't, stops it if it runs and shouldn't, and resumes it after a newer resume request. It then pushes the loop status to the API (`PUT /api/scheduler/loop-status`, operator key) when the status changes, and at least every 30 seconds. A Start the Scheduler refuses appears in the status's `validationErrors` a few seconds later. A Start while the Scheduler is down is applied when it comes back.
+
+| Path | Who | Returns |
+|---|---|---|
+| `GET /api/ui/loop/status` | Any role | `{ isLoopActive, runRequested, statusMessage, currentIssueIdentifier, processedCount, failedCount, queueCount, isCircuitBroken, lastPollError, currentCycleTemplateIndex, currentCycleTemplateCount, validationErrors, templateStatuses, reportedAt }`. `runRequested` is whether Start was the last command; while it differs from `isLoopActive`, a Start or Stop is still being applied. `reportedAt` is `null` when the Scheduler has not reported in the last 2 minutes; the status then says it is waiting for the Scheduler. A project-scoped user gets only their projects' entries in `templateStatuses`, and no messages, errors or current issue, which can name other projects' templates and issues. |
+| `POST /api/ui/loop/start` | Global `operator` | `202`. Asks for the loop to run. |
+| `POST /api/ui/loop/stop` | Global `operator` | `202`. Asks for the loop to stop after the current cycle. |
+| `POST /api/ui/loop/resume` | Global `operator` | `202`. Asks for a loop that its circuit breaker paused to resume. |
+
+Saving the pipeline settings through `PUT /api/ui/settings/pipeline` keeps the stored loop request, so a settings page loaded before a Start or Stop does not undo it.
+
+### Settings (admin)
+
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
+
+Secrets never leave the API here, not even for an admin:
+- These values come back as `****`:
+  - project secrets;
+  - every MCP server env value and header (in projects and agent profiles);
+  - provider secrets;
+  - the provider settings `privateKeyBase64`, `token` and `accessToken`.
+- Saving `****` keeps the stored value under the same key (MCP servers are matched by name). A key that is left out is removed.
+- A `****` with no stored value behind it is refused with `400` and the key named. This happens, for example, after renaming an MCP server or for a new provider. Enter the value again.
+- A stored provider credential is only used with its stored URL (`apiUrl`, `baseUrl`). A provider whose URL changed while a credential is still `****` is refused with `400`. Enter the credential again.
+- The only exception is `GET /api/ui/settings/export`: the backup file contains live credentials, so treat it as a secret.
+
+The provider operations of the Settings page run in the API:
+
+| Path | Does |
+|---|---|
+| `GET /provider-configs?kind=` | The provider configs of a kind, masked. |
+| `PUT /provider-configs` | Saves the config. With `?copyFrom={id}&copyFromKind={kind}`, a new config takes its `****` credentials from that stored provider. Settings creates a repository's related issue, repository and pipeline providers this way. |
+| `DELETE /provider-configs/{id}?kind=` | Deletes the config. |
+| `POST /provider-configs/check` | Checks the GitHub App or GitLab credentials in the posted form, and the repository or project when one is named. Returns `{ success, message }`. |
+| `POST /provider-configs/actions-access` | Whether the GitHub App can read the repository's workflow runs, as `{ success, message }`. |
+| `POST /provider-configs/repositories` | The repositories the GitHub App installation can access, as `[{ fullName, owner, name }]`. Returns `400` with the reason when the credentials fail. |
+| `POST /provider-configs/initialize` | Checks access and creates the agent labels, as `{ success, message }`. `success` is `false` when some labels could not be created. Returns `400` with the reason when access fails. |
+| `GET`, `POST /provider-configs/{id}/agent-labels` | Whether the stored issue provider's repository has the agent labels, or creates them. Returns `true` or `false`. |
+| `GET /models` | The models the agent CLI offers. Returns `502` with the reason as a JSON string when the fetch fails. |
+
+Every operation takes the form as posted. Its `****` values are filled in from the stored config with the same ID and kind, under the URL rule above.
+
 ---
 
 ## Health Probe Endpoints
@@ -572,5 +713,25 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |
 | GET | `/api/ui/me` | User token | The signed-in user and their roles |
 | GET | `/api/ui/health` | User token | Database and Redis state for the sidebar |
+| GET | `/api/ui/projects` | User token | Projects the user can read |
+| GET | `/api/ui/projects/{projectId}/templates` | User token | Templates of a readable project |
+| GET | `/api/ui/pipeline-settings` | User token | Global settings pages outside Settings show |
+| GET | `/api/ui/runs`, `/api/ui/runs/{runId}` | User token | Run history and run detail (per project) |
+| GET | `/api/ui/work-items/pending`, `/api/ui/work-items/active` | User token | Queue and in-flight work items (per project) |
+| POST, PUT | `/api/ui/work-items/{id}/cancel`, `/api/ui/work-items/{id}/priority` | User token, operator of the item's project | Cancel a run or queued item; set queue priority |
+| POST | `/api/ui/runs/{runId}/redispatch` | User token, operator of the run's project | Queue a failed run's issue again |
+| GET | `/api/ui/backlog` | User token | Open provider issues with their dispatch readiness (per project) |
+| GET | `/api/ui/templates/{templateId}/…` | User token, read on the template's project | The drawers' issues, readiness, labels, pull requests, epics and active work |
+| POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |
+| GET | `/api/ui/agents` | User token | Agents (all for global readers; those running their projects' work for scoped users) |
+| GET | `/api/ui/agents/credential-pool` | User token, global read | Kiro credential pool usage |
+| GET, POST | `/api/ui/chat/options`, `/api/ui/chat` | User token, operator of the chosen project (global operator without one) | Launchable chat profiles; launch a chat pod |
+| POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |
+| GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |
+| POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation, refactoring scan or harness suggestions run |
+| GET | `/api/ui/loop/status` | User token | Pipeline loop status (template entries filtered for scoped users) |
+| POST | `/api/ui/loop/start`, `/stop`, `/resume` | User token, global operator | Ask the Scheduler leader to start, stop or resume the loop |
+| PUT | `/api/scheduler/loop-status` | OperatorApiKey | The Scheduler leader pushes the loop status |
+| GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

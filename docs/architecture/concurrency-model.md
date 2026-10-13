@@ -33,7 +33,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  PipelineDbContext (EF Core)  — authoritative Postgres access               │
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
 │  DispatchLifecycleService: creates K8s Jobs                                 │
-│    (POST /api/work-items/{id}/dispatch, POST /api/work-items/dispatch)      │
+│    (POST /api/work-items/{id}/dispatch)                                     │
 │  DatabaseMaintenanceService (triggered by Scheduler via HTTP)              │
 │  ChatJobDispatcher + ChatSessionWatcher + ChatHeartbeatTracker             │
 │  No leader election lease                                                   │
@@ -132,7 +132,7 @@ across process boundaries.
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()`, `UpdateAgentFieldAsync()` |
 | `AgentOrphanRecoveryService` | `AgentGateway/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
-| `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on every chat prompt (`SendChatPrompt`, `POST /api/agents/{agentId}/chat-prompt`) |
+| `ChatService` | `Api/Chat/ChatService.cs` | Sets `ActiveChatSessionId` on every chat prompt (`SendPromptAsync`, `POST /api/ui/chat/{agentId}/prompt`) |
 
 `RunLifecycleManager` changes `ActiveJobId` only through `IAgentRegistryService.UpdateAgentFieldAsync`,
 which takes `SyncRoot` inside `AgentRegistryService`.
@@ -256,7 +256,7 @@ The five processes communicate strictly via defined interfaces:
 | Orchestrator | Pipeline API | REST (HTTP via `IPipelineApiConfigClient`, `IPipelineApiWorkItemClient`, `IPipelineApiRunHistoryClient`) |
 | Orchestrator | Pipeline API | SignalR hub subscribe (`IAgentHubConnection`, scoped per Blazor circuit) |
 | Orchestrator | Scheduler | REST — `GET /loop/status`, `POST /loop/start`, `/loop/stop`, `/loop/resume` |
-| Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, among others |
+| Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, `PUT /api/scheduler/loop-status` (leader only), among others |
 | Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |
 | Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, `RequestTokenRefresh` (token vending), etc. |
@@ -267,43 +267,41 @@ Job Controller, or between the Orchestrator and Agent pods.
 
 ## PVC Dispatch Race in Multi-Replica Deployments
 
-Kiro agents mount a credential PVC from the configured pool (`KiroPvcPool`). Both dispatch endpoints pick
-it in `DispatchLifecycleService`: `QueryAvailablePvcsAsync` computes the free PVCs from the
-`ClaimedPvcName` of active WorkItems, and `SelectPvcAsync` takes one from that list under
-`_pvcSelectLock`. `_pvcSelectLock` is an in-process `SemaphoreSlim`, so it serialises requests within one
-API pod only. Redis (`signalr.redis.connectionString`) makes agent selection and run tracking safe across
-replicas, but it plays no part in PVC selection.
+Kiro agents mount a credential PVC from the configured pool (`KiroPvcPool`). Every dispatch picks it in
+`DispatchLifecycleService`: `QueryAvailablePvcsAsync` computes the free PVCs from the `ClaimedPvcName` of
+active WorkItems, and `SelectPvcAsync` takes one from that list under `_pvcSelectLock`. `_pvcSelectLock` is
+an in-process `SemaphoreSlim`, so it serialises requests within one API pod only. Redis
+(`signalr.redis.connectionString`) makes agent selection and run tracking safe across replicas, but it
+plays no part in PVC selection.
+
+All work, including a manual dispatch from the drawers and a re-dispatch from the Run page, is queued as
+`Pending` and started by one endpoint:
 
 | Endpoint | Caller | Cross-replica guard |
 |---|---|---|
-| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop`, for all queued work | Postgres advisory lock `dispatch-selector:{selector}`, held from before the PVC query until the WorkItem is `Dispatched`. A lock timeout (60 s) returns an empty `503`, counted as a `lock_timeout` dispatch attempt. |
-| `POST /api/work-items/dispatch` (`DispatchWorkItem`) | Web Run page re-dispatch | None: the PVC availability is read outside any lock. |
+| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop` | Postgres advisory lock `dispatch-selector:{selector}`, held from before the PVC query until the WorkItem is `Dispatched`. A lock timeout (60 s) returns an empty `503`, counted as a `lock_timeout` dispatch attempt. |
 
-### Remaining race windows
+The synchronous `POST /api/work-items/dispatch`, which the Run page's re-dispatch used and which took no
+lock, was removed in spec 051 2.3c.
 
-- **Synchronous dispatch across replicas.** Two `POST /api/work-items/dispatch` requests on different API
-  pods can both see a free PVC, both create a K8s Job and both claim the same PVC.
-- **Different selectors on the Pending path.** The advisory lock is keyed by selector, so two Kiro
-  selectors (for example `dotnet,kiro` and `python,kiro`) that draw from the same pool are not serialised
-  against each other.
+### Remaining race window
+
+- **Different selectors.** The advisory lock is keyed by selector, so two Kiro selectors (for example
+  `dotnet,kiro` and `python,kiro`) that draw from the same pool are not serialised against each other.
 
 ### Detection and cleanup
 
 After creating the Job, `HandleOrphanedJobIfRaceDetectedAsync` reloads the WorkItem. If another request
 already moved it on, the losing request releases its PVC and deletes its Job (best effort). If both reach
 `FinalizeDispatchAsync`, the EF concurrency token fails one `SaveChangesAsync`; its Job is orphaned and
-the ReconciliationService removes it. On the synchronous endpoint a failed dispatch returns `503`, and
-`SafelyCancelOrphanedDispatchedWorkItemAsync` moves the orphaned `Dispatched` row to `Failed`
-(`InfrastructureFailure`).
+the ReconciliationService removes it.
 
-A `503` is transient. The Scheduler retries Pending work on its next cycle; on the Run page the operator
-sees the error and can re-dispatch.
+A `503` is transient: the item stays `Pending`, and the Scheduler retries it on its next cycle.
 
 ### Improvement path
 
-Keying the advisory lock by PVC pool instead of by selector would close the cross-selector window, and
-taking the same lock in `DispatchWorkItem` would close the synchronous one. Both lengthen the time
-dispatches for unrelated selectors wait on each other.
+Keying the advisory lock by PVC pool instead of by selector would close the cross-selector window. It
+lengthens the time dispatches for unrelated selectors wait on each other.
 
 ## Anti-patterns — Don't Do This
 
@@ -326,6 +324,29 @@ Redis. With Redis configured, both switch to distributed implementations automat
 `AgentRegistryService` → `DistributedAgentRegistryService`;
 `OrchestratorRunService` uses Redis-backed state.
 
+
+---
+
+## Loop Control as Desired State
+
+Spec 051 D11. `POST /api/ui/loop/start`, `/stop` and `/resume` on the Pipeline API only write the
+pipeline configuration: `ClosedLoopAutoStart` for Start and Stop, a new `LoopResumeRequestedAt`
+for Resume. No pod receives a command. Every 5 s, `LoopWatchdogService` on the Scheduler leader
+reads the configuration and:
+
+1. resumes the loop when `LoopResumeRequestedAt` is newer than the last request it handled (the
+   first value it sees is only noted);
+2. starts the loop if it should run and doesn't, which also self-heals a loop an exception stopped;
+3. stops the loop if it runs and shouldn't;
+4. pushes the loop status to `PUT /api/scheduler/loop-status` when it changed, and at least every
+   30 s.
+
+The API keeps the last status in Redis (in memory without Redis) and serves it on
+`GET /api/ui/loop/status`. A status older than 2 minutes counts as missing, so the UI can tell a
+silent Scheduler from an idle loop.
+
+The `/loop/*` endpoints and the relay below still serve the web host until it switches to
+`/api/ui/loop` (spec 051 2.6b), which deletes them.
 
 ---
 

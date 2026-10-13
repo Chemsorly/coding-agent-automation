@@ -358,24 +358,46 @@ public partial class GitLabRepositoryProvider
             "ListOpenMergeRequests", ct);
 
         var hasMore = mrs.Count > pageSize;
-        var mappedItems = mrs.Take(pageSize).Select(mr => new PullRequestSummary
-        {
-            Number = (int)mr.Iid,
-            Identifier = mr.Iid.ToString(),
-            Title = mr.Title,
-            Description = mr.Description ?? string.Empty,
-            Labels = mr.Labels ?? Array.Empty<string>(),
-            BranchName = mr.SourceBranch,
-            TargetBranch = mr.TargetBranch,
-            Url = mr.WebUrl,
-            IsDraft = mr.Draft,
-            Author = mr.Author?.Username,
-            CreatedAt = mr.CreatedAt.ToUniversalTime(),
-            HasAutoMerge = mr.MergeWhenPipelineSucceeds,
-        }).ToList();
+        var mappedItems = mrs.Take(pageSize).Select(ToSummary).ToList();
 
         return SharedPrOperations.BuildPagedResult(mappedItems, page, pageSize, hasMore);
     }
+
+    /// <inheritdoc />
+    public async Task<PullRequestSummary?> GetOpenPullRequestAsync(int prNumber, CancellationToken ct)
+    {
+        try
+        {
+            var mr = await ExecuteWithResilienceAsync(
+                client =>
+                {
+                    var mrClient = client.GetMergeRequest(ProjectId);
+                    return Task.Run(() => mrClient[prNumber], ct);
+                },
+                "GetOpenMergeRequest", ct);
+            return mr.State == "opened" ? ToSummary(mr) : null;
+        }
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    private static PullRequestSummary ToSummary(MergeRequest mr) => new()
+    {
+        Number = (int)mr.Iid,
+        Identifier = mr.Iid.ToString(),
+        Title = mr.Title,
+        Description = mr.Description ?? string.Empty,
+        Labels = mr.Labels ?? Array.Empty<string>(),
+        BranchName = mr.SourceBranch,
+        TargetBranch = mr.TargetBranch,
+        Url = mr.WebUrl,
+        IsDraft = mr.Draft,
+        Author = mr.Author?.Username,
+        CreatedAt = mr.CreatedAt.ToUniversalTime(),
+        HasAutoMerge = mr.MergeWhenPipelineSucceeds,
+    };
 
     // ─── Label Management ────────────────────────────────────────────────────────
 

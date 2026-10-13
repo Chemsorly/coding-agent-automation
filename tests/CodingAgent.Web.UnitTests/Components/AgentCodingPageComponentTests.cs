@@ -105,10 +105,6 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockConfigClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
         _mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
-        // AgentCodingPageService feeds the dispatch path, so it reads the with-secrets form
-        // (live tokens/base URLs) rather than the "****" masked one. Same backing store.
-        _mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
         _mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadPipelineConfigAsync(ct));
         _mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -133,7 +129,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
-        Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiDispatchClient>().Object);
 
         // IssueDrawerService now requires IPipelineApiWorkItemClient for status-aware active-issue tracking.
         var mockApiWorkItemClient = new Mock<IPipelineApiWorkItemClient>();
@@ -142,6 +138,8 @@ public class AgentCodingPageComponentTests : BunitContext
         mockApiWorkItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
         Services.AddSingleton<IPipelineApiWorkItemClient>(mockApiWorkItemClient.Object);
+        // Spec 051 2.3b: the drawers browse through the API; it answers from the provider mocks below.
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ProviderBackedBrowseClient.Create(() => _mockIssueProvider.Object, () => _mockRepoProvider.Object).Object);
 
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
@@ -892,8 +890,6 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task AgentCoding_RemoveTemplate_Success_RemovesFromList()
     {
-        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(c => c.DeleteTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -1512,8 +1508,6 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task AgentCoding_MoveTemplateToProject_CallsPageService()
     {
-        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -1535,7 +1529,7 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task MoveTemplateToProject_WhenServiceFails_SetsError()
     {
-        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("move failed"));
 
         var component = Render<AgentCoding>();

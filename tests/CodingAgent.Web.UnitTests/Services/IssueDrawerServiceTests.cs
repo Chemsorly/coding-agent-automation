@@ -1,8 +1,8 @@
 using Moq;
-using CodingAgent.Api.Client;
-using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
+using CodingAgent.Web.Ui;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
@@ -10,41 +10,33 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// Tests for IssueDrawerService in isolation: issue loading, dependency checking,
 /// label filtering, pagination, dispatch, active issue tracking, and CancellationToken lifecycle.
 /// Each test constructs IssueDrawerService with only its own dependencies (no IPipelineLoopService,
-/// IProjectStore, or IConfigurationStore), verifying independent testability.
+/// IProjectStore, or IConfigurationStore), verifying independent testability. Since spec 051 2.3b and
+/// 2.3c the API browses the providers and dispatches (<see cref="IUiBrowseClient"/>,
+/// <see cref="IUiDispatchClient"/>); its TemplateBrowseServiceTests and ManualDispatchServiceTests cover that.
 /// </summary>
 public class IssueDrawerServiceTests
 {
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IDependencyChecker> _mockDependencyChecker;
-    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
-    private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
-    private readonly Mock<IPipelineApiWorkItemClient> _mockApiClient;
+    private static readonly string[] BugAndDocsLabels = ["bug", "docs"];
+
+    private readonly Mock<IUiBrowseClient> _mockBrowse;
+    private readonly Mock<IUiDispatchClient> _mockDispatch;
     private readonly IssueDrawerService _service;
 
     public IssueDrawerServiceTests()
     {
-        _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockDependencyChecker = new Mock<IDependencyChecker>();
-        _mockWorkDistributor = new Mock<IWorkDistributor>();
-        _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
-        _mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        _mockBrowse = new Mock<IUiBrowseClient>();
+        _mockDispatch = new Mock<IUiDispatchClient>();
 
-        // Default stubs so RefreshActiveIssuesAsync doesn't throw in tests that don't care about it.
-        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<(string, string)>());
-        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+        // Default stubs so opening the drawer does not throw in tests that do not care about it.
+        _mockBrowse.Setup(b => b.GetActiveIssuesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<UiActiveIssue>());
+        _mockBrowse.Setup(b => b.GetLabelsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+        _mockBrowse.Setup(b => b.GetIssueReadinessAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, DependencyCheckResult>());
 
-        _service = new IssueDrawerService(
-            _mockProviderFactory.Object,
-            _mockDependencyChecker.Object,
-            _mockWorkDistributor.Object,
-            _mockDispatchOrchestration.Object,
-            _mockApiClient.Object);
+        _service = new IssueDrawerService(_mockBrowse.Object, _mockDispatch.Object);
     }
-
-    private static ProviderConfig MakeProvider(string id, ProviderKind kind = ProviderKind.Issue) =>
-        new() { Id = id, Kind = kind, ProviderType = "GitHub", DisplayName = "Test" };
 
     private static PipelineJobTemplate MakeTemplate(string id = "t-1") =>
         new() { Id = id, Name = "Test", IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
@@ -52,30 +44,13 @@ public class IssueDrawerServiceTests
     private static IssueSummary MakeIssue(string id = "42", string? description = null) =>
         new() { Identifier = id, Title = "Issue " + id, Labels = Array.Empty<string>(), Description = description };
 
-    private static readonly IReadOnlyList<ProviderConfig> IssueProviders =
-        new List<ProviderConfig> { new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" } };
-
-    private static readonly IReadOnlyList<ProviderConfig> RepoProviders =
-        new List<ProviderConfig> { new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" } };
-
     // ── Independent construction ──
 
     [Fact]
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
         // This test verifies the acceptance criterion: independently injectable without unrelated deps
-        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
-        mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<(string, string)>());
-        mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
-
-        var svc = new IssueDrawerService(
-            new Mock<IProviderFactory>().Object,
-            new Mock<IDependencyChecker>().Object,
-            new Mock<IWorkDistributor>().Object,
-            new Mock<IDispatchOrchestrationService>().Object,
-            mockApiClient.Object);
+        var svc = new IssueDrawerService(new Mock<IUiBrowseClient>().Object, new Mock<IUiDispatchClient>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
     }
@@ -85,9 +60,8 @@ public class IssueDrawerServiceTests
     [Fact]
     public async Task LoadDrawerIssuesAsync_SetsStateAndReturnsNull_OnSuccess()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
-        var mockProvider = SetupIssueProvider(items: new[] { MakeIssue("1") }, hasMore: true);
+        SetupIssueProvider(items: new[] { MakeIssue("1") }, hasMore: true);
 
         var error = await _service.LoadDrawerIssuesAsync(template, 1);
 
@@ -99,55 +73,71 @@ public class IssueDrawerServiceTests
     }
 
     [Fact]
-    public async Task LoadDrawerIssuesAsync_ReturnsError_WhenProviderNotFound()
+    public async Task LoadDrawerIssuesAsync_ReturnsTheApisReason_WhenItRefuses()
     {
-        _service.SetProviderContext(new List<ProviderConfig>(), RepoProviders);
         var template = MakeTemplate();
+        _mockBrowse.Setup(b => b.GetIssuesAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Issue provider not found for this template."));
 
         var error = await _service.LoadDrawerIssuesAsync(template, 1);
 
         Assert.Equal("Issue provider not found for this template.", error);
+        Assert.Empty(_service.DrawerState.Items);
+    }
+
+    [Fact]
+    public async Task LoadDrawerIssuesAsync_WhenTheApiCannotBeReached_ReturnsAFailureMessage()
+    {
+        var template = MakeTemplate();
+        _mockBrowse.Setup(b => b.GetIssuesAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("connection refused"));
+
+        var error = await _service.LoadDrawerIssuesAsync(template, 1);
+
+        Assert.Equal("Failed to load issues: connection refused", error);
     }
 
     [Fact]
     public async Task LoadDrawerIssuesAsync_AppliesLabelFilter_WhenSelectedLabelsPresent()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
         _service.DrawerState.SelectedLabels.Add("bug");
-
-        var mockProvider = new Mock<IIssueProvider>();
         IReadOnlyList<string>? capturedLabels = null;
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .Callback<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), HasMore = false, Page = 1, PageSize = 15 });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+        _mockBrowse.Setup(b => b.GetIssuesAsync("t-1", 2, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, int, IReadOnlyList<string>?, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary>(), HasMore = false, Page = 2, PageSize = 15 });
 
-        await _service.LoadDrawerIssuesAsync(template, 1);
+        await _service.LoadDrawerIssuesAsync(template, 2);
 
         Assert.NotNull(capturedLabels);
         Assert.Contains("bug", capturedLabels!);
     }
 
+    [Fact]
+    public async Task LoadDrawerLabelsAsync_LoadsTheTrackersLabels_AndClearsThemWhenTheApiFails()
+    {
+        var template = MakeTemplate();
+        _mockBrowse.Setup(b => b.GetLabelsAsync("t-1", It.IsAny<CancellationToken>())).ReturnsAsync(BugAndDocsLabels);
+
+        await _service.LoadDrawerLabelsAsync(template);
+        Assert.Equal(BugAndDocsLabels, _service.DrawerState.Labels);
+
+        _mockBrowse.Setup(b => b.GetLabelsAsync("t-1", It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("Failed to load labels: boom"));
+        await _service.LoadDrawerLabelsAsync(template);
+        Assert.Empty(_service.DrawerState.Labels);
+    }
+
     // ── CheckDrawerDependenciesAsync ──
 
     [Fact]
-    public async Task CheckDrawerDependenciesAsync_PopulatesReadiness_ForLoadedIssues()
+    public async Task CheckDrawerDependenciesAsync_PopulatesReadiness_ForThePage()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
-        var mockProvider = SetupIssueProvider(items: new[]
-        {
-            new IssueSummary { Identifier = "10", Title = "A", Labels = Array.Empty<string>(), Description = "Blocked by #5" },
-            new IssueSummary { Identifier = "11", Title = "B", Labels = Array.Empty<string>(), Description = "No deps" }
-        });
+        SetupIssueProvider(items: new[] { MakeIssue("10"), MakeIssue("11") });
         await _service.LoadDrawerIssuesAsync(template, 1);
-
         var blockedResult = new DependencyCheckResult { IsReady = false, BlockedBy = [5], TotalDependencies = 1 };
-        _mockDependencyChecker.Setup(d => d.CheckAsync("10", "Blocked by #5", It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(blockedResult);
-        _mockDependencyChecker.Setup(d => d.CheckAsync("11", "No deps", It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+        _mockBrowse.Setup(b => b.GetIssueReadinessAsync("t-1", 1, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, DependencyCheckResult> { ["10"] = blockedResult, ["11"] = DependencyCheckResult.NoDependencies });
 
         await _service.CheckDrawerDependenciesAsync(template, null, CancellationToken.None);
 
@@ -157,10 +147,11 @@ public class IssueDrawerServiceTests
     }
 
     [Fact]
-    public async Task CheckDrawerDependenciesAsync_ReturnsGracefully_WhenProviderNotFound()
+    public async Task CheckDrawerDependenciesAsync_ReturnsGracefully_WhenTheApiRefuses()
     {
-        _service.SetProviderContext(new List<ProviderConfig>(), RepoProviders);
         var template = MakeTemplate();
+        _mockBrowse.Setup(b => b.GetIssueReadinessAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Issue provider not found for this template."));
 
         await _service.CheckDrawerDependenciesAsync(template, null, CancellationToken.None);
 
@@ -168,32 +159,26 @@ public class IssueDrawerServiceTests
     }
 
     [Fact]
-    public async Task CheckDrawerDependenciesAsync_InvokesOnProgress_PerIssue()
+    public async Task CheckDrawerDependenciesAsync_InvokesOnProgress_OnceTheResultsAreIn()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
-        SetupIssueProvider(items: new[] { MakeIssue("1"), MakeIssue("2") });
-        await _service.LoadDrawerIssuesAsync(template, 1);
-
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+        _mockBrowse.Setup(b => b.GetIssueReadinessAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, DependencyCheckResult> { ["1"] = DependencyCheckResult.NoDependencies, ["2"] = DependencyCheckResult.NoDependencies });
 
         int progressCount = 0;
         await _service.CheckDrawerDependenciesAsync(template, () => progressCount++, CancellationToken.None);
 
-        Assert.Equal(2, progressCount);
+        Assert.Equal(1, progressCount);
     }
 
     [Fact]
     public async Task CheckDrawerDependenciesAsync_ThrowsOperationCanceled_WhenTokenCancelled()
     {
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         var template = MakeTemplate();
-        SetupIssueProvider(items: new[] { MakeIssue("1") });
-        await _service.LoadDrawerIssuesAsync(template, 1);
-
         using var cts = new CancellationTokenSource();
         cts.Cancel();
+        _mockBrowse.Setup(b => b.GetIssueReadinessAsync("t-1", It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), cts.Token))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
 
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => _service.CheckDrawerDependenciesAsync(template, null, cts.Token));
@@ -202,84 +187,53 @@ public class IssueDrawerServiceTests
     // ── DispatchIssueAsync ──
 
     [Fact]
-    public async Task DispatchIssueAsync_ReturnsError_WhenProvidersMissing()
+    public async Task DispatchIssueAsync_DispatchesTheTemplatesIssue_AndShowsTheApisMessage()
     {
-        var template = MakeTemplate();
+        _mockDispatch.Setup(d => d.DispatchIssueAsync("t-1", "42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("⏳ Queued #42 — the job controller will start an agent pod for it");
 
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template, new List<ProviderConfig>(), RepoProviders, null);
-
-        Assert.False(success);
-        Assert.Contains("no longer exist", error);
-    }
-
-    [Fact]
-    public async Task DispatchIssueAsync_DbMode_DispatchedMessage_WhenNotQueued()
-    {
-        // TODO: [WARNING] This test does not verify that DistributeAndFinalizeAsync was called with the
-        // specific request object from PrepareDistributionRequestAsync (vs. any other object). If
-        // DispatchWithOrchestrationAsync is refactored to use a different request, the test still passes.
-        // Strengthen by adding: _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(request, ...), Times.Once).
-        SetupDependencyCheckerReady();
-
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, _, msg) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate(), IssueProviders, RepoProviders, null);
+        var (success, error, msg) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate());
 
         Assert.True(success);
-        Assert.Contains("Dispatched", msg);
-        Assert.DoesNotContain("Queued", msg);
+        Assert.Null(error);
+        Assert.Equal("⏳ Queued #42 — the job controller will start an agent pod for it", msg);
     }
 
     [Fact]
-    public async Task DispatchIssueAsync_DbMode_QueuedMessage_WhenQueued()
+    public async Task DispatchIssueAsync_ReturnsTheApisReason_WhenItRefuses()
     {
-        SetupDependencyCheckerReady();
+        _mockDispatch.Setup(d => d.DispatchIssueAsync("t-1", "42", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Cannot dispatch — issue is blocked by open dependencies: #5"));
 
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, true, null));
-
-        var (success, _, msg) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate(), IssueProviders, RepoProviders, null);
-
-        Assert.True(success);
-        Assert.Contains("Queued", msg);
-    }
-
-    [Fact]
-    public async Task DispatchIssueAsync_DbMode_DistributionFailed_ReturnsError()
-    {
-        SetupDependencyCheckerReady();
-
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(false, false, null));
-
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate(), IssueProviders, RepoProviders, null);
+        var (success, error, msg) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate());
 
         Assert.False(success);
-        Assert.Contains("distribution failed", error);
+        Assert.Equal("Cannot dispatch — issue is blocked by open dependencies: #5", error);
+        Assert.Null(msg);
     }
 
     [Fact]
-    public async Task DispatchIssueAsync_ReturnsError_WhenDependencyBlocked()
+    public async Task DispatchIssueAsync_WhenTheApiCannotBeReached_SaysItCouldNotDispatch()
     {
-        var mockProvider = new Mock<IIssueProvider>();
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = [5], TotalDependencies = 1 });
+        _mockDispatch.Setup(d => d.DispatchIssueAsync("t-1", "42", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Connection refused"));
 
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate(), IssueProviders, RepoProviders, null);
+        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate());
 
         Assert.False(success);
-        Assert.Contains("blocked", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Could not dispatch — Connection refused", error);
+    }
+
+    [Fact]
+    public async Task DispatchIssueAsync_WhenTheCallTimesOut_SaysItCouldNotDispatch()
+    {
+        _mockDispatch.Setup(d => d.DispatchIssueAsync("t-1", "42", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("The request timed out."));
+
+        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate());
+
+        Assert.False(success);
+        Assert.Equal("Could not dispatch — The request timed out.", error);
     }
 
     // ── DispatchFromIssueDrawerAsync ──
@@ -287,138 +241,95 @@ public class IssueDrawerServiceTests
     [Fact]
     public async Task DispatchFromIssueDrawerAsync_ReturnsError_WhenTemplateIsNull()
     {
-        var (success, error, _) = await _service.DispatchFromIssueDrawerAsync(MakeIssue(), IssueProviders, RepoProviders, null);
+        var (success, error, _) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
 
         Assert.False(success);
         Assert.Contains("template", error, StringComparison.OrdinalIgnoreCase);
         Assert.False(_service.DrawerState.IsDispatching);
+        _mockDispatch.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task DispatchFromIssueDrawerAsync_ClosesDrawer_OnSuccess()
     {
-        // OpenIssueDrawerAsync internally calls RefreshActiveIssuesAsync →
-        // _apiClient.GetActiveIdentifiersAsync and GetPendingAsync. These are already stubbed
-        // in the constructor to return empty results, so no additional setup is needed here.
-        SetupDependencyCheckerReady();
-
         var template = MakeTemplate();
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         SetupIssueProvider(items: new[] { MakeIssue() });
         await _service.OpenIssueDrawerAsync("t-1", new[] { template });
         Assert.True(_service.DrawerState.IsOpen);
+        _mockDispatch.Setup(d => d.DispatchIssueAsync("t-1", "42", It.IsAny<CancellationToken>())).ReturnsAsync("⏳ Queued #42");
 
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, _, _) = await _service.DispatchFromIssueDrawerAsync(MakeIssue(), IssueProviders, RepoProviders, null);
+        var (success, _, _) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
 
         Assert.True(success);
         Assert.False(_service.DrawerState.IsOpen);
+        Assert.False(_service.DrawerState.IsDispatching);
+    }
+
+    [Fact]
+    public async Task DispatchFromIssueDrawerAsync_KeepsTheDrawerOpen_WhenTheApiRefuses()
+    {
+        SetupIssueProvider(items: new[] { MakeIssue() });
+        await _service.OpenIssueDrawerAsync("t-1", new[] { MakeTemplate() });
+        _mockDispatch.Setup(d => d.DispatchIssueAsync("t-1", "42", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Could not dispatch — distribution failed."));
+
+        var (success, error, _) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
+
+        Assert.False(success);
+        Assert.Equal("Could not dispatch — distribution failed.", error);
+        Assert.True(_service.DrawerState.IsOpen);
     }
 
     // ── RefreshActiveIssuesAsync / IsIssueActive / GetIssueWorkItemStatus ──
 
+    private void SetupActiveIssues(params UiActiveIssue[] active) =>
+        _mockBrowse.Setup(b => b.GetActiveIssuesAsync("t-1", It.IsAny<CancellationToken>())).ReturnsAsync(active);
+
     [Fact]
     public async Task RefreshActiveIssuesAsync_PopulatesActiveIssuesSet()
     {
-        // Set up: issue "42" is in active-identifiers and also in pending → Pending (Queued)
-        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { ("42", "ip-1") });
-        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { MakePendingItem("42", "ip-1") });
+        SetupActiveIssues(new UiActiveIssue("42", "ip-1", WorkItemStatus.Pending));
 
-        await _service.RefreshActiveIssuesAsync();
+        await _service.RefreshActiveIssuesAsync("t-1");
 
-        // TODO: [WARNING] This assertion only checks IsIssueActive (bool) and does not verify the
-        //   stored WorkItemStatus value. A regression that inverts Pending/Running classification
-        //   would not be caught here. The GetIssueWorkItemStatus_WhenIssueIsPending_ReturnsPending
-        //   test below covers the status value separately; consider merging or adding an explicit
-        //   Assert.Equal(WorkItemStatus.Pending, _service.GetIssueWorkItemStatus("42", "ip-1"))
-        //   to this test so it validates both presence and status in one place.
         Assert.True(_service.IsIssueActive("42", "ip-1"));
         Assert.False(_service.IsIssueActive("99", "ip-1"));
+        Assert.False(_service.IsIssueActive("42", "other-provider"));
     }
 
-    // ── IsIssueDistributedAsync ──
+    // ── GetIssueWorkItemStatus ──
 
-    [Fact]
-    public async Task IsIssueDistributedAsync_DelegatesToWorkDistributor()
+    [Theory]
+    [InlineData(WorkItemStatus.Pending)]
+    [InlineData(WorkItemStatus.Running)]
+    public async Task GetIssueWorkItemStatus_ReturnsTheApisBadge(WorkItemStatus badge)
     {
-        // TODO: Use (IssueIdentifier)"42" and (ProviderConfigId)"ip-1" in the mock setup and Verify calls
-        // to match the strongly-typed pattern used elsewhere in this test suite and make the type
-        // safety enforcement visible. Raw string literals compile via implicit conversions but do not
-        // verify that IssueDrawerService actually forwards the correctly-typed values to the distributor.
-        _mockWorkDistributor.Setup(w => w.IsIssueDistributedAsync("42", "ip-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        SetupActiveIssues(new UiActiveIssue("42", "ip-1", badge));
 
-        var result = await _service.IsIssueDistributedAsync((IssueIdentifier)"42", (ProviderConfigId)"ip-1");
+        await _service.RefreshActiveIssuesAsync("t-1");
 
-        Assert.True(result);
-        _mockWorkDistributor.Verify(w => w.IsIssueDistributedAsync("42", "ip-1", It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── GetIssueWorkItemStatus tests (new) ──
-
-    /// <summary>Creates a minimal PendingWorkItemDto for use in RefreshActiveIssuesAsync tests.</summary>
-    private static PendingWorkItemDto MakePendingItem(string issueIdentifier, string providerConfigId) => new()
-    {
-        Id = Guid.NewGuid(),
-        IssueIdentifier = issueIdentifier,
-        IssueProviderConfigId = providerConfigId,
-        TaskType = WorkItemTaskType.Implementation,
-        CreatedAt = DateTimeOffset.UtcNow,
-        AgentSelector = "kiro",
-        RetryCount = 0,
-        TimeoutSeconds = 3600,
-    };
-
-    [Fact]
-    public async Task GetIssueWorkItemStatus_WhenIssueIsPending_ReturnsPending()
-    {
-        // Issue is in both active-identifiers AND pending → Pending status (Queued badge)
-        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { ("42", "ip-1") });
-        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { MakePendingItem("42", "ip-1") });
-
-        await _service.RefreshActiveIssuesAsync();
-
-        var status = _service.GetIssueWorkItemStatus("42", "ip-1");
-        Assert.Equal(WorkItemStatus.Pending, status);
-    }
-
-    [Fact]
-    public async Task GetIssueWorkItemStatus_WhenIssueIsRunning_ReturnsRunning()
-    {
-        // Issue is in active-identifiers but NOT in pending → Running (Running/Dispatched badge)
-        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { ("42", "ip-1") });
-        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
-
-        await _service.RefreshActiveIssuesAsync();
-
-        var status = _service.GetIssueWorkItemStatus("42", "ip-1");
-        Assert.Equal(WorkItemStatus.Running, status);
+        Assert.Equal(badge, _service.GetIssueWorkItemStatus("42", "ip-1"));
     }
 
     [Fact]
     public async Task GetIssueWorkItemStatus_WhenIssueNotInQueue_ReturnsNull()
     {
-        // Issue is in neither list → null (no badge)
-        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<(string, string)>());
-        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+        SetupActiveIssues();
 
-        await _service.RefreshActiveIssuesAsync();
+        await _service.RefreshActiveIssuesAsync("t-1");
 
-        var status = _service.GetIssueWorkItemStatus("99", "ip-1");
-        Assert.Null(status);
+        Assert.Null(_service.GetIssueWorkItemStatus("99", "ip-1"));
+    }
+
+    [Fact]
+    public async Task OpenIssueDrawerAsync_RefreshesTheTemplatesBadges()
+    {
+        SetupIssueProvider(items: new[] { MakeIssue() });
+        SetupActiveIssues(new UiActiveIssue("42", "ip-1", WorkItemStatus.Running));
+
+        await _service.OpenIssueDrawerAsync("t-1", new[] { MakeTemplate() });
+
+        Assert.Equal(WorkItemStatus.Running, _service.GetIssueWorkItemStatus("42", "ip-1"));
     }
 
     // ── CancellationToken lifecycle ──
@@ -436,7 +347,6 @@ public class IssueDrawerServiceTests
     public async Task IssueDrawer_CancellationToken_IsValid_WhenDrawerOpen()
     {
         var template = MakeTemplate();
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         SetupIssueProvider(items: new[] { MakeIssue() });
 
         await _service.OpenIssueDrawerAsync("t-1", new[] { template });
@@ -450,7 +360,6 @@ public class IssueDrawerServiceTests
     public async Task IssueDrawer_CancellationToken_IsCancelled_AfterDrawerClose()
     {
         var template = MakeTemplate();
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         SetupIssueProvider(items: new[] { MakeIssue() });
 
         await _service.OpenIssueDrawerAsync("t-1", new[] { template });
@@ -467,7 +376,6 @@ public class IssueDrawerServiceTests
     public async Task Dispose_CancelsCts()
     {
         var template = MakeTemplate();
-        _service.SetProviderContext(IssueProviders, RepoProviders);
         SetupIssueProvider(items: new[] { MakeIssue() });
 
         await _service.OpenIssueDrawerAsync("t-1", new[] { template });
@@ -484,12 +392,12 @@ public class IssueDrawerServiceTests
 
     // ── Helpers ──
 
-    private Mock<IIssueProvider> SetupIssueProvider(
+    /// <summary>Makes the API return <paramref name="items"/> as the template's first issue page.</summary>
+    private void SetupIssueProvider(
         IEnumerable<IssueSummary>? items = null,
         bool hasMore = false)
     {
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+        _mockBrowse.Setup(b => b.GetIssuesAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = (items ?? Enumerable.Empty<IssueSummary>()).ToList(),
@@ -497,306 +405,5 @@ public class IssueDrawerServiceTests
                 Page = 1,
                 PageSize = 15
             });
-        mockProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<string>());
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-        return mockProvider;
-    }
-
-    private void SetupDependencyCheckerReady()
-    {
-        var mockProvider = new Mock<IIssueProvider>();
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-    }
-
-    private static JobDistributionRequest CreateMinimalRequest() => new()
-    {
-        IssueIdentifier = "42",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        InitiatedBy = "manual",
-        TaskType = WorkItemTaskType.Implementation,
-        AgentSelector = "dotnet,kiro",
-        TimeoutSeconds = 3600,
-        ProviderConfigs = new List<ProviderConfig>
-        {
-            new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
-        }
-    };
-
-    // ── Label clear+set before dispatch (manual force-requeue) ──
-
-    /// <summary>
-    /// Manual dispatch on an issue with a blocking label (agent:cancelled) must:
-    ///   1. Call AddLabelAsync("agent:next") on the issue provider before creating the WorkItem.
-    ///   2. Call RemoveLabelAsync("agent:cancelled") to clear the blocking label.
-    ///   3. Proceed with orchestration dispatch and succeed.
-    /// This verifies the fix for the self-reinforcing cancellation loop: without the label clear,
-    /// DispatchLoop would see agent:cancelled, cancel the WorkItem, and stamp agent:cancelled again.
-    /// Note: agent:epic-review is intentionally excluded — it is blocked entirely, not cleared+requeued.
-    /// </summary>
-    [Theory]
-    [InlineData(AgentLabels.Cancelled)]
-    [InlineData(AgentLabels.Error)]
-    [InlineData(AgentLabels.NeedsRefinement)]
-    [InlineData(AgentLabels.WontDo)]
-    [InlineData(AgentLabels.Done)]
-    public async Task DispatchIssueAsync_WithBlockingLabel_ClearsLabelAndSetsNext_BeforeDispatch(string blockingLabel)
-    {
-        // Arrange — issue has a blocking label
-        var issue = new IssueSummary
-        {
-            Identifier = "42",
-            Title = "Issue 42",
-            Labels = new[] { blockingLabel }
-        };
-        var template = MakeTemplate();
-
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration
-            .Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration
-            .Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, true, null));
-
-        _service.SetProviderContext(IssueProviders, RepoProviders);
-
-        // Act
-        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
-
-        // Assert — dispatch succeeds
-        Assert.True(success, $"Expected success but got error: {error}");
-
-        // agent:next must have been added to the issue before orchestration
-        mockProvider.Verify(p => p.AddLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Next,
-            It.IsAny<CancellationToken>()),
-            Times.Once,
-            "agent:next must be set on the issue before WorkItem creation");
-
-        // The blocking label must have been removed
-        mockProvider.Verify(p => p.RemoveLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            blockingLabel,
-            It.IsAny<CancellationToken>()),
-            Times.Once,
-            $"{blockingLabel} must be removed from the issue before WorkItem creation");
-    }
-
-    /// <summary>
-    /// Manual dispatch of an issue carrying agent:epic-review must be rejected with a clean
-    /// error before any label manipulation or WorkItem creation occurs. agent:epic-review marks
-    /// an issue awaiting human approval of an epic plan; re-dispatching it as an implementation
-    /// job would bypass the approval gate. The UI dispatch button should be disabled for such
-    /// issues, but even if the API is called directly the response must be a clear failure.
-    /// </summary>
-    [Fact]
-    public async Task DispatchIssueAsync_WithEpicReviewLabel_ReturnsError_BeforeDispatch()
-    {
-        // Arrange — issue is in the epic-review state
-        var issue = new IssueSummary
-        {
-            Identifier = "99",
-            Title = "Epic issue awaiting approval",
-            Labels = new[] { AgentLabels.EpicReview }
-        };
-        var template = MakeTemplate();
-
-        var mockProvider = new Mock<IIssueProvider>();
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-
-        // TODO: This mock returns NoDependencies so execution reaches the EpicReview guard.
-        // However, the test does not assert on *ordering* between the dependency check and the
-        // EpicReview guard. If the guards were ever swapped (EpicReview check moved before the
-        // dependency check), this test would still pass trivially. Consider adding a companion
-        // test where the issue has blocked dependencies AND agent:epic-review, asserting that
-        // the EpicReview rejection message is returned — not the "blocked by dependencies" message
-        // — to verify the EpicReview guard fires first.
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        _service.SetProviderContext(IssueProviders, RepoProviders);
-
-        // Act
-        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
-
-        // Assert — dispatch is rejected with a descriptive error
-        Assert.False(success, "Dispatch must be rejected for agent:epic-review issues");
-        Assert.NotNull(error);
-        // TODO: This assertion only verifies the label name appears in the error string. It would
-        // pass even if the message were changed to something unhelpful (e.g., "EpicReview blocked").
-        // The acceptance criterion requires a "clean error", making the message content observable
-        // behavior. Consider strengthening to Assert.Contains("human approval", error, ...) or
-        // Assert.Contains("epic approval workflow", error, ...) to pin the actionable content.
-        Assert.Contains(AgentLabels.EpicReview, error, StringComparison.OrdinalIgnoreCase);
-
-        // No label mutations must have occurred
-        mockProvider.Verify(p => p.AddLabelAsync(
-            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Label management must not fire for epic-review issues — dispatch is blocked before the label-clear path");
-        mockProvider.Verify(p => p.RemoveLabelAsync(
-            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Label management must not fire for epic-review issues — dispatch is blocked before the label-clear path");
-
-        // Orchestration must not have been invoked
-        _mockDispatchOrchestration.Verify(d => d.PrepareDistributionRequestAsync(
-            It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Orchestration must not be reached for epic-review issues");
-    }
-
-    /// <summary>
-    /// Manual dispatch on a clean issue (no blocking label) must NOT call AddLabelAsync or
-    /// RemoveLabelAsync for label management — orchestration proceeds without touching labels.
-    /// The label swap to agent:in-progress happens later in the DispatchLoop, not here.
-    /// </summary>
-    [Fact]
-    public async Task DispatchIssueAsync_WithNoBlockingLabel_DoesNotTouchLabels()
-    {
-        // Arrange — issue has agent:next (clean, scheduler-ready state)
-        var issue = MakeIssue("42");
-        var template = MakeTemplate();
-
-        var mockProvider = new Mock<IIssueProvider>();
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration
-            .Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration
-            .Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, true, null));
-
-        _service.SetProviderContext(IssueProviders, RepoProviders);
-
-        // Act — issue has no labels (MakeIssue returns Labels = Array.Empty<string>())
-        var (success, _, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
-
-        // Assert — no label mutations for clean issues
-        Assert.True(success);
-        mockProvider.Verify(p => p.AddLabelAsync(
-            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Label management must not fire for issues without blocking labels");
-        mockProvider.Verify(p => p.RemoveLabelAsync(
-            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Label management must not fire for issues without blocking labels");
-    }
-
-    /// <summary>
-    /// If label-clear succeeds (agent:next is set on GitHub) but DistributeAndFinalizeAsync then
-    /// fails (e.g. orchestration timeout, 409 from the unique index), DispatchIssueAsync must
-    /// return an error tuple. The issue is left with agent:next and no WorkItem — the scheduler
-    /// loop will pick it up naturally on its next cycle, so the state is recoverable.
-    /// </summary>
-    [Fact]
-    public async Task DispatchIssueAsync_WithBlockingLabel_LabelClearSucceeds_OrchestrationFails_ReturnsError()
-    {
-        // Arrange — issue carries agent:cancelled, label-clear succeeds, orchestration fails
-        var issue = new IssueSummary { Identifier = "42", Title = "Issue 42", Labels = new[] { AgentLabels.Cancelled } };
-        var template = MakeTemplate();
-
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        var request = CreateMinimalRequest();
-        _mockDispatchOrchestration
-            .Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(request);
-        _mockDispatchOrchestration
-            .Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(false, false, "unique index violation"));   // ← orchestration fails
-
-        _service.SetProviderContext(IssueProviders, RepoProviders);
-
-        // Act
-        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
-
-        // Assert — error returned to caller
-        Assert.False(success);
-        Assert.Contains("distribution failed", error, StringComparison.OrdinalIgnoreCase);
-
-        // Label-clear still fired — issue is left with agent:next on GitHub (recoverable by scheduler)
-        mockProvider.Verify(p => p.AddLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"), AgentLabels.Next, It.IsAny<CancellationToken>()),
-            Times.Once, "agent:next must still be set even if orchestration subsequently fails");
-    }
-
-    /// <summary>
-    /// If CreateIssueProvider throws during the label-clear block (e.g. bad provider config,
-    /// factory misconfiguration), DispatchIssueAsync must catch the exception and return an error
-    /// tuple rather than letting it bubble up to the Blazor circuit handler uncaught.
-    /// </summary>
-    [Fact]
-    public async Task DispatchIssueAsync_WithBlockingLabel_CreateIssueProviderThrows_ReturnsErrorTuple()
-    {
-        // Arrange — issue has agent:error
-        // The factory is called twice: once for the dependency check, once for the label-clear.
-        // First call succeeds (dep-check provider); second call throws (label-clear provider).
-        var issue = new IssueSummary { Identifier = "42", Title = "Issue 42", Labels = new[] { AgentLabels.Error } };
-        var template = MakeTemplate();
-
-        var depCheckProvider = new Mock<IIssueProvider>();
-        _mockProviderFactory
-            .SetupSequence(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(depCheckProvider.Object)                                          // call 1: dep-check — succeeds
-            .Throws(new InvalidOperationException("Provider config is corrupt"));     // call 2: label-clear — throws
-
-        _mockDependencyChecker
-            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        _service.SetProviderContext(IssueProviders, RepoProviders);
-
-        // Act
-        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
-
-        // Assert — error tuple returned, orchestration never reached
-        Assert.False(success);
-        Assert.NotNull(error);
-        Assert.Contains("agent:error", error, StringComparison.OrdinalIgnoreCase);
-
-        // Orchestration must never be called — the label-clear failure must short-circuit
-        _mockDispatchOrchestration.Verify(
-            d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Orchestration must not proceed when label-clear throws");
     }
 }

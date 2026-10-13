@@ -16,9 +16,8 @@ using System.Net.Http.Json;
 namespace CodingAgent.Web.E2ETests.Tests;
 
 /// <summary>
-/// Kubernetes-mode E2E tests: validates the K8s-specific dispatch pipeline where
-/// KubernetesWorkDistributor calls POST /api/work-items/dispatch and the WorkItem is
-/// created directly as Dispatched (K8s Job running), without passing through a Pending queue.
+/// Kubernetes-mode E2E tests: validates the K8s-specific dispatch pipeline, where a Pending
+/// WorkItem is claimed as Dispatched once its K8s Job is created.
 /// Uses FakeKubernetesJobClient to capture Job creation calls without real K8s.
 /// </summary>
 [Trait("Category", "E2E")]
@@ -73,17 +72,15 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // G1: KubernetesWorkDistributor synchronous dispatch — WorkItem created as Dispatched
-    // (DispatchService removed — dispatch now happens inline in POST /api/work-items/dispatch)
+    // G1: a Pending WorkItem is claimed as Dispatched with its K8s Job name
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
     public async Task K8sMode_WorkItemCreatedAsDispatched_K8sJobAlreadyRunning()
     {
-        // Arrange + Act: dispatch creates the WorkItem directly as Dispatched
+        // Arrange + Act: a Pending WorkItem is claimed as Dispatched
         var workItemId = await InsertPendingWorkItemAsync("k8s-dispatch-200", "kiro,dotnet");
-        // InsertPendingWorkItemAsync inserts as Pending for legacy path compatibility;
-        // transition to Dispatched to simulate the synchronous dispatch result
+        // Transition to Dispatched the way POST /api/work-items/{id}/dispatch does
         var transitionService = Fixture.ApiServices.GetRequiredService<CodingAgent.Infrastructure.Persistence.Services.WorkItemTransitionService>();
         var transitioned = await transitionService.TransitionAsync(
             workItemId, WorkItemStatus.Dispatched,

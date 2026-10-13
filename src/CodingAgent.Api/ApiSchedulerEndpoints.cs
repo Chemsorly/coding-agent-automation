@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Api.Loop;
 using CodingAgent.Orchestration.Dispatch;
 
 namespace CodingAgent.Api;
@@ -18,6 +19,7 @@ public static class ApiSchedulerEndpoints
             .RequireAuthorization(ApiAuthPolicies.Operator);
 
         group.MapPost("/maintenance/retention-sweep", RunRetentionSweep);
+        group.MapPut("/loop-status", ReportLoopStatus);
     }
 
     // ── POST /api/scheduler/maintenance/retention-sweep ───────────────────────
@@ -42,5 +44,17 @@ public static class ApiSchedulerEndpoints
             result.OrphanedPipelineRunsReconciled,
             result.TriageAttemptsBackfilled,
             result.TriagesDeleted));
+    }
+
+    // ── PUT /api/scheduler/loop-status ────────────────────────────────────────
+
+    /// <summary>
+    /// Stores the loop status the Scheduler leader pushes on every change (spec 051 D11). The UI reads
+    /// it through <c>GET /api/ui/loop/status</c>.
+    /// </summary>
+    internal static async Task<IResult> ReportLoopStatus(LoopStatusDto status, LoopStatusStore store)
+    {
+        await store.SaveAsync(status);
+        return TypedResults.NoContent();
     }
 }

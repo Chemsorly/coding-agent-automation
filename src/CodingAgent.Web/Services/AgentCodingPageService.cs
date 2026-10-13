@@ -2,7 +2,6 @@ using System.Runtime.CompilerServices;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web.Services;
@@ -12,7 +11,9 @@ namespace CodingAgent.Web.Services;
 /// forwards drawer operations to the focused drawer services.
 /// The Blazor component delegates to this service and retains only UI state.
 /// Registered as Scoped because it holds per-page mutable state.
-/// Config and project data are loaded via <see cref="IPipelineApiConfigClient"/>.
+/// Config and project data are loaded via <see cref="IPipelineApiConfigClient"/>. The provider lists
+/// are read without secrets: the template table only shows their names and labels, and dispatch runs
+/// in the API (spec 051 2.3c).
 /// </summary>
 public class AgentCodingPageService
 {
@@ -126,9 +127,9 @@ public class AgentCodingPageService
         try
         {
             await _access.InitializeAsync();
-            IssueProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-            var allRepoProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            PipelineProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
+            IssueProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+            var allRepoProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+            PipelineProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
             BrainProviders = allRepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
             RepoProviders = allRepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
 
@@ -144,36 +145,12 @@ public class AgentCodingPageService
             ReviewerConfigs = await _configClient.GetReviewerConfigsAsync(CancellationToken.None);
             AgentProfiles = await _configClient.GetAgentProfilesAsync(CancellationToken.None);
 
-            // Push provider context into drawer services so load callbacks have access
-            PropagateProviderContext();
-
             return null;
         }
         catch (Exception ex)
         {
             return $"Failed to load configuration: {ex.Message}";
         }
-    }
-
-    /// <summary>
-    /// Pushes the loaded provider lists into the drawer services.
-    /// Must be called after InitializeAsync populates IssueProviders / RepoProviders.
-    /// Also called by the drawer open methods to ensure context is fresh.
-    /// </summary>
-    private void PropagateProviderContext()
-    {
-        // TODO: [WARNING] These concrete type-casts silently no-op if the registered implementation is
-        // replaced by a decorator, proxy, or test double. If the cast fails, _cachedIssueProviders /
-        // _cachedRepoProviders remain null in the drawer service, causing all load calls to return
-        // "provider not found" without surfacing a clear error. Fix: lift SetProviderContext onto
-        // IIssueDrawerService, IPrReviewDrawerService, and IEpicDrawerService, or pass provider lists
-        // as parameters to each load method (matching the pattern already used for DispatchIssueAsync).
-        if (_issueDrawerService is IssueDrawerService issueImpl)
-            issueImpl.SetProviderContext(IssueProviders, RepoProviders);
-        if (_prReviewDrawerService is PrReviewDrawerService prImpl)
-            prImpl.SetProviderContext(IssueProviders, RepoProviders);
-        if (_epicDrawerService is EpicDrawerService epicImpl)
-            epicImpl.SetProviderContext(IssueProviders);
     }
 
     // ── Template Operations ──
@@ -423,7 +400,8 @@ public class AgentCodingPageService
 
     // ── Active issues forwarding ──
 
-    public Task RefreshActiveIssuesAsync() => _issueDrawerService.RefreshActiveIssuesAsync();
+    /// <summary>Reloads the Queued/Running badges for the template's trackers and repository.</summary>
+    public Task RefreshActiveIssuesAsync(TemplateId templateId) => _issueDrawerService.RefreshActiveIssuesAsync(templateId, CancellationToken.None);
 
     public bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _issueDrawerService.IsIssueActive(issueIdentifier, issueProviderConfigId);
@@ -434,13 +412,6 @@ public class AgentCodingPageService
     /// </summary>
     public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _issueDrawerService.GetIssueWorkItemStatus(issueIdentifier, issueProviderConfigId);
-
-    /// <summary>
-    /// Checks if an issue is currently distributed (Pending, Dispatched, or Running).
-    /// Used by drawer components to show processing status.
-    /// </summary>
-    public Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-        => _issueDrawerService.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId);
 
     // ── Cross-drawer coordination ──
 
@@ -464,7 +435,6 @@ public class AgentCodingPageService
     public async Task<string?> OpenIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
-        PropagateProviderContext();
         HideOtherDrawers(DrawerTabIssue);
         return await _issueDrawerService.OpenIssueDrawerAsync(templateId, Templates, notifyStateChanged);
     }
@@ -474,7 +444,6 @@ public class AgentCodingPageService
     public async Task<string?> SwitchToIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
-        PropagateProviderContext();
         HideOtherDrawers(DrawerTabIssue);
         return await _issueDrawerService.SwitchToIssueDrawerAsync(templateId, Templates, notifyStateChanged);
     }
@@ -484,7 +453,7 @@ public class AgentCodingPageService
         var templateId = _issueDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
         if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
-        return await _issueDrawerService.DispatchFromIssueDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
+        return await _issueDrawerService.DispatchFromIssueDrawerAsync(issue);
     }
 
     // ── PR drawer orchestration ──
@@ -495,14 +464,13 @@ public class AgentCodingPageService
     public async Task<string?> OpenPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
-        PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
         // Refresh the active-work-item set before opening, exactly as OpenIssueDrawerAsync does.
         // The PR drawer greys out and badges rows that already have an in-flight work item, and
         // that check reads the same ActiveIssues set the issue drawer maintains — which starts
         // empty on a fresh circuit. Without this refresh the PR drawer never shows a PR as already
         // being processed until something else happens to populate the set.
-        await RefreshActiveIssuesAsync();
+        await RefreshActiveIssuesAsync(templateId);
         return await _prReviewDrawerService.OpenPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
@@ -511,9 +479,8 @@ public class AgentCodingPageService
     public async Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
-        PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
-        await RefreshActiveIssuesAsync();
+        await RefreshActiveIssuesAsync(templateId);
         return await _prReviewDrawerService.SwitchToPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
@@ -522,7 +489,7 @@ public class AgentCodingPageService
         var templateId = _prReviewDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
         if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
-        return await _prReviewDrawerService.DispatchFromPrDrawerAsync(pr, IssueProviders, RepoProviders, parentProject);
+        return await _prReviewDrawerService.DispatchFromPrDrawerAsync(pr);
     }
 
     // ── Epic drawer orchestration ──
@@ -531,9 +498,8 @@ public class AgentCodingPageService
     public async Task<string?> OpenEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
-        PropagateProviderContext();
         HideOtherDrawers(DrawerTabEpic);
-        return await _epicDrawerService.OpenEpicDrawerAsync(templateId, Templates, Projects, notifyStateChanged);
+        return await _epicDrawerService.OpenEpicDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public void CloseEpicDrawer() => _epicDrawerService.CloseEpicDrawer();
@@ -541,9 +507,8 @@ public class AgentCodingPageService
     public async Task<string?> SwitchToEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
-        PropagateProviderContext();
         HideOtherDrawers(DrawerTabEpic);
-        return await _epicDrawerService.SwitchToEpicDrawerAsync(templateId, Templates, Projects, notifyStateChanged);
+        return await _epicDrawerService.SwitchToEpicDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
@@ -551,7 +516,7 @@ public class AgentCodingPageService
         var templateId = _epicDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
         if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
-        return await _epicDrawerService.DispatchFromEpicDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
+        return await _epicDrawerService.DispatchFromEpicDrawerAsync(issue);
     }
 
     // ── Helpers ──

@@ -130,11 +130,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             // Register a no-op IDatabaseProbe so DatabaseStartupService skips real SQL connectivity check
             services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
 
-            // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
-            // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.
-            // Register a mock to satisfy DI validation.
-            services.AddSingleton(new Mock<IDispatchOrchestrationService>().Object);
-
             // Spec 045: IPipelineApiConfigClient is registered by AddPipelineApiClient() and points
             // to localhost:9999 (stub URL set above). Replace it with a mock to prevent real HTTP
             // calls during test startup (ConsolidationRehydrationExtensions calls LoadPipelineConfigAsync).
@@ -160,6 +155,9 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             // Replace any existing IPipelineApiConfigClient registration
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);
+
+            // Spec 051: the /api/ui clients call the API as the signed-in user; there is no API here.
+            CodingAgent.Web.IntegrationTests.Helpers.UiClientStubs.Replace(services);
 
             // KubernetesWorkDistributor is now a pure Pipeline API client — its dedup and status
             // reads go through IPipelineApiWorkItemClient, which would otherwise dial the
@@ -189,13 +187,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
                 .ReturnsAsync(() => capturedSuggestions);
             services.RemoveAll<IPipelineApiHarnessSuggestionClient>();
             services.AddSingleton(harnessMock.Object);
-
-            // Replace IConsolidationService with a mock to prevent real consolidation dispatch
-            // during startup. CleanupOrphanedRunsAsync was removed from IConsolidationService in
-            // issue #3030 (ConsolidationRehydrationExtensions deleted; Program.cs no longer calls it).
-            var consolidationMock = new Mock<IConsolidationService>();
-            services.RemoveAll<IConsolidationService>();
-            services.AddSingleton(consolidationMock.Object);
 
             // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
             // (mounted from the job-templates ConfigMap). ChatJobDispatcher takes it as a
