@@ -15,6 +15,8 @@ spec:
         # Updated in issue #2976: was workdistribution_workitems_pending_duration_seconds_bucket
         # (removed duplicate instrument). dispatch_latency_seconds has the same latency data and is
         # the retained, authoritative histogram after the cleanup.
+        # The histogram is recorded only when an item reaches Dispatched, so this alert sees only items that
+        # dispatch; WorkItemNoJobTemplate covers an item that never dispatches for lack of a job template.
         - alert: WorkItemsPendingTooLong
           expr: |
             histogram_quantile(0.99,
@@ -41,6 +43,30 @@ spec:
           annotations:
             summary: "Dispatch latency is high"
             description: "P99 dispatch latency exceeds 60 seconds for {{ "{{ $labels.instance }}" }}."
+
+        # Alert when the dispatcher keeps deferring work because no job template matches an agent selector.
+        # Metric: workdistribution_dispatch_attempts_total{reason="no_template"} (counter).
+        # Source: API (DispatchWorkItemService.DispatchPendingWorkItem records it when no template resolves).
+        # WorkItemsPendingTooLong cannot see this: its histogram is recorded only when an item reaches
+        # Dispatched, so an item that never dispatches does not appear in it.
+        # A permanent condition (the job-templates ConfigMap changes only with a redeploy), not a transient
+        # dispatch failure, so it does not conflict with docs/internals/decisions.md "Dispatch 503: polling
+        # loop is the retry mechanism". It fires only after 10 minutes of sustained deferrals.
+        # increase() over a window, not a zero baseline: the series appears at its first increment.
+        # Deliberately no pending-age alert: the lowest dispatch tier legitimately waits for many hours.
+        - alert: WorkItemNoJobTemplate
+          expr: |
+            sum(increase(workdistribution_dispatch_attempts_total{reason="no_template"}[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Dispatcher keeps deferring work: no job template matches an agent selector. Check Settings → Label Routing → Agent Profiles and the {{ include "coding-agent-automation.fullname" . }}-job-templates ConfigMap."
+            description: >-
+              Work items stay Pending because the dispatcher finds no job template for their agent selector.
+              The API logs "DispatchPendingWorkItem: no job template for selector <selector>" with the selector.
+              Add a jobTemplates[] entry for it in values.yaml and redeploy, or change the agent profile or
+              repository labels so the selector matches an existing template.
 
         # Alert when web DB is unreachable
         # Uses the app-exported readiness state. When DatabaseReadinessMonitor detects
@@ -72,8 +98,8 @@ spec:
 
         # Alert when credential pool is exhausted.
         # Metrics: workdistribution_credential_pool_available / workdistribution_credential_pool_claimed.
-        # Source: API (WorkItemDispatchEndpoints — UpdateCredentialPoolMetrics called on each dispatch attempt).
-        # These gauges use an owner-only guard: non-API processes emit no measurement (issue #2980).
+        # Source: Scheduler leader (WorkItemCountsService polls GET /api/agents/credential-pool; issue #3555).
+        # These gauges emit only on the Scheduler leader, and only after a successful poll.
         - alert: CredentialPoolExhausted
           expr: |
             workdistribution_credential_pool_available == 0

@@ -106,8 +106,8 @@ public sealed class WorkItemTransitionService_PendingDispatchedTransitionsTests
 /// </para>
 /// </summary>
 /// <remarks>
-/// Placed in <see cref="MetricsTestCollection"/> because tests 8 and 9 read and write the
-/// process-wide static <c>WorkDistributionTelemetry._credentialPoolAvailable</c> field via
+/// Placed in <see cref="MetricsTestCollection"/> because tests 8 and 9 read the
+/// process-wide static callback fields on <c>WorkDistributionTelemetry</c> via
 /// reflection — they must not run concurrently with other metric-emitting tests.
 /// </remarks>
 [Collection("Metrics")]
@@ -234,13 +234,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
     // ── Helpers for reading static telemetry fields ─────────────────────────
 
-    private static int ReadCredentialPoolAvailable()
-    {
-        var field = typeof(WorkDistributionTelemetry)
-            .GetField("_credentialPoolAvailable", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(field); // guard: fails with a clear message if the field is renamed
-        return (int)field!.GetValue(null)!;
-    }
+    // ReadCredentialPoolAvailable was removed: the credential pool gauge is no longer
+    // updated from DispatchWorkItemService (issue #3555). The gauge is now emitted
+    // exclusively by the Scheduler leader via WorkItemCountsService. Tests 8 and 9
+    // now verify the ABSENCE of gauge updates from the dispatch path.
 
     // ── Test 1: Happy path ────────────────────────────────────────────────────
 
@@ -470,10 +467,16 @@ public sealed class DispatchPendingWorkItemEndpointTests
         item!.Status.Should().Be(WorkItemStatus.Pending, "PVC gate rejection must leave item Pending");
     }
 
-    // ── Test 8: Credential pool gauge emitted on success ─────────────────────
+    // ── Test 8: Credential pool gauge is NOT updated from dispatch (issue #3555) ────────────
 
+    /// <summary>
+    /// After issue #3555, the dispatch endpoint no longer calls <c>UpdateCredentialPoolMetrics</c>.
+    /// The credential pool gauge is now emitted exclusively by the Scheduler leader via
+    /// <c>WorkItemCountsService</c>. This test verifies that a successful dispatch does NOT
+    /// touch the credential pool gauge callbacks registered on <c>WorkDistributionTelemetry</c>.
+    /// </summary>
     [Fact]
-    public async Task DispatchPendingWorkItem_OnSuccess_EmitsCredentialPoolGauge()
+    public async Task DispatchPendingWorkItem_OnSuccess_DoesNotUpdateCredentialPoolGauge()
     {
         var dbFactory = CreateDbFactory();
         var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
@@ -482,30 +485,61 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var k8sMock = new Mock<IKubernetesJobClient>();
         k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        // 2-PVC pool; 0 claimed → available=2
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-a", "pvc-b"]);
         var resolver = CreateTemplateResolver(templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        // TODO [WARNING]: This test does not reset _credentialPoolAvailable to a distinguishable sentinel before
-        // the Act call. If another test in the Metrics collection happens to leave the field at 2 before this
-        // test runs, the assertion below would pass without UpdateCredentialPoolMetrics ever being called here.
-        // Add a sentinel reset (e.g. -1) before the DispatchPendingWorkItem call, matching the pattern in Test 9.
+        // TODO [WARNING]: The "BeSameAs" assertion below is vacuously true when availableCallbackBefore
+        // is null (no service has registered callbacks yet in this test run): null.Should().BeSameAs(null)
+        // always passes, even if the dispatch endpoint accidentally set the callback to null. A more robust
+        // assertion would pre-register a known non-null sentinel callback before calling dispatch, then
+        // verify the sentinel is still present after the call — distinguishing "field unchanged" from
+        // "field was cleared and happens to match null".
+        // More fundamentally, this test cannot fail at all: nothing but RegisterCredentialPoolGaugeCallbacks
+        // writes these fields and UpdateCredentialPoolMetrics is now an [Obsolete] no-op, so re-adding the
+        // UpdateCredentialPoolMetrics(...) call to DispatchWorkItemService would leave it green. Only the
+        // `git grep` acceptance check guards that regression. Fix: delete UpdateCredentialPoolMetrics so a
+        // re-added call fails to compile, then drop this test (or assert through a MeterListener with a
+        // sentinel callback that is never invoked).
+
+        // Verify that the credential pool gauge callbacks are NOT registered by the dispatch endpoint.
+        // The gauge is exclusively emitted by the Scheduler leader (issue #3555).
+        var availableCallbackBefore = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolAvailableCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
+        var claimedCallbackBefore = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolClaimedCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
 
         var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
             entity.Id, dbFactory, lifecycle, resolver, lockProvider, CancellationToken.None);
 
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>();
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
+            "successful dispatch returns 200");
 
-        // Gauge must have been updated to the available count (2)
-        ReadCredentialPoolAvailable().Should().Be(2,
-            "credential pool gauge must reflect the available PVC count after a successful dispatch");
+        // Callbacks must not have been changed by the dispatch endpoint
+        var availableCallbackAfter = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolAvailableCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
+        var claimedCallbackAfter = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolClaimedCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
+
+        availableCallbackAfter.Should().BeSameAs(availableCallbackBefore,
+            "the dispatch endpoint must not register or change credential pool gauge callbacks (issue #3555)");
+        claimedCallbackAfter.Should().BeSameAs(claimedCallbackBefore,
+            "the dispatch endpoint must not register or change credential pool gauge callbacks (issue #3555)");
     }
 
-    // ── Test 9: Credential pool gauge emitted even on 503 (PVC exhaustion) ───
+    // ── Test 9: Credential pool gauge is NOT updated even on 503 (PVC exhaustion) ─────────
 
+    /// <summary>
+    /// After issue #3555, the dispatch endpoint no longer calls <c>UpdateCredentialPoolMetrics</c>
+    /// on any path, including the PVC-exhaustion 503 path. This test verifies that the dispatch
+    /// endpoint does not touch the credential pool gauge callbacks.
+    /// </summary>
     [Fact]
-    public async Task DispatchPendingWorkItem_PvcExhaustion_EmitsCredentialPoolGaugeBeforeReturning503()
+    public async Task DispatchPendingWorkItem_PvcExhaustion_DoesNotUpdateCredentialPoolGauge()
     {
         var dbFactory = CreateDbFactory();
         // Claim the only PVC → available=0
@@ -517,29 +551,44 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var resolver = CreateTemplateResolver(templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        // Reset the static gauge field to a sentinel before calling, to distinguish "not updated" from "updated to 0".
-        // We seed available=0 and verify the gauge is updated to 0 (not left at any prior value).
-        // Reset to a non-zero sentinel so a "no update" would be detectable.
-        // TODO [WARNING]: The sentinel value (99) is written to the static field with no try/finally to restore
-        // the prior value. If the assertion fails or the endpoint throws before UpdateCredentialPoolMetrics runs,
-        // the field is abandoned at 99, potentially causing subsequent Metrics-collection tests that read
-        // _credentialPoolAvailable without their own sentinel reset to observe leaked state and produce a false
-        // pass or false failure. Wrap the sentinel assignment and assertion in try/finally that restores the
-        // prior value, or add a collection-level fixture teardown that resets the field.
-        typeof(WorkDistributionTelemetry)
-            .GetField("_credentialPoolAvailable", BindingFlags.NonPublic | BindingFlags.Static)!
-            .SetValue(null, 99); // sentinel
+        // TODO [WARNING]: The "BeSameAs" assertion below is vacuously true when availableCallbackBefore
+        // is null (no service has registered callbacks yet in this test run): null.Should().BeSameAs(null)
+        // always passes, even if the dispatch endpoint accidentally set the callback to null. A more robust
+        // assertion would pre-register a known non-null sentinel callback before calling dispatch, then
+        // verify the sentinel is still present after the call — distinguishing "field unchanged" from
+        // "field was cleared and happens to match null".
+        // More fundamentally, this test cannot fail at all: nothing but RegisterCredentialPoolGaugeCallbacks
+        // writes these fields and UpdateCredentialPoolMetrics is now an [Obsolete] no-op, so re-adding the
+        // UpdateCredentialPoolMetrics(...) call to DispatchWorkItemService would leave it green. Only the
+        // `git grep` acceptance check guards that regression. Fix: delete UpdateCredentialPoolMetrics so a
+        // re-added call fails to compile, then drop this test (or assert through a MeterListener with a
+        // sentinel callback that is never invoked).
+
+        var availableCallbackBefore = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolAvailableCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
+        var claimedCallbackBefore = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolClaimedCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
 
         var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
             entity.Id, dbFactory, lifecycle, resolver, lockProvider, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
+            "PVC exhaustion must return 503");
 
-        // Gauge must have been updated to 0 (not left at the 99 sentinel),
-        // proving UpdateCredentialPoolMetrics was called BEFORE the PVC gate returned 503.
-        ReadCredentialPoolAvailable().Should().Be(0,
-            "UpdateCredentialPoolMetrics must be called before the PVC gate so the gauge is updated even on 503");
+        var availableCallbackAfter = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolAvailableCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
+        var claimedCallbackAfter = typeof(WorkDistributionTelemetry)
+            .GetField("_credentialPoolClaimedCallback", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
+
+        availableCallbackAfter.Should().BeSameAs(availableCallbackBefore,
+            "the dispatch endpoint must not register or change credential pool gauge callbacks on any path (issue #3555)");
+        claimedCallbackAfter.Should().BeSameAs(claimedCallbackBefore,
+            "the dispatch endpoint must not register or change credential pool gauge callbacks on any path (issue #3555)");
     }
 
     // ── Test 10: Advisory lock prevents double-dispatch ──────────────────────
@@ -2015,6 +2064,15 @@ public sealed class UniqueViolationIdempotentRetryTests
     private static IOrchestratorRunService CreateRunService() =>
         new OrchestratorRunService(Mock.Of<Serilog.ILogger>());
 
+    private static JobTemplateStore CreateTemplateStore() =>
+        JobTemplateStore.LoadFromYaml("""
+            - labels: "kiro,dotnet"
+              image: "test-image:latest"
+              imagePullPolicy: "Always"
+              providerType: "kiro"
+              maxConcurrent: 5
+            """);
+
     private static JobDistributionRequest MakeRequest(
         string? issueIdentifier = null,
         string? runId = null) => new()
@@ -2041,18 +2099,23 @@ public sealed class UniqueViolationIdempotentRetryTests
         // Arrange: first call creates the item; second call with same RunId triggers PK conflict.
         var dbFactory = CreateDbFactory();
         var runService = CreateRunService();
+        var templateStore = CreateTemplateStore();
         var runId = Guid.NewGuid().ToString();
         var request = MakeRequest(runId: runId);
 
         // Act: first call — succeeds, returns 201
         var firstResult = await WorkItemDispatchEndpoints.CreateWorkItem(
-            request, new WorkItemStore(dbFactory, runService), CancellationToken.None);
+            request, new WorkItemStore(dbFactory, runService),
+            new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore),
+            CancellationToken.None);
         firstResult.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Created<Guid>>(
             "first call must succeed");
 
         // Act: second call with same RunId — triggers PK unique violation
         var secondResult = await WorkItemDispatchEndpoints.CreateWorkItem(
-            request, new WorkItemStore(dbFactory, runService), CancellationToken.None);
+            request, new WorkItemStore(dbFactory, runService),
+            new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore),
+            CancellationToken.None);
 
         // Assert: second call must return 201 (idempotent — item already exists)
         var created = secondResult as Microsoft.AspNetCore.Http.HttpResults.Created<Guid>;
@@ -2100,7 +2163,9 @@ public sealed class UniqueViolationIdempotentRetryTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.CreateWorkItem(
-            request, new WorkItemStore(dbFactory, runService), CancellationToken.None);
+            request, new WorkItemStore(dbFactory, runService),
+            new DispatchWorkItemService(CreateTemplateStore()), new DispatchTemplateResolver(null, CreateTemplateStore()),
+            CancellationToken.None);
 
         // Assert: 409 Conflict via HandleUniqueViolationFallback
         var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;

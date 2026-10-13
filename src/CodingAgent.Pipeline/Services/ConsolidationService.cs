@@ -296,13 +296,15 @@ public sealed class ConsolidationService : IConsolidationService
 
         if (result.IsPermanentFailure)
         {
-            // Permanent failure (e.g. no job template for the resolved selector).
+            // Permanent failure (e.g. no job template for the resolved selector). The selector is logged as
+            // its own property: it is what the operator has to fix, and it must not depend on how a
+            // distributor words its error message.
             PipelineTelemetry.ConsolidationDispatchPermanentFailures.Add(1,
                 new KeyValuePair<string, object?>("run.type", type.ToString()));
             _logger.Error(
-                "ConsolidationService: permanent dispatch failure for {Type}/{TemplateId}: {Error}. " +
+                "ConsolidationService: permanent dispatch failure for {Type}/{TemplateId} (agent selector '{AgentSelector}'): {Error}. " +
                 "No WorkItem created. Re-trigger after fixing the agent configuration.",
-                type, templateIdValue ?? GlobalScopeName, result.ErrorMessage);
+                type, templateIdValue ?? GlobalScopeName, request.AgentSelector, result.ErrorMessage);
         }
         else
         {

@@ -47,9 +47,9 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | Metric | Type | Unit | Tags | Recorded by | Description |
 |--------|------|------|------|-------------|-------------|
 | `workdistribution.dispatch_latency_seconds` | Histogram | s | `agent_selector` | API | WorkItem creation (or original enqueue) → dispatched |
-| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error` |
+| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error`. `no_template` drives `WorkItemNoJobTemplate` (see [Alerts](#alerts)) |
 | `workdistribution.pod_start_seconds` | Histogram | s | — | API | Dispatched → the agent's first `GET /assignment` |
-| `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | API | Kiro credential PVCs, as last computed during dispatch. Only the API emits them |
+| `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | Scheduler leader | Kiro credential PVCs, polled every 10 s by the Scheduler leader. Emits nothing before the first successful poll and on non-leaders |
 | `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | — | API | A dispatch found no free credential PVC |
 | `workdistribution.progress_write_failures` | Counter | `{failure}` | — | API | Failed `LastProgressAt` writes; sustained failures risk false-positive timeouts |
 | `workdistribution.dispatcher_polls` | Counter | `{poll}` | — | Scheduler | Dispatch poll cycles |
@@ -89,12 +89,18 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `github.api.requests` | Counter | `operation`, `outcome` | API, Scheduler, Web | GitHub API attempts, retries included. `outcome`: `success`, `not_found`, `rate_limited`, `error` |
 | `github.rate_limit.remaining` | ObservableGauge | `resource` (`core`, `graphql`) | API, Scheduler, Web | Remaining rate-limit quota; only emitted after the process made a GitHub call |
 
-### Agent connections (API)
+### Agent connections (Scheduler leader)
+
+<!-- TODO [WARNING]: This heading attributes the whole table to the Scheduler leader, but only the two
+     gauge rows (`agent.jobs.active`, `agent.connections.total`) are emitted there. `agent.hub.auth_rejections`
+     and `token_vending.failures` are counters recorded by API-hosted code. An operator switching
+     `service_name` after the deploy could query the wrong service for those counters. Fix: use a neutral
+     heading (or split into two subsections) and name the Scheduler leader only on the two gauge rows. -->
 
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|
-| `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, from the agent registry |
-| `agent.connections.total` | ObservableGauge | — | Agents registered with the hub |
+| `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, polled from the agent registry by the Scheduler leader |
+| `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
 | `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`, `operator_forbidden` |
 | `token_vending.failures` | Counter | — | Token vending failures |
 
@@ -248,6 +254,22 @@ Stall kills and process deaths are also reported to the API, which records `pipe
 | Brain update rates | `increase(pipeline_run_brain_updates_total[24h])` |
 
 **Removed metrics.** `workdistribution.workitems_terminated` and `workdistribution.job_execution_duration_seconds` recorded the same transition as `pipeline.run.outcomes` / `pipeline.run.duration` and were removed; use the `pipeline.run.*` pair. The agent-side `quality_gate.*` (`retries`, `duration`, `evaluations`, `process.*`, `stall.*`, `external_ci.duration`, `post_pr_ci.duration`), `agent.heartbeat.failures`, `agent.reconnections`, `agent.signalr.failures` and `brain.push.retries` instruments were removed because agent pods export no metrics, so none of them ever reached Prometheus after issue #2980; `pipeline.run.quality_gate.results`, `pipeline.run.agent_stalls` and `pipeline.run.ci.wait` are the API-side replacements.
+
+### Alerts
+
+The Helm chart defines its alert rules in `helm/coding-agent-automation/templates/prometheusrules.yaml`. They render only when `monitoring.prometheusRules.enabled` is `true` (default `false`) and need the Prometheus Operator, which provides the `PrometheusRule` resource. A deployment that sends its metrics to Grafana Cloud and alerts there must create the same rules in Grafana Cloud: that is outside this repository.
+
+| Alert | Expression | For | Severity | Fires when |
+|-------|------------|-----|----------|------------|
+| `WorkItemNoJobTemplate` | `sum(increase(workdistribution_dispatch_attempts_total{reason="no_template"}[10m])) > 0` | 10m | `warning` | The dispatcher keeps deferring work because no job template matches an agent selector |
+
+**`WorkItemNoJobTemplate` covers the permanent no-template case.** A work item whose agent selector has no job template, neither directly nor through its agent profile, is deferred on every dispatch cycle and stays Pending. The templates come from `jobTemplates[]` in the Helm values and change only with a redeploy, so this does not clear by itself. It is not one of the transient dispatch failures (no free credential PVC, a Kubernetes error) that the next cycle retries without an alert; the rule fires only after the deferrals have gone on for 10 minutes. It needs no threshold and no zero baseline: the dispatcher retries every cycle, so the series keeps incrementing after it first appears, and `increase()` over the window sees that. It counts items the dispatcher attempts in a cycle.
+
+The counter has no selector label. The API logs `DispatchPendingWorkItem: no job template for selector <selector>` with the selector. To fix it, add a `jobTemplates[]` entry for that selector and redeploy, or change the agent profile (Settings → Label Routing → Agent Profiles) or the repository labels so the selector matches an existing template.
+
+**`WorkItemsPendingTooLong` only sees items that dispatch.** It is a quantile of `workdistribution_dispatch_latency_seconds`, which the API records when an item moves from Pending to Dispatched. An item that never dispatches never enters that histogram, so the alert cannot fire for it.
+
+**There is no pending-age alert.** A threshold on `workdistribution.pending.oldest_age_seconds` would fire on waits that are not a fault: the lowest dispatch tier can wait many hours and then dispatch. The `no_template` counter is the signal for the permanent case.
 
 ## Traces
 

@@ -25,14 +25,15 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     private static JobDistributionRequest MakeRequest(
-        WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
+        WorkItemTaskType taskType = WorkItemTaskType.Implementation,
+        string agentSelector = "kiro") => new()
         {
             IssueIdentifier = new IssueIdentifier("GH-1"),
             IssueProviderConfigId = "github",
             RepoProviderConfigId = "github-repo",
             InitiatedBy = "test",
             TaskType = taskType,
-            AgentSelector = "kiro",
+            AgentSelector = agentSelector,
             TimeoutSeconds = 3600
         };
 
@@ -168,11 +169,48 @@ public sealed class KubernetesWorkDistributorTests
         result.Success.Should().BeFalse();
         result.IsPermanentFailure.Should().BeFalse(
             "503 is a transient failure — the run should remain Queued and retry");
-        // TODO: [WARNING] ErrorMessage is not asserted here. The 503 path in EnqueueAsPendingAsync
-        // propagates the exception message into ErrorMessage; if it were accidentally swallowed and
-        // returned as null/empty, the Attention view would show a blank failure note. The parallel
-        // non-Consolidation 503 test (line ~110) asserts result.ErrorMessage.Should().Contain("server error").
-        // Add the same assertion here for parity: result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorMessage.Should().NotBeNullOrEmpty("the failure text must reach the caller, not be swallowed");
+    }
+
+    /// <summary>
+    /// 422 from CreateAsync = <c>POST /api/work-items</c> refused the run because its agent selector has no
+    /// job template. Templates are read at start-up, so a retry cannot succeed: permanent failure, selector in the message.
+    /// </summary>
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When422_ReturnsPermanentFailureNamingTheSelector()
+    {
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation, agentSelector: "kiro,python,python312");
+        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null,
+                System.Net.HttpStatusCode.UnprocessableEntity));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.IsPermanentFailure.Should().BeTrue("a missing job template cannot be fixed by retrying");
+        result.Queued.Should().BeFalse("nothing was enqueued");
+        result.AlreadyExists.Should().BeFalse();
+        result.WorkItemId.Should().BeNull();
+        result.ErrorMessage.Should().Contain("kiro,python,python312", "the operator needs the selector that has no template");
+        result.ErrorMessage.Should().Contain("job template");
+    }
+
+    /// <summary>
+    /// The mapping is by status code, not by task type: only Consolidation requests get a 422 from the API today,
+    /// but a 422 from the enqueue call is permanent whichever task type sent it.
+    /// </summary>
+    [Fact]
+    public async Task DistributeAsync_Implementation_When422_ReturnsPermanentFailure()
+    {
+        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null,
+                System.Net.HttpStatusCode.UnprocessableEntity));
+
+        var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.IsPermanentFailure.Should().BeTrue();
+        result.ErrorMessage.Should().Contain("'kiro'");
     }
 
     /// <summary>

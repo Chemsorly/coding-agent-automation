@@ -81,37 +81,36 @@ public static class WorkDistributionTelemetry
 
     /// <summary>
     /// Gauge: number of available credential PVCs in the kiro pool.
-    /// Emits no measurement until <see cref="UpdateCredentialPoolMetrics"/> has been called
+    /// Emits no measurement until <see cref="RegisterCredentialPoolGaugeCallbacks"/> has been called
     /// (the same owner-only pattern used by <see cref="DispatcherLastPollEpoch"/>).
-    /// Processes that never call <see cref="UpdateCredentialPoolMetrics"/> — Scheduler,
+    /// Processes that never call <see cref="RegisterCredentialPoolGaugeCallbacks"/> — the API,
     /// Job Controller, and Web — emit nothing, preventing spurious 0 series.
-    /// Only the API process owns this metric (set in <c>WorkItemDispatchEndpoints</c>).
+    /// Emitted by the Scheduler leader via <c>WorkItemCountsService</c>.
     /// </summary>
     public static readonly ObservableGauge<int> CredentialPoolAvailable =
         Meter.CreateObservableGauge<int>(
             "workdistribution.credential_pool_available",
             observeValues: () =>
             {
-                if (!_credentialPoolUpdated) return [];
-                return [new Measurement<int>(_credentialPoolAvailable,
-                    new KeyValuePair<string, object?>("pool", "kiro"))];
+                var cb = Volatile.Read(ref _credentialPoolAvailableCallback);
+                return cb is null ? [] : cb();
             },
             unit: "{pvc}",
             description: "Number of available credential PVCs");
 
     /// <summary>
     /// Gauge: number of claimed credential PVCs in the kiro pool.
-    /// Emits no measurement until <see cref="UpdateCredentialPoolMetrics"/> has been called
+    /// Emits no measurement until <see cref="RegisterCredentialPoolGaugeCallbacks"/> has been called
     /// (the same owner-only pattern used by <see cref="DispatcherLastPollEpoch"/>).
+    /// Emitted by the Scheduler leader via <c>WorkItemCountsService</c>.
     /// </summary>
     public static readonly ObservableGauge<int> CredentialPoolClaimed =
         Meter.CreateObservableGauge<int>(
             "workdistribution.credential_pool_claimed",
             observeValues: () =>
             {
-                if (!_credentialPoolUpdated) return [];
-                return [new Measurement<int>(_credentialPoolClaimed,
-                    new KeyValuePair<string, object?>("pool", "kiro"))];
+                var cb = Volatile.Read(ref _credentialPoolClaimedCallback);
+                return cb is null ? [] : cb();
             },
             unit: "{pvc}",
             description: "Number of claimed credential PVCs");
@@ -195,12 +194,12 @@ public static class WorkDistributionTelemetry
     // Note: the C# 'volatile' keyword is restricted to types ≤ 4 bytes (CS0677), so
     // Volatile.Read/Write are used instead for correct acquire/release memory ordering.
     private static long _pollEpochMillis;
-    private static int _credentialPoolAvailable;
-    private static int _credentialPoolClaimed;
-    // Sentinel: set to true by UpdateCredentialPoolMetrics on the first call.
-    // Gauges emit no measurement until the owning process (API) calls UpdateCredentialPoolMetrics,
-    // preventing Scheduler, Job Controller, and Web from emitting spurious 0 series.
-    private static volatile bool _credentialPoolUpdated;
+
+    // Credential-pool gauge callbacks registered by WorkItemCountsService.
+    // null = no callback registered yet → gauge emits nothing.
+    private static Func<IEnumerable<Measurement<int>>>? _credentialPoolAvailableCallback;
+    private static Func<IEnumerable<Measurement<int>>>? _credentialPoolClaimedCallback;
+
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
 
     // Backing field for the oldest-pending-age gauge.
@@ -251,25 +250,42 @@ public static class WorkDistributionTelemetry
     }
 
     /// <summary>
-    /// Updates credential pool gauge values.
-    /// Called by the API's <c>WorkItemDispatchEndpoints</c> after computing PVC availability.
-    /// Setting these values activates the owner-only guard — only the API emits measurements
-    /// for these gauges; other processes that never call this method emit nothing.
+    /// Registers callbacks that supply <c>workdistribution.credential_pool_available</c> and
+    /// <c>workdistribution.credential_pool_claimed</c> gauge measurements.
+    /// Called once at startup by <c>WorkItemCountsService</c> on the Scheduler leader.
+    /// The callbacks are invoked on every OTel collection cycle; they should return an empty
+    /// enumerable when the leader has no data yet (before first poll) or is not the leader.
     /// </summary>
+    public static void RegisterCredentialPoolGaugeCallbacks(
+        Func<IEnumerable<Measurement<int>>> availableCallback,
+        Func<IEnumerable<Measurement<int>>> claimedCallback)
+    {
+        ArgumentNullException.ThrowIfNull(availableCallback);
+        ArgumentNullException.ThrowIfNull(claimedCallback);
+
+        // NOTE (issue #3555): Unlike RegisterWorkItemsByStatusCallback (which uses Interlocked.CompareExchange
+        // and logs a warning on double-registration), this method unconditionally overwrites the callbacks.
+        // A second call from a misconfigured DI container or a test running in the same process silently
+        // replaces the active callbacks without any diagnostic. Consider using Interlocked.CompareExchange
+        // and emitting Serilog.Log.Warning on double-registration, matching RegisterWorkItemsByStatusCallback.
+
+        Volatile.Write(ref _credentialPoolAvailableCallback, availableCallback);
+        Volatile.Write(ref _credentialPoolClaimedCallback, claimedCallback);
+    }
+
+    /// <summary>
+    /// Updates credential pool gauge values.
+    /// </summary>
+    /// <remarks>
+    /// This method is kept for backward compatibility. The credential pool gauges are now
+    /// driven by the Scheduler leader via <c>WorkItemCountsService</c> using
+    /// <see cref="RegisterCredentialPoolGaugeCallbacks"/>. This method is a no-op.
+    /// </remarks>
+    [Obsolete("Use RegisterCredentialPoolGaugeCallbacks instead. The credential pool gauges are now emitted by the Scheduler leader.")]
     public static void UpdateCredentialPoolMetrics(int available, int claimed)
     {
-        // TODO [WARNING]: _credentialPoolAvailable and _credentialPoolClaimed are plain static int
-        // fields (no volatile, no Volatile.Write). The volatile write to _credentialPoolUpdated
-        // provides a release fence, but the two int stores that precede it are not guaranteed to be
-        // visible to the collection thread before it sees the sentinel flip. On a CPU with a
-        // store-buffer (x86 is strongly-ordered, but ARM is not), the collection thread can observe
-        // _credentialPoolUpdated == true while still reading stale 0 values for the ints.
-        // Fix: use Volatile.Write for both int fields (matching the _pollEpochMillis pattern), or
-        // consolidate both values into an Interlocked-exchanged reference type to prevent torn reads.
-        // See review findings for issue #2980.
-        _credentialPoolAvailable = available;
-        _credentialPoolClaimed = claimed;
-        _credentialPoolUpdated = true;
+        // No-op: credential pool gauges are now emitted by the Scheduler leader via
+        // WorkItemCountsService and RegisterCredentialPoolGaugeCallbacks.
     }
 
     /// <summary>

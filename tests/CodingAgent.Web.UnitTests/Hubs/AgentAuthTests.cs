@@ -722,6 +722,94 @@ public class AgentAuthorizationFilterRedisFallbackTests
 
     // ── Inner helper for IHttpContextFeature ─────────────────────────────
 
+    /// <summary>
+    /// When a client supplies agentId more than once (e.g. ?agentId=a&amp;agentId=b),
+    /// StringValues.ToString() comma-joins the values into "a,b".  GetByAgentId("a,b")
+    /// returns null → connection is rejected.  The fix (FirstOrDefault) reads only the
+    /// first value, so GetByAgentId("a") succeeds and the call is allowed.
+    /// </summary>
+    // TODO: This test only covers the AgentAuthorizationFilter (cold-pod Redis fallback) path.
+    // The same FirstOrDefault fix was also applied to AgentHub.OnConnectedAsync (AgentHub.cs),
+    // AgentHub.ValidateRegistrationIdentity (AgentHub.Registration.cs), and the group-subscription
+    // path (AgentHub.GroupSubscriptions.cs). If the fix were accidentally reverted at any of those
+    // three sites, this test would not catch it. Consider adding parallel duplicate-query-param tests
+    // for OnConnectedAsync, ValidateRegistrationIdentity, and the group-subscription SubscribeToJob
+    // path. (WARNING — Test Quality Review)
+    [Fact]
+    public async Task GuardAgentMethod_DuplicateAgentIdQueryParams_ResolvesByFirstValue()
+    {
+        const string connectionId = "conn-dup";
+
+        // Cold pod: in-process index misses.
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+
+        // Redis has an entry for the first value only; the comma-joined key returns nothing.
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId("a")))
+            .Returns(MakeEntry("a", connectionId));
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId("a,b")))
+            .Returns((AgentEntry?)null);
+
+        // Build a dual-value query string inline — MakeContextWithAgentIdQuery only supports
+        // a single value and cannot produce ?agentId=a&agentId=b.
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.QueryString = new QueryString("?agentId=a&agentId=b");
+        var features = new FeatureCollection();
+        features.Set<IHttpContextFeature>(new TestHttpContextFeature(httpContext));
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns(connectionId);
+        mockCtx.Setup(c => c.Features).Returns(features);
+        var ctx = mockCtx.Object;
+
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var nextCalled = false;
+        await _filter.InvokeMethodAsync(invocationCtx, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextCalled.Should().BeTrue(
+            "filter must resolve the first agentId value ('a') from a duplicate-param query string and allow the call");
+    }
+
+    // ── Null HttpContext (non-HTTP transport) ─────────────────────────────
+
+    /// <summary>
+    /// When the cold-pod Redis fallback path reads the agentId query parameter via
+    /// <c>GetHttpContext()?.Request.Query["agentId"].FirstOrDefault()</c>, and
+    /// <c>GetHttpContext()</c> returns null (e.g. non-HTTP transport), the null-conditional
+    /// <c>?.</c> propagates null. The fallback finds no agentId → agent remains null → rejects.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_NullHttpContext_Throws()
+    {
+        const string connectionId = "conn-no-http";
+
+        // Cold pod: in-process index misses.
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+
+        // Use an empty FeatureCollection (Features is not null, but IHttpContextFeature is absent).
+        // GetHttpContext() returns null → queryAgentId becomes null → agent stays null → reject.
+        var features = new FeatureCollection();
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns(connectionId);
+        mockCtx.Setup(c => c.Features).Returns(features);
+
+        var hub = CreateHub(mockCtx.Object);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(mockCtx.Object, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = () => _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>(
+            "with null HttpContext the agentId cannot be read, so the cold-pod fallback finds nothing and rejects the call");
+    }
+
+    // ── Inner helper for IHttpContextFeature ─────────────────────────────
+
     private sealed class TestHttpContextFeature : IHttpContextFeature
     {
         public TestHttpContextFeature(HttpContext httpContext) => HttpContext = httpContext;

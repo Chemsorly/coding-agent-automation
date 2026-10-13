@@ -60,7 +60,7 @@ public sealed partial class AgentHub
     /// </summary>
     private void ValidateRegistrationIdentity(AgentRegistrationMessage message)
     {
-        var queryAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+        var queryAgentId = Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
         if (!string.Equals(message.AgentId.Value, queryAgentId, StringComparison.Ordinal))
         {
             // TODO: SanitizeForLog returns "" when message.AgentId.Value is null, whereas the old code
