@@ -501,6 +501,10 @@ public static class ApiServiceCollectionExtensions
         // ── ConsolidationBadgeService ────────────────────────────────────────
         services.AddSingleton<ConsolidationBadgeService>();
 
+        // ── LoopStatusStore — the Scheduler leader's last loop status (spec 051 D11) ──
+        services.AddSingleton(sp => new CodingAgent.Api.Loop.LoopStatusStore(
+            ResolveRedisStoreOrNull(sp), sp.GetRequiredService<TimeProvider>()));
+
         // ── IActiveRunQueryService ────────────────────────────────────────────
         services.AddSingleton<IActiveRunQueryService>(sp => new PostgresActiveRunQueryService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),

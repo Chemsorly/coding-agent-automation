@@ -20,7 +20,7 @@ internal static class UiSettingsEndpoints
         var group = ui.MapGroup("/settings").RequireAuthorization(UiPolicies.Admin);
 
         group.MapGet("/pipeline", ConfigEndpoints.GetPipelineConfig);
-        group.MapPut("/pipeline", ConfigEndpoints.SavePipelineConfig);
+        group.MapPut("/pipeline", SavePipelineConfig);
 
         group.MapGet("/agent-profiles", GetAgentProfiles);
         group.MapPut("/agent-profiles", SaveAgentProfile);
@@ -52,6 +52,26 @@ internal static class UiSettingsEndpoints
         group.MapUiProviderEndpoints();
 
         return group;
+    }
+
+    /// <summary>
+    /// PUT /api/ui/settings/pipeline — saves the settings but keeps the stored loop fields: they are
+    /// loop commands (spec 051 D11), and a settings page loaded before a Start or Stop would undo it.
+    /// </summary>
+    internal static async Task<IResult> SavePipelineConfig([FromBody] PipelineConfiguration config, IPipelineConfigStore store, CancellationToken ct)
+    {
+        var errors = PipelineSettingsValidator.Validate(config);
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join(" ", errors));
+
+        await store.UpdatePipelineConfigAsync(
+            current => config with
+            {
+                ClosedLoopAutoStart = current.ClosedLoopAutoStart,
+                LoopResumeRequestedAt = current.LoopResumeRequestedAt,
+            },
+            ct);
+        return TypedResults.Ok();
     }
 
     internal static async Task<IResult> GetAgentProfiles(IAgentProfileStore store, CancellationToken ct) =>
