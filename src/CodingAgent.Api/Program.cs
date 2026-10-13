@@ -6,6 +6,7 @@ using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
+using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -120,7 +121,6 @@ var app = builder.Build();
 await app.RunApiMigrationsAsync(builder.Configuration);
 
 app.MapApiHealthEndpoints();
-app.RegisterApiObservableGauges();
 
 // Log every 4xx/5xx response as a structured Serilog event. This runs under the Serilog
 // category (not Microsoft.AspNetCore), so it is NOT suppressed by the Warning override in
@@ -162,6 +162,12 @@ app.MapUiEndpoints();
 // If it is missing, new-schema work items silently receive a degraded identity-only 200
 // response with no provider configs. Resolve eagerly to fail fast on misconfiguration.
 _ = app.Services.GetRequiredService<AssignmentEnricher>();
+
+// IAgentRegistryService is registered via a factory lambda in AddApiOrchestration that may
+// throw when FailOnMultiReplicaWithoutRedis=true and ChatReplicaCount > 1.
+// Resolve eagerly so the fail-fast guard fires at startup rather than on the first hub
+// or API request. Without this, the process starts and the error only surfaces on demand.
+_ = app.Services.GetRequiredService<IAgentRegistryService>();
 
 await app.RunAsync();
 
