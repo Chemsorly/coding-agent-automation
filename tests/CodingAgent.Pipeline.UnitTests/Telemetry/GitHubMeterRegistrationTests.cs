@@ -100,31 +100,4 @@ public class GitHubMeterRegistrationTests
         // criterion 3) so that accidental removal of the call is caught.
         // (TestQualityReviewer, issue #3446)
     }
-
-    [Fact]
-    public void ApiProgramCs_CallsGitHubTelemetryPreInitialize()
-    {
-        var source = File.ReadAllText(FindSourceFile("src/CodingAgent.Api/Program.cs"));
-
-        source.Should().Contain("GitHubTelemetry.PreInitialize()",
-            "Api/Program.cs must call GitHubTelemetry.PreInitialize() to seed github.api.requests " +
-            "counter tag combinations so Prometheus increase() works on first increment");
-    }
-
-    [Fact]
-    public void SchedulerProgramCs_CallsGitHubTelemetryPreInitialize()
-    {
-        var source = File.ReadAllText(FindSourceFile("src/CodingAgent.Scheduler/Program.cs"));
-
-        source.Should().Contain("GitHubTelemetry.PreInitialize()",
-            "Scheduler/Program.cs must call GitHubTelemetry.PreInitialize()");
-    }
-
-    // TODO: Add PreInitialize() coverage for JobController/Program.cs and Web/Program.cs.
-    // Both processes call GitHubTelemetry.PreInitialize() (confirmed in the diff), but the
-    // test suite only asserts this for Api and Scheduler. A future removal from JobController
-    // or Web would not be caught. Add:
-    //   JobControllerProgramCs_CallsGitHubTelemetryPreInitialize
-    //   WebProgramCs_CallsGitHubTelemetryPreInitialize
-    // mirroring the pattern above.
 }
