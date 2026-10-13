@@ -152,14 +152,24 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `decomposition`, `decomposition_*` | `decomposition` |
 | anything else, empty, null (incl. `unknown` from older agents, and the triage phases `triage`, `triage_review`, `triage_refinement`, which `run_type=triage` already separates) | `other` |
 
-#### Counter pre-initialization
+#### Counting events exactly
 
-A Prometheus series that starts at 1 shows no `increase()`, so counters with closed tag sets are seeded with `Add(0)` at startup. `MetricPreInitialization.Run` builds the host's `MeterProvider` first — measurements made before a provider listens to a meter are dropped, so seeding straight after `builder.Build()` records nothing — then emits the zero series and flushes them.
+Counters are not seeded at startup. Seeding every closed-tag combination with `Add(0)` produced about 1,600 zero-value series per API replica and about 200 per Scheduler and Web replica. Every restart created them again under a new `service_instance_id`, and Grafana Cloud kept counting the old copies for 1–3 h, so the daily deploy pushed the stack over its in-memory series limit and metrics were dropped for hours. Do not add `Add(0)` seeding for new counters.
 
-- **API** (`Program.EmitPreInitCounters`): `pipeline.run.outcomes` (6 run types × 15 outcome/failure_reason combinations; `pipeline.project_name` is left out because it is unbounded), `pipeline.run.sub_issues`, `pipeline.run.brain_updates`, `pipeline.run.quality_gate.results`, `pipeline.run.ci.not_started_retriggers`, `pipeline.run.agent_stalls` (run type × phase × kind), the four per-phase usage counters (run type × phase × provider; `pipeline.run.agent_sessions` is seeded with `model="unknown"` only, because real model names are unbounded), `pipeline.run.token_usage`, `pipeline.run.billing_cost_usd`, `pipeline.run.agent_turns`, `pipeline.run.web_search_requests`, `pipeline.run.rate_limit_events` (`provider=claude`), and `workdistribution.dispatch.attempts`.
-- **API, Scheduler, Web** (`GitHubTelemetry.PreInitialize`): `github.api.requests` (operation × outcome) and `pipeline.pull_requests.closed`.
+`increase()` and `rate()` miss the first increment of a series that starts in a new process. To count events exactly, take each instance's maximum in the window minus its value at the window start, which is 0 for a series that started inside the window:
 
-Histograms and gauges are not pre-initialized.
+```promql
+sum by (outcome) (
+  max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range]))
+  - (
+    max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (last_over_time(pipeline_run_outcomes_total[6h] offset $__range))
+    or
+    max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range])) * 0
+  )
+)
+```
+
+The inner `max by (…, service_instance_id)` must list every tag of the counter. It only merges the copies of one instance that arrive with and without `k8s_*` labels.
 
 #### Histogram buckets
 
@@ -491,15 +501,15 @@ See `.env.example` for a reference of available variables.
 
 ### Metrics
 
-Right after an API restart, the pre-initialized counters are visible at zero:
+After a run finishes, its outcome appears in `pipeline_run_outcomes_total`:
 
 ```promql
-count by (run_type) (pipeline_run_outcomes_total)
+count by (run_type, outcome) (pipeline_run_outcomes_total)
 ```
 
-Each run type should return at least 15 series (the pre-initialized ones; live series add `pipeline.project_name`). After a run finishes, `increase(pipeline_run_outcomes_total[1h])` shows it under its `outcome`.
+Right after a restart this returns nothing until the first run finishes, because counters are not seeded with zero series. For totals over a window, use the query in "Counting events exactly".
 
-`ApiTelemetryExportTests` (`tests/CodingAgent.Api.IntegrationTests`) checks the same in-process: it builds the real API host with an in-memory exporter and asserts that the pre-initialized series are exported and the noise spans are not.
+`ApiTelemetryExportTests` (`tests/CodingAgent.Api.IntegrationTests`) builds the real API host with an in-memory exporter and asserts that no counter series are exported before the first event and that the noise spans are not exported.
 
 ### Traces
 

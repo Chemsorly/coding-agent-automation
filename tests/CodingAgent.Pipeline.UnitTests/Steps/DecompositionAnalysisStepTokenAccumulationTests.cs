@@ -265,6 +265,64 @@ public class DecompositionAnalysisStepTokenAccumulationTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenReviewAndRefinementReportCost_RunTotalCostIncludesThem()
+    {
+        // Arrange — same call sequence as the refinement test, but every call reports a cost
+        var reviewFilePath = Path.Combine(_agentDir, "decomposition-review.md");
+        var analysisResult = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = ["Plan generated"],
+            Usage = new TokenUsage { InputTokens = 1000, OutputTokens = 500 },
+            Cost = 1.00m
+        };
+        var reviewResult = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = ["Review complete — found critical issue"],
+            Usage = new TokenUsage { InputTokens = 600, OutputTokens = 300 },
+            Cost = 0.25m
+        };
+        var refinementResult = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = ["Refinement complete"],
+            Usage = new TokenUsage { InputTokens = 800, OutputTokens = 400 },
+            Cost = 0.10m
+        };
+
+        var callIndex = 0;
+        _agentProvider
+            .Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                var index = callIndex++;
+                if (index == 1)
+                {
+                    // The review agent writes its findings itself; a CRITICAL line triggers the refinement call
+                    File.WriteAllText(reviewFilePath, "# Review\n\n[CRITICAL] Missing acceptance criteria in sub-issue 1.");
+                }
+                return index switch { 0 => analysisResult, 1 => reviewResult, _ => refinementResult };
+            });
+
+        WritePlanFile();
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new DecompositionAnalysisStep();
+
+        // Act
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert
+        result.Should().Be(StepResult.Continue);
+        run.TotalCost.Should().Be(1.35m,
+            because: "the run cost is the analysis (1.00) plus the review (0.25) and the refinement (0.10)");
+        run.Metrics.PhaseBreakdown["decomposition_review"].Cost.Should().Be(0.25m);
+        run.Metrics.PhaseBreakdown["decomposition_refinement"].Cost.Should().Be(0.10m);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WhenReviewHasNoRefinement_NoDecompositionRefinementPhase()
     {
         // Arrange — review agent writes findings with no CRITICAL/WARNING → no refinement dispatched

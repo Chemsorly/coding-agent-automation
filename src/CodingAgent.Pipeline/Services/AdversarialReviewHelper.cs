@@ -26,7 +26,7 @@ public sealed record AdversarialReviewPrompts(string ReviewPrompt, string Refine
 
 /// <summary>
 /// Result of an adversarial review pass, including whether review ran,
-/// whether refinement was triggered, and token usage from both calls.
+/// whether refinement was triggered, and the agent results (tokens, cost) of both calls.
 /// </summary>
 public sealed record AdversarialReviewResult
 {
@@ -36,11 +36,17 @@ public sealed record AdversarialReviewResult
     /// <summary>Whether refinement was triggered (CRITICAL/WARNING found).</summary>
     public bool RefinementTriggered { get; init; }
 
+    /// <summary>The discriminator call's result (tokens, cost, usage details), or null if not executed.</summary>
+    public AgentResult? ReviewAgentResult { get; init; }
+
+    /// <summary>The refinement call's result (tokens, cost, usage details), or null if not executed.</summary>
+    public AgentResult? RefinementAgentResult { get; init; }
+
     /// <summary>Token usage from the discriminator call, or null if not executed.</summary>
-    public TokenUsage? ReviewTokenUsage { get; init; }
+    public TokenUsage? ReviewTokenUsage => ReviewAgentResult?.Usage;
 
     /// <summary>Token usage from the refinement call, or null if not executed.</summary>
-    public TokenUsage? RefinementTokenUsage { get; init; }
+    public TokenUsage? RefinementTokenUsage => RefinementAgentResult?.Usage;
 
     /// <summary>Severity counts parsed from the review findings.</summary>
     public CodeReview.SeverityCounts? Severities { get; init; }
@@ -122,8 +128,6 @@ public static class AdversarialReviewHelper
                 },
                 ct);
 
-            var reviewUsage = reviewResult.Usage;
-
             // 2a. Check discriminator exit code — non-zero means agent crashed/failed
             if (!reviewResult.Success)
             {
@@ -133,7 +137,7 @@ public static class AdversarialReviewHelper
                 {
                     ReviewExecuted = true,
                     RefinementTriggered = false,
-                    ReviewTokenUsage = reviewUsage
+                    ReviewAgentResult = reviewResult
                 };
             }
 
@@ -146,7 +150,7 @@ public static class AdversarialReviewHelper
                 {
                     ReviewExecuted = true,
                     RefinementTriggered = false,
-                    ReviewTokenUsage = reviewUsage
+                    ReviewAgentResult = reviewResult
                 };
             }
 
@@ -165,7 +169,7 @@ public static class AdversarialReviewHelper
                 {
                     ReviewExecuted = true,
                     RefinementTriggered = false,
-                    ReviewTokenUsage = reviewUsage,
+                    ReviewAgentResult = reviewResult,
                     Severities = severities
                 };
             }
@@ -197,8 +201,8 @@ public static class AdversarialReviewHelper
                     {
                         ReviewExecuted = true,
                         RefinementTriggered = false, // Treat as "not successfully refined"
-                        ReviewTokenUsage = reviewUsage,
-                        RefinementTokenUsage = refinementResult.Usage,
+                        ReviewAgentResult = reviewResult,
+                        RefinementAgentResult = refinementResult,
                         Severities = severities
                     };
                 }
@@ -209,8 +213,8 @@ public static class AdversarialReviewHelper
                 {
                     ReviewExecuted = true,
                     RefinementTriggered = true,
-                    ReviewTokenUsage = reviewUsage,
-                    RefinementTokenUsage = refinementResult.Usage,
+                    ReviewAgentResult = reviewResult,
+                    RefinementAgentResult = refinementResult,
                     Severities = severities
                 };
             }
@@ -222,7 +226,7 @@ public static class AdversarialReviewHelper
                 {
                     ReviewExecuted = true,
                     RefinementTriggered = false,
-                    ReviewTokenUsage = reviewUsage,
+                    ReviewAgentResult = reviewResult,
                     Severities = severities
                 };
             }

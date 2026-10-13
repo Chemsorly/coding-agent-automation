@@ -16,7 +16,7 @@ public static class AgentBillingModes
     /// <summary>The provider did not say how its calls are paid for.</summary>
     public const string Unknown = "unknown";
 
-    /// <summary>All closed-set values, for metric pre-initialization.</summary>
+    /// <summary>All closed-set values.</summary>
     public static readonly string[] All = [Api, Subscription, Unknown];
 }
 
