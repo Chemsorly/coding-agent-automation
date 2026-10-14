@@ -6,7 +6,7 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgent.Orchestration;
 
 /// <summary>
-/// Resolves the agent selector labels for a consolidation dispatch request.
+/// Resolves the agent selector for a consolidation dispatch request.
 /// Implements <see cref="IConsolidationSelectorResolver"/> using <see cref="IAgentProfileStore"/>
 /// and <see cref="IPipelineConfigStore"/>. It lives here rather than in <c>CodingAgent.Pipeline</c>
 /// so the stores stay out of that layer. The Pipeline API, which triggers consolidation since spec 051
@@ -15,10 +15,10 @@ namespace CodingAgent.Orchestration;
 /// Resolution order:
 /// <list type="number">
 ///   <item>Use <see cref="ProviderConfig.RequiredLabels"/> or <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/>
-///         (via <see cref="LabelResolver"/>) to find required labels, then resolve to MatchLabels via the profile store.</item>
+///         (via <see cref="LabelResolver"/>) to find required labels, then resolve to a profile via the profile store.</item>
 ///   <item>Fall back to the live <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/> from
 ///         <see cref="IPipelineConfigStore"/> if required-labels are empty.</item>
-///   <item>Fall back to the first enabled profile's MatchLabels if no default is configured.</item>
+///   <item>Fall back to the first enabled profile if no default is configured.</item>
 ///   <item>Return <c>null</c> when no profiles exist (startup race) — the caller must treat this as transient.</item>
 /// </list>
 /// </para>
@@ -41,7 +41,7 @@ internal sealed class ConsolidationSelectorResolver : IConsolidationSelectorReso
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<string>?> ResolveAsync(
+    public async Task<ConsolidationAgentSelection?> ResolveAsync(
         ProviderConfig? repoConfig,
         PipelineConfiguration config,
         CancellationToken ct)
@@ -64,7 +64,7 @@ internal sealed class ConsolidationSelectorResolver : IConsolidationSelectorReso
     /// <summary>
     /// Synchronous resolution logic, separated for testability.
     /// </summary>
-    internal static IReadOnlyList<string>? Resolve(
+    internal static ConsolidationAgentSelection? Resolve(
         ProviderConfig? repoConfig,
         PipelineConfiguration staticConfig,
         PipelineConfiguration liveConfig,
@@ -75,11 +75,20 @@ internal sealed class ConsolidationSelectorResolver : IConsolidationSelectorReso
         if (requiredLabels is { Count: > 0 })
         {
             var profile = ProfileResolver.ResolveByRequiredLabels(profiles, requiredLabels);
-            var selector = profile?.MatchLabels ?? requiredLabels;
+            if (profile is not null)
+            {
+                Log.Debug(
+                    "ConsolidationSelectorResolver: resolved selector '{Selector}' via profile '{Profile}' from required labels",
+                    profile.JobTemplateKey(), profile.DisplayName);
+                return new ConsolidationAgentSelection(profile.JobTemplateKey(), profile.Id);
+            }
+
+            // Labels known but no profile matched — use labels as selector.
+            var fallbackSelector = AgentSelectorKey.From(requiredLabels);
             Log.Debug(
-                "ConsolidationSelectorResolver: resolved selector '{Selector}' from required labels",
-                AgentSelectorKey.From(selector));
-            return selector;
+                "ConsolidationSelectorResolver: resolved selector '{Selector}' from required labels (no profile match)",
+                fallbackSelector);
+            return new ConsolidationAgentSelection(fallbackSelector, null);
         }
 
         // 2. Fall back to live DefaultRequiredAgentLabels from config store.
@@ -90,12 +99,22 @@ internal sealed class ConsolidationSelectorResolver : IConsolidationSelectorReso
                 .ToList()
                 .AsReadOnly();
             var defaultProfile = ProfileResolver.ResolveByRequiredLabels(profiles, defaultLabels);
-            var selector = defaultProfile?.MatchLabels ?? defaultLabels;
+
+            if (defaultProfile is not null)
+            {
+                Log.Warning(
+                    "ConsolidationSelectorResolver: no repo-scoped required labels; " +
+                    "fell back to live DefaultRequiredAgentLabels → profile '{Profile}' selector '{Selector}'",
+                    defaultProfile.DisplayName, defaultProfile.JobTemplateKey());
+                return new ConsolidationAgentSelection(defaultProfile.JobTemplateKey(), defaultProfile.Id);
+            }
+
+            var fallbackSelector = AgentSelectorKey.From(defaultLabels);
             Log.Warning(
                 "ConsolidationSelectorResolver: no repo-scoped required labels; " +
-                "fell back to live DefaultRequiredAgentLabels → selector '{Selector}'",
-                AgentSelectorKey.From(selector));
-            return selector;
+                "fell back to live DefaultRequiredAgentLabels → selector '{Selector}' (no profile match)",
+                fallbackSelector);
+            return new ConsolidationAgentSelection(fallbackSelector, null);
         }
 
         // 3. No default labels configured. Pick the first enabled profile explicitly rather
@@ -112,8 +131,8 @@ internal sealed class ConsolidationSelectorResolver : IConsolidationSelectorReso
             Log.Warning(
                 "ConsolidationSelectorResolver: no required labels and no DefaultRequiredAgentLabels; " +
                 "fell back to highest-priority enabled profile '{Profile}' → selector '{Selector}'",
-                firstEnabled.DisplayName, AgentSelectorKey.From(firstEnabled.MatchLabels));
-            return firstEnabled.MatchLabels;
+                firstEnabled.DisplayName, firstEnabled.JobTemplateKey());
+            return new ConsolidationAgentSelection(firstEnabled.JobTemplateKey(), firstEnabled.Id);
         }
 
         // 4. No profiles available at all (startup race).

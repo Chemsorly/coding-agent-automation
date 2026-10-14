@@ -171,7 +171,7 @@ public sealed class JobTemplateStore
         if (agentProvider is null)
             return null;
 
-        var selector = NormalizeLabels(string.Join(",", profile.MatchLabels));
+        var selector = profile.JobTemplateKey();
         var template = Resolve(selector);
         if (template is null)
             return null;
