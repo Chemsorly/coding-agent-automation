@@ -756,9 +756,9 @@ public sealed class ModelFetchJobServiceTests
 
         await service.FetchModelsAsync("kiro", CancellationToken.None, progress);
 
-        phases.Should().Contain("Creating job…",      "job creation phase must be reported");
+        phases.Should().Contain("Creating job…", "job creation phase must be reported");
         phases.Should().Contain("Waiting for agent to connect…", "waiting phase must be reported");
-        phases.Should().Contain("Received results…",  "success phase must be reported");
+        phases.Should().Contain("Received results…", "success phase must be reported");
     }
 
     [Fact]
