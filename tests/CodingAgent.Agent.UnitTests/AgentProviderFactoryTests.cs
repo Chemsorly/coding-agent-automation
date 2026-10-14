@@ -59,6 +59,104 @@ public class AgentProviderFactoryTests
         act.Should().Throw<ArgumentNullException>();
     }
 
+    // ── ResolveCliPath ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ResolveCliPath_VariableIsSet_ReturnsVariableValue()
+    {
+        var origValue = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, "/custom/kiro-cli");
+            var result = AgentProviderFactory.ResolveCliPath(AgentDefaults.EnvKiroCliPath, AgentDefaults.KiroCliPath);
+            result.Should().Be("/custom/kiro-cli");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, origValue);
+        }
+    }
+
+    [Fact]
+    public void ResolveCliPath_VariableIsUnset_ReturnsDefault()
+    {
+        var origValue = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, null);
+            var result = AgentProviderFactory.ResolveCliPath(AgentDefaults.EnvKiroCliPath, AgentDefaults.KiroCliPath);
+            result.Should().Be(AgentDefaults.KiroCliPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, origValue);
+        }
+    }
+
+    [Fact]
+    public void ResolveCliPath_VariableIsEmpty_ReturnsDefault()
+    {
+        var origValue = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, "");
+            var result = AgentProviderFactory.ResolveCliPath(AgentDefaults.EnvKiroCliPath, AgentDefaults.KiroCliPath);
+            result.Should().Be(AgentDefaults.KiroCliPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, origValue);
+        }
+    }
+
+    [Fact]
+    public void ResolveCliPath_VariableIsWhitespace_ReturnsDefault()
+    {
+        var origValue = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, "   ");
+            var result = AgentProviderFactory.ResolveCliPath(AgentDefaults.EnvKiroCliPath, AgentDefaults.KiroCliPath);
+            result.Should().Be(AgentDefaults.KiroCliPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, origValue);
+        }
+    }
+
+    [Fact]
+    public void ResolveCliPath_ClaudeVariableIsSet_ReturnsVariableValue()
+    {
+        var origValue = Environment.GetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath, "/custom/claude");
+            var result = AgentProviderFactory.ResolveCliPath(AgentDefaults.EnvClaudeCliPath, AgentDefaults.ClaudeCliPath);
+            result.Should().Be("/custom/claude");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath, origValue);
+        }
+    }
+
+    [Fact]
+    public void ResolveCliPath_ClaudeVariableIsUnset_ReturnsDefault()
+    {
+        var origValue = Environment.GetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath, null);
+            var result = AgentProviderFactory.ResolveCliPath(AgentDefaults.EnvClaudeCliPath, AgentDefaults.ClaudeCliPath);
+            result.Should().Be(AgentDefaults.ClaudeCliPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath, origValue);
+        }
+    }
+
     [Fact]
     public void Constructor_NullOrchestratorProxy_DoesNotThrow()
     {

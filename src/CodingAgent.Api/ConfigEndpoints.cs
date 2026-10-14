@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -158,8 +159,26 @@ public static class ConfigEndpoints
     internal static async Task<IResult> SaveProviderConfig(
         [FromBody] ProviderConfig config,
         IProviderConfigStore store,
+        JobTemplateStore templates,
+        IAgentProfileStore profileStore,
         CancellationToken ct)
     {
+        if (config.Kind == ProviderKind.Agent)
+        {
+            // TODO: TOCTOU race — a concurrent SaveAgentProfile call may insert a new profile that
+            // links to this provider ID after this snapshot is taken but before SaveProviderConfigAsync
+            // commits. The new profile would bypass both endpoints' mismatch validation, producing a
+            // stored type mismatch. Fixing this requires a distributed lock or a database-side
+            // constraint check (e.g. a CHECK trigger or a read-modify-write transaction). Tracked for
+            // post-launch hardening; the window is narrow and requires concurrent admin requests.
+            var profiles = await profileStore.LoadAgentProfilesAsync(ct);
+            foreach (var profile in profiles.Where(p => p.AgentProviderConfigId == config.Id))
+            {
+                var message = templates.FindProviderTypeMismatch(profile, config);
+                if (message is not null)
+                    return TypedResults.BadRequest(message);
+            }
+        }
         return await SaveAsync(() => store.SaveProviderConfigAsync(config, ct));
     }
 
@@ -185,8 +204,15 @@ public static class ConfigEndpoints
     internal static async Task<IResult> SaveAgentProfile(
         [FromBody] AgentProfile profile,
         IAgentProfileStore store,
+        JobTemplateStore templates,
+        IProviderConfigStore providerStore,
         CancellationToken ct)
     {
+        var provider = await providerStore.GetProviderConfigByIdAsync(profile.AgentProviderConfigId, ProviderKind.Agent, ct);
+        var message = templates.FindProviderTypeMismatch(profile, provider);
+        if (message is not null)
+            return TypedResults.BadRequest(message);
+
         return await SaveAsync(() => store.SaveAgentProfileAsync(profile, ct));
     }
 

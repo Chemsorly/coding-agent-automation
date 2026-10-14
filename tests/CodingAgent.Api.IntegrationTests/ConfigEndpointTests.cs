@@ -9,6 +9,8 @@ using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace CodingAgent.Api.IntegrationTests;
 
@@ -1385,5 +1387,197 @@ public sealed class ConfigEndpointTests
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a bad ID is the caller's mistake, not a server failure");
         (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid project ID: proj-platform");
+    }
+}
+
+// ── Provider type mismatch tests ──────────────────────────────────────────────────────────────
+
+/// <summary>
+/// A factory that injects a kiro job template into the <see cref="JobTemplateStore"/> singleton,
+/// so we can test the provider type mismatch validation in SaveAgentProfile and SaveProviderConfig.
+/// </summary>
+public sealed class ApiWebApplicationFactoryWithKiroTemplate : ApiWebApplicationFactory
+{
+    private const string KiroYaml = """
+        - labels: dotnet,kiro
+          image: agent:latest
+          providerType: kiro
+        """;
+
+    protected override void ConfigureTestServices(Microsoft.Extensions.DependencyInjection.IServiceCollection services)
+    {
+        services.RemoveAll<CodingAgent.Kubernetes.JobTemplateStore>();
+        services.AddSingleton(CodingAgent.Kubernetes.JobTemplateStore.LoadFromYaml(KiroYaml));
+    }
+}
+
+/// <summary>
+/// Integration tests for provider type mismatch validation in the config endpoints.
+/// Uses a separate factory with a kiro job template so we can test the mismatch checks.
+/// </summary>
+/// <remarks>
+/// TODO: These tests exercise the mismatch validation through the UI endpoints
+/// (/api/ui/settings/agent-profiles, /api/ui/settings/provider-configs) rather than the direct
+/// config endpoints (/api/config/agent-profiles, /api/config/provider-configs). The mismatch
+/// logic in ConfigEndpoints.SaveAgentProfile/SaveProviderConfig is reached indirectly via the UI
+/// layer. If a future change adds a bypass in UiSettingsEndpoints/UiProviderEndpoints before
+/// delegating to ConfigEndpoints, the direct API paths would be unprotected and untested.
+/// Consider adding parallel tests that call /api/config/* directly with the operator API key.
+/// </remarks>
+public sealed class ConfigEndpointTypeMismatchTests : IClassFixture<ApiWebApplicationFactoryWithKiroTemplate>
+{
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOptions =
+        new() { PropertyNameCaseInsensitive = true };
+
+    private readonly ApiWebApplicationFactoryWithKiroTemplate _factory;
+    private readonly HttpClient _admin;
+    private readonly HttpClient _operator;
+
+    public ConfigEndpointTypeMismatchTests(ApiWebApplicationFactoryWithKiroTemplate factory)
+    {
+        _factory = factory;
+        _admin = factory.CreateClient();
+        _admin.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", Security.TestUserTokens.For(Security.TestUserTokens.Global(CodingAgent.Contracts.Auth.AccessRole.Admin)));
+        // /api/config/* requires the operator API key, not the admin JWT
+        _operator = factory.CreateClient();
+        _operator.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", ApiWebApplicationFactory.ApiKey);
+    }
+
+    private async Task<string> SaveKiroProviderAsync()
+    {
+        var providerId = Guid.NewGuid().ToString();
+        var provider = new ProviderConfig
+        {
+            Id = providerId,
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Kiro Agent"
+        };
+        var r = await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", provider, PipelineJsonOptions.Default);
+        r.StatusCode.Should().Be(HttpStatusCode.OK, "saving kiro provider must succeed");
+        return providerId;
+    }
+
+    private async Task<string> SaveClaudeProviderAsync()
+    {
+        var providerId = Guid.NewGuid().ToString();
+        var provider = new ProviderConfig
+        {
+            Id = providerId,
+            Kind = ProviderKind.Agent,
+            ProviderType = "ClaudeCode",
+            DisplayName = "Claude Agent"
+        };
+        var r = await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", provider, PipelineJsonOptions.Default);
+        r.StatusCode.Should().Be(HttpStatusCode.OK, "saving claude provider must succeed");
+        return providerId;
+    }
+
+    [Fact]
+    public async Task SaveAgentProfile_MismatchingType_Returns400AndDoesNotStore()
+    {
+        var claudeProviderId = await SaveClaudeProviderAsync();
+
+        var profileId = Guid.NewGuid().ToString();
+        var profile = new AgentProfile
+        {
+            Id = profileId,
+            DisplayName = "My Profile",
+            AgentProviderConfigId = claudeProviderId,
+            Enabled = true,
+            MatchLabels = ["dotnet", "kiro"]  // matches the kiro template
+        };
+
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "ClaudeCode on a kiro template must be rejected");
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("ClaudeCode");
+        body.Should().Contain("kiro");
+
+        // Verify it was not stored
+        var profiles = await _admin.GetFromJsonAsync<List<AgentProfile>>("/api/ui/settings/agent-profiles", PipelineJsonOptions.Default);
+        profiles.Should().NotContain(p => p.Id == profileId);
+    }
+
+    [Fact]
+    public async Task SaveAgentProfile_MatchingType_Returns200()
+    {
+        var kiroProviderId = await SaveKiroProviderAsync();
+
+        var profile = new AgentProfile
+        {
+            Id = Guid.NewGuid().ToString(),
+            DisplayName = "Kiro Profile",
+            AgentProviderConfigId = kiroProviderId,
+            Enabled = true,
+            MatchLabels = ["dotnet", "kiro"]  // matches the kiro template
+        };
+
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "KiroCli on a kiro template must be accepted");
+    }
+
+    [Fact]
+    public async Task SaveAgentProfile_LabelsWithNoMatchingTemplate_Returns200()
+    {
+        var claudeProviderId = await SaveClaudeProviderAsync();
+
+        var profile = new AgentProfile
+        {
+            Id = Guid.NewGuid().ToString(),
+            DisplayName = "Java Claude Profile",
+            AgentProviderConfigId = claudeProviderId,
+            Enabled = true,
+            MatchLabels = ["java", "spring"]  // no matching template for these labels
+        };
+
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "no matching template means no opinion, save must succeed");
+    }
+
+    [Fact]
+    public async Task SaveProviderConfig_TypeChangeCausesMismatch_Returns400()
+    {
+        // 1. Create a kiro provider and a profile that links them (both match the kiro template)
+        var kiroProviderId = await SaveKiroProviderAsync();
+        var profileId = Guid.NewGuid().ToString();
+        var kiroProfile = new AgentProfile
+        {
+            Id = profileId,
+            DisplayName = "Kiro Profile",
+            AgentProviderConfigId = kiroProviderId,
+            Enabled = true,
+            MatchLabels = ["dotnet", "kiro"]
+        };
+        var saveProfile = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", kiroProfile, PipelineJsonOptions.Default);
+        saveProfile.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 2. Now change the provider's type to ClaudeCode — this would break the profile
+        var changedProvider = new ProviderConfig
+        {
+            Id = kiroProviderId,
+            Kind = ProviderKind.Agent,
+            ProviderType = "ClaudeCode",
+            DisplayName = "Now Claude Agent"
+        };
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", changedProvider, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "changing provider type to one that mismatches existing enabled profiles must be rejected");
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("ClaudeCode");
+        body.Should().Contain("kiro");
+
+        // Verify the provider was NOT updated — the original KiroCli type must still be stored
+        var providers = await _operator.GetFromJsonAsync<List<ProviderConfig>>(
+            $"/api/config/provider-configs?kind={ProviderKind.Agent}&includeSecrets=false",
+            PipelineJsonOptions.Default);
+        var notChanged = providers!.FirstOrDefault(p => p.Id == kiroProviderId);
+        notChanged.Should().NotBeNull("provider must still exist");
+        notChanged!.ProviderType.Should().Be("KiroCli", "rejected save must not persist the type change");
     }
 }

@@ -7,12 +7,20 @@
     <h2>Agent Profiles</h2>
     <p class="section-description">Profiles map agents to their capabilities via labels. When a job is dispatched, the agent's labels are matched against profile labels (ALL must match) to determine MCP servers and provider config.</p>
 
-    @if (_missingTemplates.Count > 0)
+    @if (_missingTemplates.Count > 0 || _typeMismatches.Count > 0)
     {
         <div class="agent-detail-error" style="margin-bottom: 12px;">
             <Icon Name="alert-octagon" Size="16" />
-            <strong>Dispatch will fail:</strong> @_missingTemplates.Count profile(s) have no matching job template in the <code>orchestrator-job-templates</code> ConfigMap.
-            Work items routed to these profiles will fail at dispatch. See highlighted rows below.
+            <strong>Dispatch will fail:</strong>
+            @if (_missingTemplates.Count > 0)
+            {
+                <text>@_missingTemplates.Count profile(s) have no matching job template in the <code>orchestrator-job-templates</code> ConfigMap. Work items routed to these profiles will fail at dispatch.</text>
+            }
+            @if (_typeMismatches.Count > 0)
+            {
+                <text>@_typeMismatches.Count profile(s) use an agent provider whose type does not match their job template. Their runs fail when the agent starts.</text>
+            }
+            See highlighted rows below.
         </div>
     }
 
@@ -88,6 +96,12 @@
                                         <span class="template-missing"
                                               title="No job template matches labels [@string.Join(", ", profile.MatchLabels)]. Work items will fail at dispatch.">
                                             <Icon Name="alert-octagon" Size="14" /> No template
+                                        </span>
+                                    }
+                                    else if (_typeMismatches.TryGetValue(profile.Id, out var mismatchMsg))
+                                    {
+                                        <span class="template-missing" title="@mismatchMsg">
+                                            <Icon Name="alert-octagon" Size="14" /> Wrong agent type
                                         </span>
                                     }
                                     else if (profile.Enabled && profile.MatchLabels.Count > 0)
@@ -285,6 +299,7 @@
 
     private List<AgentProfile> _profiles = new();
     private HashSet<string> _missingTemplates = new();
+    private Dictionary<string, string> _typeMismatches = new();
     private bool _showForm;
     private AgentProfile? _editingProfile;
     private ProfileForm _form = new();
@@ -308,6 +323,7 @@
         {
             _profiles = (await ConfigClient.GetAgentProfilesAsync(CancellationToken.None)).ToList();
             _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore, IsKubernetesMode);
+            _typeMismatches = ComputeTypeMismatches(_profiles, JobTemplateStore, IsKubernetesMode, AgentProviders);
         }
         catch (Exception ex)
         {
@@ -333,6 +349,27 @@
                 missing.Add(profile.Id);
         }
         return missing;
+    }
+
+    /// <summary>
+    /// Returns a dictionary of profile id → mismatch message for enabled profiles whose
+    /// agent provider type does not match the job template's provider type.
+    /// Returns empty dictionary when not in k8s mode.
+    /// </summary>
+    private static Dictionary<string, string> ComputeTypeMismatches(
+        IReadOnlyList<AgentProfile> profiles, JobTemplateStore? store, bool isKubernetesMode,
+        IReadOnlyList<ProviderConfig> agentProviders)
+    {
+        if (!isKubernetesMode || store is null) return new Dictionary<string, string>();
+        var mismatches = new Dictionary<string, string>();
+        foreach (var profile in profiles)
+        {
+            var provider = agentProviders.FirstOrDefault(p => p.Id == profile.AgentProviderConfigId);
+            var message = store.FindProviderTypeMismatch(profile, provider);
+            if (message is not null)
+                mismatches[profile.Id] = message;
+        }
+        return mismatches;
     }
 
     private void ShowAddForm()

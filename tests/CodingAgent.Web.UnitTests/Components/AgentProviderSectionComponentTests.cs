@@ -53,7 +53,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "My Kiro Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
             }
@@ -63,7 +62,6 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         Assert.Contains("My Kiro Agent", component.Markup);
         Assert.Contains("KiroCli", component.Markup);
-        Assert.Contains("/usr/bin/kiro-cli", component.Markup);
         Assert.Contains("model: claude-sonnet-4", component.Markup);
         Assert.DoesNotContain("min ·", component.Markup);
     }
@@ -81,7 +79,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "Agent 1",
                 Settings = new Dictionary<string, string>
                 {
-                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }
@@ -106,7 +103,7 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         Assert.Contains("Add Agent Provider", component.Markup);
         Assert.Contains("Display Name", component.Markup);
-        Assert.Contains("Executable Path", component.Markup);
+        Assert.DoesNotContain("Executable Path", component.Markup);
         Assert.DoesNotContain("Timeout (minutes)", component.Markup);
         Assert.Contains("Agent Name", component.Markup);
         Assert.Contains("Model", component.Markup);
@@ -157,7 +154,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "My Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    [ProviderSettingKeys.ExecutablePath] = "/custom/path/kiro-cli",
                     [ProviderSettingKeys.AgentName] = "custom-agent",
                     [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
@@ -255,7 +251,9 @@ public class AgentProviderSectionComponentTests : BunitContext
                 c.Kind == ProviderKind.Agent &&
                 c.ProviderType == "KiroCli" &&
                 // kiro-cli 2.29 refuses every run for --agent "default", the field's old pre-fill
-                c.Settings[ProviderSettingKeys.AgentName] == ""),
+                c.Settings[ProviderSettingKeys.AgentName] == "" &&
+                // Executable path is no longer stored in settings — the agent uses env vars or image defaults
+                !c.Settings.ContainsKey("executablePath")),
             It.IsAny<CancellationToken>()), Times.Once);
 
         Assert.True(onSavedCalled);
@@ -304,7 +302,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "To Delete",
                 Settings = new Dictionary<string, string>
                 {
-                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }
@@ -339,7 +336,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 DisplayName = "Delete Fail",
                 Settings = new Dictionary<string, string>
                 {
-                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }
