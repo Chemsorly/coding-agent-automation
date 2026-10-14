@@ -253,6 +253,30 @@ public class PipelineRunTests
         summary.BrainRepoUsed.Should().Be(hasBrainProvider);
     }
 
+    [Fact]
+    public void ToSummary_CopiesFailureCategoryAndPodLogTail()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            FailureCategory = FailureReason.ExitCodeFailure,
+            PodLogTail = ["line1", "line2"]
+        };
+        run.MarkCompleted();
+        run.CurrentStep = PipelineStep.Failed;
+
+        var summary = run.ToSummary();
+
+        summary.FailureCategory.Should().Be(FailureReason.ExitCodeFailure,
+            "ToSummary must copy FailureCategory");
+        summary.PodLogTail.Should().BeEquivalentTo(["line1", "line2"],
+            "ToSummary must copy PodLogTail");
+    }
+
     #endregion
 
     #region Status Lifecycle — Happy Path

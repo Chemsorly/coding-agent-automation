@@ -60,7 +60,7 @@ public sealed class RunUsageMetricsTests
         lifecycleManager
             .Setup(m => m.FailRunWithLabelAsync(
                 It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync((PipelineRun?)null);
         var dbFactory = new LocalTestDbContextFactory(opts);
         return new WorkItemStatusTransitionService(

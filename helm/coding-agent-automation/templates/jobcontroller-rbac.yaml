@@ -27,6 +27,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  # Pod log tail of a failed agent pod, kept on the run summary (the pod's log is lost with the Job)
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   # Per-Job Secrets for agent derived API key (Req 8a.3 / H4 correction in Req 9.3).
   # The Job Controller vends HMAC-SHA256(master, agentId) via a per-Job Secret with
   # ownerReference so it is GC'd with the Job. Without these verbs,

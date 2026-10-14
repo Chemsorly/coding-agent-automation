@@ -328,7 +328,8 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<FailureReason?>()))
+                It.IsAny<FailureReason?>(),
+                It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync((PipelineRun?)null);
 
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "test error" };
@@ -351,7 +352,8 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<string>(),
                 (string?)null,
                 It.IsAny<CancellationToken>(),
-                It.IsAny<FailureReason?>()),
+                It.IsAny<FailureReason?>(),
+                It.IsAny<IReadOnlyList<string>?>()),
             Times.Once,
             "FailRunAsync must be called exactly once on a real Running→Failed transition");
     }
@@ -1145,7 +1147,8 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<FailureReason?>()))
+                It.IsAny<FailureReason?>(),
+                It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync((PipelineRun?)null);
 
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "test error" };

@@ -1043,7 +1043,7 @@ public sealed class ModelFetchJobServiceTests
         public Task DeleteSecretAsync(string name, string ns, CancellationToken ct = default) => Task.CompletedTask;
         public Task<V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default)
             => Task.FromResult(new V1PodList { Items = [] });
-        public Task<string> ReadPodLogsAsync(string podName, string ns, CancellationToken ct = default)
+        public Task<string> ReadPodLogTailAsync(string podName, string ns, string container, int tailLines, CancellationToken ct = default)
             => Task.FromResult(string.Empty);
     }
 }
