@@ -74,6 +74,13 @@ public static class SchedulerServiceCollectionExtensions
                 new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
+        services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(c =>
+        {
+            c.BaseAddress = new Uri(pipelineApiBaseUrl);
+            c.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
+        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
@@ -147,6 +154,24 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
+
+        // ── Consolidation services ────────────────────────────────────────────
+        services.AddSingleton<IHarnessSuggestionStore>(sp =>
+            new ApiBackedHarnessSuggestionStore(sp.GetRequiredService<IPipelineApiHarnessSuggestionClient>()));
+        services.AddSingleton<IConsolidationSelectorResolver>(sp =>
+            new ConsolidationSelectorResolver(
+                sp.GetRequiredService<IAgentProfileStore>(),
+                sp.GetRequiredService<IPipelineConfigStore>()));
+        services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
+            new ConsolidationServiceDependencies(
+                Log.Logger,
+                new PipelineConfiguration(),
+                sp.GetRequiredService<IProjectStore>(),
+                sp.GetRequiredService<IHarnessSuggestionStore>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
+                WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
+                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
+                PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
 
         // ── Dispatch orchestration service ────────────────────────────────────
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
