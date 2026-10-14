@@ -13,16 +13,16 @@ public class PipelineSidebarComponentTests : BunitContext
     private static PipelineRun CreateRun(
         PipelineStep currentStep = PipelineStep.GeneratingCode,
         PipelineStep highWaterMark = PipelineStep.Created) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = "42",
-        IssueTitle = "Test Issue",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        StartedAt = DateTime.UtcNow.AddMinutes(-5),
-        CurrentStep = currentStep,
-        HighWaterMark = highWaterMark
-    };
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            CurrentStep = currentStep,
+            HighWaterMark = highWaterMark
+        };
 
     // --- Linear progression (no retry) ---
 
@@ -307,17 +307,17 @@ public class PipelineSidebarComponentTests : BunitContext
     private static PipelineRun CreateBrainRun(
         PipelineStep currentStep,
         PipelineStep highWaterMark) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = "42",
-        IssueTitle = "Test Issue",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        StartedAt = DateTime.UtcNow.AddMinutes(-5),
-        CurrentStep = currentStep,
-        HighWaterMark = highWaterMark,
-        BrainProviderConfigId = "brain-1"
-    };
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            CurrentStep = currentStep,
+            HighWaterMark = highWaterMark,
+            BrainProviderConfigId = "brain-1"
+        };
 
     [Fact]
     public void BrainSyncPostRun_WhenActive_ShowsSyncing()
