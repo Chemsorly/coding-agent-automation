@@ -969,7 +969,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
     }
 
     // ── Feedback comment outbox — inline post outcome ─────────────────────────
-    // These tests wire the real AgentIssueOperations over a mocked issue provider, so the provider
+    // These tests wire the real HubIssueOperations over a mocked issue provider, so the provider
     // outcome reaches the outbox decision the same way it does in production. The outbox row may only
     // be marked Completed when the inline post delivered the comment; otherwise the relay must deliver it.
 
@@ -1049,7 +1049,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
                 _facade.Object,
                 _lifecycleManager.Object,
                 _labelService.Object,
-                new AgentIssueOperations(_facade.Object, _labelService.Object, _logger.Object),
+                new HubIssueOperations(_facade.Object, _labelService.Object, _logger.Object),
                 _changeNotifier.Object,
                 _appLifetime.Object,
                 _outbox.Object,

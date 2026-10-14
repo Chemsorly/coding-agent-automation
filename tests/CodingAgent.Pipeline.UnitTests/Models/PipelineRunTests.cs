@@ -546,7 +546,7 @@ public class PipelineRunTests
 
     // TODO: These tests verify ProviderConfigIdForLabel in isolation but no test exists to verify
     // that passing a targetKind different from run.LabelTargetKind at the call-site level (e.g.,
-    // AgentIssueOperations.SwapLabelAsync) is either unsupported or produces consistent routing.
+    // HubIssueOperations.SwapLabelAsync) is either unsupported or produces consistent routing.
     // Consider adding a call-site-level characterization test to document this contract.
     #region ProviderConfigIdForLabel — Provider routing by RunType
 
