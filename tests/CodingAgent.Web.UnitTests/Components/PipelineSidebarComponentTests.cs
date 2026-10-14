@@ -628,5 +628,37 @@ public class PipelineSidebarComponentTests : BunitContext
     // Add a test that: (1) renders with run A (populated breakdown, expand it), (2) calls SetParametersAndRender
     // with run B (a different RunId), and asserts that the cost breakdown collapsible is collapsed (body absent)
     // for the new run. This verifies the reset logic in OnParametersSet.
+
+    // ── Issue #3565: consolidation header ─────────────────────────────────
+
+    /// <summary>
+    /// A consolidation run's sidebar header must show the human-readable kind+template title
+    /// instead of "Issue #…".
+    /// </summary>
+    [Fact]
+    public void ConsolidationRun_HeaderShowsKindAndTemplate()
+    {
+        // RunType is init-only on PipelineRun — build inline; cannot use CreateRun().
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            CurrentStep = PipelineStep.Completed,
+            HighWaterMark = PipelineStep.Created,
+            RunType = PipelineRunType.Consolidation,
+        };
+        run.ConsolidationType = ConsolidationRunType.BrainConsolidation;
+        run.ConsolidationTemplateName = "tpl";
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        var headerText = cut.Find(".sidebar-issue").TextContent.Trim();
+        Assert.Contains("Brain consolidation · tpl", headerText);
+        Assert.DoesNotContain("Issue #", headerText);
+    }
 }
 
