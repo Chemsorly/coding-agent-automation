@@ -88,22 +88,24 @@ public class ApiWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("AGENT_API_KEY", ApiKey);
         Environment.SetEnvironmentVariable("UserToken__SigningKey", UserTokenSigningKey);
 
-        // Reset Serilog's global logger to a fresh bootstrap state.
-        // Use CreateBootstrapLogger() (not CreateLogger()) — UseSerilog captures Log.Logger
-        // during service resolution and calls Freeze() on it if it's a ReloadableLogger.
-        // CreateBootstrapLogger creates a fresh ReloadableLogger; CreateLogger() creates a
-        // static logger that the Serilog hosting library handles differently and may cause
-        // "logger is already frozen" when multiple factories run in the same test process.
-        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
-            .MinimumLevel.Warning()
-            .CreateBootstrapLogger();
-
         builder.UseEnvironment("Development");
 
         builder.ConfigureServices(services =>
         {
             // Reduce shutdown timeout in tests
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+
+            // Override the Serilog.ILogger DI registration to prevent the ReloadableLogger.Freeze()
+            // race condition when multiple WebApplicationFactory instances start concurrently.
+            // The old approach (Log.Logger = CreateBootstrapLogger() in ConfigureWebHost) had a race:
+            // two concurrent Program.Main calls both write to Log.Logger, and whichever factory's
+            // UseSerilog lambda runs second finds Log.Logger already frozen → exception.
+            // By replacing the ILogger registration here (which runs after Program.Main's
+            // UseSerilog registration), we bypass the Freeze() code path entirely.
+            // See also AgentHubGateKestrelFactory and HubAndDiTests which apply the same fix.
+            services.RemoveAll<Serilog.ILogger>();
+            services.AddSingleton<Serilog.ILogger>(
+                new Serilog.LoggerConfiguration().MinimumLevel.Warning().CreateLogger());
 
             // Remove all hosted services to prevent background loops in tests
             services.RemoveAll<IHostedService>();
