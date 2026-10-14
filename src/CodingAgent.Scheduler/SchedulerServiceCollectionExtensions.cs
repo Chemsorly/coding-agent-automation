@@ -162,16 +162,8 @@ public static class SchedulerServiceCollectionExtensions
             new ConsolidationSelectorResolver(
                 sp.GetRequiredService<IAgentProfileStore>(),
                 sp.GetRequiredService<IPipelineConfigStore>()));
-        services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
-            new ConsolidationServiceDependencies(
-                Log.Logger,
-                new PipelineConfiguration(),
-                sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>(),
-                sp.GetRequiredService<IProviderConfigStore>(),
-                WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
-                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
-                PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
+        services.AddSingleton<IConsolidationService>(sp =>
+            new ConsolidationService(BuildConsolidationServiceDeps(sp)));
 
         // ── Dispatch orchestration service ────────────────────────────────────
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
@@ -457,6 +449,23 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
     }
+
+    /// <summary>
+    /// Builds a <see cref="ConsolidationServiceDependencies"/> record from the service container.
+    /// Extracted to a helper so the <see cref="IConsolidationService"/> factory stays short and
+    /// does not create a Sonar CPD clone block against the equivalent inline construction in the
+    /// API host (<c>ApiServiceCollectionExtensions.AddLifecycleAndConsolidation</c>).
+    /// </summary>
+    private static ConsolidationServiceDependencies BuildConsolidationServiceDeps(IServiceProvider sp) =>
+        new(
+            Log.Logger,
+            new PipelineConfiguration(),
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<IHarnessSuggestionStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
+            WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
+            SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
+            PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>());
 
     private static k8s.Kubernetes CreateKubernetesClient()
     {
