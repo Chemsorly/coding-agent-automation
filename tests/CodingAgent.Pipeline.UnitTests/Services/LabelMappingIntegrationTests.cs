@@ -264,12 +264,12 @@ public class LabelMappingIntegrationTests
 
     private static QualityGateConfiguration CreateQgc(
         string id, string displayName, string[] matchLabels, int executionOrder = 0) => new()
-    {
-        Id = id,
-        DisplayName = displayName,
-        MatchLabels = matchLabels.ToList(),
-        TestArguments = ["test"],
-        Enabled = true,
-        ExecutionOrder = executionOrder
-    };
+        {
+            Id = id,
+            DisplayName = displayName,
+            MatchLabels = matchLabels.ToList(),
+            TestArguments = ["test"],
+            Enabled = true,
+            ExecutionOrder = executionOrder
+        };
 }
