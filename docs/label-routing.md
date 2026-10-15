@@ -24,7 +24,7 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 
 | System | Label Source | Matching Logic | Purpose |
 |--------|-------------|----------------|---------|
-| **Profile Resolution** | Job's RequiredLabels (from repo) | Profile MatchLabels ⊇ job labels (the profile covers every repo label); the closest fit wins: the covering profile with the fewest labels, then Priority, then Id | Pick the agent provider config; the profile's labels become the job's agent selector |
+| **Profile Resolution** | Job's RequiredLabels (from the pipeline job template) | Profile MatchLabels ⊇ job labels (the profile covers every repo label); the closest fit wins: the covering profile with the fewest labels, then Priority, then Id | Pick the agent provider config; the profile's labels become the job's agent selector |
 | **Job Template Selection** | Matched profile's job template | The profile names its job template (by its labels key); without one, its MatchLabels are the key | Pick the image, `maxConcurrent` and resources |
 | **QGC Resolution** | Matched profile's MatchLabels | QGC MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which quality gates to run |
 | **Reviewer Resolution** | Matched profile's MatchLabels | Reviewer MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which review agents to run |
@@ -134,5 +134,5 @@ The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pi
 2. **Create an Agent Profile** — In Settings → Label Routing → Agent Profiles, map the labels to a provider config and choose its job template (select the template you added in step 1)
 3. **Create a QGC** — In Settings → Label Routing → Quality Gate Configs, define the build/test commands for the stack
 4. **Create a Reviewer Config** (optional) — In Settings → Label Routing → Reviewer Configs, define stack-specific review agents
-5. **Configure the repository** — Set `requiredLabels` on the repository provider config (include both stack and version labels)
-6. **Create a Pipeline Job Template** — On the Pipelines page (Pipeline Job Templates section), link the issue provider, repo provider, and optional brain/CI providers
+5. **Configure the repository** — On the Pipelines page, add or edit the pipeline job template for this repository and set `requiredLabels` in the Repository Settings section (include both stack and version labels)
+6. **Create a Pipeline Job Template** — On the Pipelines page (Pipeline Job Templates section), link the issue provider, repo provider, and optional brain/CI providers; set the required agent labels in Repository Settings

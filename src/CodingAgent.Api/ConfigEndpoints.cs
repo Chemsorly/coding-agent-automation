@@ -3,10 +3,13 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
+using Serilog;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace CodingAgent.Api;
 
@@ -18,6 +21,9 @@ namespace CodingAgent.Api;
 /// </summary>
 public static class ConfigEndpoints
 {
+    /// <summary>Valid secret key names: must start with a letter or underscore, followed by letters, digits, underscores.</summary>
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+
     private static readonly JsonSerializerOptions ExportOptions = new()
     {
         WriteIndented = true,
@@ -139,6 +145,19 @@ public static class ConfigEndpoints
         IAgentProfileStore profileStore,
         CancellationToken ct)
     {
+        if (config.Kind == ProviderKind.Repository)
+        {
+            // Repository settings live on the pipeline job template, not the connection.
+            var hasRepoSettings = config.RequiredLabels is { Count: > 0 }
+                || config.Secrets is { Count: > 0 }
+                || config.SetupSteps is { Count: > 0 }
+                || !string.IsNullOrEmpty(config.SteeringContent)
+                || config.BlacklistedPaths is { Count: > 0 };
+            if (hasRepoSettings)
+                return TypedResults.BadRequest(
+                    "Agent labels, secrets, setup steps, steering and the commit blacklist are set on the pipeline job template.");
+        }
+
         if (config.Kind == ProviderKind.Agent)
         {
             // TODO: TOCTOU race — a concurrent SaveAgentProfile call may insert a new profile that
@@ -374,6 +393,33 @@ public static class ConfigEndpoints
         if (conflict is not null)
             return TypedResults.BadRequest(conflict);
 
+        // Validate secret key names: must match ^[A-Za-z_][A-Za-z0-9_]*$ (same rule as project secrets).
+        if (template.Secrets is { Count: > 0 })
+        {
+            // TODO: [WARNING] No server-side check for duplicate secret keys. Because Secrets is a
+            // Dictionary<string,string>, duplicate keys in the JSON payload are silently resolved by the
+            // serializer (last value wins) rather than reported as a validation error. The prior UI guard
+            // in RepoProviderSection.razor ("Duplicate key.") was removed and not reintroduced on the
+            // template path. If the client-side guard in RepositorySettingsEditor.razor is bypassed,
+            // users get no feedback about duplicates. Consider adding a duplicate-key check here.
+            foreach (var key in template.Secrets.Keys)
+            {
+                if (!SecretKeyPattern.IsMatch(key))
+                    return TypedResults.BadRequest(
+                        $"Secret name '{key}' is invalid; names must start with a letter or underscore and contain only letters, digits and underscores.");
+            }
+        }
+
+        // Validate setup steps: each step must have both a name and a command.
+        if (template.SetupSteps is { Count: > 0 })
+        {
+            foreach (var step in template.SetupSteps)
+            {
+                if (string.IsNullOrWhiteSpace(step.Name) || string.IsNullOrWhiteSpace(step.Command))
+                    return TypedResults.BadRequest("Each setup step must have a name and a command.");
+            }
+        }
+
         return await SaveAsync(() => store.SaveTemplateAsync(projectId, template, ct));
     }
 
@@ -545,6 +591,10 @@ public static class ConfigEndpoints
         // not inside the retry lambda where it could fire on a failed attempt before rollback.
         configStore.InvalidateCaches();
 
+        // Move repository settings from any provider configs that still carry them (older bundles)
+        // onto the templates that reference those providers. Idempotent.
+        await MigrateRepositorySettingsFromProvidersAsync(dbFactory, ct);
+
         return TypedResults.Ok(new ImportExportResult
         {
             Success = true,
@@ -555,6 +605,151 @@ public static class ConfigEndpoints
                       $"{bundle.Projects?.Count ?? 0} projects, " +
                       $"{bundle.JobTemplates?.Count ?? 0} templates"
         });
+    }
+
+    /// <summary>
+    /// Moves repository settings (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths)
+    /// from repository <see cref="ProviderConfig"/> records onto the templates that reference them.
+    /// Idempotent: skips fields already set on the template; only clears from the provider once all
+    /// referencing templates have been successfully updated.
+    /// A provider referenced by no template keeps its values and generates a warning.
+    /// <para>
+    /// Works directly with EF entities (like <c>DatabaseStartupService.MoveRepositorySettingsToTemplatesAsync</c>)
+    /// to avoid the <c>SaveProviderConfigAsync</c> GUID-only constraint and the data-loss risk that arises
+    /// when a referencing template's parent project cannot be resolved (orphaned template).
+    /// </para>
+    /// </summary>
+    private static async Task MigrateRepositorySettingsFromProvidersAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var allProviderEntities = await db.ProviderConfigs
+            .Where(p => p.Kind == ProviderKind.Repository)
+            .ToListAsync(ct);
+
+        if (allProviderEntities.Count == 0)
+            return;
+
+        var allTemplateEntities = await db.PipelineJobTemplates.ToListAsync(ct);
+
+        var anyChanged = false;
+
+        foreach (var providerEntity in allProviderEntities)
+        {
+            if (string.IsNullOrEmpty(providerEntity.Configuration))
+                continue;
+
+            var provider = JsonSerializer.Deserialize<ProviderConfig>(
+                providerEntity.Configuration, PipelineJsonOptions.Lenient);
+            if (provider is null)
+                continue;
+
+            var hasSettings = provider.RequiredLabels is { Count: > 0 }
+                || provider.Secrets is { Count: > 0 }
+                || provider.SetupSteps is { Count: > 0 }
+                || !string.IsNullOrEmpty(provider.SteeringContent)
+                || provider.BlacklistedPaths is { Count: > 0 };
+
+            if (!hasSettings)
+                continue;
+
+            // Match templates by the provider's Id field in the JSON, which is the logical identifier
+            // used in the template's RepoProviderId field. The entity GUID key (providerEntity.Id) is
+            // separate from the ProviderConfig.Id field inside the Configuration JSON.
+            var referencingEntities = allTemplateEntities
+                .Where(t =>
+                {
+                    if (string.IsNullOrEmpty(t.Configuration)) return false;
+                    var tmpl = JsonSerializer.Deserialize<PipelineJobTemplate>(
+                        t.Configuration, PipelineJsonOptions.Lenient);
+                    return tmpl?.RepoProviderId == provider.Id;
+                })
+                .ToList();
+
+            if (referencingEntities.Count == 0)
+            {
+                Log.Warning(
+                    "MigrateRepositorySettings: provider '{DisplayName}' ({Id}) has repository settings " +
+                    "but no template references it; values kept",
+                    provider.DisplayName, provider.Id);
+                continue;
+            }
+
+            // Copy fields onto each referencing template whose own value is null/empty.
+            // Track whether every template was successfully updated before clearing the provider.
+            var allUpdated = true;
+            foreach (var templateEntity in referencingEntities)
+            {
+                var template = JsonSerializer.Deserialize<PipelineJobTemplate>(
+                    templateEntity.Configuration!, PipelineJsonOptions.Lenient);
+                if (template is null)
+                {
+                    allUpdated = false;
+                    continue;
+                }
+
+                var needsUpdate =
+                    (provider.RequiredLabels is { Count: > 0 } && template.RequiredLabels is not { Count: > 0 })
+                    || (provider.Secrets is { Count: > 0 } && template.Secrets is not { Count: > 0 })
+                    || (provider.SetupSteps is { Count: > 0 } && template.SetupSteps is not { Count: > 0 })
+                    || (!string.IsNullOrEmpty(provider.SteeringContent) && string.IsNullOrEmpty(template.SteeringContent))
+                    || (provider.BlacklistedPaths is { Count: > 0 } && template.BlacklistedPaths is not { Count: > 0 });
+
+                if (!needsUpdate)
+                    continue;
+
+                var updated = template with
+                {
+                    RequiredLabels = template.RequiredLabels is { Count: > 0 } ? template.RequiredLabels : provider.RequiredLabels,
+                    Secrets = template.Secrets is { Count: > 0 } ? template.Secrets : provider.Secrets,
+                    SetupSteps = template.SetupSteps is { Count: > 0 } ? template.SetupSteps : provider.SetupSteps,
+                    SteeringContent = !string.IsNullOrEmpty(template.SteeringContent) ? template.SteeringContent : provider.SteeringContent,
+                    BlacklistedPaths = template.BlacklistedPaths is { Count: > 0 } ? template.BlacklistedPaths : provider.BlacklistedPaths,
+                };
+
+                templateEntity.Configuration = JsonSerializer.Serialize(updated, PipelineJsonOptions.Default);
+                anyChanged = true;
+
+                Log.Information(
+                    "MigrateRepositorySettings: copied repository settings from provider '{ProviderDisplayName}' ({ProviderId}) to template '{TemplateName}' ({TemplateId})",
+                    provider.DisplayName, provider.Id, template.Name, template.Id);
+            }
+
+            if (!allUpdated)
+            {
+                Log.Warning(
+                    "MigrateRepositorySettings: provider '{DisplayName}' ({Id}) has repository settings but some referencing templates could not be deserialized; provider values kept",
+                    provider.DisplayName, provider.Id);
+                continue;
+            }
+
+            // Clear the five fields from the provider only after all templates have been updated.
+            var cleared = new ProviderConfig
+            {
+                BlacklistedPaths = null,
+                DisplayName = provider.DisplayName,
+                Id = provider.Id,
+                Kind = provider.Kind,
+                ProviderType = provider.ProviderType,
+                RepositoryRole = provider.RepositoryRole,
+                RequiredLabels = null,
+                Secrets = null,
+                Settings = provider.Settings,
+                SetupSteps = null,
+                SteeringContent = null,
+            };
+            providerEntity.Configuration = JsonSerializer.Serialize(cleared, PipelineJsonOptions.Default);
+            anyChanged = true;
+
+            Log.Information(
+                "MigrateRepositorySettings: cleared repository settings from provider '{DisplayName}' ({Id})",
+                provider.DisplayName, provider.Id);
+        }
+
+        if (anyChanged)
+            await db.SaveChangesAsync(ct);
     }
 
     /// <summary>

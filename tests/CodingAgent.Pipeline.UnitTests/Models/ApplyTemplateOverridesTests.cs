@@ -116,7 +116,7 @@ public class ApplyTemplateOverridesTests
     }
 
     [Fact]
-    public void MatchingTemplate_AppliesBlacklistFromRepoProvider()
+    public void MatchingTemplate_AppliesBlacklistFromTemplate()
     {
         var config = TestPipelineConfig.Default();
         var templates = new List<PipelineJobTemplate>
@@ -129,6 +129,7 @@ public class ApplyTemplateOverridesTests
                 RepoProviderId = "repo-1",
                 BrainProviderId = "brain-1",
                 BrainReadOnly = false,
+                BlacklistedPaths = new List<string> { "vendor", "dist" },
             }
         };
         var providerConfigs = new List<ProviderConfig>
@@ -139,7 +140,8 @@ public class ApplyTemplateOverridesTests
                 DisplayName = "Repo",
                 Kind = ProviderKind.Repository,
                 ProviderType = "GitHub",
-                BlacklistedPaths = new List<string> { "vendor", "dist" },
+                // BlacklistedPaths intentionally absent from the connection record —
+                // it now lives on the template (issue #3575).
             }
         };
 

@@ -152,7 +152,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = repoConfigs.TryGetProviderConfig(template.RepoProviderId);
         if (repoConfig is not null)
-            rawConfigs.Add(repoConfig);
+            rawConfigs.Add(RepositorySettings.WithTemplateSettings(repoConfig, template));
 
         // Add brain provider if configured
         if (!string.IsNullOrEmpty(template.BrainProviderId))

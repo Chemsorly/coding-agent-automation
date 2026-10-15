@@ -137,9 +137,12 @@ public sealed class ConsolidationService : IConsolidationService
                 return null;
             }
 
-            // Resolve repo ProviderConfig (for selector resolution).
-            repoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
+            // Resolve repo ProviderConfig (for selector resolution), enriched with template settings.
+            var rawRepoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
                 template.RepoProviderId, ProviderKind.Repository, ct);
+            repoConfig = rawRepoConfig is not null
+                ? RepositorySettings.WithTemplateSettings(rawRepoConfig, template)
+                : null;
         }
 
         var templateName = template?.Name ?? GlobalScopeName;

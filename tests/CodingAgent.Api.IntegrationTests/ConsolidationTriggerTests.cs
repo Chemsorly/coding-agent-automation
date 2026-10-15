@@ -31,12 +31,12 @@ public sealed class ConsolidationTriggerTests(ApiWebApplicationFactory factory)
         await projects.SaveTemplateAsync(Project, new PipelineJobTemplate
         {
             Id = Template, Name = "charlie-api", IssueProviderId = "ip-consolidation", RepoProviderId = RepoProvider, Enabled = true,
+            RequiredLabels = [.. RequiredLabels],
         }, CancellationToken.None);
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(new ProviderConfig
         {
             Id = RepoProvider, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Charlie repo",
-            RequiredLabels = [.. RequiredLabels],
         }, CancellationToken.None);
         await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(new AgentProfile
         {

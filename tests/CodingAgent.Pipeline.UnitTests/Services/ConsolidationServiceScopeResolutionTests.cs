@@ -106,12 +106,14 @@ public sealed class ConsolidationServiceScopeResolutionTests
     [Fact]
     public async Task TriggerAsync_WithTemplate_ForwardsResolvedRepoConfigToSelectorResolver()
     {
-        // Characterizes: the repoConfig resolved from the provider store is forwarded
-        // to ResolveSelectorLabelsAsync (and thus to IConsolidationSelectorResolver.ResolveAsync).
-        var expectedConfig = new ProviderConfig { Id = "rp-scope-exact", Kind = ProviderKind.Repository, DisplayName = "Scope Repo", ProviderType = "GitHub" };
+        // Characterizes: the repoConfig resolved from the provider store (enriched with template
+        // settings) is forwarded to ResolveSelectorLabelsAsync (and thus to
+        // IConsolidationSelectorResolver.ResolveAsync). After issue #3575 the repoConfig is a
+        // copy enriched by RepositorySettings.WithTemplateSettings; the Id is the same.
+        var rawConfig = new ProviderConfig { Id = "rp-scope-exact", Kind = ProviderKind.Repository, DisplayName = "Scope Repo", ProviderType = "GitHub" };
         _providerConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync(Template.RepoProviderId, ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expectedConfig);
+            .ReturnsAsync(rawConfig);
 
         var sut = CreateSut();
 
@@ -119,11 +121,11 @@ public sealed class ConsolidationServiceScopeResolutionTests
 
         _selectorResolver.Verify(
             r => r.ResolveAsync(
-                expectedConfig,
+                It.Is<ProviderConfig>(c => c.Id == rawConfig.Id),
                 It.IsAny<PipelineConfiguration>(),
                 It.IsAny<CancellationToken>()),
             Times.Once,
-            "the repoConfig returned by the provider store must be passed to the selector resolver");
+            "the repoConfig (enriched with template settings) must be passed to the selector resolver");
     }
 
     // ── 2. global run skips template/project resolution ──────────────────────

@@ -1,0 +1,272 @@
+@using System.Text.RegularExpressions
+@using CodingAgent.Pipeline.Models
+@using static CodingAgent.Web.Components.Pages.TemplateTableSection
+
+@* Repository settings editor — agent labels, secrets, setup steps, steering, blacklist. *@
+@* Used inside TemplateAddForm.razor. *@
+
+<div class="repository-settings-editor">
+    <h4>Repository Settings</h4>
+    <p class="form-hint">These settings apply to agent runs on this template's repository.</p>
+
+    <div class="form-group">
+        <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
+        <input type="text" value="@_labelsText" @onchange="OnLabelsChanged" placeholder="e.g. kiro, dotnet, dotnet10" />
+    </div>
+
+    <div class="form-group">
+        <div class="label-with-hint">
+            <label>Blacklisted Paths</label>
+            <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
+        </div>
+        <input type="text" value="@_blacklistedPathsText" @onchange="OnBlacklistedPathsChanged" placeholder=".kiro, .github, .brain" />
+    </div>
+
+    <Collapsible CssClass="secrets-section" HeaderClass="secrets-section-header" BodyClass="secrets-section-body"
+                 IsExpanded="_secretsExpanded" IsExpandedChanged="v => _secretsExpanded = v">
+        <Header>🔑 Secrets (@_secrets.Count)</Header>
+        <ChildContent>
+            @for (var i = 0; i < _secrets.Count; i++)
+            {
+                var index = i;
+                var secret = _secrets[index];
+                var isRevealed = _revealedSecrets.Contains(index);
+                <div class="secret-row">
+                    <input type="text"
+                           class="secret-key-input"
+                           value="@secret.Key"
+                           @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
+                           placeholder="ENV_VAR_NAME" />
+                    <input type="@(isRevealed ? "text" : "password")"
+                           class="secret-value-input"
+                           value="@secret.Value"
+                           @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                           placeholder="secret value" />
+                    <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
+                    <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                </div>
+                @if (!string.IsNullOrEmpty(secret.ValidationError))
+                {
+                    <div class="secret-validation-error">@secret.ValidationError</div>
+                }
+            }
+            <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+        </ChildContent>
+    </Collapsible>
+
+    <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
+                 IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
+        <Header><Icon Name="settings" /> Setup Steps (@_setupSteps.Count)</Header>
+        <ChildContent>
+            <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
+            @for (var i = 0; i < _setupSteps.Count; i++)
+            {
+                var index = i;
+                var step = _setupSteps[index];
+                <div class="setup-step-row">
+                    <div class="setup-step-header">
+                        <span class="setup-step-number">@(index + 1).</span>
+                        <input type="text"
+                               class="setup-step-name-input"
+                               value="@step.Name"
+                               @onchange="e => UpdateSetupStepName(index, e.Value?.ToString() ?? string.Empty)"
+                               placeholder="Label (e.g. Restore dependencies)" />
+                        <div class="setup-step-actions">
+                            <button type="button" class="btn-icon" title="Move up" disabled="@(index == 0)" @onclick="() => MoveSetupStepUp(index)">↑</button>
+                            <button type="button" class="btn-icon" title="Move down" disabled="@(index == _setupSteps.Count - 1)" @onclick="() => MoveSetupStepDown(index)">↓</button>
+                            <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSetupStep(index)">🗑</button>
+                        </div>
+                    </div>
+                    <textarea class="setup-step-command-input"
+                              rows="2"
+                              @onchange="e => UpdateSetupStepCommand(index, e.Value?.ToString() ?? string.Empty)"
+                              placeholder="Full shell command (e.g. dotnet restore, npm install)">@step.Command</textarea>
+                    @if (!string.IsNullOrEmpty(step.ValidationError))
+                    {
+                        <div class="setup-step-validation-error">@step.ValidationError</div>
+                    }
+                </div>
+            }
+            <button type="button" class="btn-add-inline" @onclick="AddSetupStep">+ Add Step</button>
+        </ChildContent>
+    </Collapsible>
+
+    <div class="form-group">
+        <label>Steering Instructions</label>
+        <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
+        <textarea @bind="SteeringContentBinding" rows="15" placeholder="@SteeringPlaceholder"></textarea>
+    </div>
+</div>
+
+@code {
+    private const string SteeringPlaceholder =
+        "## Architecture\n- This is a Spring Boot application using Gradle\n- All REST endpoints require OpenAPI annotations\n" +
+        "- Database migrations live in src/main/resources/db/migration/\n\n" +
+        "## Build Commands\n- Build: ./gradlew build\n- Test: ./gradlew test\n- Lint: ./gradlew spotlessCheck";
+
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+
+    [Parameter, EditorRequired] public TemplateFormModel Form { get; set; } = default!;
+
+    private string _labelsText = "";
+    private string _blacklistedPathsText = "";
+    private string? _steeringContent;
+    private List<SecretEntry> _secrets = new();
+    private List<SetupStepEntry> _setupSteps = new();
+    private HashSet<int> _revealedSecrets = new();
+    private bool _secretsExpanded;
+    private bool _setupStepsExpanded;
+
+    protected override void OnParametersSet()
+    {
+        // TODO: [WARNING] OnParametersSet runs on every parent re-render and unconditionally
+        // overwrites local edit state (_labelsText, _secrets, _setupSteps, etc.) from Form.
+        // Any inline validation errors (SecretEntry.ValidationError, SetupStepEntry.ValidationError)
+        // are never written back to Form, so a parent re-render clears displayed validation messages.
+        // Consider initialize-once semantics (guard on first render) so that transient UI state
+        // survives parent re-renders while the editor is being edited.
+        _labelsText = Form.RequiredLabels is { Count: > 0 } ? string.Join(", ", Form.RequiredLabels) : "";
+        _blacklistedPathsText = Form.BlacklistedPaths is { Count: > 0 } ? string.Join(", ", Form.BlacklistedPaths) : "";
+        _steeringContent = Form.SteeringContent;
+        _secrets = Form.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new();
+        _setupSteps = Form.SetupSteps?.Select(s => new SetupStepEntry { Name = s.Name, Command = s.Command }).ToList() ?? new();
+    }
+
+    // ── Labels ─────────────────────────────────────────────────────────────
+
+    private void OnLabelsChanged(ChangeEventArgs e)
+    {
+        _labelsText = e.Value?.ToString() ?? "";
+        var labels = _labelsText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Form.RequiredLabels = labels.Length > 0 ? labels : null;
+    }
+
+    // ── Blacklisted Paths ──────────────────────────────────────────────────
+
+    private void OnBlacklistedPathsChanged(ChangeEventArgs e)
+    {
+        _blacklistedPathsText = e.Value?.ToString() ?? "";
+        var paths = _blacklistedPathsText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Form.BlacklistedPaths = paths.Length > 0 ? paths : null;
+    }
+
+    // ── Secrets ────────────────────────────────────────────────────────────
+    // TODO: [WARNING] AddSecret appends a blank SecretEntry to the local _secrets list but does
+    // NOT call UpdateFormSecrets(). UpdateFormSecrets filters out entries with empty keys, so
+    // the blank row can never be persisted to Form.Secrets. If OnParametersSet runs before the
+    // user types a key (e.g. a parent field edit triggers a re-render), the blank row disappears.
+    // Fix: call UpdateFormSecrets() after adding the blank row so that a re-render round-trip via
+    // Form preserves it (or use initialize-once semantics in OnParametersSet).
+    private void AddSecret() => _secrets.Add(new SecretEntry());
+
+    private void RemoveSecret(int index)
+    {
+        _secrets.RemoveAt(index);
+        _revealedSecrets.Remove(index);
+        UpdateFormSecrets();
+    }
+
+    private void UpdateSecretKey(int index, string key)
+    {
+        _secrets[index] = _secrets[index] with { Key = key, ValidationError = ValidateSecretKey(key) };
+        UpdateFormSecrets();
+    }
+
+    private void UpdateSecretValue(int index, string value)
+    {
+        _secrets[index] = _secrets[index] with { Value = value };
+        UpdateFormSecrets();
+    }
+
+    private void ToggleSecretVisibility(int index)
+    {
+        if (!_revealedSecrets.Remove(index))
+            _revealedSecrets.Add(index);
+    }
+
+    private static string? ValidateSecretKey(string key) =>
+        !string.IsNullOrEmpty(key) && !SecretKeyPattern.IsMatch(key)
+            ? "Key must start with a letter or underscore and contain only letters, digits and underscores."
+            : null;
+
+    private void UpdateFormSecrets()
+    {
+        var valid = _secrets.Where(s => !string.IsNullOrEmpty(s.Key)).ToList();
+        Form.Secrets = valid.Count > 0
+            ? valid.ToDictionary(s => s.Key, s => s.Value)
+            : null;
+    }
+
+    // ── Setup Steps ────────────────────────────────────────────────────────
+    // TODO: [WARNING] AddSetupStep has the same issue as AddSecret above: the blank row is
+    // not reflected in Form.SetupSteps until a field is edited (UpdateFormSetupSteps is not
+    // called), and is lost on an intervening parent re-render. Apply the same fix.
+    private void AddSetupStep() => _setupSteps.Add(new SetupStepEntry());
+
+    private void RemoveSetupStep(int index)
+    {
+        _setupSteps.RemoveAt(index);
+        UpdateFormSetupSteps();
+    }
+
+    private void UpdateSetupStepName(int index, string name)
+    {
+        _setupSteps[index] = _setupSteps[index] with { Name = name };
+        UpdateFormSetupSteps();
+    }
+
+    private void UpdateSetupStepCommand(int index, string command)
+    {
+        _setupSteps[index] = _setupSteps[index] with { Command = command };
+        UpdateFormSetupSteps();
+    }
+
+    private void MoveSetupStepUp(int index)
+    {
+        if (index <= 0) return;
+        (_setupSteps[index - 1], _setupSteps[index]) = (_setupSteps[index], _setupSteps[index - 1]);
+        UpdateFormSetupSteps();
+    }
+
+    private void MoveSetupStepDown(int index)
+    {
+        if (index >= _setupSteps.Count - 1) return;
+        (_setupSteps[index], _setupSteps[index + 1]) = (_setupSteps[index + 1], _setupSteps[index]);
+        UpdateFormSetupSteps();
+    }
+
+    private void UpdateFormSetupSteps()
+    {
+        Form.SetupSteps = _setupSteps.Count > 0
+            ? _setupSteps.Select(s => new SetupStep { Name = s.Name, Command = s.Command }).ToList()
+            : null;
+    }
+
+    // ── Steering ───────────────────────────────────────────────────────────
+
+    private string? SteeringContentBinding
+    {
+        get => _steeringContent;
+        set
+        {
+            _steeringContent = value;
+            Form.SteeringContent = string.IsNullOrEmpty(value) ? null : value;
+        }
+    }
+
+    // ── Internal DTOs (same pattern as RepoProviderSection) ───────────────
+
+    private sealed record SecretEntry
+    {
+        public string Key { get; init; } = "";
+        public string Value { get; init; } = "";
+        public string? ValidationError { get; init; }
+    }
+
+    private sealed record SetupStepEntry
+    {
+        public string Name { get; init; } = "";
+        public string Command { get; init; } = "";
+        public string? ValidationError { get; init; }
+    }
+}

@@ -804,21 +804,34 @@ public class DispatchOrchestrationServiceTests
             SteeringContent = "## Project Instructions\nAlways use structured logging."
         };
 
-        var repoConfigWithSteering = new ProviderConfig
+        var repoConfigWithoutSteering = new ProviderConfig
         {
             Id = "repo-1",
             DisplayName = "Repo",
             ProviderType = "github",
             Kind = ProviderKind.Repository,
+            // SteeringContent now lives on the template (issue #3575)
+        };
+        // Template carries steering content and required labels (issue #3575)
+        var templateWithSteering = new PipelineJobTemplate
+        {
+            Id = "t-steering-1",
+            Name = "SteeringTemplate",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            Enabled = true,
             RequiredLabels = ["dotnet"],
-            SteeringContent = "## Repo Instructions\nFollow the decisions in decisions.md."
+            SteeringContent = "## Repo Instructions\nFollow the decisions in decisions.md.",
         };
         _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfigWithSteering);
+            .ReturnsAsync(repoConfigWithoutSteering);
         _mockProviderConfigStore
             .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { repoConfigWithSteering });
+            .ReturnsAsync(new[] { repoConfigWithoutSteering });
+        _mockProviderConfigStore
+            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { templateWithSteering });
 
         var service = CreateService();
         DispatchOrchestrationService iface = service;
