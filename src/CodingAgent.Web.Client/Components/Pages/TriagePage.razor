@@ -642,7 +642,6 @@
         {
             DraftIds = ids,
             Queue = _queue,
-            CreatedBy = Access.Username ?? "unknown",
         }, _cts.Token);
         var made = $"Created {Issues(created.Created.Count)}";
         _notice = created.Errors.Count == 0
@@ -656,7 +655,6 @@
         AfterRerun(await Triages.RerunAsync(Id, new RerunTriageRequest
         {
             Feedback = _feedback?.Trim(),
-            Author = Access.Username ?? "unknown",
         }, _cts.Token));
         _feedback = null;
         _panel = Panel.None;
@@ -673,7 +671,6 @@
         {
             Answers = answers,
             Feedback = string.IsNullOrWhiteSpace(_feedback) ? null : _feedback.Trim(),
-            Author = Access.Username ?? "unknown",
         }, _cts.Token));
         _feedback = null;
         _answers.Clear();
@@ -684,7 +681,6 @@
         _detail = await Triages.DismissAsync(Id, new DismissTriageRequest
         {
             Reason = string.IsNullOrWhiteSpace(_dismissReason) ? null : _dismissReason.Trim(),
-            By = Access.Username ?? "unknown",
         }, _cts.Token);
         _dismissReason = null;
         _panel = Panel.None;
@@ -709,7 +705,6 @@
         TargetRepository = draft.TargetRepository,
         Title = draft.Title,
         Body = draft.Body,
-        EditedBy = Access.Username ?? "unknown",
     }, _cts.Token));
 
     private async Task ResetDraftAsync(string draftId) => await EditAsync("ResetTriageDraft", () => Triages.ResetDraftAsync(Id, draftId, _cts.Token));

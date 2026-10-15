@@ -46,7 +46,7 @@ The Pipeline API generates short-lived GitHub installation tokens for agents on 
 
 ### Per-Process Environment Variables
 
-Secrets and environment variables injected for a pipeline run (via setup steps or project secrets) are scoped to the **child agent process only**. They are set on `ProcessStartInfo.Environment` before the process launches and do not affect the agent host process, any other running agent, or any subsequently spawned processes outside that child. This means there is no risk of secret leakage between concurrent runs or into the orchestrator's own environment.
+Secrets and environment variables injected for a pipeline run (via setup steps or project secrets) are scoped to the **child agent process only**. They are set on `ProcessStartInfo.Environment` before the process launches and do not affect the agent host process, any other running agent, or any subsequently spawned processes outside that child. This means there is no risk of secret leakage between concurrent runs or into the agent host's own environment.
 
 ---
 

@@ -152,12 +152,22 @@ public class AgentCodingLoopCommandTests : BunitContext
     }
 
     [Fact]
-    public async Task StartRequestedButNotApplied_ShowsTheRequest_AndStopWithdrawsIt()
+    public void StartRequestedButNotYetApplied_SaysTheSchedulerStartsIt()
+    {
+        _loop.Status = FakeUiLoopClient.Stopped with { RunRequested = true };
+
+        var cut = Render<AgentCoding>();
+
+        LoopProgress(cut).Should().Contain("Start requested");
+    }
+
+    [Fact]
+    public async Task StartRefusedByTheScheduler_SaysSo_ShowsWhy_AndStopWithdrawsIt()
     {
         _loop.Status = FakeUiLoopClient.Stopped with { RunRequested = true, ValidationErrors = ["No enabled pipeline job templates configured."] };
         var cut = Render<AgentCoding>();
 
-        LoopProgress(cut).Should().Contain("Start requested");
+        LoopProgress(cut).Should().Contain("Start refused");
         cut.Markup.Should().Contain("No enabled pipeline job templates configured.");
 
         await cut.InvokeAsync(() => LoopStopButton(cut).Click());

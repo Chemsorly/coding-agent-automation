@@ -198,7 +198,6 @@ public class TriageListAndFormComponentTests : BunitContext
 
         _triages.Verify(t => t.CreateAsync(It.Is<CreateTriageRequest>(r =>
                 r.ProjectId == ShopProjectId
-                && r.RequestedBy == "tester"
                 && r.Request.Title == "Checkout returns 502"
                 && r.Request.StartInTemplateId == "t1"
                 && r.Request.From != null && r.Request.Until == null),

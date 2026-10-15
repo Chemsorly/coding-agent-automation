@@ -430,9 +430,8 @@ api:
   # key (WorkDistribution__OrchestratorUrl) — changing it re-points both shapes simultaneously
   # (Spec 044 Req C2.1 option a). Default derives from release name and api.service.port.
   serviceUrl: ""
-  # Spec 045 Req 6.4/6.5: API base URL and hub URL for the web service to connect
-  # to the Pipeline API for config loading (IPipelineApiConfigClient) and live streaming
-  # (IAgentHubConnection). When empty, the chart computes the default in-cluster URL from
+  # The Pipeline API URL the web service calls as the signed-in user: /api/ui for its data and
+  # /hubs/ui for live streaming (spec 051). When empty, the chart computes the default in-cluster URL from
   # the release name, namespace, and api.service.port. Override for external or custom routing.
   # REQUIRED when api.enabled is false. When empty and api.enabled is false, the chart
   # fails at render time — the web service would otherwise compute an in-cluster URL

@@ -417,7 +417,6 @@
             var detail = await Triages.CreateAsync(new CreateTriageRequest
             {
                 ProjectId = _projectId,
-                RequestedBy = Access.Username ?? "unknown",
                 Request = new TriageRequest
                 {
                     Title = _title!.Trim(),

@@ -439,6 +439,7 @@ public partial class AgentCoding : IDisposable
     private string? LoopProgressText => (_loop.RunRequested, _loop.IsLoopActive) switch
     {
         _ when _loop.ReportedAt is null => string.IsNullOrEmpty(_loop.StatusMessage) ? null : _loop.StatusMessage,
+        (true, false) when _loop.ValidationErrors.Count > 0 => "Start refused — fix the problems below; the Scheduler retries while Start stays requested.",
         (true, false) => "Start requested — the Scheduler starts the loop within a few seconds.",
         (false, true) => "Stop requested — the loop stops after its current cycle.",
         (true, true) => $"Polling template {_loop.CurrentCycleTemplateIndex + 1} of {_loop.CurrentCycleTemplateCount} · Processed: {_loop.ProcessedCount} · Failed: {_loop.FailedCount}",

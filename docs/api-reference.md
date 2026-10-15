@@ -39,7 +39,7 @@ GET /api/work-items/{id}/assignment?access_token=<token>
 
 ### Token Derivation
 
-The orchestrator supports two authentication modes:
+The service surface supports two kinds of API key:
 
 1. **Master key (legacy)** — Use the raw `AGENT_API_KEY` value directly as the Bearer token. This works when no `agentId` query parameter is provided.
 
@@ -49,7 +49,7 @@ The orchestrator supports two authentication modes:
    ```
    Pass the derived key as the Bearer token and include `?agentId=<agent_id>` as a query parameter.
 
-The `AGENT_API_KEY` environment variable on the orchestrator sets the master key. See [Configuration](configuration.md#orchestrator) for details.
+The `AGENT_API_KEY` environment variable of the Pipeline API (and of the Scheduler and Job Controller, which call it) sets the master key. See [Configuration](configuration.md#pipeline-api) for details.
 
 ---
 

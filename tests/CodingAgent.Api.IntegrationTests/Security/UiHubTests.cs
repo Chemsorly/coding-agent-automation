@@ -98,6 +98,29 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
         connection.State.Should().Be(HubConnectionState.Connected);
     }
 
+    /// <summary>
+    /// The UI hub speaks JSON only (D7). The agents' hub keeps MessagePack, and the same SignalR registration
+    /// serves both, so this pins the per-hub restriction.
+    /// </summary>
+    [Fact]
+    public async Task MessagePack_IsRefused()
+    {
+        var connection = new HubConnectionBuilder()
+            .WithUrl(HubUrl, o =>
+            {
+                o.AccessTokenProvider = () => Task.FromResult<string?>(TestUserTokens.For(TestUserTokens.Global(AccessRole.ReadOnly)));
+                o.SkipNegotiation = true;
+                o.Transports = HttpTransportType.WebSockets;
+            })
+            .AddMessagePackProtocol()
+            .Build();
+        await using (connection)
+        {
+            using var cts = new CancellationTokenSource(Wait);
+            await FluentActions.Awaiting(() => connection.StartAsync(cts.Token)).Should().ThrowAsync<Exception>();
+        }
+    }
+
     [Fact]
     public async Task NoToken_AndTheApiKey_AreRefused()
     {
@@ -168,11 +191,11 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
             new ChatSessionRecord(agentId, "oidc", "oidc:anna", ProjectT, "profile", "window"));
         var operatorOfT = TestUserTokens.Scoped(ProjectT, AccessRole.Operator);
 
-        await using (var bert = await ConnectAsync(TestUserTokens.For(operatorOfT, "oidc:bert", "bert")))
-        {
-            await FluentActions.Awaiting(() => bert.InvokeAsync(HubMethodNames.SubscribeToChat, agentId))
-                .Should().ThrowAsync<HubException>("another operator of the project does not see Anna's chat");
-        }
+        await using var bert = await ConnectAsync(TestUserTokens.For(operatorOfT, "oidc:bert", "bert"));
+        var bertReceived = new ConcurrentQueue<string>();
+        bert.On<string, IReadOnlyList<string>>(HubMethodNames.OnChatResponse, (_, l) => { foreach (var line in l) bertReceived.Enqueue(line); });
+        await FluentActions.Awaiting(() => bert.InvokeAsync(HubMethodNames.SubscribeToChat, agentId))
+            .Should().ThrowAsync<HubException>("another operator of the project does not see Anna's chat");
 
         await using var anna = await ConnectAsync(TestUserTokens.For(operatorOfT, "oidc:anna", "anna"));
         var lines = new ConcurrentQueue<string>();
@@ -187,6 +210,7 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
         await WaitUntilAsync(() => !completed.IsEmpty);
         lines.Should().Equal("hi", "there");
         completed.Should().Equal(("s1", 1, "boom"));
+        bertReceived.Should().BeEmpty("a refused subscription joins no group");
     }
 
     /// <summary>
