@@ -60,9 +60,9 @@ public class AgentCodingLoopToastTests : BunitContext
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(_mockProjectStore.Object);
         Services.AddSingleton<IPipelineApiConfigClient>(_mockConfigClient.Object);
-        // Spec 051 2.7: the page reads /api/ui/pipelines and writes templates through Settings; both answer from the config mock.
+        // Spec 051 2.7: the page reads /api/ui/pipelines, answered from the config mock, and writes templates through Settings.
         Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiConfig(_mockConfigClient).Object);
-        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiSettings(_mockConfigClient).Object);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiSettingsClient>().Object);
 
         Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiAgentClient>().Object);
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
@@ -218,8 +218,6 @@ public class AgentCodingLoopToastTests : BunitContext
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
         _mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
-        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }

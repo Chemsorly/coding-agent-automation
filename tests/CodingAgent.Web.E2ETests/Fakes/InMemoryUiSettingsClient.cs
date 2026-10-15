@@ -1,5 +1,6 @@
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.Ui;
 
 namespace CodingAgent.Web.E2ETests.Fakes;
@@ -8,9 +9,10 @@ namespace CodingAgent.Web.E2ETests.Fakes;
 /// Settings for the E2E web host, over the same in-memory store as <see cref="InMemoryPipelineApiConfigClient"/>.
 /// The harness keeps configuration in that store, which the API host's database-backed handlers
 /// (template listing, export, import) do not read. The wire format of <c>/api/ui/settings</c> is
-/// covered by the API contract tests instead.
+/// covered by the API contract tests instead. Template writes go to the store directly: the Pipeline
+/// API client has none.
 /// </summary>
-public sealed class InMemoryUiSettingsClient(InMemoryPipelineApiConfigClient config) : IUiSettingsClient
+public sealed class InMemoryUiSettingsClient(InMemoryPipelineApiConfigClient config, InMemoryConfigurationStore store) : IUiSettingsClient
 {
     private const string FirstRunBannerDismissedKey = "first_run_banner_dismissed";
 
@@ -40,13 +42,13 @@ public sealed class InMemoryUiSettingsClient(InMemoryPipelineApiConfigClient con
     public Task<IReadOnlyList<PipelineJobTemplate>> GetAllTemplatesAsync(CancellationToken ct = default) => config.GetAllTemplatesAsync(ct);
 
     public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default) =>
-        config.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId, ct);
+        store.MoveTemplateAsync(sourceProjectId, targetProjectId, new TemplateId(templateId), ct);
 
     public Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct = default) =>
-        config.SaveTemplateAsync(projectId.Value, template, ct);
+        store.SaveTemplateAsync(projectId.Value, template, ct);
 
     public Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct = default) =>
-        config.DeleteTemplateAsync(projectId.Value, templateId.Value, ct);
+        store.DeleteTemplateAsync(projectId.Value, templateId, ct);
 
     public Task<byte[]> ExportConfigAsync(CancellationToken ct = default) => config.ExportConfigAsync(ct);
     public Task ImportConfigAsync(Stream jsonStream, string fileName, CancellationToken ct = default) => config.ImportConfigAsync(jsonStream, fileName, ct);
