@@ -95,13 +95,13 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// </summary>
     public static KiroCliLib.Configuration.Configuration CreateRunConfiguration(
         string executablePath, string? model, string? agentName, AgentEffortLevel effort = AgentEffortLevel.Auto) => new()
-    {
-        KiroCliPath = executablePath,
-        UseWsl = OperatingSystem.IsWindows(),
-        Model = string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : model.Trim(),
-        AgentName = IsNoAgentChosen(agentName) ? null : agentName!.Trim(),
-        Effort = ToKiroEffort(effort)
-    };
+        {
+            KiroCliPath = executablePath,
+            UseWsl = OperatingSystem.IsWindows(),
+            Model = string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : model.Trim(),
+            AgentName = IsNoAgentChosen(agentName) ? null : agentName!.Trim(),
+            Effort = ToKiroEffort(effort)
+        };
 
     /// <summary>
     /// Whether an agent name setting means "the CLI's own agent". The provider form pre-filled

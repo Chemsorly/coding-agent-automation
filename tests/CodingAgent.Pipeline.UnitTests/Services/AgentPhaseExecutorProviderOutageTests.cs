@@ -38,7 +38,11 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
 
         var run = new PipelineRun
         {
-            RunId = "outage", IssueIdentifier = "42", IssueTitle = "t", IssueProviderConfigId = "ip", RepoProviderConfigId = "rp",
+            RunId = "outage",
+            IssueIdentifier = "42",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
             WorkspacePath = _workspacePath
         };
         var context = new AgentPhaseContext
@@ -46,10 +50,16 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
             Run = run,
             Config = new PipelineConfiguration
             {
-                AgentTimeout = TimeSpan.FromMinutes(10), StallPollInterval = TimeSpan.FromMilliseconds(50),
-                StallWarningInterval = TimeSpan.FromHours(1), MaxAnalysisRetries = 2, AnalysisReviewEnabled = false
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1),
+                MaxAnalysisRetries = 2,
+                AnalysisReviewEnabled = false
             },
-            AgentProvider = agent.Object, IssueOps = issueOps.Object, Callbacks = callbacks.Object, OrchestratorCts = null,
+            AgentProvider = agent.Object,
+            IssueOps = issueOps.Object,
+            Callbacks = callbacks.Object,
+            OrchestratorCts = null,
             Issue = new IssueDetail { Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "r", AcceptanceCriteria = ["a"] }
         };
@@ -78,7 +88,11 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
 
         var run = new PipelineRun
         {
-            RunId = "outage-warmup", IssueIdentifier = "42", IssueTitle = "t", IssueProviderConfigId = "ip", RepoProviderConfigId = "rp",
+            RunId = "outage-warmup",
+            IssueIdentifier = "42",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
             WorkspacePath = _workspacePath
         };
         var context = new AgentPhaseContext
@@ -86,10 +100,16 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
             Run = run,
             Config = new PipelineConfiguration
             {
-                AgentTimeout = TimeSpan.FromMinutes(10), StallPollInterval = TimeSpan.FromMilliseconds(50),
-                StallWarningInterval = TimeSpan.FromHours(1), MaxAnalysisRetries = 2, AnalysisReviewEnabled = false
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1),
+                MaxAnalysisRetries = 2,
+                AnalysisReviewEnabled = false
             },
-            AgentProvider = agent.Object, IssueOps = issueOps.Object, Callbacks = callbacks.Object, OrchestratorCts = null,
+            AgentProvider = agent.Object,
+            IssueOps = issueOps.Object,
+            Callbacks = callbacks.Object,
+            OrchestratorCts = null,
             Issue = new IssueDetail { Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "r", AcceptanceCriteria = ["a"] }
         };
