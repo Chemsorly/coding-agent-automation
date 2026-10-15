@@ -161,7 +161,8 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IConsolidationSelectorResolver>(sp =>
             new ConsolidationSelectorResolver(
                 sp.GetRequiredService<IAgentProfileStore>(),
-                sp.GetRequiredService<IPipelineConfigStore>()));
+                sp.GetRequiredService<IPipelineConfigStore>(),
+                sp.GetService<JobTemplateStore>()));
         services.AddSingleton<IConsolidationService>(sp =>
             new ConsolidationService(BuildConsolidationServiceDeps(sp)));
 
