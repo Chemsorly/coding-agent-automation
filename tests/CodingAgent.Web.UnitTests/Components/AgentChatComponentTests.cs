@@ -454,6 +454,14 @@ public class AgentChatTwoProfileSameTemplateTests : AgentChatTestBase
     {
         var cut = Render<AgentChat>();
 
+        // TODO: [WARNING] Profiles are seeded in alphabetical order ("Profile A", "Profile B"), so this
+        // ordering assertion passes whether or not the component actually sorts by DisplayName. To properly
+        // cover sort-by-DisplayName, seed profiles out of alphabetical order (e.g. "Profile B" before
+        // "Profile A") and assert that "Profile A" appears before "Profile B" in the rendered output.
+        // TODO: [WARNING] This assertion only checks the `value` attribute of each <option>, not the
+        // display text. A bug in the display format (e.g. rendering the profile ID instead of DisplayName,
+        // or omitting the model/template-key segment) would pass this test undetected. Assert TextContent
+        // as well to cover the full format specified in the issue.
         cut.FindAll("#profile-select option").Select(o => o.GetAttribute("value"))
             .Should().Equal("", ProfileA, ProfileB);
     }

@@ -42,8 +42,8 @@ public interface IConsolidationJobPreparationService
     /// <param name="templateId">Template ID to resolve repo/brain/issue providers from.</param>
     /// <param name="profile">
     /// The agent profile resolved at dispatch time. When non-null, the agent provider config
-    /// is taken from <see cref="AgentProfile.AgentProviderConfigId"/> directly without calling
-    /// <c>ProfileResolver.Resolve</c>. When null (work item queued before this change, or profile
+    /// is taken from <see cref="AgentProfile.AgentProviderConfigId"/> directly. When null
+    /// (work item queued before this change, or profile
     /// deleted/disabled), no agent provider config is injected.
     /// </param>
     /// <param name="ct">Cancellation token.</param>

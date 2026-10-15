@@ -3,44 +3,15 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
-/// Stateless service responsible for matching an agent's labels to the best Agent Profile.
-/// <para>
-/// <see cref="Resolve"/> uses subset matching with case-insensitive label comparison, then sorts
-/// by specificity (descending), priority (descending), and Id (ascending) to break ties.
-/// </para>
+/// Stateless service responsible for matching required labels to the best Agent Profile.
 /// <para>
 /// <see cref="ResolveByRequiredLabels"/> uses superset (coverage) matching: the profile must
 /// cover every required label. Among covering profiles the closest fit wins — fewest labels first
 /// (ascending), then priority (descending), then Id (ascending).
 /// </para>
 /// </summary>
-public sealed class ProfileResolver
+public static class ProfileResolver
 {
-    /// <summary>
-    /// Resolves the best matching profile for an agent based on its labels.
-    /// Returns <c>null</c> if no enabled profile matches (caller decides error handling).
-    /// </summary>
-    /// <param name="profiles">All available profiles to evaluate.</param>
-    /// <param name="agentLabels">The labels reported by the agent.</param>
-    /// <returns>The highest-priority matching profile, or <c>null</c> if none match.</returns>
-    public AgentProfile? Resolve(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> agentLabels) // NOSONAR S2325 — instance API: callers and tests use an instance
-    {
-        ArgumentNullException.ThrowIfNull(profiles);
-        ArgumentNullException.ThrowIfNull(agentLabels);
-
-        return LabelMatchResolver.Resolve(
-            profiles,
-            agentLabels,
-            enabledPredicate: p => p.Enabled,
-            labelSelector: p => p.MatchLabels,
-            matchStrategy: LabelMatchStrategies.Subset,
-            orderBy: items => items
-                .OrderByDescending(p => p.MatchLabels.Count)
-                .ThenByDescending(p => p.Priority)
-                .ThenBy(p => p.Id, StringComparer.Ordinal))
-            .FirstOrDefault();
-    }
-
     /// <summary>
     /// Resolves the best profile whose MatchLabels COVER all required labels.
     /// Used for dispatch: given a set of required labels (from repo config or pipeline defaults),
