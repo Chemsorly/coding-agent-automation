@@ -30,18 +30,28 @@ public sealed class ConsolidationTriggerTests(ApiWebApplicationFactory factory)
         await projects.SaveProjectAsync(new PipelineProject { Id = Project, Name = "Charlie" }, CancellationToken.None);
         await projects.SaveTemplateAsync(Project, new PipelineJobTemplate
         {
-            Id = Template, Name = "charlie-api", IssueProviderId = "ip-consolidation", RepoProviderId = RepoProvider, Enabled = true,
+            Id = Template,
+            Name = "charlie-api",
+            IssueProviderId = "ip-consolidation",
+            RepoProviderId = RepoProvider,
+            Enabled = true,
             RequiredLabels = [.. RequiredLabels],
         }, CancellationToken.None);
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(new ProviderConfig
         {
-            Id = RepoProvider, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Charlie repo",
+            Id = RepoProvider,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Charlie repo",
         }, CancellationToken.None);
         await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(new AgentProfile
         {
-            Id = "9c000000-0000-0000-0000-0000000000c1", DisplayName = "Charlie agent", AgentProviderConfigId = "agent-cfg",
-            MatchLabels = ProfileLabels, Enabled = true,
+            Id = "9c000000-0000-0000-0000-0000000000c1",
+            DisplayName = "Charlie agent",
+            AgentProviderConfigId = "agent-cfg",
+            MatchLabels = ProfileLabels,
+            Enabled = true,
         }, CancellationToken.None);
     }
 

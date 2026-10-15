@@ -19,19 +19,19 @@ public class RepositorySettingsTests
         IReadOnlyList<SetupStep>? setupSteps = null,
         string? steeringContent = null,
         IReadOnlyList<string>? blacklistedPaths = null) => new()
-    {
-        Id = id,
-        Kind = ProviderKind.Repository,
-        ProviderType = "GitHub",
-        DisplayName = "Test Repo",
-        Settings = new Dictionary<string, string> { ["token"] = "t" },
-        RepositoryRole = RepositoryRole.Work,
-        RequiredLabels = requiredLabels,
-        Secrets = secrets,
-        SetupSteps = setupSteps,
-        SteeringContent = steeringContent,
-        BlacklistedPaths = blacklistedPaths,
-    };
+        {
+            Id = id,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string> { ["token"] = "t" },
+            RepositoryRole = RepositoryRole.Work,
+            RequiredLabels = requiredLabels,
+            Secrets = secrets,
+            SetupSteps = setupSteps,
+            SteeringContent = steeringContent,
+            BlacklistedPaths = blacklistedPaths,
+        };
 
     private static PipelineJobTemplate MakeTemplate(
         string repoProviderId = RepoId,
@@ -42,18 +42,18 @@ public class RepositorySettingsTests
         IReadOnlyList<SetupStep>? setupSteps = null,
         string? steeringContent = null,
         IReadOnlyList<string>? blacklistedPaths = null) => new()
-    {
-        Id = id ?? Guid.NewGuid().ToString(),
-        Name = "T",
-        IssueProviderId = "ip-1",
-        RepoProviderId = repoProviderId,
-        Enabled = enabled,
-        RequiredLabels = requiredLabels,
-        Secrets = secrets,
-        SetupSteps = setupSteps,
-        SteeringContent = steeringContent,
-        BlacklistedPaths = blacklistedPaths,
-    };
+        {
+            Id = id ?? Guid.NewGuid().ToString(),
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = repoProviderId,
+            Enabled = enabled,
+            RequiredLabels = requiredLabels,
+            Secrets = secrets,
+            SetupSteps = setupSteps,
+            SteeringContent = steeringContent,
+            BlacklistedPaths = blacklistedPaths,
+        };
 
     // ── TemplateFor ──────────────────────────────────────────────────────────
 

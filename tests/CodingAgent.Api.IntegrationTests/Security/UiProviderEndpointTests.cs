@@ -185,8 +185,12 @@ public sealed class UiProviderEndpointTests(ProviderChecksApiFactory factory)
             settings[key] = value;
         return new ProviderConfig
         {
-            Id = id ?? config.Id, Kind = config.Kind, ProviderType = config.ProviderType, DisplayName = config.DisplayName,
-            Settings = settings, Secrets = config.Secrets,
+            Id = id ?? config.Id,
+            Kind = config.Kind,
+            ProviderType = config.ProviderType,
+            DisplayName = config.DisplayName,
+            Settings = settings,
+            Secrets = config.Secrets,
         };
     }
 
@@ -314,7 +318,10 @@ public sealed class UiProviderEndpointTests(ProviderChecksApiFactory factory)
         var masked = await MaskedAsync(IssueId, ProviderKind.Issue);
         var related = new ProviderConfig
         {
-            Id = NewId, Kind = ProviderKind.Pipeline, ProviderType = ProviderTypes.GitHub, DisplayName = "CI",
+            Id = NewId,
+            Kind = ProviderKind.Pipeline,
+            ProviderType = ProviderTypes.GitHub,
+            DisplayName = "CI",
             Settings = new Dictionary<string, string>(masked.Settings),
         };
 

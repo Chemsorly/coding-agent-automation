@@ -277,13 +277,21 @@ public class ApplyTemplateOverridesTests
         var config = TestPipelineConfig.Default();
         var disabled = new PipelineJobTemplate
         {
-            Id = "tmpl-old", Name = "Old", IssueProviderId = "issue-old", RepoProviderId = "repo-1",
-            Enabled = false, BrainReadOnly = true,
+            Id = "tmpl-old",
+            Name = "Old",
+            IssueProviderId = "issue-old",
+            RepoProviderId = "repo-1",
+            Enabled = false,
+            BrainReadOnly = true,
         };
         var enabled = new PipelineJobTemplate
         {
-            Id = "tmpl-new", Name = "New", IssueProviderId = "issue-new", RepoProviderId = "repo-1",
-            Enabled = true, BrainReadOnly = false,
+            Id = "tmpl-new",
+            Name = "New",
+            IssueProviderId = "issue-new",
+            RepoProviderId = "repo-1",
+            Enabled = true,
+            BrainReadOnly = false,
         };
         var templates = disabledFirst ? new[] { disabled, enabled } : new[] { enabled, disabled };
 
