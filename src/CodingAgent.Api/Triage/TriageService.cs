@@ -395,7 +395,7 @@ public sealed class TriageService
             InitiatedBy = InitiatedByConstants.Manual,
             TaskType = WorkItemTaskType.Triage,
             RunType = PipelineRunType.Triage,
-            AgentSelector = AgentSelectorKey.From(profile.MatchLabels),
+            AgentSelector = profile.JobTemplateKey(),
             TimeoutSeconds = (int)config.AgentTimeout.TotalSeconds,
             ProjectId = Guid.TryParse(project.Id, out var pid) ? pid : null,
             ProjectName = project.Name,

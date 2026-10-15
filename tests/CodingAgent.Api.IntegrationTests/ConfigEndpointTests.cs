@@ -76,6 +76,15 @@ public sealed class ConfigEndpointTests
             "two PUTs with the same ID must produce exactly one row (upsert semantics)");
     }
 
+    // TODO: [WARNING] Three tests required by issue #3560 are missing from this file:
+    // 1. "PUT then GET of an agent profile keeps jobTemplate" — verifies JSON serialisation and
+    //    the save/load round trip preserve the new AgentProfile.JobTemplate field.
+    // 2. "An unknown key returns 400 when the template store has templates" — exercises the new
+    //    BadRequest branch in ConfigEndpoints.SaveAgentProfile when templates.Resolve(key) is null.
+    //    This is the only non-trivial new validation branch; without this test a regression in
+    //    ConfigEndpoints (e.g., inverted condition, wrong response code) would go undetected.
+    // 3. "An export and import round trip keeps jobTemplate" — verifies export/import path preserves the field.
+
     // ── ProviderConfigs ───────────────────────────────────────────────────────────
 
     [Fact]
@@ -1424,6 +1433,7 @@ public sealed class ApiWebApplicationFactoryWithKiroTemplate : ApiWebApplication
 /// delegating to ConfigEndpoints, the direct API paths would be unprotected and untested.
 /// Consider adding parallel tests that call /api/config/* directly with the operator API key.
 /// </remarks>
+[Collection(ApiIntegrationTestCollection.Name)]
 public sealed class ConfigEndpointTypeMismatchTests : IClassFixture<ApiWebApplicationFactoryWithKiroTemplate>
 {
     private static readonly System.Text.Json.JsonSerializerOptions JsonOptions =

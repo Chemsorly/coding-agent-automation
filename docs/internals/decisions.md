@@ -94,7 +94,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### One agent image per agent tool, with every tech stack
 <!-- 2026-10-04 -->
-**Rule:** Each agent tool (Kiro, OpenCode, Claude Code) has one image, a target of `dockerfiles/agent.Dockerfile`, that carries every supported stack: .NET 10 SDK, JDK 21 + Maven and Python 3.12. Labels still pick the agent profile and job template; templates of different stacks point at the same image.
+**Rule:** Each agent tool (Kiro, OpenCode, Claude Code) has one image, a target of `dockerfiles/agent.Dockerfile`, that carries every supported stack: .NET 10 SDK, JDK 21 + Maven and Python 3.12. A repository's labels pick the agent profile, and the profile names its job template; templates of different stacks point at the same image.
 **Why:** The agent worker needs the .NET SDK in every image anyway, so per-stack images saved little, while nine near-copies of the Dockerfile drifted apart, CI built eighteen agent images per run, and no image could run a polyglot repository. **Accepting:** a larger image and a slower first pull on a new node, every stack's CVE findings in every agent image, and one version per stack.
 **Not:** one image per agent tool and stack.
 **Revisit when:** a stack needs two versions side by side (for example Java 17 and 21), or image size measurably slows pod start.
@@ -222,6 +222,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Why:** Repos can target different agent stacks (dotnet, python) without per-repo config when the default fits.
 **Not:** template-only selectors; per-issue routing.
 **Revisit when:** a third layer (per issue or per template) is needed.
+
+### Agent profile names its job template; the closest fit picks the profile
+<!-- 2026-10-10 -->
+**Rule:** A Helm job template is an image plus a capacity pool. An agent profile names its job template, its agent provider config (model, effort, auth mode) and its MCP servers, so several profiles can share one template. A repository's labels pick the profile: among the profiles whose labels cover all of the repository's labels, the one with the fewest labels wins, then the higher Priority, then the Id. The profile's labels also pick the quality gates and reviewers. A job keeps the profile it was dispatched with.
+**Why:** The three layers exist to fan out: one image, several models or MCP server sets. While a profile's labels were its template's key, every variant needed its own Helm entry, and "most labels wins" let a variant or polyglot profile take over other repositories and run its quality gates on them. **Accepting:** profiles that share a template share its `maxConcurrent`; a variant needs an extra label on the repositories that should use it.
+**Not:** a template reference on the agent provider config; the provider config folded into the profile; "most labels wins".
+**Revisit when:** a repository needs to pick its profile directly instead of through labels.
 
 ## Pipeline behavior
 
