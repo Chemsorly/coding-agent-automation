@@ -52,7 +52,7 @@ public class ConsolidationPromptBuilderSubAgentCharacterizationTests
         result.Should().Contain(
             "# Agent A: Structural Debt Detection" + Environment.NewLine +
             Environment.NewLine +
-            "You are one of three parallel analysis agents. Your focus is **structural debt** —" + Environment.NewLine +
+            "You are one of several parallel analysis agents. Your focus is **structural debt** —" + Environment.NewLine +
             "patterns where incremental changes have created global incoherence." + Environment.NewLine +
             Environment.NewLine);
         // TODO [WARNING] (review finding: TestQualityReviewer agent) — This assertion ends at the trailing
@@ -113,7 +113,7 @@ public class ConsolidationPromptBuilderSubAgentCharacterizationTests
         result.Should().Contain(
             "# Agent B: Correctness & Hygiene Detection" + Environment.NewLine +
             Environment.NewLine +
-            "You are one of three parallel analysis agents. Your focus is **correctness and hygiene** —" + Environment.NewLine +
+            "You are one of several parallel analysis agents. Your focus is **correctness and hygiene** —" + Environment.NewLine +
             "concrete issues that are wrong, dead, or misleading." + Environment.NewLine +
             Environment.NewLine);
         // TODO [WARNING] (review finding: TestQualityReviewer agent) — Same gap as Agent A's IntroTextExact:
@@ -170,11 +170,11 @@ public class ConsolidationPromptBuilderSubAgentCharacterizationTests
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt();
 
-        // Agent C has additional intro lines after the standard "You are one of three" opening
+        // Agent C has additional intro lines after the standard "You are one of several" opening
         result.Should().Contain(
             "# Agent C: Design Consistency Detection" + Environment.NewLine +
             Environment.NewLine +
-            "You are one of three parallel analysis agents. Your focus is **design consistency** —" + Environment.NewLine +
+            "You are one of several parallel analysis agents. Your focus is **design consistency** —" + Environment.NewLine +
             "patterns where naming, typing, or API shape deviates from the project's own conventions." + Environment.NewLine +
             Environment.NewLine +
             "**This agent depends heavily on `.agent/refactoring-conventions.json`.** Read it first." + Environment.NewLine +

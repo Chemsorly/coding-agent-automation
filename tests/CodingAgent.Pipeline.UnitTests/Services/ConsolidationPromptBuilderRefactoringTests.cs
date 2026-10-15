@@ -189,6 +189,7 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain(AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
         result.Should().Contain(AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath);
         result.Should().Contain(AgentWorkspacePaths.RefactoringDesignFindingsFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
         result.Should().Contain(AgentWorkspacePaths.RefactoringConventionsFilePath);
         result.Should().Contain(AgentWorkspacePaths.HotspotAnalysisFilePath);
     }
@@ -417,7 +418,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     {
         ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt(),
         ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt(),
-        ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt()
+        ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt(),
+        ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt()
     };
 
     [Fact]
@@ -474,6 +476,7 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain(AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
         result.Should().Contain(AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath);
         result.Should().Contain(AgentWorkspacePaths.RefactoringDesignFindingsFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
     }
 
     [Fact]
@@ -624,5 +627,69 @@ public class ConsolidationPromptBuilderRefactoringTests
         // e.g. by asserting on the EvaluationBullets rendering that includes "[WARNING]" in the bullet prefix.
         result.Should().Contain("**Duplication without its differences**");
         result.Should().Contain("Flag [WARNING] and list the differences it missed");
+    }
+
+    // ─── Phase 1, Agent D: Test Gap Detection ─────────────────────────────
+
+    [Fact]
+    public void BuildRefactoringTestGapPrompt_WritesToTestGapFindingsFile()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
+    }
+
+    [Fact]
+    public void BuildRefactoringTestGapPrompt_UsesOnlyTestGapCategory()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt();
+
+        result.Should().Contain("\"category\": \"test-gap\"");
+    }
+
+    [Fact]
+    public void BuildRefactoringTestGapPrompt_ForbidsBuilds()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt();
+
+        result.Should().Contain("Do NOT run builds");
+    }
+
+    [Fact]
+    public void BuildRefactoringContextExtractionPrompt_AsksForCoverageReport()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt();
+
+        result.Should().Contain("**Test coverage.**");
+        result.Should().Contain("coverage.<ext>");
+        result.Should().Contain("timeout 20m");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_HasTestGapEvidenceGate()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        var gate = Section(result, "### Step 3: Evidence Quality Gate", "### Step 4");
+
+        gate.Should().Contain("`test-gap`");
+        gate.Should().Contain("tool:coverage:");
+    }
+
+    [Fact]
+    public void BuildRefactoringTestGapPrompt_ReferencesHotspotAndConventionsFiles()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.HotspotAnalysisFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringConventionsFilePath);
+    }
+
+    [Fact]
+    public void BuildRefactoringTestGapPrompt_ListsCoverageAsPrimaryEvidence()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt();
+
+        result.Should().Contain("primary evidence");
+        result.Should().Contain("tool:coverage:");
     }
 }

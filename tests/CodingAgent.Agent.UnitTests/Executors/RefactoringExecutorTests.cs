@@ -1825,7 +1825,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("10")],
-                Page = 1, PageSize = 100, HasMore = true
+                Page = 1,
+                PageSize = 100,
+                HasMore = true
             });
         _mockIssueProvider
             .Setup(x => x.ListClosedIssuesAsync(2, 100,
@@ -1834,7 +1836,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("11")],
-                Page = 2, PageSize = 100, HasMore = false
+                Page = 2,
+                PageSize = 100,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -1867,7 +1871,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("20"), MakeNonScanIssue("21")],
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -1948,7 +1954,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [openScanIssue],
-                Page = 1, PageSize = 50, HasMore = false
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -2104,5 +2112,33 @@ public class RefactoringExecutorTests : IDisposable
         // negative assertion gives a false sense of completeness. Consider replacing or supplementing it with a
         // stricter assertion (e.g. asserting the full intro sentence). See TestQualityReviewer finding at line 1940.
         body.Should().NotContain("written against commit `");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Phase1_RunsTestGapAgent()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — one of the Phase 1 agent calls must carry the Agent D prompt
+        _mockAgentProvider.Verify(
+            x => x.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt != null && r.Prompt.Contains("# Agent D: Test Gap Detection")),
+                It.IsAny<CancellationToken>(),
+                null),
+            Times.Once);
     }
 }

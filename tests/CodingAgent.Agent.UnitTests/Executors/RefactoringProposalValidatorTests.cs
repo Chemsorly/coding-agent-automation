@@ -29,13 +29,13 @@ public class RefactoringProposalValidatorTests : IDisposable
 
     private static RefactoringProposal Proposal(
         string title = "Extract shared validation", IReadOnlyList<string>? files = null, string? category = null) => new()
-    {
-        Title = title,
-        AffectedFiles = files ?? ["src/A.cs"],
-        Description = "desc",
-        Rationale = "why",
-        Category = category
-    };
+        {
+            Title = title,
+            AffectedFiles = files ?? ["src/A.cs"],
+            Description = "desc",
+            Rationale = "why",
+            Category = category
+        };
 
     private (IReadOnlyList<RefactoringProposal> Valid, IReadOnlyList<RefactoringProposalValidator.Rejection> Rejected) Validate(
         IReadOnlyList<RefactoringProposal> proposals, params string[] existingTitles) =>
@@ -188,5 +188,16 @@ public class RefactoringProposalValidatorTests : IDisposable
     public void NormalizeTitle_KeepsLowercaseWordsOnly(string title, string expected)
     {
         RefactoringProposalValidator.NormalizeTitle(title).Should().Be(expected);
+    }
+
+    [Fact]
+    public void Validate_TestGapCategory_IsAccepted()
+    {
+        // test-gap is in RefactoringCategories.All; the validator must accept it
+        var proposal = Proposal(category: RefactoringCategories.TestGap);
+        var (valid, rejected) = Validate([proposal]);
+
+        valid.Should().ContainSingle();
+        rejected.Should().BeEmpty();
     }
 }
