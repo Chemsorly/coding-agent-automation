@@ -1825,7 +1825,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("10")],
-                Page = 1, PageSize = 100, HasMore = true
+                Page = 1,
+                PageSize = 100,
+                HasMore = true
             });
         _mockIssueProvider
             .Setup(x => x.ListClosedIssuesAsync(2, 100,
@@ -1834,7 +1836,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("11")],
-                Page = 2, PageSize = 100, HasMore = false
+                Page = 2,
+                PageSize = 100,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -1867,7 +1871,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("20"), MakeNonScanIssue("21")],
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -1948,7 +1954,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [openScanIssue],
-                Page = 1, PageSize = 50, HasMore = false
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))

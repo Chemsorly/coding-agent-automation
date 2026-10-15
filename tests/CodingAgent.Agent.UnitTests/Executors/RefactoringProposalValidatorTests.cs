@@ -29,13 +29,13 @@ public class RefactoringProposalValidatorTests : IDisposable
 
     private static RefactoringProposal Proposal(
         string title = "Extract shared validation", IReadOnlyList<string>? files = null, string? category = null) => new()
-    {
-        Title = title,
-        AffectedFiles = files ?? ["src/A.cs"],
-        Description = "desc",
-        Rationale = "why",
-        Category = category
-    };
+        {
+            Title = title,
+            AffectedFiles = files ?? ["src/A.cs"],
+            Description = "desc",
+            Rationale = "why",
+            Category = category
+        };
 
     private (IReadOnlyList<RefactoringProposal> Valid, IReadOnlyList<RefactoringProposalValidator.Rejection> Rejected) Validate(
         IReadOnlyList<RefactoringProposal> proposals, params string[] existingTitles) =>
