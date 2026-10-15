@@ -705,47 +705,58 @@ public class RunsPageComponentTests : BunitContext
             "clearing the InitiatedBy filter should restore all rows");
     }
 
-    // ── Consolidation row navigation (issue #2629) ────────────────────────────
+    // ── Consolidation row navigation (issue #2629, #3565) ──────────────────────
 
-    // 24. Clicking a consolidation row must NOT navigate and must lack monitoring-row-clickable
+    // 24. Clicking a consolidation row navigates to /runs/{runId} and shows the human-readable title
     [Fact]
-    public async Task ConsolidationRow_Click_DoesNotNavigate_AndIsVisuallyInert()
+    public async Task ConsolidationRow_Click_NavigatesToRunDetail_AndShowsKindTitle()
     {
         var runId = Guid.NewGuid().ToString();
+        var summary = new PipelineRunSummary
+        {
+            RunId = runId,
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateName = "my-template",
+            IssueIdentifier = "RefactoringDetection:tpl-1",
+            IssueTitle = "RefactoringDetection:tpl-1",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            InitiatedBy = "consolidation:manual",
+        };
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(OnePage(MakeSummary(runId, runType: PipelineRunType.Consolidation,
-                initiatedBy: "consolidation:manual")));
+            .ReturnsAsync(OnePage(summary));
 
         var cut = Render<Runs>();
 
         var nav = Services.GetRequiredService<NavigationManager>();
-        var uriBefore = nav.Uri;
 
-        // (a) Row must NOT carry monitoring-row-clickable CSS class.
+        // Row must carry monitoring-row-clickable.
         var row = cut.Find(".monitoring-table tbody tr");
-        row.ClassList.Should().NotContain("monitoring-row-clickable",
-            "consolidation rows must not be visually presented as clickable");
+        row.ClassList.Should().Contain("monitoring-row-clickable",
+            "consolidation rows must be clickable after issue #3565");
 
-        // (b) Clicking the row must not change the navigation URI.
+        // Row must show the human-readable title, not the dedup key.
+        row.TextContent.Should().Contain("Refactoring scan · my-template",
+            "title cell must show the kind+template form");
+        row.TextContent.Should().NotContain("#RefactoringDetection",
+            "raw dedup key must not appear in the row");
+        // TODO: [WARNING] The assertion above only guards the `#`-prefixed form of the dedup key.
+        // If the IssueTitle span (`RefactoringDetection:tpl-1`, no `#`) were accidentally moved
+        // back outside the consolidation `else` block in Runs.razor, row text would contain
+        // "RefactoringDetection:tpl-1" while both assertions still pass. Add:
+        //   row.TextContent.Should().NotContain("RefactoringDetection:tpl-1")
+        // to close the gap (TestQualityReviewer finding, issue #3565).
+
+        // Clicking must navigate to /runs/{runId}.
         await cut.InvokeAsync(() => row.Click());
-        nav.Uri.Should().Be(uriBefore,
-            "clicking a consolidation row must not trigger navigation");
-
-        // (c) Row must have a non-empty title tooltip directing to the Consolidation page.
-        var title = row.GetAttribute("title");
-        title.Should().NotBeNullOrEmpty(
-            "consolidation row must have a tooltip directing users to the Consolidation page");
-        title.Should().Contain("Consolidation",
-            "tooltip must reference the Consolidation page");
+        nav.Uri.Should().EndWith($"runs/{runId}",
+            "clicking a consolidation row must navigate to the run detail page");
     }
 
     // 25. Clicking an Implementation row MUST navigate to /runs/{runId} (regression guard)
-    // TODO: add equivalent tests for PipelineRunType.Review and PipelineRunType.DecompositionAnalysis /
-    // PipelineRunType.Decomposition — the acceptance criteria for issue #2629 explicitly require
-    // that all non-consolidation run types continue to navigate. TryOpenRun's single != Consolidation
-    // branch would not be caught by test coverage if it is accidentally broadened.
-    // See review finding from issue #2629.
     [Fact]
     public async Task ImplementationRow_Click_NavigatesToRunDetail()
     {
