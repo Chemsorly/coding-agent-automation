@@ -15,7 +15,8 @@ internal sealed record UserTokenSigningKey(SecurityKey Key);
 /// It lasts <see cref="UserTokens.HttpLifetime"/>, never past the session, and is minted again
 /// shortly before it expires or when the user changes. A scope only ever hands out its own user's
 /// token. There is none for an anonymous user or a user without any role.
-/// The UI hub's token is minted the same way but lasts the whole session (D7).
+/// The UI hub's token is minted the same way but lasts the whole session (D7); it is marked
+/// <c>use=hub</c>, so the API accepts it only on the hub, never on the HTTP UI surface.
 /// </summary>
 internal sealed class UserTokenProvider(
     AuthenticationStateProvider authenticationState,
@@ -33,19 +34,20 @@ internal sealed class UserTokenProvider(
     public async ValueTask<string?> GetTokenAsync(CancellationToken ct = default)
     {
         var now = time.GetUtcNow();
-        _http = await GetAsync(_http, now, _ => now + UserTokens.HttpLifetime, ct);
+        _http = await GetAsync(_http, now, _ => now + UserTokens.HttpLifetime, use: null, ct);
         return _http.Token;
     }
 
     public async ValueTask<string?> GetHubTokenAsync(CancellationToken ct = default)
     {
         var now = time.GetUtcNow();
-        _hub = await GetAsync(_hub, now, user => AuthPrincipals.GetSessionExpiry(user) ?? now + UserTokens.HttpLifetime, ct);
+        _hub = await GetAsync(_hub, now, user => AuthPrincipals.GetSessionExpiry(user) ?? now + UserTokens.HttpLifetime, UserTokenClaimTypes.HubUse, ct);
         return _hub.Token;
     }
 
     /// <summary>The <paramref name="current"/> token while it is the same user's and not about to expire, else a new one.</summary>
-    private async Task<Minted> GetAsync(Minted current, DateTimeOffset now, Func<ClaimsPrincipal, DateTimeOffset> lifetimeEnd, CancellationToken ct)
+    private async Task<Minted> GetAsync(
+        Minted current, DateTimeOffset now, Func<ClaimsPrincipal, DateTimeOffset> lifetimeEnd, string? use, CancellationToken ct)
     {
         var user = (await authenticationState.GetAuthenticationStateAsync()).User;
         if (current.Token is not null && ReferenceEquals(user, current.User) && now < current.Expires - RenewBefore)
@@ -67,7 +69,7 @@ internal sealed class UserTokenProvider(
 
         var tokenSubject = new UserTokenSubject(
             subject, AuthPrincipals.GetUsername(user), user.FindFirst(AuthClaimTypes.IdentitySource)?.Value);
-        var token = UserTokens.Create(tokenSubject, grant, now, expires, signingKey.Key);
+        var token = UserTokens.Create(tokenSubject, grant, now, expires, signingKey.Key, use);
         logger.LogDebug("Minted a user token valid until {Expires:O}", expires);
         return new Minted(user, token, expires);
     }

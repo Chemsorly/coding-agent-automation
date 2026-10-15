@@ -99,6 +99,30 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
     }
 
     /// <summary>
+    /// The hub token lasts the session, so it must not double as an HTTP credential: the hub takes it, every
+    /// <c>/api/ui</c> endpoint refuses it (the unredacted admin export too), and the 5-minute HTTP token still works.
+    /// </summary>
+    [Fact]
+    public async Task HubToken_ConnectsToTheHub_ButIsRefusedOnTheHttpUiSurface()
+    {
+        var admin = TestUserTokens.Global(AccessRole.Admin);
+        await using var connection = await ConnectAsync(TestUserTokens.Hub(admin));
+        connection.State.Should().Be(HubConnectionState.Connected);
+
+        using var http = api.CreateClient();
+        foreach (var path in new[] { "/api/ui/me", "/api/ui/settings/export" })
+        {
+            using var withHubToken = new HttpRequestMessage(HttpMethod.Get, path);
+            withHubToken.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestUserTokens.Hub(admin));
+            (await http.SendAsync(withHubToken)).StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden, path);
+        }
+
+        using var withHttpToken = new HttpRequestMessage(HttpMethod.Get, "/api/ui/me");
+        withHttpToken.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestUserTokens.For(admin));
+        (await http.SendAsync(withHttpToken)).StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+    }
+
+    /// <summary>
     /// The UI hub speaks JSON only (D7). The agents' hub keeps MessagePack, and the same SignalR registration
     /// serves both, so this pins the per-hub restriction.
     /// </summary>

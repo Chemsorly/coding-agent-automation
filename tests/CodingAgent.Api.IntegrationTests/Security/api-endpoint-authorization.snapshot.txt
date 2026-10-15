@@ -134,6 +134,6 @@ POST /api/work-items/{id:guid}/status -> Service: AgentApiKey
 GET /healthz -> Anonymous
 * /hubs/agent (hub) -> Service: AgentApiKey
 * /hubs/agent/negotiate (hub) -> Service: AgentApiKey
-* /hubs/ui (hub) -> Ui: Ui.AnyAccess
-* /hubs/ui/negotiate (hub) -> Ui: Ui.AnyAccess
+* /hubs/ui (hub) -> Ui: Ui.Hub
+* /hubs/ui/negotiate (hub) -> Ui: Ui.Hub
 GET /readyz -> Anonymous

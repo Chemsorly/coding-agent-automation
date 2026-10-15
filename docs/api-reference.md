@@ -622,7 +622,7 @@ Saving the pipeline settings through `PUT /api/ui/settings/pipeline` keeps the s
 
 ### UI hub (`/hubs/ui`)
 
-The SignalR hub of the signed-in UI: live output of runs and replies of chats. It takes the user token (any role) over WebSockets, JSON protocol only; API keys and anonymous callers are refused. The token lasts the session, and the hub closes the connection when it expires. A connection joins the groups of what it shows, and the hub has no other methods:
+The SignalR hub of the signed-in UI: live output of runs and replies of chats. It takes the user token (any role) over WebSockets, JSON protocol only; API keys and anonymous callers are refused. The connect token lasts the session and carries `use=hub`: only the hub accepts it, every `/api/ui` endpoint answers it with `403`, so it is no HTTP credential. The hub closes the connection when the token expires. A connection joins the groups of what it shows, and the hub has no other methods:
 
 | Method | Allowed when | Then receives |
 |---|---|---|

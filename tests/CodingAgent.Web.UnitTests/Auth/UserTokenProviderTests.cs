@@ -123,6 +123,8 @@ public class UserTokenProviderTests
         Lifetime(hubToken!).Should().BeCloseTo(TimeSpan.FromHours(8), TimeSpan.FromSeconds(1));
         Lifetime(httpToken!).Should().Be(UserTokens.HttpLifetime);
         (await ValidateAsync(hubToken!)).FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-alice");
+        (await ValidateAsync(hubToken!)).FindFirst(UserTokenClaimTypes.Use)?.Value.Should().Be(UserTokenClaimTypes.HubUse, "the API accepts it only on the hub");
+        (await ValidateAsync(httpToken!)).FindFirst(UserTokenClaimTypes.Use).Should().BeNull("HTTP tokens carry no use restriction");
         (await provider.GetHubTokenAsync()).Should().Be(hubToken, "a hub token is reused while it is the same user's");
     }
 
