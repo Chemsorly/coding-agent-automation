@@ -484,6 +484,53 @@ public class RunPageComponentTests : BunitContext
         Assert.Empty(cut.FindAll("pre.run-live-log"));
     }
 
+    // ── Issue #3588: Pod log tail card ────────────────────────────────────
+
+    [Fact]
+    public void WithPodLogTail_RendersCard()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3588",
+            IssueTitle = "Pod log tail test",
+            FinalStep = PipelineStep.Failed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PodLogTail = ["line1", "line2"]
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var card = cut.Find("[data-testid='pod-log-tail-card']");
+        Assert.NotNull(card);
+        Assert.Contains("line1", card.TextContent);
+        Assert.Contains("line2", card.TextContent);
+    }
+
+    [Fact]
+    public void WithoutPodLogTail_DoesNotRenderCard()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3588",
+            IssueTitle = "No pod log test",
+            FinalStep = PipelineStep.Failed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PodLogTail = null
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        Assert.Empty(cut.FindAll("[data-testid='pod-log-tail-card']"));
+    }
+
     // ── Issue #2948: Re-dispatch button ──────────────────────────────────
     // TODO: [WARNING] Missing negative test: a Review or Decomposition run type with FinalStep=Failed and
     // provider IDs should NOT show the re-dispatch button (CanRedispatch gates on RunType==Implementation).

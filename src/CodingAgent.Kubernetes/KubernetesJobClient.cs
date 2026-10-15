@@ -33,9 +33,9 @@ public sealed class KubernetesJobClient : IKubernetesJobClient
     public async Task<V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default)
         => await _client.CoreV1.ListNamespacedPodAsync(ns, labelSelector: labelSelector, cancellationToken: ct);
 
-    public async Task<string> ReadPodLogsAsync(string podName, string ns, CancellationToken ct = default)
+    public async Task<string> ReadPodLogTailAsync(string podName, string ns, string container, int tailLines, CancellationToken ct = default)
     {
-        var stream = await _client.CoreV1.ReadNamespacedPodLogAsync(podName, ns, cancellationToken: ct);
+        var stream = await _client.CoreV1.ReadNamespacedPodLogAsync(podName, ns, container: container, tailLines: tailLines, cancellationToken: ct);
         using var reader = new System.IO.StreamReader(stream);
         return await reader.ReadToEndAsync(ct);
     }

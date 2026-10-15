@@ -194,7 +194,8 @@ public sealed partial class WorkItemStatusTransitionService
                 failureReason,
                 resolvedFinalLabel,
                 ct,
-                CodingAgent.Pipeline.Models.FailureReason.InfrastructureFailure);
+                ParseFailureReason(request.FailureReason) ?? CodingAgent.Pipeline.Models.FailureReason.InfrastructureFailure,
+                SanitizePodLogTail(request.PodLogTail));
         }
         else if (request.Status == WorkItemStatus.Cancelled)
         {
@@ -242,16 +243,11 @@ public sealed partial class WorkItemStatusTransitionService
             // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
             // correspond to a named FailureReason member. The IsDefined guard rejects such values
             // so only named members are persisted to entity.FailureReason. (Issue #2667)
-            if (request.FailureReason is not null
-                && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
-                && Enum.IsDefined(typeof(FailureReason), parsedReason))
-            {
-                entity.FailureReason ??= parsedReason;
-            }
+            var parsed = ParseFailureReason(request.FailureReason);
+            if (parsed is not null)
+                entity.FailureReason ??= parsed;
             else
-            {
                 entity.FailureReason ??= FailureReason.AgentError;
-            }
         }
 
         if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
@@ -696,6 +692,61 @@ public sealed partial class WorkItemStatusTransitionService
     /// </summary>
     private static string PascalToSnakeCaseTag(string pascalCase) =>
         PascalCaseBoundaryRegex().Replace(pascalCase, "_$1").ToLowerInvariant();
+
+    /// <summary>
+    /// Parses a failure reason string into a typed <see cref="FailureReason"/> enum value.
+    /// Returns null when the value is null, empty, or does not correspond to a defined member.
+    /// </summary>
+    internal static FailureReason? ParseFailureReason(string? value)
+    {
+        if (value is null) return null;
+        if (Enum.TryParse<FailureReason>(value, ignoreCase: true, out var parsed)
+            && Enum.IsDefined(typeof(FailureReason), parsed))
+            return parsed;
+        return null;
+    }
+
+    /// <summary>
+    /// Caps a pod log tail to the last 100 lines, truncates each line to 1000 characters,
+    /// and redacts common secret patterns. Returns null for null or empty input.
+    /// </summary>
+    // TODO: [WARNING] AWS_ACCESS_KEY_ID values are not redacted by any of the three patterns.
+    // KeyValueSecretRegex matches keywords token/password/passwd/secret/api[_-]?key/authorization;
+    // ACCESS_KEY_ID contains none of those words. AWS_SECRET_ACCESS_KEY is caught by the 'secret'
+    // keyword, but the corresponding key ID is not. If an agent pod is configured with
+    // AWS_ACCESS_KEY_ID=AKIA… (e.g., for S3 brain-repo access) and logs a startup configuration
+    // dump before crashing, that key ID would be stored unredacted in the run summary and shown on
+    // the run page to all users with run-read access. Consider adding an AWS key ID pattern
+    // (?i)\bAKIA[A-Z0-9]{16}\b or extending KeyValueSecretRegex to include ACCESS_KEY_ID.
+    // See security review finding [WARNING] #2.
+    internal static IReadOnlyList<string>? SanitizePodLogTail(IReadOnlyList<string>? lines)
+    {
+        if (lines is null or { Count: 0 }) return null;
+
+        var tail = lines.Count > 100 ? lines.Skip(lines.Count - 100).ToList() : lines;
+        var result = new List<string>(tail.Count);
+        foreach (var raw in tail)
+        {
+            var line = raw.Length > 1000 ? raw[..1000] : raw;
+            try { line = KeyValueSecretRegex().Replace(line, "$1$2***"); }
+            catch (RegexMatchTimeoutException) { continue; }
+            try { line = BearerTokenRegex().Replace(line, "Bearer ***"); }
+            catch (RegexMatchTimeoutException) { continue; }
+            try { line = GitHubTokenRegex().Replace(line, "***"); }
+            catch (RegexMatchTimeoutException) { continue; }
+            result.Add(line);
+        }
+        return result.Count > 0 ? result : null;
+    }
+
+    [GeneratedRegex(@"(?i)(token|password|passwd|secret|api[_\-]?key|authorization)(\s*[=:]\s*)(bearer\s+)?\S+", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex KeyValueSecretRegex();
+
+    [GeneratedRegex(@"(?i)\bbearer\s+\S+", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex BearerTokenRegex();
+
+    [GeneratedRegex(@"\bgh[pousr]_[A-Za-z0-9]{20,}", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex GitHubTokenRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex("(?<=[a-z0-9])([A-Z])", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex PascalCaseBoundaryRegex();

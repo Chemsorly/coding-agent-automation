@@ -56,12 +56,12 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> FailRunWithLabelAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum = null)
+    public async Task<PipelineRun?> FailRunWithLabelAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum = null, IReadOnlyList<string>? podLogTail = null)
     {
-        return await FailRunCoreAsync(runId, failureReason, resolvedFinalLabel, ct, failureReasonEnum);
+        return await FailRunCoreAsync(runId, failureReason, resolvedFinalLabel, ct, failureReasonEnum, podLogTail);
     }
 
-    private async Task<PipelineRun?> FailRunCoreAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum)
+    private async Task<PipelineRun?> FailRunCoreAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum, IReadOnlyList<string>? podLogTail = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
@@ -78,6 +78,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         // 1. Mark the run as failed
         run.FailureReason = failureReason;
+        if (failureReasonEnum is not null)
+            run.FailureCategory = failureReasonEnum;
+        if (podLogTail is { Count: > 0 })
+            run.PodLogTail = podLogTail;
         run.MarkCompleted();
         run.CurrentStep = PipelineStep.Failed;
 
