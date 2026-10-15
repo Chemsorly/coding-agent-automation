@@ -104,30 +104,8 @@ public static partial class PipelineFormatting
         if (report is null || report.Criteria.Count == 0)
             return;
 
-        sb.AppendLine("## Acceptance Criteria Compliance");
-        sb.AppendLine();
-        sb.AppendLine("| Status | Criterion | Notes |");
-        sb.AppendLine("|--------|-----------|-------|");
-        foreach (var c in report.Criteria)
-        {
-            var icon = c.Status switch
-            {
-                CriterionStatus.Compliant => "✅",
-                CriterionStatus.NonCompliant => "❌",
-                CriterionStatus.NotApplicable => "⚠️",
-                _ => "❓"
-            };
-            var notes = SanitizeTableCell(c.Evidence ?? c.Reasoning ?? "");
-            sb.AppendLine($"| {icon} | {SanitizeTableCell(c.Criterion)} | {notes} |");
-        }
-        sb.AppendLine();
-        sb.AppendLine($"*{report.Summary}*");
-        sb.AppendLine();
+        MarkdownTableHelper.AppendAcceptanceCriteriaTable(sb, report, "## Acceptance Criteria Compliance");
     }
-
-    /// <summary>Escapes pipe characters and replaces newlines to keep markdown table cells intact.</summary>
-    private static string SanitizeTableCell(string text)
-        => text.Replace("|", "\\|").Replace("\r\n", " ").Replace("\n", " ");
 
     private static void AppendInputComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
     {

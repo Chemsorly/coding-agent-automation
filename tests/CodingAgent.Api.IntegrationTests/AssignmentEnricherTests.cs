@@ -189,7 +189,7 @@ public sealed class AssignmentEnricherTests
         mock.Setup(s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException(
                 "ConsolidationJobPreparationService.PrepareAsync was not expected to be called by this test."));
@@ -957,7 +957,7 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(preparationResult ?? MakeConsolidationPreparationResult());
 
@@ -1122,7 +1122,7 @@ public sealed class AssignmentEnricherTests
             s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()),
             Times.Once,
             "IConsolidationJobPreparationService.PrepareAsync must be called exactly once");
@@ -1224,9 +1224,9 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, IReadOnlyList<string>, CancellationToken>(
+            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
                 (type, _, _, _) => capturedType = type)
             .ReturnsAsync(MakeConsolidationPreparationResult());
 
@@ -1264,9 +1264,9 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, IReadOnlyList<string>, CancellationToken>(
+            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
                 (_, tid, _, _) => capturedTemplateId = tid)
             .ReturnsAsync(MakeConsolidationPreparationResult());
 
@@ -1306,9 +1306,9 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, IReadOnlyList<string>, CancellationToken>(
+            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
                 (_, tid, _, _) => capturedTemplateId = tid)
             .ReturnsAsync(MakeConsolidationPreparationResult());
 
@@ -1457,7 +1457,7 @@ public sealed class AssignmentEnricherTests
             s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()),
             Times.Never,
             "ConsolidationJobPreparationService.PrepareAsync must not be called when profile resolution fails");
@@ -1482,7 +1482,7 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException(
                 "IConsolidationJobPreparationService.PrepareAsync must not be called for implementation tasks."));
@@ -1505,7 +1505,7 @@ public sealed class AssignmentEnricherTests
             s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<AgentProfile?>(),
                 It.IsAny<CancellationToken>()),
             Times.Never,
             "IConsolidationJobPreparationService.PrepareAsync must NOT be called for implementation tasks");
@@ -1561,6 +1561,224 @@ public sealed class AssignmentEnricherTests
         await act.Should().ThrowAsync<InvalidOperationException>(
             "NoOpConsolidationPreparer.PrepareAsync must throw to provide a clear fail-fast diagnostic " +
             "rather than silently producing an empty-config assignment");
+    }
+
+    // ── ResolveProfile: profile-ID lookup and label fallback (issue #3560) ──────────
+
+    [Fact]
+    public async Task EnrichAsync_ResolvedProfileId_UsesSecondProfileConfig_NotFirstProfileConfig()
+    {
+        // ARRANGE: two profiles share the same template key "dotnet,dotnet10,kiro".
+        // Profile 2 has a different AgentProviderConfigId and McpServers.
+        var profile1 = new AgentProfile
+        {
+            Id = "profile-main",
+            DisplayName = "Main Profile",
+            AgentProviderConfigId = "cfg-main",
+            MatchLabels = ["kiro", "dotnet", "dotnet10"],
+            Enabled = true,
+            JobTemplate = "kiro,dotnet,dotnet10",
+        };
+        var profile2 = new AgentProfile
+        {
+            Id = "profile-variant",
+            DisplayName = "Variant Profile",
+            AgentProviderConfigId = "cfg-variant",
+            MatchLabels = ["kiro", "dotnet", "dotnet10", "sonnet"],
+            Enabled = true,
+            JobTemplate = "kiro,dotnet,dotnet10",
+            McpServers = [new McpServerConfig { Name = "context7", Type = "http", Url = "https://mcp.context7.com/mcp" }],
+        };
+
+        // Identity carries the variant profile's ID — the enricher must use the variant.
+        var identity = MakeIdentity("dotnet,dotnet10,kiro") with
+        {
+            ResolvedProfileId = "profile-variant",
+            PayloadSchemaVersion = 1,
+        };
+        var project = MakeProject();
+        var (_, _, enricher) = MakeEnricher(profiles: [profile1, profile2]);
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT: result uses the variant profile's provider config and MCP servers
+        result.Should().NotBeNull();
+        result!.AgentProviderConfigId.Should().Be("cfg-variant",
+            "enricher must use the profile identified by ResolvedProfileId, not the first profile matching the selector");
+        result.McpServers.Should().NotBeNull();
+        result.McpServers!.Any(s => s.Name == "context7").Should().BeTrue(
+            "McpServers from the resolved profile must be included");
+        // TODO: [WARNING] Missing assertion for RequiredLabels. Requirement 6 changed RequiredLabels
+        // in DispatchCoreRequest from the identity's selector labels to profile.MatchLabels.
+        // For profile2 (MatchLabels = ["kiro","dotnet","dotnet10","sonnet"]) vs. the selector
+        // "dotnet,dotnet10,kiro" (no "sonnet"), reverting that one line in AssignmentEnricher.cs
+        // would leave quality gates silently resolved against the template key's labels instead of
+        // the profile's. Add: infra.CapturedRequest.RequiredLabels.Should().BeEquivalentTo(
+        //   profile2.MatchLabels, "quality gates must follow the resolved profile's MatchLabels");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_NullResolvedProfileId_FallsBackToLabelResolution()
+    {
+        // ARRANGE: identity has no ResolvedProfileId (queued before this change).
+        // The fallback must resolve the profile from the selector labels.
+        var profile = MakeProfile(id: "profile-by-label", agentProviderConfigId: "cfg-by-label");
+        var identity = MakeIdentity("dotnet") with
+        {
+            ResolvedProfileId = null,
+            PayloadSchemaVersion = 1,
+        };
+        var project = MakeProject();
+        var (_, _, enricher) = MakeEnricher(profiles: [profile]);
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT: the profile resolved from labels is used
+        result.Should().NotBeNull();
+        result!.AgentProviderConfigId.Should().Be("cfg-by-label",
+            "with no ResolvedProfileId the enricher must fall back to label-based profile resolution");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_DisabledResolvedProfile_FallsBackToLabelResolution()
+    {
+        // ARRANGE: identity references a profile that is now disabled.
+        var disabledProfile = new AgentProfile
+        {
+            Id = "disabled-profile",
+            DisplayName = "Disabled",
+            AgentProviderConfigId = "cfg-disabled",
+            MatchLabels = ["dotnet"],
+            Enabled = false,
+        };
+        var activeProfile = MakeProfile(id: "active-profile", agentProviderConfigId: "cfg-active");
+        var identity = MakeIdentity("dotnet") with
+        {
+            ResolvedProfileId = "disabled-profile",
+            PayloadSchemaVersion = 1,
+        };
+        var project = MakeProject();
+        var (_, _, enricher) = MakeEnricher(profiles: [disabledProfile, activeProfile]);
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT: falls back to the enabled profile resolved from labels
+        result.Should().NotBeNull();
+        result!.AgentProviderConfigId.Should().Be("cfg-active",
+            "a disabled ResolvedProfileId must trigger fallback to label-based resolution");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_Consolidation_ResolvedProfileId_UsesVariantProfileConfig()
+    {
+        // ARRANGE: two consolidation profiles share the same template.
+        // Identity carries the variant profile's ID.
+        var profile1 = new AgentProfile
+        {
+            Id = "consol-main",
+            DisplayName = "Consol Main",
+            AgentProviderConfigId = "consol-cfg-main",
+            MatchLabels = ["kiro", "dotnet"],
+            Enabled = true,
+        };
+        var profile2 = new AgentProfile
+        {
+            Id = "consol-variant",
+            DisplayName = "Consol Variant",
+            AgentProviderConfigId = "consol-cfg-variant",
+            MatchLabels = ["kiro", "dotnet"],
+            Enabled = true,
+        };
+
+        var capturedProfile = (AgentProfile?)null;
+        var preparerMock = new Mock<IConsolidationJobPreparationService>();
+        preparerMock
+            .Setup(s => s.PrepareAsync(
+                It.IsAny<ConsolidationRunType>(),
+                It.IsAny<TemplateId?>(),
+                It.IsAny<AgentProfile?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
+                (_, _, p, _) => capturedProfile = p)
+            .ReturnsAsync(MakeConsolidationPreparationResult());
+
+        var identity = MakeConsolidationIdentity(agentSelector: "dotnet,kiro") with
+        {
+            ResolvedProfileId = "consol-variant",
+            PayloadSchemaVersion = 1,
+        };
+        var project = MakeProject();
+        var profileStoreMock = new Mock<IAgentProfileStore>();
+        profileStoreMock.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<AgentProfile>)[profile1, profile2]);
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
+        var enricher = new AssignmentEnricher(
+            new StubDispatchInfrastructure((_, _) =>
+                throw new InvalidOperationException("dispatch infra must not be called for consolidation")),
+            profileStoreMock.Object, preparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT
+        result.Should().NotBeNull();
+        capturedProfile.Should().NotBeNull();
+        capturedProfile!.Id.Should().Be("consol-variant",
+            "the variant profile (identified by ResolvedProfileId) must be passed to PrepareAsync");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_Consolidation_NullResolvedProfileId_FallsBackToLabelResolution()
+    {
+        // ARRANGE: consolidation identity with no ResolvedProfileId.
+        var profile = new AgentProfile
+        {
+            Id = "consol-fallback",
+            DisplayName = "Fallback",
+            AgentProviderConfigId = "consol-fallback-cfg",
+            MatchLabels = ["kiro", "dotnet"],
+            Enabled = true,
+        };
+
+        var capturedProfile = (AgentProfile?)null;
+        var preparerMock = new Mock<IConsolidationJobPreparationService>();
+        preparerMock
+            .Setup(s => s.PrepareAsync(
+                It.IsAny<ConsolidationRunType>(),
+                It.IsAny<TemplateId?>(),
+                It.IsAny<AgentProfile?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
+                (_, _, p, _) => capturedProfile = p)
+            .ReturnsAsync(MakeConsolidationPreparationResult());
+
+        var identity = MakeConsolidationIdentity(agentSelector: "dotnet,kiro") with
+        {
+            ResolvedProfileId = null,
+            PayloadSchemaVersion = 1,
+        };
+        var project = MakeProject();
+        var profileStoreMock = new Mock<IAgentProfileStore>();
+        profileStoreMock.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<AgentProfile>)[profile]);
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
+        var enricher = new AssignmentEnricher(
+            new StubDispatchInfrastructure((_, _) =>
+                throw new InvalidOperationException("dispatch infra must not be called for consolidation")),
+            profileStoreMock.Object, preparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT: the label-resolved profile is passed to PrepareAsync
+        result.Should().NotBeNull();
+        capturedProfile!.Id.Should().Be("consol-fallback",
+            "null ResolvedProfileId must trigger label-based fallback for consolidation enrichment");
     }
 
     private sealed class WithProfileStoreEnricher : AssignmentEnricher

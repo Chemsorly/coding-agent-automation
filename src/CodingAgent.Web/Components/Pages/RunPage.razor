@@ -59,6 +59,7 @@
                     else if (run.RunType == PipelineRunType.Consolidation)
                     {
                         <span class="run-type-badge run-type-consolidation"><Icon Name="refresh-cw" Size="14" /> Consolidation</span>
+                        <span class="cockpit-chip" data-testid="consolidation-type-chip">@FormatConsolidationType(run.ConsolidationType)</span>
                     }
                     else if (run.RunType == PipelineRunType.Triage)
                     {
@@ -79,6 +80,10 @@
                     @* An operator triage has no issue: its identifier is the triage:{id} sentinel *@
                     <h1>@run.IssueTitle</h1>
                 }
+                else if (run.RunType == PipelineRunType.Consolidation)
+                {
+                    <h1>@FormatConsolidationTitle(run.ConsolidationType, run.ConsolidationTemplateName, run.ConsolidationTemplateId)</h1>
+                }
                 else
                 {
                     <h1>@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier @run.IssueTitle</h1>
@@ -94,7 +99,7 @@
 
         var implPr = run.RunType != PipelineRunType.Review ? run.PullRequestUrl : null;
         var reviewPr = run.RunType == PipelineRunType.Review ? run.ReviewPrUrl : null;
-        @if (!string.IsNullOrEmpty(run.IssueUrl) || !string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr) || _triageId is not null)
+        @if (!string.IsNullOrEmpty(run.IssueUrl) || !string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr) || _triageId is not null || run.RunType == PipelineRunType.Consolidation)
         {
             <div class="cockpit-links-rail">
                 @if (_triageId is { } triageId)
@@ -112,6 +117,10 @@
                 @if (!string.IsNullOrEmpty(reviewPr))
                 {
                     <a href="@reviewPr" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="search" Size="14" /> PR under review ↗</a>
+                }
+                @if (run.RunType == PipelineRunType.Consolidation)
+                {
+                    <a href="consolidation" class="cockpit-link-chip" data-testid="consolidation-page-link"><Icon Name="refresh-cw" Size="14" /> Consolidation page →</a>
                 }
             </div>
         }
@@ -166,6 +175,14 @@
                             <span style="font-weight: 600;">Reviewers:</span> @string.Join(", ", run.CodeReviewAgentsRun)
                         </div>
                     }
+                </div>
+            }
+
+            @if (run.RunType == PipelineRunType.Consolidation && !string.IsNullOrEmpty(run.ConsolidationResultSummary))
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="consolidation-result">
+                    <div class="cockpit-detail-sub-label">Result</div>
+                    <div style="font-size: 13.5px;">@run.ConsolidationResultSummary</div>
                 </div>
             }
 
@@ -774,6 +791,9 @@
         model.CompletedAtOffset = summary.CompletedAtOffset;
         model.ResetStartedAt(summary.StartedAtOffset);
         model.RunMode = summary.RunMode;
+        model.ConsolidationType = summary.ConsolidationType;
+        model.ConsolidationTemplateId = summary.ConsolidationTemplateId;
+        model.ConsolidationTemplateName = summary.ConsolidationTemplateName;
 
         return model;
     }

@@ -6,7 +6,7 @@ namespace CodingAgent.Pipeline.Services.Prompts;
 /// <summary>
 /// Phased refactoring detection prompt builders.
 /// Splits the monolithic refactoring prompt into focused phases:
-/// Phase 0 (context extraction), Phase 1 (3 parallel sub-agents),
+/// Phase 0 (context extraction), Phase 1 (4 parallel sub-agents),
 /// Phase 2 (aggregation), and strengthened adversarial review.
 /// </summary>
 public static partial class ConsolidationPromptBuilder
@@ -23,7 +23,7 @@ $"""
 ## CRITICAL RULES — Read First
 
 1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Use the available tools.** Phase 0 listed them under `availableTools` in `{AgentWorkspacePaths.RefactoringConventionsFilePath}` and saved the output of the project's analyzers in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other two agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
+2. **Use the available tools.** Phase 0 listed them under `availableTools` in `{AgentWorkspacePaths.RefactoringConventionsFilePath}` and saved the output of the project's analyzers in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other detection agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
 3. **Declare what you did NOT check.** List files/areas you skipped due to context limits in the `notChecked` field of your output.
 4. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
 5. **Do NOT modify source code.** Only produce the findings output file.
@@ -69,7 +69,7 @@ $"""
 
         PromptBuilder.AppendSection(sb, "## Evidence Sources", s =>
         {
-            s.AppendLine("Three detection agents run after you, at the same time, in this workspace. Prepare the tool evidence");
+            s.AppendLine("The detection agents run after you, at the same time, in this workspace. Prepare the tool evidence");
             s.AppendLine("they will use, so they do not each run builds:");
             s.AppendLine();
             s.AppendLine("1. **MCP tools.** Check your available MCP tools for additional data sources — for example code quality or");
@@ -78,7 +78,14 @@ $"""
             s.AppendLine("2. **The project's own analyzers.** Find the build, lint and analysis commands the project uses (CI workflows,");
             s.AppendLine("   build scripts, README). Run the ones that report warnings without changing tracked files, once, and save");
             s.AppendLine($"   each raw output to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/<name>.txt`. You may install tools.");
-            s.AppendLine("3. List both under `availableTools` below. If a source fails or needs credentials you do not have, skip it");
+            s.AppendLine("3. **Test coverage.** If the project has tests, run them once with code coverage and save the coverage report");
+            s.AppendLine($"   (Cobertura XML, lcov or a JSON summary) to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/coverage.<ext>`. Use the project's own");
+            s.AppendLine("   coverage setup when it has one (for example coverlet in the test projects, jacoco, pytest-cov, c8 or nyc).");
+            s.AppendLine("   Otherwise you may install a coverage tool outside the repository (for example `dotnet-coverage` or `coverage`),");
+            s.AppendLine("   but do not change tracked files. Stop the test run after 20 minutes (for example `timeout 20m <command>`).");
+            s.AppendLine("   Failing tests are fine as long as a report was written. Name this entry `coverage` under `availableTools`; if");
+            s.AppendLine("   no report was written, say why in its `reports` field.");
+            s.AppendLine("4. List all of them under `availableTools` below. If a source fails or needs credentials you do not have, skip it");
             s.AppendLine("   and say why in its `reports` field.");
         });
 
@@ -376,6 +383,72 @@ $"""
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    //  Phase 1, Agent D: Test Gap Detection
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Agent D prompt: focused on production code that no test checks. Reads the coverage report
+    /// Phase 0 saved; falls back to search proof that no test references the code.
+    /// </summary>
+    public static string BuildRefactoringTestGapPrompt()
+    {
+        var sb = new StringBuilder();
+
+        sb.Append(RefactoringSubAgentPreamble);
+
+        sb.AppendLine("# Agent D: Test Gap Detection");
+        sb.AppendLine();
+        sb.AppendLine("You are one of several parallel analysis agents. Your focus is **test gaps** —");
+        sb.AppendLine("production code whose behavior no test checks, so a regression in it would go unnoticed.");
+        sb.AppendLine();
+
+        PromptBuilder.AppendSection(sb, "## Your Category", s =>
+        {
+            s.AppendLine("1. **Test gaps** — Production code with branching logic, error handling or a public contract that no test exercises.");
+            s.AppendLine("   Look for: public methods with conditions or loops and no test that calls them, catch blocks and error paths");
+            s.AppendLine("   no test reaches, parsing and validation code tested only on the happy path.");
+            s.AppendLine("   **Not a finding:** generated code, plain data types (records, DTOs, enums), constants, simple properties,");
+            s.AppendLine("   dependency-injection registration, and code that `testingPhilosophy` in `.agent/refactoring-conventions.json`");
+            s.AppendLine("   says is tested another way (for example only end-to-end).");
+        });
+
+        PromptBuilder.AppendSection(sb, "## Exploration Strategy", s =>
+        {
+            s.AppendLine($"1. Read `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — `testingPhilosophy` and `availableTools`.");
+            s.AppendLine("2. If `availableTools` has a `coverage` entry with an output file, read that report. It is your primary evidence:");
+            s.AppendLine("   it lists the lines and branches no test executed.");
+            s.AppendLine($"3. Read `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — start with the top 15 most-changed files. Code that changes often and has");
+            s.AppendLine("   no tests carries the highest risk.");
+            s.AppendLine("4. For each candidate file: find its uncovered methods in the coverage report. Without a report, find the test files");
+            s.AppendLine("   that should cover it (by the project's test naming and folder layout) and search them for the type and method names.");
+            s.AppendLine("5. Read each uncovered method and decide whether it holds logic worth a test (see \"Not a finding\" above).");
+        });
+
+        AppendFindingsOutputFormat(sb, new FindingsOutputSpec
+        {
+            OutputPath = AgentWorkspacePaths.RefactoringTestGapFindingsFilePath,
+            Categories = RefactoringCategories.TestGaps,
+            EvidenceHint = "The uncovered lines from the coverage report, or the search showing that no test references the code",
+            EvidenceSourcesExample = "\"tool:coverage:src/Foo.cs:L40-L58\", \"grep:FooService -- tests\"",
+            CrossReferenceHint = "The test file that should cover this code, or where the tests for this area live",
+            ImpactHint = "Which regression would go unnoticed — be specific",
+            SuggestedFixHint = "The methods and behaviors (inputs, branches, error paths) the missing tests should cover"
+        });
+
+        PromptBuilder.AppendSection(sb, "## Quality Bar", s =>
+        {
+            s.AppendLine("- **Every finding MUST prove the gap** — either a `tool:coverage:<file>:L<start>-L<end>` source naming the uncovered");
+            s.AppendLine("  lines from the coverage report, or a `grep:` source showing that no test file references the method or type.");
+            s.AppendLine("- Name the methods and the behaviors the missing tests should cover in `suggestedFix`.");
+            s.AppendLine("- One finding per production file: group the gaps of one file into one finding.");
+            s.AppendLine("- Prefer hotspot files. A gap in code that has not changed for months is low priority.");
+            s.AppendLine("- Maximum 8 findings.");
+        });
+
+        return sb.ToString();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     //  Shared Phase 1 scaffold
     // ─────────────────────────────────────────────────────────────────────
 
@@ -414,7 +487,7 @@ $"""
 
         sb.AppendLine($"# {agentTitle}");
         sb.AppendLine();
-        sb.AppendLine($"You are one of three parallel analysis agents. Your focus is **{focusKeyword}** —");
+        sb.AppendLine($"You are one of several parallel analysis agents. Your focus is **{focusKeyword}** —");
         sb.AppendLine(focusDescription);
         sb.AppendLine();
 
@@ -480,6 +553,7 @@ $"""
     /// <summary>
     /// Phase 2 prompt: aggregates findings from all three sub-agents, deduplicates,
     /// filters against project conventions, and produces final ranked proposals.
+    /// TODO: Update "three sub-agents" to "four sub-agents" — Agent D (test gaps) was added by issue #3582. See review finding #4.
     /// </summary>
     public static string BuildRefactoringAggregationPrompt(
         int maxProposals = 3,
@@ -490,7 +564,7 @@ $"""
 
         sb.AppendLine("# Phase 2: Aggregation & Prioritization");
         sb.AppendLine();
-        sb.AppendLine("You are the orchestrator synthesizing findings from three parallel analysis agents");
+        sb.AppendLine("You are the orchestrator synthesizing findings from the parallel analysis agents");
         sb.AppendLine("into final, actionable refactoring proposals. Your job is quality control and ranking —");
         sb.AppendLine("not discovery. Do NOT add new findings; only curate what the agents produced.");
         sb.AppendLine();
@@ -501,8 +575,9 @@ $"""
         sb.AppendLine($"1. `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` — Agent A: structural debt");
         sb.AppendLine($"2. `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` — Agent B: correctness & hygiene");
         sb.AppendLine($"3. `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` — Agent C: design consistency");
-        sb.AppendLine($"4. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
-        sb.AppendLine($"5. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
+        sb.AppendLine($"4. `{AgentWorkspacePaths.RefactoringTestGapFindingsFilePath}` — Agent D: test gaps");
+        sb.AppendLine($"5. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
+        sb.AppendLine($"6. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
         sb.AppendLine();
         sb.AppendLine("Each findings file holds a `findings` array and a `notChecked` list.");
         sb.AppendLine("If a findings file is missing or is not valid JSON, that agent failed. Continue with the other files");
@@ -535,6 +610,7 @@ $"""
         sb.AppendLine($"- `{RefactoringCategories.Duplication}`: `crossReference` MUST name the other copy. Otherwise DROP the proposal.");
         sb.AppendLine($"- `{RefactoringCategories.NamingInconsistency}`: MUST cite the convention rule it violates. Otherwise DROP the proposal.");
         sb.AppendLine($"- `{RefactoringCategories.PrimitiveObsession}`: MUST show 3+ occurrences with a `grep:` or `usage-search:` source. Otherwise DROP the proposal.");
+        sb.AppendLine($"- `{RefactoringCategories.TestGap}`: MUST have a `tool:coverage:` source naming the uncovered lines, or a `grep:` source showing that no test file references the code. Otherwise DROP the proposal.");
         sb.AppendLine($"- `{RefactoringCategories.StructuralDrift}`, `{RefactoringCategories.Complexity}`, `{RefactoringCategories.OverEngineering}`, `{RefactoringCategories.Todo}`, `{RefactoringCategories.StaleDocumentation}`:");
         sb.AppendLine("  may use \"code-reading:\" alone but receive a capped evidence score of 1 unless a `tool:`, `grep:` or `usage-search:` source corroborates them.");
         sb.AppendLine("- `hotspot:` is a priority signal, not evidence. It never satisfies this gate and never raises the evidence score.");
@@ -637,6 +713,7 @@ $"""
         sb.AppendLine("  - Prefer negative assertions (\"no references remain\", \"no callers exist\") — they catch incomplete implementations.");
         sb.AppendLine("  - When `scopeQuery` is set, one criterion MUST state that no match of the pattern remains (apart from the exclusions in `description`).");
         sb.AppendLine($"  - For `{RefactoringCategories.Bug}`, one criterion MUST require a test that reproduces the failure scenario and passes after the fix.");
+        sb.AppendLine($"  - For `{RefactoringCategories.TestGap}`, the criteria MUST name the behaviors the new tests cover, and one criterion MUST state that no production (non-test) file changes.");
         sb.AppendLine($"  - For `{RefactoringCategories.Duplication}` with behavioral differences, one criterion MUST state that each listed difference is kept or removed as `description` says.");
         sb.AppendLine("  - Do NOT use #N notation — GitHub autolinks to wrong issues.");
         sb.AppendLine();
@@ -646,6 +723,7 @@ $"""
         sb.AppendLine("  - extract-class: \"Original class no longer contains the extracted methods\", \"New class is registered in DI\"");
         sb.AppendLine("  - duplication: \"Duplicated logic consolidated to single call site\", \"The guard only the retry copy had is kept on the retry path\"");
         sb.AppendLine("  - bug: \"A test that sets X to null before calling Y fails before the fix and passes after it\"");
+        sb.AppendLine("  - test-gap: \"Tests cover the null-input and timeout paths of FooService.Parse\", \"No production (non-test) file changes\"");
         sb.AppendLine();
         sb.AppendLine("## Writing for the Implementer");
         sb.AppendLine();
@@ -667,7 +745,7 @@ $"""
         sb.AppendLine("## Also Produce");
         sb.AppendLine();
         sb.AppendLine($"Write a brief analysis log at `{AgentWorkspacePaths.RefactoringAnalysisFilePath}` containing:");
-        sb.AppendLine("- Total findings received from agents A, B, C, and any agent whose findings file was missing or invalid");
+        sb.AppendLine("- Total findings received from agents A, B, C, D, and any agent whose findings file was missing or invalid");
         sb.AppendLine("- How many were dropped (duplicates, convention-filtered, evidence gate, scope-exceeded)");
         sb.AppendLine("- The ranking scores for the top candidates");
         sb.AppendLine("- Which findings were dropped and why (one line each)");

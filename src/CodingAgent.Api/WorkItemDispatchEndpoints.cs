@@ -212,12 +212,16 @@ public static class WorkItemDispatchEndpoints
                 }
                 : null,
 
+            // Dispatch-time profile identity — kept so AssignmentEnricher can restore the exact
+            // profile at claim time without re-resolving from labels.
+            ResolvedProfileId = request.ResolvedProfileId,
+
             // Schema version discriminator — marks this as new-schema (minimal identity payload).
             // GetAssignment uses PayloadSchemaVersion == 1 to detect new-schema rows and trigger
             // AssignmentEnricher. All mutable config intentionally omitted (null). Fields not listed
             // above (ProviderConfigs, PipelineConfiguration, QualityGateConfigs, ReviewerConfigs,
             // McpServers, RepoSteeringContent, ProjectSteeringContent, IssueComments,
-            // ParsedIssue, ExistingAnalysis, ResolvedProfileId, AgentProviderConfigId)
+            // ParsedIssue, ExistingAnalysis, AgentProviderConfigId)
             // are left at their default null values and re-fetched at assignment time by AssignmentEnricher.
             PayloadSchemaVersion = 1,
         };

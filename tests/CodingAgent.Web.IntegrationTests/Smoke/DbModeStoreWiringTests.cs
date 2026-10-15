@@ -4,7 +4,6 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using CodingAgent.Web.Services;
 using CodingAgent.Api.Client.Stores;
 using ApiBackedPipelineRunHistoryService = CodingAgent.Api.Client.Stores.ApiBackedPipelineRunHistoryService;
 using Microsoft.Extensions.DependencyInjection;

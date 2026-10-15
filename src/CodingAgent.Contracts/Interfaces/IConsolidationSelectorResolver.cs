@@ -3,7 +3,7 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
-/// Resolves the agent selector labels for a consolidation dispatch request.
+/// Resolves the agent selector for a consolidation dispatch request.
 /// Keeps the selector logic (which depends on <see cref="IAgentProfileStore"/> and <see cref="IPipelineConfigStore"/>)
 /// in <c>CodingAgent.Web</c> while <c>ConsolidationService</c> (in <c>CodingAgent.Pipeline</c>)
 /// can call it without taking on infrastructure-layer dependencies.
@@ -11,7 +11,7 @@ namespace CodingAgent.Pipeline.Interfaces;
 public interface IConsolidationSelectorResolver
 {
     /// <summary>
-    /// Resolves the agent selector labels for a consolidation run.
+    /// Resolves the agent selector for a consolidation run.
     /// </summary>
     /// <param name="repoConfig">
     /// The repo <see cref="ProviderConfig"/> resolved at trigger time, used to read
@@ -23,10 +23,12 @@ public interface IConsolidationSelectorResolver
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
-    /// The resolved selector labels, or <c>null</c> when no agent profiles are available
-    /// (startup race — the caller must treat this as a transient failure, NOT a permanent 422).
+    /// A <see cref="ConsolidationAgentSelection"/> with the resolved agent selector and the matched
+    /// profile's ID (or <c>null</c> when only labels were known), or <c>null</c> when no agent
+    /// profiles are available (startup race — the caller must treat this as a transient failure,
+    /// NOT a permanent 422).
     /// </returns>
-    Task<IReadOnlyList<string>?> ResolveAsync(
+    Task<ConsolidationAgentSelection?> ResolveAsync(
         ProviderConfig? repoConfig,
         PipelineConfiguration config,
         CancellationToken ct);
