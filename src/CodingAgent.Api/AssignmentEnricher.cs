@@ -93,6 +93,10 @@ public class AssignmentEnricher
     // helpful message. Consider adding a guard in EnrichCoreAsync (e.g., throw InvalidOperationException
     // with a clear message when _infra is null) to fail fast with a diagnostic message rather than
     // an opaque NRE. Also, logger is not null-guarded consistently with the public constructor.
+    // TODO: Issue #3561 removed the ProfileResolver singleton DI registration and made ProfileResolver
+    // a static class. The NOTE above about _infra/_agentProfileStore NRE in test subclasses is unrelated
+    // to ProfileResolver; it remains valid. The issue's intended removal (a separate comment about
+    // "ProfileResolver is registered as a singleton") was already absent from this file on main.
     protected internal AssignmentEnricher(
         ILogger logger,
         IConsolidationJobPreparationService? consolidationPreparer = null)
