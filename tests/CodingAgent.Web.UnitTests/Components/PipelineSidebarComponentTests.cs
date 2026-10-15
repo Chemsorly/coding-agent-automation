@@ -654,7 +654,7 @@ public class PipelineSidebarComponentTests : BunitContext
 
     // ── Issue #3566: consolidation step ladder ─────────────────────────────
 
-    private static PipelineRun CreateConsolidationRun(
+    private static RunSidebarModel CreateConsolidationRun(
         ConsolidationRunType consolidationType,
         PipelineStep currentStep = PipelineStep.Created,
         PipelineStep highWaterMark = PipelineStep.Created) => new()
@@ -662,9 +662,7 @@ public class PipelineSidebarComponentTests : BunitContext
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "42",
             IssueTitle = "Test Issue",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CurrentStep = currentStep,
             HighWaterMark = highWaterMark,
             RunType = PipelineRunType.Consolidation,
@@ -739,16 +737,24 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.Empty(cut.FindAll("#step-DetectingFindings"));
     }
 
-    // TODO [WARNING]: Missing test — BrainConsolidation step-state rendering for in-progress scenario.
-    // The _logicalOrder values for brain consolidation (ConsolidatingKnowledge=50, ReviewingBrainChanges=51,
-    // PushingBrainChanges=52) are exercised by StepOrderTests.GetOrder_BrainConsolidationSteps_AreMonotonicallyIncreasing
-    // for the server-side StepOrder dictionary, but PipelineSidebar._logicalOrder is a separate dictionary that
-    // drives sidebar rendering. If those values were accidentally transposed, the step-card CSS states would be wrong
-    // but no test here would catch it.
-    // Add a test: BrainConsolidation_InProgress_MarksStepsBeforeCurrentCompleted:
-    //   CurrentStep = ReviewingBrainChanges, HighWaterMark = ReviewingBrainChanges, IsRunning = true.
-    //   Assert: #step-ConsolidatingKnowledge has step-card-completed, #step-ReviewingBrainChanges has step-card-active,
-    //   #step-PushingBrainChanges has step-card-pending.
+    [Fact]
+    public void BrainConsolidation_InProgress_MarksStepsBeforeCurrentCompleted()
+    {
+        var run = CreateConsolidationRun(
+            ConsolidationRunType.BrainConsolidation,
+            currentStep: PipelineStep.ReviewingBrainChanges,
+            highWaterMark: PipelineStep.ReviewingBrainChanges);
+
+        var cut = Render<PipelineSidebar>(p =>
+        {
+            p.Add(s => s.Run, run);
+            p.Add(s => s.IsRunning, true);
+        });
+
+        Assert.Contains("step-card-completed", cut.Find("#step-ConsolidatingKnowledge").GetAttribute("class") ?? "");
+        Assert.Contains("step-card-active", cut.Find("#step-ReviewingBrainChanges").GetAttribute("class") ?? "");
+        Assert.Contains("step-card-pending", cut.Find("#step-PushingBrainChanges").GetAttribute("class") ?? "");
+    }
 
     [Fact]
     public void HarnessSuggestions_HasNoPhases()
