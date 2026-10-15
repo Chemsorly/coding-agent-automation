@@ -212,7 +212,7 @@ public class AgentCodingPageService
     public async Task<(bool Success, string? Error, string? SuccessMessage)> AddTemplateAsync(TemplateTableSection.TemplateFormModel form)
     {
         if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
-        var newTemplate = new PipelineJobTemplate
+        var newTemplate = WithRepositorySettings(new PipelineJobTemplate
         {
             Id = Guid.NewGuid().ToString(),
             Name = form.Name.Trim(),
@@ -229,7 +229,7 @@ public class AgentCodingPageService
             HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
             HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
             Enabled = true
-        };
+        }, form);
         var targetProjectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;
         try { await _settings.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
@@ -271,7 +271,7 @@ public class AgentCodingPageService
         return (true, null, $"Template \"{updated.Name}\" saved.");
     }
 
-    private static PipelineJobTemplate ApplyEdit(PipelineJobTemplate existing, TemplateTableSection.TemplateFormModel form) => existing with
+    private static PipelineJobTemplate ApplyEdit(PipelineJobTemplate existing, TemplateTableSection.TemplateFormModel form) => WithRepositorySettings(existing with
     {
         Name = form.Name.Trim(),
         BrainProviderId = string.IsNullOrEmpty(form.BrainProviderId) ? null : form.BrainProviderId,
@@ -284,6 +284,23 @@ public class AgentCodingPageService
         HousekeepingEnabled = form.HousekeepingEnabled,
         HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
         HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
+    }, form);
+
+    /// <summary>Applies the five repository-settings fields from <paramref name="form"/> to <paramref name="template"/>.</summary>
+    // TODO: [WARNING] Repository secrets stored on PipelineJobTemplate are returned in plaintext by
+    // the template GET endpoint (/api/config/projects/{id}/templates). The provider-config path ran
+    // secrets through UiSecretMask (replacing values with "****") in GET responses; no equivalent
+    // masking was added for templates. An operator-level API credential can read plaintext secret
+    // values by calling the template GET endpoint. The provider-config masking pattern prevented
+    // secret exfiltration via the API even from authenticated callers — add equivalent masking to
+    // the template GET response or move secrets to a separate secrets store (SecurityReviewer finding).
+    private static PipelineJobTemplate WithRepositorySettings(PipelineJobTemplate template, TemplateTableSection.TemplateFormModel form) => template with
+    {
+        RequiredLabels = form.RequiredLabels is { Count: > 0 } ? form.RequiredLabels : null,
+        Secrets = form.Secrets is { Count: > 0 } ? new Dictionary<string, string>(form.Secrets) : null,
+        SetupSteps = form.SetupSteps is { Count: > 0 } ? form.SetupSteps : null,
+        SteeringContent = !string.IsNullOrEmpty(form.SteeringContent) ? form.SteeringContent : null,
+        BlacklistedPaths = form.BlacklistedPaths is { Count: > 0 } ? form.BlacklistedPaths : null,
     };
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> RemoveTemplateAsync(PipelineJobTemplate template)

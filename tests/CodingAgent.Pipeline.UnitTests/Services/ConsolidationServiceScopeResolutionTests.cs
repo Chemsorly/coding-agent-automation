@@ -126,6 +126,12 @@ public sealed class ConsolidationServiceScopeResolutionTests
                 It.IsAny<CancellationToken>()),
             Times.Once,
             "the repoConfig (enriched with template settings) must be passed to the selector resolver");
+        // TODO: [WARNING] The matcher It.Is<ProviderConfig>(c => c.Id == rawConfig.Id) accepts both
+        // the raw config and the enriched copy from RepositorySettings.WithTemplateSettings because
+        // both share the same Id. If the WithTemplateSettings call in ConsolidationService were
+        // removed and the raw config passed directly, this test would still pass. Assert a
+        // template-sourced field (e.g. RequiredLabels) on the captured config to verify enrichment
+        // actually occurred (TestQualityReviewer finding).
     }
 
     // ── 2. global run skips template/project resolution ──────────────────────

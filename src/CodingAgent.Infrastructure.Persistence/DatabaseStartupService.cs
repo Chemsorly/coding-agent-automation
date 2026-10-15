@@ -353,6 +353,10 @@ public sealed class DatabaseStartupService
         Serilog.ILogger logger,
         CancellationToken ct)
     {
+        // TODO: [WARNING] db and logger have no ArgumentNullException.ThrowIfNull guards; a null
+        // db causes NullReferenceException on the first db.ProviderConfigs access and a null logger
+        // causes NullReferenceException on the first logger.Warning(...) call inside the loop.
+        // Add ThrowIfNull guards for both parameters (DotNetSpecialist finding).
         var allProviderEntities = await db.ProviderConfigs
             .Where(p => p.Kind == ProviderKind.Repository)
             .ToListAsync(ct);

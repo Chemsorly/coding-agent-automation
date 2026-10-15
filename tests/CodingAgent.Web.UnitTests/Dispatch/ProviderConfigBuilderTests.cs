@@ -247,6 +247,11 @@ public class ProviderConfigBuilderTests
         var repoConfig = result.Should().Contain(c => c.Id == RepoProviderId).Subject;
         repoConfig.RequiredLabels.Should().BeEquivalentTo(["kiro", "dotnet"],
             "template's RequiredLabels must be injected onto the repo config");
+        // TODO: [WARNING] Only RequiredLabels is asserted. The other four fields copied from the
+        // template by RepositorySettings.WithTemplateSettings (Secrets, SetupSteps, SteeringContent,
+        // BlacklistedPaths) are not verified. A regression dropping any of those four from
+        // WithTemplateSettings would not be caught by this test. Assert all five fields to fully
+        // characterize the enrichment contract (TestQualityReviewer finding).
     }
 
     [Fact]

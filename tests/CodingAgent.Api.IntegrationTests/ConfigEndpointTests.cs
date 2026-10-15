@@ -185,7 +185,7 @@ public sealed class ConfigEndpointTests
         // PUT to the template endpoint should return 400. Without that test, a regression in the
         // blank-name guard would go undetected.
 
-        // Template saves use /api/config/projects/{projectId}/templates (operator key, not admin path).
+        // Template saves go through /api/ui/settings/projects/{projectId}/templates (admin, spec 051 2.1b).
         // Create a fresh project so the template won't collide with templates from other tests.
         var projectGuid = Guid.NewGuid();
         var projectId = projectGuid.ToString();
@@ -205,7 +205,7 @@ public sealed class ConfigEndpointTests
             }
         };
 
-        var put = await _client.PutAsJsonAsync($"/api/config/projects/{projectId}/templates", template, PipelineJsonOptions.Default);
+        var put = await _admin.PutAsJsonAsync($"/api/ui/settings/projects/{projectId}/templates", template, PipelineJsonOptions.Default);
 
         put.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             "a secret name starting with a digit must be refused");
