@@ -184,6 +184,28 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
+    public async Task EnsureSessionAsync_ConfigurationRefused_ThrowsProviderMisconfigured()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
+                {
+                    onOutput?.Invoke("Error: failed to set agent 'x': Internal error (code -32603): Mode 'x' not found");
+                })
+            .ReturnsAsync(4);
+        _mockOrchestrator.Setup(o => o.LastRunRejectedConfiguration).Returns(true);
+
+        var act = () => _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<ProviderUnavailableException>();
+        ex.Which.Category.Should().Be(AgentErrorCategory.ProviderMisconfigured);
+        ex.Which.Message.Should().Contain("Mode 'x' not found");
+    }
+
+    [Fact]
     public async Task EnsureSessionAsync_NonZeroWarmUpExit_DoesNotMarkSessionEstablished()
     {
         _mockOrchestrator
@@ -221,7 +243,8 @@ public class KiroCliAgentProviderTests
                 });
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
-            _mockProcessStarter.Object) { CreateEphemeralOrchestratorWith = _ => ephemeral.Object };
+            _mockProcessStarter.Object)
+        { CreateEphemeralOrchestratorWith = _ => ephemeral.Object };
         using var cts = new CancellationTokenSource();
 
         var run = provider.ExecuteAsync(
@@ -245,7 +268,8 @@ public class KiroCliAgentProviderTests
         var ephemerals = new Queue<IKiroCliOrchestrator>([alive.Object, exiting.Object]);
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
-            _mockProcessStarter.Object) { CreateEphemeralOrchestratorWith = _ => ephemerals.Dequeue() };
+            _mockProcessStarter.Object)
+        { CreateEphemeralOrchestratorWith = _ => ephemerals.Dequeue() };
         using var cts = new CancellationTokenSource();
         var review = new AgentRequest { Prompt = "review", WorkspacePath = "/workspace", Timeout = TimeSpan.FromMinutes(1) };
 
