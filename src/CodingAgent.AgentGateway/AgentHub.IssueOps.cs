@@ -88,7 +88,7 @@ public sealed partial class AgentHub
 
         // Derive targetKind from the run's RunType rather than trusting the caller-supplied value.
         // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
-        // Note: the target kind is derived inside AgentIssueOperations.SwapLabelAsync from run.LabelTargetKind.
+        // Note: the target kind is derived inside HubIssueOperations.SwapLabelAsync from run.LabelTargetKind.
 
         // TODO (WARNING — Security): newLabel is agent-supplied external input and is logged raw here
         // alongside run.AgentId and run.CurrentStep. A crafted newLabel containing CR/LF characters would

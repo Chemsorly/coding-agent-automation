@@ -468,7 +468,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     // TODO: This test was weakened during lifecycle extraction — it only verifies delegation to IHubIssueOperations mock,
     // not the full interaction with IssueProvider (PostCommentAsync with correct args). Consider adding an integration-level
-    // test that exercises AgentIssueOperations.PostCommentViaIssueProviderAsync through the hub's RequestPostComment path.
+    // test that exercises HubIssueOperations.PostCommentViaIssueProviderAsync through the hub's RequestPostComment path.
     [Fact]
     public async Task RequestPostComment_AnalysisType_PostsMarkdown()
     {
@@ -1073,7 +1073,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     private AgentJobLifecycleService CreateRealLifecycleService(IChangeNotifier changeNotifier)
     {
-        var issueOps = new AgentIssueOperations(
+        var issueOps = new HubIssueOperations(
             _mockFacade.Object,
             _mockLabelService.Object,
             _mockLogger.Object);
