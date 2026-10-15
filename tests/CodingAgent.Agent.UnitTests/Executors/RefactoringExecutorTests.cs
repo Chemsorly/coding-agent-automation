@@ -2105,4 +2105,32 @@ public class RefactoringExecutorTests : IDisposable
         // stricter assertion (e.g. asserting the full intro sentence). See TestQualityReviewer finding at line 1940.
         body.Should().NotContain("written against commit `");
     }
+
+    [Fact]
+    public async Task ExecuteAsync_Phase1_RunsTestGapAgent()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — one of the Phase 1 agent calls must carry the Agent D prompt
+        _mockAgentProvider.Verify(
+            x => x.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt != null && r.Prompt.Contains("# Agent D: Test Gap Detection")),
+                It.IsAny<CancellationToken>(),
+                null),
+            Times.Once);
+    }
 }

@@ -189,4 +189,15 @@ public class RefactoringProposalValidatorTests : IDisposable
     {
         RefactoringProposalValidator.NormalizeTitle(title).Should().Be(expected);
     }
+
+    [Fact]
+    public void Validate_TestGapCategory_IsAccepted()
+    {
+        // test-gap is in RefactoringCategories.All; the validator must accept it
+        var proposal = Proposal(category: RefactoringCategories.TestGap);
+        var (valid, rejected) = Validate([proposal]);
+
+        valid.Should().ContainSingle();
+        rejected.Should().BeEmpty();
+    }
 }
