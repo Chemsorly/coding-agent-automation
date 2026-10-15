@@ -50,11 +50,12 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
         await projects.SaveTemplateAsync(Project, new PipelineJobTemplate
         {
             Id = Template, Name = "delta-api", IssueProviderId = "ip-delta", RepoProviderId = RepoProvider, BrainProviderId = "brain-delta", Enabled = true,
+            RequiredLabels = [.. Labels],
         }, CancellationToken.None);
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(new ProviderConfig
         {
-            Id = RepoProvider, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Delta repo", RequiredLabels = [.. Labels],
+            Id = RepoProvider, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Delta repo",
         }, CancellationToken.None);
         await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(new AgentProfile
         {
