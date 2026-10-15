@@ -168,7 +168,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // Spec 051: Settings goes through /api/ui/settings. Back it with the same store for the
             // same reason; the API host's template listing, export and import read its database.
             services.RemoveAll<CodingAgent.Web.Ui.IUiSettingsClient>();
-            services.AddSingleton<CodingAgent.Web.Ui.IUiSettingsClient>(new CodingAgent.Web.E2ETests.Fakes.InMemoryUiSettingsClient(ApiConfigClient));
+            services.AddSingleton<CodingAgent.Web.Ui.IUiSettingsClient>(new CodingAgent.Web.E2ETests.Fakes.InMemoryUiSettingsClient(ApiConfigClient, ConfigStore));
 
             // Spec 051 2.1c: provider configs and checks go through the real /api/ui/settings client to
             // the API host, which shares this store and FakeProviders and fakes the GitLab check.

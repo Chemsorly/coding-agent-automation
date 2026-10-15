@@ -633,7 +633,7 @@ A refused subscription fails with a `HubException` that reads the same whether t
 
 ### Settings (admin)
 
-`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both.
 
 Secrets never leave the API here, not even for an admin:
 - These values come back as `****`:

@@ -130,37 +130,9 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         return result ?? [];
     }
 
-    public async Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct = default)
-    {
-        var response = await _http.PutAsJsonAsync(
-            $"/api/config/projects/{Uri.EscapeDataString(projectId)}/templates",
-            template,
-            PipelineJsonOptions.Default,
-            ct);
-        await EnsureAcceptedAsync(response, ct);
-    }
-
-    public async Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default)
-    {
-        var response = await _http.DeleteAsync(
-            $"/api/config/projects/{Uri.EscapeDataString(projectId)}/templates/{Uri.EscapeDataString(templateId)}",
-            ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default)
-    {
-        var response = await _http.PostAsJsonAsync(
-            "/api/config/templates/move",
-            new { SourceProjectId = sourceProjectId.Value, TargetProjectId = targetProjectId.Value, TemplateId = templateId },
-            PipelineJsonOptions.Default,
-            ct);
-        await EnsureAcceptedAsync(response, ct);
-    }
-
     /// <summary>
     /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/>, but when the API refuses the request
-    /// (400 or 404), the exception message is the API's reason, for example a template binding conflict,
+    /// (400 or 404), the exception message is the API's reason, for example a setting outside its range,
     /// so the UI can show it.
     /// </summary>
     private static async Task EnsureAcceptedAsync(HttpResponseMessage response, CancellationToken ct)
