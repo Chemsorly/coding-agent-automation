@@ -12,7 +12,7 @@ The Pipeline API (`CodingAgent.Api`, port **8080**) exposes HTTP API endpoints f
 | Health Probes (`/healthz`, `/readyz`) | ✅ |
 | UI surface (`/api/ui/`) | ✅ |
 
-> **Note:** The SignalR hub (`/hubs/agent`) is a WebSocket transport endpoint used for real-time agent communication. It is not a REST API and is not covered in this reference.
+> **Note:** The agents' SignalR hub (`/hubs/agent`) is a WebSocket transport endpoint, not a REST API, and is not covered in this reference. The UI hub (`/hubs/ui`) is described under [UI Surface Endpoints](#ui-hub-hubsui).
 
 ## Authentication
 
@@ -593,7 +593,7 @@ Every path needs an operator role. A chat runs with the MCP servers, secrets and
 |---|---|
 | `GET /api/ui/chat/options` | Returns `{ profiles, connectTimeoutSeconds }`. `profiles` lists the enabled agent profiles whose labels name a job template, as `{ id, displayName, matchLabels }`. |
 | `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId }` with the profile's selector and its provider's model and effort, then waits until the pod connects (up to `connectTimeoutSeconds`). Returns `{ agentId, model }`, where `model` is `auto` when the provider sets none. |
-| `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the `chat-session-{sessionId}` hub group. Returns `204`. |
+| `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the chat's group on the [UI hub](#ui-hub-hubsui), tagged with the `sessionId`. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/keepalive` | Resets the idle clock of the chat's pod. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/terminate` | Ends the chat and stops its pod. Returns `204`. |
 
@@ -619,6 +619,17 @@ Loop control is desired state. Start, Stop and Resume only record the request in
 | `POST /api/ui/loop/resume` | Global `operator` | `202`. Asks for a loop that its circuit breaker paused to resume. |
 
 Saving the pipeline settings through `PUT /api/ui/settings/pipeline` keeps the stored loop request, so a settings page loaded before a Start or Stop does not undo it.
+
+### UI hub (`/hubs/ui`)
+
+The SignalR hub of the signed-in UI: live output of runs and replies of chats. It takes the user token (any role) over WebSockets, JSON protocol only; API keys and anonymous callers are refused. The token lasts the session, and the hub closes the connection when it expires. A connection joins the groups of what it shows, and the hub has no other methods:
+
+| Method | Allowed when | Then receives |
+|---|---|---|
+| `SubscribeToRun(runId)` / `UnsubscribeFromRun(runId)` | The user can read the project of the run's work item. | The output so far and, while the run is active, a `RunStateSnapshot`; then `OnOutputLines`, `OnStepTransition`, `OnChatEntry`, `OnQualityGateResult`, `OnBrainSyncResult` and `OnRunCompleted`. |
+| `SubscribeToChat(agentId)` / `UnsubscribeFromChat(agentId)` | The user launched the chat (or is a global `admin`) and can still operate on its project, as for the chat endpoints. | `OnChatResponse` and `OnChatCompleted` for every prompt of the chat; each carries the prompt's `sessionId`. |
+
+A refused subscription fails with a `HubException` that reads the same whether the run or chat does not exist or belongs to someone else. `/hubs/agent` is for agent pods only: a connection without an `agentId` is closed, and user tokens are refused.
 
 ### Settings (admin)
 

@@ -1,7 +1,6 @@
 @page "/consolidation"
 @attribute [Authorize(Policy = AccessPolicies.GlobalRead)]
 @layout CockpitLayout
-@implements IDisposable
 @using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
@@ -11,10 +10,12 @@
 @inject IUiConsolidationClient ConsolidationApi
 @inject IUiRunClient RunHistory
 @inject IUiWorkItemClient WorkItems
-@inject IAgentHubConnection HubConnection
 @inject CurrentAccess Access
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
+
+@* Runs end on the agents' side, so the last-run cards and the history refresh on a timer (spec 051 D8). *@
+<AutoRefresh IntervalSeconds="15" OnTick="LoadDataAsync" />
 
 <div class="cockpit-page">
     <div class="cockpit-page-header">
@@ -314,11 +315,6 @@
     private bool _statusIsError;
     private bool _isLoading = true;
 
-    // Hub subscription for real-time refresh (replaces ConsolidationService.OnChange).
-    // IChangeNotifier is registered as NullChangeNotifier in the web host (no-op), so we subscribe
-    // to IAgentHubConnection hub events instead — the same pattern used by Runs.razor.
-    private IDisposable? _completedSub;
-
     // Refactoring modal state
     private bool _showRefactoringModal;
     private bool _modalJustOpened;
@@ -332,29 +328,7 @@
     private bool _modalReviewEnabledIsOverride;
     private ElementReference _modalOverlayRef;
 
-    protected override async Task OnInitializedAsync()
-    {
-        // Subscribe to hub JobCompleted events for real-time page refresh.
-        // This replaces ConsolidationService.OnChange which will no longer fire after
-        // UpdateRunAsync writes are removed (issue #3028).
-        // Uses the same pattern as Runs.razor (HubMethodNames.OnRunCompleted).
-        // TODO [WARNING]: The async lambda below captures `this` (the Blazor component) but has no
-        // exception guard. If the circuit is disposed between the hub event firing and InvokeAsync
-        // completing, LoadDataAsync will throw ObjectDisposedException (or TaskCanceledException),
-        // which escapes the async-void-equivalent SignalR dispatch and may terminate the process.
-        // The old HandleConsolidationChanged had an explicit catch (ObjectDisposedException) for
-        // exactly this reason. Add a try/catch inside the lambda to swallow ObjectDisposedException
-        // and TaskCanceledException, matching the pattern in the removed handler. (DotNetSpecialist review)
-        _completedSub = HubConnection.On<string, JobCompletionPayload>(
-            HubMethodNames.OnRunCompleted,
-            (_, _) => InvokeAsync(async () =>
-            {
-                await LoadDataAsync();
-                StateHasChanged();
-            }));
-
-        await LoadDataAsync();
-    }
+    protected override async Task OnInitializedAsync() => await LoadDataAsync();
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -586,9 +560,4 @@
         ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
         _ => type.ToString()
     };
-
-    public void Dispose()
-    {
-        _completedSub?.Dispose();
-    }
 }

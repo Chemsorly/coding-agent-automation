@@ -11,8 +11,7 @@ public static class PipelineApiClientServiceCollectionExtensions
 {
     private const string BearerScheme = "Bearer";
     /// <summary>
-    /// Registers all typed HTTP clients, the <see cref="IAgentHubConnection"/> factory,
-    /// and the <see cref="PipelineApiClientOptions"/> singleton.
+    /// Registers all typed HTTP clients and the <see cref="PipelineApiClientOptions"/> singleton.
     /// </summary>
     /// <exception cref="ArgumentException">Thrown when <see cref="PipelineApiClientOptions.AgentApiKey"/> is null or empty.</exception>
     public static IServiceCollection AddPipelineApiClient(
@@ -96,10 +95,6 @@ public static class PipelineApiClientServiceCollectionExtensions
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-
-        // Hub connection — transient so each caller owns its own connection lifecycle
-        services.AddTransient<IAgentHubConnection>(_ =>
-            new AgentHubConnection($"{options.BaseUrl.TrimEnd('/')}/hubs/agent", options.AgentApiKey));
 
         return services;
     }

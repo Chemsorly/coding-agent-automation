@@ -170,7 +170,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
 
     private void RegisterRunsServices(Mock<CodingAgent.Web.Ui.IUiRunClient> mockHistory)
     {
-        var mockHub = new Mock<IAgentHubConnection>();
+        var mockHub = new Mock<IUiHubConnection>();
         mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
         mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(

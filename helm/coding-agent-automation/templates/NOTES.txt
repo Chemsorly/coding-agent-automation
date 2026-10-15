@@ -153,3 +153,8 @@ Scheduler leader applies them. Remove them from your values.
 Pipeline API: api.replicas > 1 requires signalr.redis.connectionString, so all replicas
 share agent and run state through Redis. The chart refuses to render without it.
 {{- end }}
+{{- if .Values.api.hubUrl }}
+
+Note: api.hubUrl is no longer used. The web connects to the UI hub at api.baseUrl + /hubs/ui with the
+signed-in user's token; only agents use /hubs/agent. Remove it from your values.
+{{- end }}

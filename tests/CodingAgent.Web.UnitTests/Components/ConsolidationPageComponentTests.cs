@@ -30,16 +30,10 @@ public class ConsolidationPageComponentTests : BunitContext
 
     private readonly Mock<IUiConsolidationClient> _mockConsolidationClient = new();
     private readonly Mock<IUiRunClient> _mockRunHistoryClient = new();
-    private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
 
     public ConsolidationPageComponentTests()
     {
         Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
-        // IAgentHubConnection mock: On<T1,T2> returns a no-op disposable (page subscribes in OnInitializedAsync).
-        _mockHubConnection
-            .Setup(h => h.On<string, JobCompletionPayload>(It.IsAny<string>(), It.IsAny<Action<string, JobCompletionPayload>>()))
-            .Returns(Mock.Of<IDisposable>());
-        _mockHubConnection.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
     }
 
     /// <summary>
@@ -80,7 +74,6 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Services.AddSingleton(_mockConsolidationClient.Object);
         Services.AddSingleton(_mockRunHistoryClient.Object);
-        Services.AddSingleton<IAgentHubConnection>(_mockHubConnection.Object);
         Services.AddSingleton(new Mock<IUiWorkItemClient>().Object);
     }
 

@@ -39,12 +39,22 @@ public interface IUserAccess
 }
 
 /// <summary>Reads the user and grant from the request's user-token principal.</summary>
-public sealed class UserAccess(IHttpContextAccessor httpContextAccessor) : IUserAccess
+public sealed class UserAccess : IUserAccess
 {
+    private readonly Func<System.Security.Claims.ClaimsPrincipal> _user;
     private AccessGrant? _grant;
 
-    private System.Security.Claims.ClaimsPrincipal User =>
-        httpContextAccessor.HttpContext?.User ?? new System.Security.Claims.ClaimsPrincipal();
+    public UserAccess(IHttpContextAccessor httpContextAccessor)
+        : this(() => httpContextAccessor.HttpContext?.User ?? new System.Security.Claims.ClaimsPrincipal())
+    {
+    }
+
+    private UserAccess(Func<System.Security.Claims.ClaimsPrincipal> user) => _user = user;
+
+    /// <summary>The access of a principal outside a request, such as a UI hub connection's user.</summary>
+    public static UserAccess For(System.Security.Claims.ClaimsPrincipal user) => new(() => user);
+
+    private System.Security.Claims.ClaimsPrincipal User => _user();
 
     public AccessGrant Grant => _grant ??= User.Identity?.IsAuthenticated == true
         ? AccessGrantClaims.FromClaims(User.Claims)

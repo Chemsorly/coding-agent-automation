@@ -6,7 +6,7 @@
 @using CodingAgent.Pipeline.Interfaces
 @using System.Reflection
 @using System.Runtime.InteropServices
-@inject IPipelineRunHistoryService HistoryService
+@inject IUiRunClient Runs
 @inject BuildInfo BuildInfo
 @inject CurrentAccess Access
 
@@ -157,7 +157,7 @@
 
         if (!Access.HasGlobalRead)
             return;
-        var history = await HistoryService.GetRunHistoryAsync();
+        var history = (await Runs.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 1000))).Items;
         _totalRuns = history.Count;
         _successCount = history.Count(r => r.FinalStep == PipelineStep.Completed);
         _failedCount = history.Count(r => r.FinalStep == PipelineStep.Failed);

@@ -27,7 +27,7 @@ public abstract class AgentChatTestBase : BunitContext
 
     protected Mock<IUiChatClient> Chat { get; } = new();
     protected Mock<IUiConfigClient> Config { get; } = new();
-    protected Mock<IAgentHubConnection> Hub { get; } = new();
+    protected Mock<IUiHubConnection> Hub { get; } = new();
 
     protected AgentChatTestBase()
     {
@@ -41,7 +41,6 @@ public abstract class AgentChatTestBase : BunitContext
         Hub.Setup(h => h.State).Returns(() => connected ? HubConnectionState.Connected : HubConnectionState.Disconnected);
         Hub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Callback(() => connected = true).Returns(Task.CompletedTask);
         Hub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        Hub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>())).Returns(Mock.Of<IDisposable>());
         Hub.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>())).Returns(Mock.Of<IDisposable>());
         Hub.Setup(h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>())).Returns(Mock.Of<IDisposable>());
 
@@ -73,8 +72,9 @@ public abstract class AgentChatTestBase : BunitContext
     }
 
     protected int SubscribeCount() => Hub.Invocations
-        .Count(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
-                    && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession);
+        .Count(i => i.Method.Name == nameof(IUiHubConnection.InvokeAsync)
+                    && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChat
+                    && i.Arguments[1] is string agent && agent == FakeAgentId);
 }
 
 /// <summary>bUnit component tests for the AgentChat page: setup UI, launch, prompt and end.</summary>
@@ -184,16 +184,15 @@ public class AgentChatComponentTests : AgentChatTestBase
     }
 
     [Fact]
-    public async Task Prompt_IsSentToTheChatsAgent_UnderTheSessionItSubscribedTo()
+    public async Task Launch_JoinsTheChatsHubGroupOnce_AndEachPromptGetsItsOwnSession()
     {
         var cut = await LaunchAsync();
+        cut.WaitForAssertion(() => SubscribeCount().Should().Be(1), timeout: TimeSpan.FromSeconds(5));
 
         await SendPromptAsync(cut, "hello there");
 
         cut.WaitForAssertion(() => Chat.Verify(c => c.SendPromptAsync(FakeAgentId, It.IsAny<string>(), "hello there", It.IsAny<CancellationToken>()), Times.Once));
-        var subscribed = Hub.Invocations.Single(i => i.Method.Name == nameof(IAgentHubConnection.InvokeAsync)
-            && i.Arguments[0] is string m && m == HubMethodNames.SubscribeToChatSession).Arguments[1];
-        Chat.Verify(c => c.SendPromptAsync(FakeAgentId, (string)subscribed!, "hello there", It.IsAny<CancellationToken>()), Times.Once);
+        SubscribeCount().Should().Be(1, "replies carry their session ID, so one subscription serves every prompt");
     }
 
     [Fact]
@@ -351,9 +350,9 @@ public class AgentChatLaunchErrorTests : AgentChatTestBase
 }
 
 /// <summary>
-/// AgentChat re-joins the active chat session group after a hub reconnect, and the reconnect handler
-/// is removed when the chat ends or the component is disposed. Issue #3551: hub group membership is
-/// lost on reconnect, so in-flight responses only keep arriving if SubscribeToChatSession runs again.
+/// AgentChat joins its chat pod's group on the UI hub again after a reconnect, and the reconnect handler is
+/// removed when the chat ends or the component is disposed. Issue #3551: hub group membership is lost on
+/// reconnect, so in-flight responses only keep arriving if SubscribeToChat runs again.
 /// </summary>
 public class AgentChatReconnectTests : AgentChatTestBase
 {
@@ -362,61 +361,57 @@ public class AgentChatReconnectTests : AgentChatTestBase
         Services.AddTestAccess();
     }
 
-    private async Task SendPromptAndWaitForSubscribeAsync(IRenderedComponent<AgentChat> cut)
+    private async Task<IRenderedComponent<AgentChat>> LaunchAndWaitForSubscribeAsync()
     {
-        await SendPromptAsync(cut);
-        cut.WaitForAssertion(() => SubscribeCount().Should().BeGreaterThan(0), timeout: TimeSpan.FromSeconds(5));
+        var cut = await LaunchAsync();
+        cut.WaitForAssertion(() => SubscribeCount().Should().Be(1), timeout: TimeSpan.FromSeconds(5));
+        return cut;
     }
 
     [Fact]
-    public async Task AgentChat_ResubscribesToChatSession_AfterReconnectWithActiveSession()
+    public async Task AgentChat_JoinsTheChatGroupAgain_AfterReconnect()
     {
-        var cut = await LaunchAsync();
-        await SendPromptAndWaitForSubscribeAsync(cut);
-        var countBefore = SubscribeCount();
+        var cut = await LaunchAndWaitForSubscribeAsync();
 
         Hub.Raise(m => m.Reconnected += null, "conn-2");
 
-        cut.WaitForAssertion(() => SubscribeCount().Should().BeGreaterThan(countBefore), timeout: TimeSpan.FromSeconds(5));
+        cut.WaitForAssertion(() => SubscribeCount().Should().Be(2), timeout: TimeSpan.FromSeconds(5));
     }
 
     [Fact]
-    public async Task AgentChat_DoesNotSubscribeOnReconnect_WhenNoActiveSession()
+    public async Task AgentChat_DoesNotSubscribeOnReconnect_BeforeAChatIsLaunched()
     {
-        await LaunchAsync();
+        Render<AgentChat>();
 
         Hub.Raise(m => m.Reconnected += null, "conn-2");
         await Task.Delay(200);
 
-        SubscribeCount().Should().Be(0, "SubscribeToChatSession must not be called when no session is active");
+        SubscribeCount().Should().Be(0, "no chat pod is running yet");
     }
 
     [Fact]
-    public async Task AgentChat_DoesNotSubscribeOnReconnect_AfterChatEnds()
+    public async Task AgentChat_LeavesTheChatGroup_AndDoesNotSubscribeOnReconnect_AfterChatEnds()
     {
-        var cut = await LaunchAsync();
-        await SendPromptAndWaitForSubscribeAsync(cut);
+        var cut = await LaunchAndWaitForSubscribeAsync();
         await cut.InvokeAsync(() => cut.FindAll("button").First(b => b.TextContent.Contains("End Chat")).Click());
         cut.WaitForAssertion(() => Assert.DoesNotContain("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
-        var countAfterEnd = SubscribeCount();
 
         Hub.Raise(m => m.Reconnected += null, "conn-2");
         await Task.Delay(200);
 
-        SubscribeCount().Should().Be(countAfterEnd);
+        SubscribeCount().Should().Be(1);
+        Hub.Verify(h => h.InvokeAsync(HubMethodNames.UnsubscribeFromChat, FakeAgentId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task AgentChat_RemovesReconnectedHandlerOnDispose()
     {
-        var cut = await LaunchAsync();
-        await SendPromptAndWaitForSubscribeAsync(cut);
-        var countBeforeDispose = SubscribeCount();
+        var cut = await LaunchAndWaitForSubscribeAsync();
 
         await cut.Instance.DisposeAsync();
         Hub.Raise(m => m.Reconnected += null, "conn-2");
         await Task.Delay(200);
 
-        SubscribeCount().Should().Be(countBeforeDispose);
+        SubscribeCount().Should().Be(1);
     }
 }

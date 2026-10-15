@@ -294,8 +294,7 @@ For full request/response examples, authentication details, and query parameters
 | `AGENT_API_KEY` | Master key for authenticating agent connections. Each agent Job receives its own key, HMAC(master_key, agent_id), from a per-Job Secret; agents never see the master key. |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
-| `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
-| `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
+| `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** The UI clients call its `/api/ui` surface and the pages connect to its UI hub, `{PipelineApi__BaseUrl}/hubs/ui`, as the signed-in user. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
 
 ### Web UI Authentication
 

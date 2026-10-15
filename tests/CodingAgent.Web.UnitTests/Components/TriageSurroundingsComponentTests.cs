@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -65,7 +66,7 @@ public class TriageSurroundingsComponentTests : BunitContext
         }, null));
         var triages = new Mock<CodingAgent.Web.Ui.IUiTriageClient>();
         triages.Setup(t => t.FindByRunAsync(runId.ToString(), It.IsAny<CancellationToken>())).ReturnsAsync(TriageId);
-        var hub = new Mock<IAgentHubConnection>();
+        var hub = new Mock<IUiHubConnection>();
         hub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
         var config = new Mock<IPipelineApiConfigClient>();
         config.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());

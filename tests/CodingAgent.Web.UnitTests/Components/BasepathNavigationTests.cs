@@ -222,11 +222,9 @@ public class BasepathNavigationTests : BunitContext
     [Fact]
     public void RunPage_DoesNotRenderAbsoluteInternalHrefs()
     {
-        var mockHub = new Mock<IAgentHubConnection>();
+        var mockHub = new Mock<IUiHubConnection>();
         mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
         mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>())).Returns(Mock.Of<IDisposable>());
-        mockHub.Setup(h => h.On<It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType>>())).Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType>>())).Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType, It.IsAnyType>>())).Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);

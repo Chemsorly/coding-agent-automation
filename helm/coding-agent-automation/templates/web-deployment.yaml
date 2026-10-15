@@ -109,7 +109,7 @@ spec:
             - configMapRef:
                 name: {{ include "coding-agent-automation.fullname" . }}-web-env
           env:
-            {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
+            {{- include "coding-agent-automation.otelHeadersEnv" . | nindent 12 }}
             {{- include "coding-agent-automation.userTokenEnv" . | nindent 12 }}
             {{- include "coding-agent-automation.dataProtectionKeyEnv" . | nindent 12 }}
             # Spec 049: secrets of the user login (the rest of the auth config is in auth.json).
@@ -131,16 +131,9 @@ spec:
             {{- end }}
             # The web host holds no Postgres and (spec 051 D10) no Redis connection: its Data
             # Protection ring comes from DataProtection__Key above, infrastructure health from the API.
-            # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
-            # Spec 045 Req 6.4: web must know API base URL and hub URL.
+            # Pipeline API connection: the UI clients call {BaseUrl}/api/ui, the UI hub is {BaseUrl}/hubs/ui.
             - name: PipelineApi__BaseUrl
               value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
-            - name: PipelineApi__HubUrl
-              value: {{ if .Values.api.hubUrl -}}
-                {{- .Values.api.hubUrl | quote }}
-              {{- else -}}
-                {{- printf "%s/hubs/agent" (include "coding-agent-automation.apiBaseUrl" .) | quote }}
-              {{- end }}
             # Downward API: expose namespace and pod name so OTEL_RESOURCE_ATTRIBUTES can reference
             # them via $(VAR_NAME) substitution. These MUST come before OTEL_RESOURCE_ATTRIBUTES.
             {{- include "coding-agent-automation.otelEnv" (dict "serviceName" (.Values.otel.webServiceName | default "coding-agent-web") "deploymentName" (printf "%s-web" (include "coding-agent-automation.fullname" .)) "root" .) | nindent 12 }}
@@ -149,15 +142,7 @@ spec:
               mountPath: /app/config/auth.json
               subPath: auth.json
               readOnly: true
-            - name: job-templates
-              mountPath: /app/config/job-templates.yaml
-              subPath: job-templates.yaml
-              readOnly: true
       volumes:
         - name: auth-config
           configMap:
             name: {{ include "coding-agent-automation.fullname" . }}-web-auth
-        - name: job-templates
-          configMap:
-            name: {{ include "coding-agent-automation.fullname" . }}-job-templates
-            optional: true

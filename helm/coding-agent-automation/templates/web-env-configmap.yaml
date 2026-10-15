@@ -19,7 +19,3 @@ data:
   WebUI__BasePath: {{ $web.env.basePath | default "./" | quote }}
   # Only an ingress with a tls section has an HTTPS URL to redirect to.
   WebUI__HttpsRedirect: {{ if and $web.ingress.enabled $web.ingress.tls $web.ingress.httpsRedirect }}"true"{{ else }}"false"{{ end }}
-  # The only work-distribution setting the web host reads: Agent Chat waits this long for the
-  # chat pod to connect. The other WorkDistribution__* keys belong to the API, Scheduler and
-  # Job Controller, which build and reconcile the Jobs.
-  WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}

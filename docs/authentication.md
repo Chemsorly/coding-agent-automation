@@ -7,7 +7,7 @@ The Job Controller, the Scheduler and agent pods use the agent API keys describe
 The Pipeline API has two surfaces:
 
 - **Service surface** (`/api/**` except `/api/ui/**`, and `/hubs/agent`): API keys only.
-- **UI surface** (`/api/ui/**`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints one token per browser session (circuit) and page request, and only for users with a role; it never calls the UI surface with the master API key.
+- **UI surface** (`/api/ui/**` and `/hubs/ui`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls; the UI hub's connect token lasts the session, and the hub closes the connection when it expires). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints one token per browser session (circuit) and page request, and only for users with a role; it never calls the UI surface with the master API key.
 
 An API endpoint that declares no policy is denied. A credential of one surface is never accepted on the other.
 

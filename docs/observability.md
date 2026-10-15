@@ -101,7 +101,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 |--------|------|------|-------------|
 | `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, polled from the agent registry by the Scheduler leader |
 | `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
-| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`, `operator_forbidden` |
+| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch` |
 | `token_vending.failures` | Counter | — | Token vending failures |
 
 ### Tag Schema

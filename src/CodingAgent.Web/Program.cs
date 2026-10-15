@@ -107,15 +107,6 @@ builder.Services.AddPipelineApiClient(new PipelineApiClientOptions
     AgentApiKey = agentApiKey
 });
 
-// Scoped hub connection — one per Blazor circuit (overrides the Transient registered
-// by AddPipelineApiClient above). Connects to the API hub using AGENT_API_KEY as Bearer.
-// Helm injects PipelineApi__HubUrl (double-underscore → PipelineApi:HubUrl IConfiguration key).
-// Falls back to baseUrl + /hubs/agent if HubUrl is not set.
-// See Req 3.6 L1 for the explicit wiring requirement.
-var apiHubUrl = builder.Configuration.GetValue<string>("PipelineApi:HubUrl")
-    ?? $"{apiBaseUrl.TrimEnd('/')}/hubs/agent";
-builder.Services.AddScoped<IAgentHubConnection>(_ => new AgentHubConnection(apiHubUrl, agentApiKey));
-
 builder.Services.AddInfrastructureServices();
 builder.Services.AddPipelineServices(Serilog.Log.Logger);
 builder.Services.AddPipelineCoreServices();

@@ -27,7 +27,11 @@ internal static class ApiSignalRRegistration
         IConfiguration configuration,
         IHostEnvironment environment)
     {
-        var signalR = services.AddAgentSignalRServices(environment);
+        var signalR = services.AddAgentSignalRServices(environment)
+            // The UI hub speaks JSON only: MessagePack is for agents, and the browser client has no formatter for
+            // the strongly-typed IDs (spec 051 D7).
+            .AddHubOptions<UiHub>(options => options.SupportedProtocols = ["json"]);
+        services.AddSingleton<IUiHubAuthorizer, CodingAgent.Api.Ui.UiHubAuthorizer>();
 
         // ── Optional Redis backplane (Req 5.8) ──────────────────────────────
         var redisConnectionString = configuration.GetValue<string>("SignalR:Redis:ConnectionString");

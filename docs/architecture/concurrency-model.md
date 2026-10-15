@@ -18,16 +18,15 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  Reads loop status and agents from /api/ui with the user's token            │
 │  No leader election, no Kubernetes API access, no SignalR hub of its own   │
 │                                                                             │
-│  No EF Core. No AgentHub. Connects to API via IPipelineApiConfigClient,    │
-│  IPipelineApiRunHistoryClient, IAgentHubConnection (from Api.Client,       │
-│  scoped per circuit).                                                       │
+│  No EF Core. No AgentHub. Live run output and chat replies come from the    │
+│  API's UI hub (IUiHubConnection, one per circuit, user token).              │
 └─────────────────────────────────────────────────────────────────────────────┘
-         │  REST calls (HTTP) + SignalR hub subscribe (IAgentHubConnection)
+         │  REST calls (HTTP) + SignalR UI hub subscribe (/hubs/ui, user token)
          ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Pipeline API  (CodingAgent.Api)                                       │
 │  ──────────────                                                             │
-│  AgentHub  — real-time hub for agent pods and Blazor circuits               │
+│  AgentHub (/hubs/agent) for agent pods; UiHub (/hubs/ui) for the UI         │
 │  AgentRegistryService  ─┐                                                  │
 │  OrchestratorRunService ├── singleton in-memory state (locking applies)    │
 │  PipelineDbContext (EF Core)  — authoritative Postgres access               │
@@ -254,7 +253,7 @@ The five processes communicate strictly via defined interfaces:
 | From | To | Mechanism |
 |------|----|-----------|
 | Orchestrator | Pipeline API | REST (HTTP via `IPipelineApiConfigClient`, `IPipelineApiWorkItemClient`, `IPipelineApiRunHistoryClient`) |
-| Orchestrator | Pipeline API | SignalR hub subscribe (`IAgentHubConnection`, scoped per Blazor circuit) |
+| Orchestrator | Pipeline API | SignalR UI hub `/hubs/ui` (`IUiHubConnection`, one per Blazor circuit, with the user's session-long token) |
 | Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, `PUT /api/scheduler/loop-status` (leader only), among others |
 | Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |

@@ -23,6 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The UI hub (spec 051 D7). The .NET SignalR client also runs in the browser. -->
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\CodingAgent.Contracts\CodingAgent.Contracts.csproj" />
   </ItemGroup>
 </Project>

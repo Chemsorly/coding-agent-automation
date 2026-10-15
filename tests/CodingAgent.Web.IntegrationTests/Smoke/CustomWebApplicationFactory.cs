@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
@@ -154,10 +155,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);
 
-            // Spec 045: IAgentHubConnection is scoped (one per Blazor circuit). Replace with a mock
-            // to prevent real SignalR connection attempts to localhost:9999/hubs/agent in tests.
-            services.RemoveAll<IAgentHubConnection>();
-            services.AddScoped<IAgentHubConnection>(_ => new Mock<IAgentHubConnection>().Object);
+            // The UI hub connection is scoped (one per Blazor circuit). Replace it with a mock so pages
+            // make no SignalR connection attempts to localhost:9999/hubs/ui in tests.
+            services.RemoveAll<IUiHubConnection>();
+            services.AddScoped<IUiHubConnection>(_ => new Mock<IUiHubConnection>().Object);
 
             // Spec 045: IPipelineApiRunHistoryClient is registered by AddPipelineApiClient() and would
             // try to connect to localhost:9999. Replace with a mock to prevent real HTTP calls.

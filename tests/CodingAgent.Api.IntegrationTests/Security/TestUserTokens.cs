@@ -28,6 +28,9 @@ internal static class TestUserTokens
         return UserTokens.Create(new UserTokenSubject(subject, username, identitySource), grant, now, now + UserTokens.HttpLifetime, Key);
     }
 
+    public static string ValidUntil(AccessGrant grant, DateTimeOffset expires, string subject = "oidc:tester", string? username = "tester") =>
+        UserTokens.Create(new UserTokenSubject(subject, username, "oidc"), grant, DateTimeOffset.UtcNow, expires, Key);
+
     public static string LocalAdmin() => For(Global(AccessRole.Admin), "local:admin", "admin", "local");
 
     public static string Expired(AccessGrant grant)

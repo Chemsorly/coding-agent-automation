@@ -27,9 +27,6 @@ public sealed class RequiresActiveJobAttribute : Attribute;
 ///         (ConnectionId → agentId lookup in the registry).</item>
 ///   <item>Methods decorated with <see cref="RequiresActiveJobAttribute"/> additionally validate
 ///         that the <c>jobId</c> (first parameter) matches the agent's <c>ActiveJobId</c>.</item>
-///   <item>Operator-authenticated callers (the Blazor UI circuit — master key, no <c>agentId</c>
-///         query parameter) are not agents and never call <c>RegisterAgent</c>. They are allowed
-///         to invoke the UI subscription methods only.</item>
 /// </list>
 /// Mismatched calls throw <see cref="HubException"/> and are logged.
 ///
@@ -38,19 +35,6 @@ public sealed class RequiresActiveJobAttribute : Attribute;
 /// </summary>
 public sealed class AgentAuthorizationFilter : IHubFilter
 {
-    /// <summary>
-    /// Hub methods an operator-authenticated (non-agent) connection may invoke.
-    /// The Blazor UI subscribes to <c>run-{jobId}</c> groups through these,
-    /// and to <c>chat-session-{sessionId}</c> groups for interactive chat streaming.
-    /// </summary>
-    private static readonly HashSet<string> OperatorAllowedMethods = new(StringComparer.Ordinal)
-    {
-        nameof(AgentHub.SubscribeToRun),
-        nameof(AgentHub.UnsubscribeFromRun),
-        nameof(AgentHub.SubscribeToChatSession),
-        nameof(AgentHub.UnsubscribeFromChatSession)
-    };
-
     private const string ReasonTag = "reason";
 
     private readonly IAgentRegistryService _registry;
@@ -68,22 +52,13 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         HubInvocationContext invocationContext,
         Func<HubInvocationContext, ValueTask<object?>> next)
     {
-        // Only apply authorization to AgentHub — skip Blazor's internal ComponentHub and other hubs
+        // Only AgentHub — UiHub checks its callers in its own methods
         if (invocationContext.Hub is not AgentHub)
         {
             return await next(invocationContext);
         }
 
-        bool shouldInvoke;
-        if (IsOperatorConnection(invocationContext))
-        {
-            GuardOperatorMethod(invocationContext);
-            shouldInvoke = true;
-        }
-        else
-        {
-            shouldInvoke = GuardAgentMethod(invocationContext);
-        }
+        var shouldInvoke = GuardAgentMethod(invocationContext);
 
         // Short-circuit: skip hub method invocation when GuardAgentMethod signals idle-completion
         // (e.g. ReportJobCompleted from an agent that already completed via HTTP, issue #2956).
@@ -91,34 +66,6 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             return default;
 
         return await next(invocationContext);
-    }
-
-    /// <summary>
-    /// True when the caller authenticated with the master key and no <c>agentId</c> query
-    /// parameter — <c>AgentApiKeyAuthHandler</c> stamps <c>auth_kind=operator</c> for that case.
-    /// In practice this is the Blazor UI circuit.
-    /// </summary>
-    private static bool IsOperatorConnection(HubInvocationContext ctx) =>
-        string.Equals(
-            ctx.Context.User?.FindFirst("auth_kind")?.Value,
-            "operator",
-            StringComparison.Ordinal);
-
-    /// <summary>
-    /// Operator connections are not agents and never call <c>RegisterAgent</c>. They may join and
-    /// leave run groups so the UI can stream output; everything else on this hub is agent-facing.
-    /// </summary>
-    private void GuardOperatorMethod(HubInvocationContext ctx)
-    {
-        if (OperatorAllowedMethods.Contains(ctx.HubMethodName))
-            return;
-
-        PipelineTelemetry.HubAuthRejections.Add(1,
-            new KeyValuePair<string, object?>(ReasonTag, PipelineTelemetry.HubAuthRejectionReasons.OperatorForbidden));
-        _logger.Warning(
-            "Hub method {Method} rejected — operator connection {ConnectionId} may only invoke UI subscription methods",
-            ctx.HubMethodName, ctx.Context.ConnectionId);
-        throw new HubException($"Method {ctx.HubMethodName} is not available to operator connections");
     }
 
     /// <summary>
@@ -145,9 +92,6 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         // connection — meaning Register() has completed on some replica and written the new
         // connectionId. If Redis still holds a previous connection's ID, the guard rejects the
         // entry and the caller must retry (the Polly pipeline covers that residual window).
-        //
-        // Operator connections never reach this method (IsOperatorConnection check routes them to
-        // GuardOperatorMethod first), so the ?agentId fallback cannot be abused by the UI circuit.
         // TODO: ctx.Context.Features is non-nullable in the SignalR contract and is always initialized
         // before InvokeMethodAsync — the `is not null` guard is redundant and misleading. The real
         // null-safety is provided by the ?. null-conditional on GetHttpContext() below. Remove this

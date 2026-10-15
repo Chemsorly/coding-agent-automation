@@ -16,6 +16,10 @@ internal static class UiClientRegistration
         services.AddSingleton(new UserTokenSigningKey(userTokenSigningKey));
         services.AddScoped<IUiAccessTokenSource, UserTokenProvider>();
 
+        // One UI hub connection per circuit (spec 051 D7), with the user's session-long hub token.
+        services.AddScoped<IUiHubConnection>(sp => new UiHubConnection(
+            new Uri($"{apiBaseUrl.TrimEnd('/')}{CodingAgent.Pipeline.HubRoutes.Ui}"), sp.GetRequiredService<IUiAccessTokenSource>()));
+
         services.AddHttpClient<IUiMeClient, UiMeClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiHealthClient, UiHealthClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiConfigClient, UiConfigClient>(client => client.BaseAddress = new Uri(apiBaseUrl));

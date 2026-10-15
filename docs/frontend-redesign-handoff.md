@@ -101,7 +101,7 @@ Four sections, each from a real source; every row links to the provider:
 Launch-a-pod interactive chat — **not** a run debugger.
 - **Launch** — `IPipelineApiChatClient.DispatchChatPodAsync(agentSelector, model, effort)` → `agentId` (blocks until pod connects; 409 already active, 503 no PVC, 504 timeout). Selector = a Job Template's labels; model/effort resolved via `ProfileResolver` over `AgentProfile[]`.
 - **Send prompt** — build with `IChatPromptBuilder`, deliver via `IPipelineApiAgentClient.AssignChatPromptAsync(agentId, ChatPromptMessage)`.
-- **Streaming** — `IAgentHubConnection` (SignalR): `SubscribeToChatSession`, `HubMethodNames.OnChatResponse` / `OnChatCompleted`. Roles: `ChatRole` {User, Agent, System}.
+- **Streaming** — `IUiHubConnection` (SignalR UI hub): `SubscribeToChat(agentId)`, `HubMethodNames.OnChatResponse` / `OnChatCompleted` (each carries the prompt's session ID). Roles: `ChatRole` {User, Agent, System}.
 - **Lifecycle** — `TerminateChatSessionAsync`, `SendKeepaliveAsync` (30s heartbeat).
 - **Reuse:** `AgentChat.razor` (the flow already exists — re-shell it).
 

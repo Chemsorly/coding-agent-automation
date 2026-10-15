@@ -10,7 +10,7 @@
 @inject IUiChatClient Chat
 @inject IUiConfigClient UiConfig
 @inject IJSRuntime JS
-@inject IAgentHubConnection HubConnection
+@inject IUiHubConnection HubConnection
 @inject CurrentAccess Access
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
@@ -372,30 +372,26 @@
                 _ = SendKeepaliveAsync(agentIdForKeepalive);
         }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
-        // Re-join the chat session group after every hub reconnect so in-flight responses
-        // keep arriving. Guarded by _isWaitingForResponse so we only re-subscribe when a
-        // reply is expected — between prompts _activeSessionId holds the previous session ID
-        // (HandleChatCompleted intentionally does not clear it) and we must not re-subscribe
-        // to a finished session. CancellationToken.None is intentional: this handler fires on
-        // a background thread and _cts may have been disposed by the time it runs.
-        // TODO: The guard reads _isWaitingForResponse and _activeSessionId directly from the
-        // SignalR reconnect callback thread without marshalling through InvokeAsync, unlike the
-        // RunPage handler which wraps its body. On weak-memory architectures (ARM) the reconnect
-        // thread may observe stale values for these fields, which are written on the Blazor sync
-        // context. Concrete risk: a stale _isWaitingForResponse == true after completion causes a
-        // redundant SubscribeToChatSession call to a finished session. Fix: wrap the entire
-        // handler body in InvokeAsync(async () => { ... }) so the reads happen on the sync
-        // context and observe the latest field values — consistent with the RunPage handler.
-        // TODO: The async lambda is invoked fire-and-forget by the SignalR event infrastructure.
-        // If HubConnection.InvokeAsync throws (e.g. transport closed during a rapid reconnect
-        // sequence), the exception becomes an unobserved task and TaskScheduler.UnobservedTaskException
-        // fires. Wrap the body in try/catch(Exception) and log the failure to make it observable.
-        _reconnectedHandler = async _ =>
-        {
-            if (!_isWaitingForResponse || string.IsNullOrEmpty(_activeSessionId)) return;
-            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None); // intentional: background-thread, _cts may be disposed
-        };
+        // One subscription serves every prompt of this chat: replies carry their session ID. A reconnect is a
+        // new hub connection without groups, so the handler joins the chat's group again.
+        await JoinChatGroupAsync();
+        _reconnectedHandler = _ => InvokeAsync(JoinChatGroupAsync);
         HubConnection.Reconnected += _reconnectedHandler;
+    }
+
+    // Joins the chat pod's group on the UI hub, which only the chat's owner may (spec 051 D7).
+    private async Task JoinChatGroupAsync()
+    {
+        if (!_isChatActive || string.IsNullOrEmpty(_selectedAgentId) || HubConnection.State != HubConnectionState.Connected) return;
+        try { await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChat, _selectedAgentId, CancellationToken.None); }
+        catch (Exception ex) { Log.Warning(ex, "AgentChat: joining the chat's hub group failed — responses will not stream"); }
+    }
+
+    private async Task LeaveChatGroupAsync()
+    {
+        if (string.IsNullOrEmpty(_selectedAgentId) || HubConnection.State != HubConnectionState.Connected) return;
+        try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChat, _selectedAgentId, CancellationToken.None); }
+        catch (Exception ex) { Log.Debug(ex, "AgentChat: leaving the chat's hub group failed"); }
     }
 
     // ── SendPrompt ────────────────────────────────────────────────────────────
@@ -413,13 +409,14 @@
 
         try
         {
-            await UnsubscribePreviousSessionAsync();
+            // A new session ID per prompt: replies of an earlier prompt no longer match it.
             _activeSessionId = Guid.NewGuid().ToString();
-            await SubscribeAndSendPromptAsync(prompt);
+            // The API builds the prompt (MCP servers, secrets, steering) and checks the chat is ours;
+            // a refusal surfaces as InvalidOperationException with the reason.
+            await Chat.SendPromptAsync(_selectedAgentId, _activeSessionId, prompt);
         }
         catch (Exception ex)
         {
-            await UnsubscribeCurrentSessionOnErrorAsync();
             _activeSessionId = null;
             _messages.Add(new ChatMessage
             {
@@ -433,39 +430,11 @@
         await ScrollToBottom();
     }
 
-    private async Task UnsubscribePreviousSessionAsync()
-    {
-        // Leave the previous session's hub group before opening a new one to prevent duplicate events.
-        if (string.IsNullOrEmpty(_activeSessionId) || HubConnection.State != HubConnectionState.Connected) return;
-        try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
-        catch (Exception ex) { Log.Warning(ex, "AgentChat: failed to unsubscribe previous session {SessionId}", _activeSessionId); }
-    }
-
-    private async Task SubscribeAndSendPromptAsync(string prompt)
-    {
-        var sessionId = _activeSessionId ?? throw new InvalidOperationException("_activeSessionId must be set before calling SubscribeAndSendPromptAsync");
-
-        if (HubConnection.State == HubConnectionState.Connected)
-            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChatSession, sessionId, CancellationToken.None);
-
-        // The API builds the prompt (MCP servers, secrets, steering) and checks the chat is ours;
-        // a refusal surfaces as InvalidOperationException with the reason.
-        await Chat.SendPromptAsync(_selectedAgentId, sessionId, prompt);
-    }
-
     // Best effort: a missed keepalive only shortens the idle window, and the next follows in 30s.
     private async Task SendKeepaliveAsync(string agentId)
     {
         try { await Chat.KeepaliveAsync(agentId); }
         catch (Exception ex) { Log.Debug(ex, "AgentChat: keepalive failed for agent {AgentId}", agentId); }
-    }
-
-    private async Task UnsubscribeCurrentSessionOnErrorAsync()
-    {
-        // Prompt never reached the agent — no OnChatResponse/OnChatCompleted will fire for this session.
-        if (string.IsNullOrEmpty(_activeSessionId) || HubConnection.State != HubConnectionState.Connected) return;
-        try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
-        catch (Exception unsubEx) { Log.Warning(unsubEx, "AgentChat: failed to unsubscribe after send failure for session {SessionId}", _activeSessionId); }
     }
 
     // ── EndChat ───────────────────────────────────────────────────────────────
@@ -485,13 +454,7 @@
         // Stop keepalive timer — pod is about to be terminated
         if (_keepaliveTimer is not null) { await _keepaliveTimer.DisposeAsync(); _keepaliveTimer = null; }
 
-        // Unsubscribe from the hub group for the current session before terminating
-        if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
-        {
-            try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
-            catch (Exception ex) { Log.Warning(ex, "AgentChat: hub UnsubscribeFromChatSession failed"); }
-        }
-
+        await LeaveChatGroupAsync();
         await EndChatK8sModeAsync();
 
         _isWaitingForResponse = false;
@@ -564,12 +527,8 @@
             await _cts.CancelAsync();
         _cts?.Dispose();
 
-        // Unsubscribe from the active session group if still active
-        if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
-        {
-            try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
-            catch (Exception ex) { Log.Debug(ex, "AgentChat: hub UnsubscribeFromChatSession failed on dispose"); }
-        }
+        if (_isChatActive)
+            await LeaveChatGroupAsync();
         _activeSessionId = null; // prevent stale OnChatCompleted callbacks from passing the session-ID guard
 
         if (_isChatActive && !string.IsNullOrEmpty(_selectedAgentId))
