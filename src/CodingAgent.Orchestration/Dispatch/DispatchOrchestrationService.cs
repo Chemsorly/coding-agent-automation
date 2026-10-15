@@ -519,7 +519,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         PipelineRunType runType,
         ILogger logger)
     {
-        var agentSelector = AgentSelectorKey.From(result.ResolvedProfile.MatchLabels);
+        var agentSelector = result.ResolvedProfile.JobTemplateKey();
 
         return new JobDistributionRequest
         {

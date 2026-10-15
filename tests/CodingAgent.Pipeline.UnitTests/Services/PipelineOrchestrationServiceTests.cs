@@ -352,9 +352,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
+        // EnsureSessionAsync is called twice: once in VerifyBaselineStep.RunAgentHealthCheckAsync
+        // (added in issue #3648) and once in RunSingleAnalysisAttemptAsync.
         _mockAgentProvider.Verify(
             p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Exactly(2));
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(
                 It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase") && r.UseResume),

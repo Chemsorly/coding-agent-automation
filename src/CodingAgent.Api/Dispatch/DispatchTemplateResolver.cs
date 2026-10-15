@@ -64,7 +64,7 @@ internal sealed class DispatchTemplateResolver
             return (null, null);
         }
 
-        var profileSelector = AgentSelectorKey.From(profile.MatchLabels);
+        var profileSelector = profile.JobTemplateKey();
 
         var template = _templateProvider.Resolve(profileSelector);
         if (template is not null && warnOnExpansion)

@@ -912,6 +912,76 @@ public class RunPageComponentTests : BunitContext
 
         cut.FindAll("[data-testid='redispatch-btn']").Should().ContainSingle();
     }
+
+    // ── Issue #3565: consolidation run identity ────────────────────────────
+
+    /// <summary>
+    /// A completed consolidation run must show the kind chip, a human-readable title without the
+    /// dedup key, a result section, and a "Consolidation page →" link.
+    /// </summary>
+    [Fact]
+    public void ConsolidationRun_ShowsKindTitleResultAndConsolidationLink_WithoutIssueNumber()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateName = "my-template",
+            ConsolidationTemplateId = "tpl-1",
+            IssueIdentifier = "RefactoringDetection:tpl-1",
+            IssueTitle = "RefactoringDetection:tpl-1",
+            ConsolidationResultSummary = "Created 3 refactoring issue(s): #1, #2, #3",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Title must be the human-readable kind+template form (not the dedup key).
+        cut.Find("h1").TextContent.Should().Be("Refactoring scan · my-template");
+
+        // The raw dedup key must not appear in the rendered markup.
+        cut.Markup.Should().NotContain("#RefactoringDetection");
+
+        // Kind chip must show the specific type.
+        cut.Find("[data-testid='consolidation-type-chip']").TextContent.Should().Be("Refactoring Scan");
+
+        // Result section must be present and contain the summary.
+        cut.Find("[data-testid='consolidation-result']").TextContent.Should().Contain("Created 3 refactoring issue(s): #1, #2, #3");
+
+        // Consolidation link must point to the internal Consolidation page.
+        cut.Find("[data-testid='consolidation-page-link']").GetAttribute("href").Should().Be("consolidation");
+    }
+
+    /// <summary>
+    /// When ConsolidationResultSummary is null, the result section must be absent from the page.
+    /// </summary>
+    [Fact]
+    public void ConsolidationRun_WithoutResultSummary_HasNoResultSection()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateName = "my-template",
+            ConsolidationTemplateId = "tpl-1",
+            IssueIdentifier = "RefactoringDetection:tpl-1",
+            IssueTitle = "RefactoringDetection:tpl-1",
+            ConsolidationResultSummary = null,
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.FindAll("[data-testid='consolidation-result']").Should().BeEmpty();
+    }
 }
 
 /// <summary>

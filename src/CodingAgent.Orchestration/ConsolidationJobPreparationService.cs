@@ -16,7 +16,6 @@ namespace CodingAgent.Orchestration;
 public sealed class ConsolidationJobPreparationService : IConsolidationJobPreparationService
 {
     private readonly IProviderConfigStore _providerConfigStore;
-    private readonly IAgentProfileStore _agentProfileStore;
     private readonly IProjectStore _projectStore;
     private readonly ITokenVendingService _tokenVending;
     private readonly IPipelineConfigStore _pipelineConfigStore;
@@ -27,7 +26,6 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         IProjectStore projectStore,
         ITokenVendingService tokenVending,
         ILogger logger,
-        IAgentProfileStore? agentProfileStore = null,
         IPipelineConfigStore? pipelineConfigStore = null)
     {
         ArgumentNullException.ThrowIfNull(providerConfigStore);
@@ -36,11 +34,6 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         ArgumentNullException.ThrowIfNull(logger);
 
         _providerConfigStore = providerConfigStore;
-        _agentProfileStore = agentProfileStore
-            ?? providerConfigStore as IAgentProfileStore
-            ?? throw new ArgumentException(
-                $"{nameof(providerConfigStore)} must implement IAgentProfileStore when {nameof(agentProfileStore)} is not provided",
-                nameof(providerConfigStore));
         _projectStore = projectStore;
         _tokenVending = tokenVending;
         _logger = logger;
@@ -59,7 +52,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         IProjectStore projectStore,
         ITokenVendingService tokenVending,
         ILogger logger)
-        : this((IProviderConfigStore)configStore, projectStore, tokenVending, logger, configStore, configStore)
+        : this((IProviderConfigStore)configStore, projectStore, tokenVending, logger, configStore)
     {
     }
 
@@ -67,13 +60,11 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
     public async Task<ConsolidationJobPreparationResult> PrepareAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
-        IReadOnlyList<string> agentLabels,
+        AgentProfile? profile,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(agentLabels);
-
         var rawConfigs = new List<ProviderConfig>();
-        await ResolveAgentProviderConfigAsync(rawConfigs, agentLabels, ct);
+        await ResolveAgentProviderConfigAsync(rawConfigs, profile, ct);
 
         var repoProviderId = "";
         string? brainProviderId = null;
@@ -107,40 +98,38 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
     }
 
     /// <summary>
-    /// Resolves the agent provider config via profile or fallback, appending to rawConfigs.
+    /// Resolves the agent provider config from the supplied profile, appending to rawConfigs.
+    /// When the profile is null (work item queued before this change, or profile deleted/disabled),
+    /// no agent provider config is injected and a warning is logged.
     /// </summary>
     private async Task ResolveAgentProviderConfigAsync(
         List<ProviderConfig> rawConfigs,
-        IReadOnlyList<string> agentLabels,
+        AgentProfile? profile,
         CancellationToken ct)
     {
-        var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-        var profileResolver = new ProfileResolver();
-        var profile = profileResolver.Resolve(profiles, agentLabels);
-
         if (profile is not null)
         {
+            var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
             var agentConfig = agentConfigs.TryGetProviderConfig(profile.AgentProviderConfigId);
             if (agentConfig is not null)
             {
                 rawConfigs.Add(agentConfig);
                 _logger.Debug(
-                    "ConsolidationJobPreparationService: resolved agent provider via profile '{ProfileId}' for labels [{Labels}]",
-                    profile.Id, string.Join(", ", agentLabels));
+                    "ConsolidationJobPreparationService: resolved agent provider via profile '{ProfileId}'",
+                    profile.Id);
             }
             return;
         }
 
-        // No matching profile — in Kubernetes mode the dispatched pod's provider type must
-        // match the resolved agent config. Without a matching profile we cannot know which
-        // provider to use, so we log a warning and skip adding an agent config. The dispatch
-        // will fail with a provider-resolution error rather than silently using the wrong provider.
+        // No profile — cannot determine which agent provider to use.
+        // TODO: [WARNING] Requirement 8 says the warning should name the work item's selector, but this
+        // method no longer receives the selector (it accepts AgentProfile? directly). The inline comment
+        // "The caller logs the work item's selector" is also inaccurate: EnrichConsolidationCoreAsync
+        // returns null before calling PrepareAsync when profile is null, so in practice this branch is
+        // only reachable from direct calls (tests or future callers outside the current enrichment path).
         _logger.Warning(
-            "ConsolidationJobPreparationService: no profile matches labels [{Labels}] — " +
-            "no agent provider config will be injected. Ensure an AgentProfile with matchLabels " +
-            "matching the job's AgentSelector exists.",
-            string.Join(", ", agentLabels));
+            "ConsolidationJobPreparationService: no agent profile supplied — " +
+            "no agent provider config will be injected.");
     }
 
     /// <summary>

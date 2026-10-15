@@ -1,7 +1,6 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
-using CodingAgent.Web.Services;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using Serilog;
