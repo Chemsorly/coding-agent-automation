@@ -48,7 +48,8 @@ public sealed class ConsolidationService : IConsolidationService
         ConsolidationRunType type,
         TemplateId? templateId,
         CancellationToken ct,
-        bool autoDispatch = false)
+        bool autoDispatch = false,
+        RefactoringScanFocus focus = RefactoringScanFocus.All)
     {
         var scope = await ResolveConsolidationScopeAsync(type, templateId, ct);
         if (scope is null)
@@ -76,7 +77,7 @@ public sealed class ConsolidationService : IConsolidationService
         var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
 
-        var request = BuildConsolidationDistributionRequest(traceContext, type, selection, scope, autoDispatch);
+        var request = BuildConsolidationDistributionRequest(traceContext, type, selection, scope, autoDispatch, focus);
 
         var result = await TryDistributeAsync(_workDistributor, request, type, scope.TemplateIdValue, ct);
         if (result is null)
@@ -190,7 +191,8 @@ public sealed class ConsolidationService : IConsolidationService
         ConsolidationRunType type,
         ConsolidationAgentSelection selection,
         ConsolidationScope scope,
-        bool autoDispatch)
+        bool autoDispatch,
+        RefactoringScanFocus focus)
     {
         // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
         // the brain for brain consolidation, the template (and so its repository) for a refactoring scan,
@@ -217,6 +219,7 @@ public sealed class ConsolidationService : IConsolidationService
             ConsolidationTemplateId = scope.TemplateIdValue,
             ConsolidationTemplateName = scope.TemplateIdValue is null ? null : scope.TemplateName,
             AutoDispatch = autoDispatch,
+            RefactoringFocus = focus,
             ProjectId = !string.IsNullOrEmpty(scope.ProjectId) && Guid.TryParse(scope.ProjectId, out var pid)
                 ? pid
                 : (Guid?)null,

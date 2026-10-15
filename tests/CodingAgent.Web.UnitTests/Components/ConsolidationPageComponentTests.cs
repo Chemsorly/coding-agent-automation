@@ -522,7 +522,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ThrowsAsync(new InvalidOperationException(Rejected));
 
         var cut = Render<Consolidation>();
@@ -553,8 +553,8 @@ public class ConsolidationPageComponentTests : BunitContext
         // test that exercises ConsolidationPageService.TriggerAsync directly and asserts on the returned
         // message content. See review finding (TestQualityReviewer, WARNING).
         _mockConsolidationClient
-            .Setup(s => s.TriggerAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((ConsolidationRunType type, string? _, bool __, CancellationToken ___) =>
+            .Setup(s => s.TriggerAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
+            .Returns((ConsolidationRunType type, string? _, bool __, CancellationToken ___, RefactoringScanFocus ____) =>
                 Task.FromException<string>(new InvalidOperationException(type switch
                 {
                     ConsolidationRunType.BrainConsolidation => "Brain consolidation rejected for Test Template — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
@@ -663,7 +663,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -676,7 +676,7 @@ public class ConsolidationPageComponentTests : BunitContext
         startButton.Click();
 
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", false, It.IsAny<CancellationToken>()), Times.Once);
+            ConsolidationRunType.RefactoringDetection, "t1", false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
     }
 
     [Fact]
@@ -689,7 +689,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -705,7 +705,36 @@ public class ConsolidationPageComponentTests : BunitContext
         startButton.Click();
 
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", true, It.IsAny<CancellationToken>()), Times.Once);
+            ConsolidationRunType.RefactoringDetection, "t1", true, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
+    }
+
+    [Fact]
+    public void RefactoringModal_FocusTests_PassesFocusToTrigger()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(issueProviderId: "issue-1", repoProviderId: "repo-1")
+        };
+        RegisterServices(templates: templates);
+
+        _mockConsolidationClient.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
+            .ReturnsAsync(Queued);
+
+        var cut = Render<Consolidation>();
+
+        var refactoringButton = cut.FindAll(".btn-trigger")
+            .First(b => b.TextContent.Contains("Refactoring Scan"));
+        refactoringButton.Click();
+
+        // Change the focus dropdown to "Tests"
+        cut.Find("[data-testid=refactoring-focus]").Change(RefactoringScanFocus.Tests.ToString());
+
+        var startButton = cut.Find(".modal-card .btn-save");
+        startButton.Click();
+
+        _mockConsolidationClient.Verify(s => s.TriggerAsync(
+            ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<bool>(), It.IsAny<CancellationToken>(), RefactoringScanFocus.Tests), Times.Once);
     }
 
     [Fact]
@@ -729,7 +758,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Never);
     }
 
     [Fact]
@@ -742,7 +771,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -753,7 +782,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()), Times.Once);
+            ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
     }
 
     [Fact]
@@ -766,7 +795,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -777,7 +806,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>()), Times.Once);
+            ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
     }
 
     // ═══ Issue #1772: Modal focus and Enter-key bubble fixes ═══
@@ -859,7 +888,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Assert.NotEmpty(cut.FindAll(".modal-overlay"));
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Never);
     }
 
     [Fact]
@@ -872,7 +901,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -884,7 +913,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+            ConsolidationRunType.RefactoringDetection, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
     }
 
     [Fact]
@@ -905,7 +934,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Never);
     }
 
     // ═══ Dispatch tests ═══
@@ -919,7 +948,7 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()))
+                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -928,7 +957,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationClient.Verify(
             s => s.TriggerAsync(
-                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()),
+                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()),
             Times.Once,
             "TriggerAsync must be called exactly once");
     }
@@ -943,7 +972,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ThrowsAsync(new InvalidOperationException(Rejected));
 
         var cut = Render<Consolidation>();
@@ -951,7 +980,7 @@ public class ConsolidationPageComponentTests : BunitContext
         cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Brain Consolidation")).Click();
 
         _mockConsolidationClient.Verify(
-            s => s.TriggerAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            s => s.TriggerAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()),
             Times.Once);
     }
 
@@ -964,7 +993,7 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -974,7 +1003,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationClient.Verify(
             s => s.TriggerAsync(
-                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()),
             Times.Once);
     }
 
@@ -987,7 +1016,7 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>()))
+                ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
@@ -995,7 +1024,7 @@ public class ConsolidationPageComponentTests : BunitContext
         cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Generate Suggestions")).Click();
 
         _mockConsolidationClient.Verify(
-            s => s.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>()),
+            s => s.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()),
             Times.Once);
     }
 
@@ -1009,7 +1038,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>()))
+                ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
             .ReturnsAsync(Queued);
 
         var cut = Render<Consolidation>();
