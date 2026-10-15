@@ -51,7 +51,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     private void RegisterInsightsServices(Mock<CodingAgent.Web.Ui.IUiRunClient> mockHistory)
     {
         Services.AddSingleton(mockHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
@@ -107,7 +107,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         mockWorkItems ??= BuildEmptyWorkItemsMock();
 
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());
@@ -181,7 +181,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
             .Returns(Mock.Of<IDisposable>());
 
         Services.AddSingleton(mockHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());

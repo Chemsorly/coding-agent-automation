@@ -50,7 +50,7 @@ public class CockpitLayoutComponentTests : BunitContext
                 HasMore = false
             });
         Services.AddSingleton(_mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
 
         Services.AddSingleton(_state);
 

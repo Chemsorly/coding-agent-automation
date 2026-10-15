@@ -52,7 +52,7 @@ public class OverviewComponentTests : BunitContext
         mockWorkItems ??= BuildEmptyWorkItemsMock();
 
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());

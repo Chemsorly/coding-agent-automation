@@ -24,6 +24,13 @@ internal static class UiClientRegistration
         services.AddHttpClient<IUiWorkItemClient, UiWorkItemClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiConsolidationClient, UiConsolidationClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiLoopClient, UiLoopClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+        // Creating several issues on a slow tracker can take longer than the default timeout. No retries:
+        // the POSTs are not idempotent (a retried re-run would start a second attempt).
+        services.AddHttpClient<IUiTriageClient, UiTriageClient>(client =>
+        {
+            client.BaseAddress = new Uri(apiBaseUrl);
+            client.Timeout = TimeSpan.FromMinutes(2);
+        });
         services.AddHttpClient<IUiAgentClient, UiAgentClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         // The backlog pages through every enabled issue provider and checks each issue's dependencies.
         services.AddHttpClient<IUiBrowseClient, UiBrowseClient>(client =>

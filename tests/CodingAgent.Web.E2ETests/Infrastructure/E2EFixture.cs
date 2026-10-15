@@ -323,6 +323,25 @@ public sealed class E2EFixture : IAsyncLifetime
     }
 
     /// <summary>
+    /// A client for the API's UI surface (<c>/api/ui/**</c>, spec 051 D1), which takes only user tokens: it
+    /// carries one for "tester" with <paramref name="grant"/> (global admin by default), signed with the
+    /// harness key the way the web host signs them.
+    /// </summary>
+    public HttpClient CreateUiApiClient(CodingAgent.Contracts.Auth.AccessGrant? grant = null)
+    {
+        var client = (_apiFactory ?? throw new InvalidOperationException("API host not started")).CreateClient();
+        var now = DateTimeOffset.UtcNow;
+        var token = CodingAgent.Infrastructure.Common.Auth.UserTokens.Create(
+            new CodingAgent.Infrastructure.Common.Auth.UserTokenSubject("e2e:tester", "tester", "e2e"),
+            grant ?? new CodingAgent.Contracts.Auth.AccessGrant(CodingAgent.Contracts.Auth.AccessRole.Admin, new Dictionary<string, CodingAgent.Contracts.Auth.AccessRole>(), []),
+            now,
+            now.AddMinutes(30),
+            CodingAgent.Infrastructure.Common.Auth.UserTokens.CreateSigningKey(E2ETestDefaults.UserTokenSigningKey));
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    /// <summary>
     /// Returns the shared Playwright browser, launching it on first use.
     ///
     /// Launching costs about a second and requires the Chromium bundle to be installed, so it is

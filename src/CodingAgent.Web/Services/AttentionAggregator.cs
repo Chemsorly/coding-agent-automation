@@ -1,4 +1,4 @@
-using CodingAgent.Api.Client;
+using CodingAgent.Web.Ui;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web.Services;
@@ -106,7 +106,7 @@ public static class AttentionAggregator
     /// degrades to no triage group when the triage API is unavailable.
     /// </summary>
     public static async Task<IReadOnlyList<TriageListItem>> LoadTriagesNeedingYouAsync(
-        IPipelineApiTriageClient client, string? projectId, CancellationToken ct)
+        IUiTriageClient client, string? projectId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(client);
         try

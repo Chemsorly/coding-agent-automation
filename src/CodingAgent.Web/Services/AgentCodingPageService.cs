@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using CodingAgent.Api.Client;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Ui;
@@ -11,15 +10,15 @@ namespace CodingAgent.Web.Services;
 /// Coordinator for the AgentCoding page — owns template CRUD, loop controls, provider lists, and
 /// forwards drawer operations to the focused drawer services.
 /// The Blazor component delegates to this service and retains only UI state.
-/// Registered as Scoped because it holds per-page mutable state.
-/// Config and project data are loaded via <see cref="IPipelineApiConfigClient"/>. The provider lists
-/// are read without secrets: the template table only shows their names and labels, and dispatch runs
-/// in the API (spec 051 2.3c).
+/// Everything goes through /api/ui with the user's token (spec 051 2.7): the page reads <see cref="IUiConfigClient.GetPipelinesPageAsync"/>
+/// (readable projects only, secrets masked), template changes go through the admin settings surface
+/// (<see cref="IUiSettingsClient"/>), the loop through <see cref="IUiLoopClient"/>, and dispatch runs in the API (2.3c).
 /// </summary>
 public class AgentCodingPageService
 {
     private readonly IUiLoopClient _loopClient;
-    private readonly IPipelineApiConfigClient _configClient;
+    private readonly IUiConfigClient _uiConfig;
+    private readonly IUiSettingsClient _settings;
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
     private readonly IEpicDrawerService _epicDrawerService;
@@ -28,7 +27,8 @@ public class AgentCodingPageService
 
     public AgentCodingPageService(
         IUiLoopClient loopClient,
-        IPipelineApiConfigClient configClient,
+        IUiConfigClient uiConfig,
+        IUiSettingsClient settings,
         IIssueDrawerService issueDrawerService,
         IPrReviewDrawerService prReviewDrawerService,
         IEpicDrawerService epicDrawerService,
@@ -38,7 +38,8 @@ public class AgentCodingPageService
         _access = access;
         _guard = guard;
         _loopClient = loopClient;
-        _configClient = configClient;
+        _uiConfig = uiConfig;
+        _settings = settings;
         _issueDrawerService = issueDrawerService;
         _prReviewDrawerService = prReviewDrawerService;
         _epicDrawerService = epicDrawerService;
@@ -128,23 +129,20 @@ public class AgentCodingPageService
         try
         {
             await _access.InitializeAsync();
-            IssueProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-            var allRepoProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            PipelineProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
-            BrainProviders = allRepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
-            RepoProviders = allRepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
-
-            var config = await _configClient.GetPipelineConfigAsync(CancellationToken.None);
-            MaxRetries = config.MaxRetries;
-            PipelineConfig = config;
-            await LoadProjectsAsync();
-            // Spec 049 Req 6.3/8.6: only templates of readable projects (a template without a project is global).
-            Templates = (await _configClient.GetAllTemplatesAsync(CancellationToken.None))
-                .Where(t => GetParentProject(t.Id) is not null || _access.HasGlobalRead)
-                .ToList();
-            QualityGateConfigs = await _configClient.GetQualityGateConfigsAsync(CancellationToken.None);
-            ReviewerConfigs = await _configClient.GetReviewerConfigsAsync(CancellationToken.None);
-            AgentProfiles = await _configClient.GetAgentProfilesAsync(CancellationToken.None);
+            // Spec 051 2.7: one read with the user's token. The API keeps only the readable projects' templates
+            // (a template without a project is global, so only a global reader gets it) and masks secrets.
+            var page = await _uiConfig.GetPipelinesPageAsync(CancellationToken.None);
+            IssueProviders = page.IssueProviders.ToList();
+            PipelineProviders = page.PipelineProviders.ToList();
+            BrainProviders = page.RepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
+            RepoProviders = page.RepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
+            MaxRetries = page.MaxRetries;
+            PipelineConfig = new PipelineConfiguration { DefaultRequiredAgentLabels = page.DefaultRequiredAgentLabels, MaxRetries = page.MaxRetries };
+            Projects = page.Projects;
+            Templates = page.Templates.ToList();
+            QualityGateConfigs = page.QualityGateConfigs;
+            ReviewerConfigs = page.ReviewerConfigs;
+            AgentProfiles = page.AgentProfiles;
 
             return null;
         }
@@ -187,7 +185,7 @@ public class AgentCodingPageService
         if (idx < 0) return (true, null);
         var updated = updater(template, enabled);
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _configClient.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        try { await _settings.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}"); }
         Templates[idx] = updated;
         return (true, null);
@@ -235,7 +233,7 @@ public class AgentCodingPageService
             Enabled = true
         };
         var targetProjectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;
-        try { await _configClient.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
+        try { await _settings.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
         Templates.Add(newTemplate);
         await LoadProjectsAsync();
@@ -269,7 +267,7 @@ public class AgentCodingPageService
 
         var updated = ApplyEdit(Templates[idx], form);
         var projectId = GetParentProject(updated.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _configClient.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        try { await _settings.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
         Templates[idx] = updated;
         return (true, null, $"Template \"{updated.Name}\" saved.");
@@ -294,7 +292,7 @@ public class AgentCodingPageService
     {
         if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _configClient.DeleteTemplateAsync(projectId, template.Id, CancellationToken.None); }
+        try { await _settings.DeleteTemplateAsync(projectId, template.Id, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to delete: {ex.Message}", null); }
         Templates.RemoveAll(t => t.Id == template.Id);
         await LoadProjectsAsync();
@@ -311,7 +309,7 @@ public class AgentCodingPageService
             var targetProject = Projects.FirstOrDefault(p => p.Id == targetProjectId);
             if (sourceProject == null || targetProject == null) return (true, null, null);
             // The template's own project is the only membership record, so a move is one call.
-            await _configClient.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.Value, CancellationToken.None);
+            await _settings.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.Value, CancellationToken.None);
             await LoadProjectsAsync();
             return (true, null, $"Moved \"{Templates.FirstOrDefault(t => t.Id == templateId.Value)?.Name ?? templateId.Value}\" to {targetProject.Name}.");
         }
@@ -512,7 +510,7 @@ public class AgentCodingPageService
     public bool CanDispatch(TemplateId templateId) => _access.CanOperate(GetParentProject(templateId)?.Id);
 
     private async Task LoadProjectsAsync() =>
-        Projects = (await _configClient.GetProjectsAsync(CancellationToken.None)).Where(p => _access.CanRead(p.Id)).ToList();
+        Projects = (await _uiConfig.GetPipelinesPageAsync(CancellationToken.None)).Projects;
 
     /// <summary>Spec 049 Req 7.3: the denial message, or null when the user holds <paramref name="role"/>.</summary>
     private async Task<string?> DeniedAsync(AccessRole role, string? projectId = null, [CallerMemberName] string action = "")

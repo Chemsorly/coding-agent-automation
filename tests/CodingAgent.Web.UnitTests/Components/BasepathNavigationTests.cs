@@ -117,7 +117,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(new List<ActiveWorkItemDto>());
 
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());
@@ -194,7 +194,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiBrowseClient>(b =>
             b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()) == Task.FromResult(new BacklogResult(Array.Empty<BacklogIssue>(), false))));
@@ -252,7 +252,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(new List<ActiveWorkItemDto>());
 
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiWorkItemClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
@@ -299,7 +299,7 @@ public class BasepathNavigationTests : BunitContext
 
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
         Services.AddSingleton<NotificationService>();

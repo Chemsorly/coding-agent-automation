@@ -29,16 +29,6 @@ GET /api/pipeline-runs/active-branches -> Service: OperatorApiKey
 GET /api/pipeline-runs/{runId:guid} -> Service: OperatorApiKey
 PUT /api/scheduler/loop-status -> Service: OperatorApiKey
 POST /api/scheduler/maintenance/retention-sweep -> Service: OperatorApiKey
-GET /api/triages/ -> Service: OperatorApiKey
-POST /api/triages/ -> Service: OperatorApiKey
-GET /api/triages/by-run/{runId:guid} -> Service: OperatorApiKey
-GET /api/triages/similar -> Service: OperatorApiKey
-GET /api/triages/{id:guid} -> Service: OperatorApiKey
-POST /api/triages/{id:guid}/create-issues -> Service: OperatorApiKey
-POST /api/triages/{id:guid}/dismiss -> Service: OperatorApiKey
-PUT /api/triages/{id:guid}/drafts/{draftId} -> Service: OperatorApiKey
-POST /api/triages/{id:guid}/drafts/{draftId}/reset -> Service: OperatorApiKey
-POST /api/triages/{id:guid}/rerun -> Service: OperatorApiKey
 GET /api/ui/agents -> Ui: Ui.AnyAccess
 GET /api/ui/agents/credential-pool -> Ui: Ui.AnyAccess, Ui.GlobalRead
 GET /api/ui/backlog -> Ui: Ui.AnyAccess
@@ -57,6 +47,7 @@ GET /api/ui/loop/status -> Ui: Ui.AnyAccess
 POST /api/ui/loop/stop -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 GET /api/ui/me -> Ui: Ui.AnyAccess
 GET /api/ui/pipeline-settings -> Ui: Ui.AnyAccess
+GET /api/ui/pipelines -> Ui: Ui.AnyAccess
 GET /api/ui/projects -> Ui: Ui.AnyAccess
 GET /api/ui/projects/{projectId}/templates -> Ui: Ui.AnyAccess
 GET /api/ui/runs -> Ui: Ui.AnyAccess
@@ -76,6 +67,8 @@ GET /api/ui/settings/projects -> Ui: Ui.Admin, Ui.AnyAccess
 PUT /api/ui/settings/projects -> Ui: Ui.Admin, Ui.AnyAccess
 DELETE /api/ui/settings/projects/{id} -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/projects/{id} -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/projects/{projectId}/templates -> Ui: Ui.Admin, Ui.AnyAccess
+DELETE /api/ui/settings/projects/{projectId}/templates/{templateId} -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/provider-configs -> Ui: Ui.Admin, Ui.AnyAccess
 PUT /api/ui/settings/provider-configs -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/ui/settings/provider-configs/actions-access -> Ui: Ui.Admin, Ui.AnyAccess
@@ -104,6 +97,17 @@ POST /api/ui/templates/{templateId}/issues/{issueIdentifier}/dispatch -> Ui: Ui.
 GET /api/ui/templates/{templateId}/labels -> Ui: Ui.AnyAccess
 GET /api/ui/templates/{templateId}/pull-requests -> Ui: Ui.AnyAccess
 POST /api/ui/templates/{templateId}/pull-requests/{number:int}/dispatch -> Ui: Ui.AnyAccess, Ui.AnyOperator
+GET /api/ui/triages -> Ui: Ui.AnyAccess
+POST /api/ui/triages -> Ui: Ui.AnyAccess, Ui.AnyOperator
+GET /api/ui/triages/by-run/{runId:guid} -> Ui: Ui.AnyAccess
+GET /api/ui/triages/preview -> Ui: Ui.AnyAccess, Ui.AnyOperator
+GET /api/ui/triages/similar -> Ui: Ui.AnyAccess
+GET /api/ui/triages/{id:guid} -> Ui: Ui.AnyAccess
+POST /api/ui/triages/{id:guid}/create-issues -> Ui: Ui.AnyAccess, Ui.AnyOperator
+POST /api/ui/triages/{id:guid}/dismiss -> Ui: Ui.AnyAccess, Ui.AnyOperator
+PUT /api/ui/triages/{id:guid}/drafts/{draftId} -> Ui: Ui.AnyAccess, Ui.AnyOperator
+POST /api/ui/triages/{id:guid}/drafts/{draftId}/reset -> Ui: Ui.AnyAccess, Ui.AnyOperator
+POST /api/ui/triages/{id:guid}/rerun -> Ui: Ui.AnyAccess, Ui.AnyOperator
 GET /api/ui/work-items/active -> Ui: Ui.AnyAccess
 GET /api/ui/work-items/pending -> Ui: Ui.AnyAccess
 POST /api/ui/work-items/{id:guid}/cancel -> Ui: Ui.AnyAccess, Ui.AnyOperator

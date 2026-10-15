@@ -3,6 +3,7 @@ using Moq;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.UnitTests.Auth;
 using CodingAgent.Api.Client;
+using CodingAgent.Web.UnitTests.TestUtilities;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Orchestration.Registry;
@@ -76,7 +77,8 @@ public class AgentCodingPageServiceTests
         var (access, guard) = TestAccess.Create(grant);
         return new AgentCodingPageService(
             _mockLoopClient.Object,
-            _mockConfigClient.Object,
+            ConfigBackedPipelinesClients.UiConfig(_mockConfigClient).Object,
+            ConfigBackedPipelinesClients.UiSettings(_mockConfigClient).Object,
             _mockIssueDrawerService.Object,
             _mockPrReviewDrawerService.Object,
             _mockEpicDrawerService.Object,
@@ -673,18 +675,6 @@ public class AgentCodingPageServiceTests
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
         _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
-    }
-
-    [Fact]
-    public async Task Access_ScopedUser_SeesOnlyItsProjectsAndTemplates()
-    {
-        SetupTwoProjects();
-        var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.ReadOnly)));
-
-        await service.InitializeAsync();
-
-        service.Projects.Select(p => p.Id).Should().Equal(AccessProjectP);
-        service.Templates.Select(t => t.Id).Should().Equal("t-p");
     }
 
     [Fact]

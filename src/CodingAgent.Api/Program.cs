@@ -152,7 +152,6 @@ app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();
 app.MapHarnessSuggestionEndpoints();
 app.MapFeedbackCommentOutboxEndpoints();
-app.MapTriageEndpoints();
 app.MapAgentEndpoints();
 app.MapApiSchedulerEndpoints();
 app.MapUiEndpoints();

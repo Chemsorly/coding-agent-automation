@@ -42,6 +42,12 @@ public sealed class InMemoryUiSettingsClient(InMemoryPipelineApiConfigClient con
     public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default) =>
         config.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId, ct);
 
+    public Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct = default) =>
+        config.SaveTemplateAsync(projectId.Value, template, ct);
+
+    public Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct = default) =>
+        config.DeleteTemplateAsync(projectId.Value, templateId.Value, ct);
+
     public Task<byte[]> ExportConfigAsync(CancellationToken ct = default) => config.ExportConfigAsync(ct);
     public Task ImportConfigAsync(Stream jsonStream, string fileName, CancellationToken ct = default) => config.ImportConfigAsync(jsonStream, fileName, ct);
 

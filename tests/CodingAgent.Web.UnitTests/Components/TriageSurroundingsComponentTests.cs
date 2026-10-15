@@ -20,7 +20,7 @@ public class TriageSurroundingsComponentTests : BunitContext
     [Fact]
     public void Attention_ListsTriagesThatNeedSomeone()
     {
-        var triages = new Mock<IPipelineApiTriageClient>();
+        var triages = new Mock<CodingAgent.Web.Ui.IUiTriageClient>();
         triages.Setup(t => t.ListAsync(It.Is<TriageListQuery>(q => q.Tab == TriageListTab.NeedYou), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TriageListPage
             {
@@ -63,7 +63,7 @@ public class TriageSurroundingsComponentTests : BunitContext
             CompletedAtOffset = DateTimeOffset.UtcNow,
             ProjectId = ShopProjectId,
         }, null));
-        var triages = new Mock<IPipelineApiTriageClient>();
+        var triages = new Mock<CodingAgent.Web.Ui.IUiTriageClient>();
         triages.Setup(t => t.FindByRunAsync(runId.ToString(), It.IsAny<CancellationToken>())).ReturnsAsync(TriageId);
         var hub = new Mock<IAgentHubConnection>();
         hub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);

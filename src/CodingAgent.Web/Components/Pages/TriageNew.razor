@@ -2,12 +2,11 @@
 @attribute [Authorize(Policy = AccessPolicies.AnyOperator)]
 @layout CockpitLayout
 @implements IAsyncDisposable
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
-@inject IPipelineApiTriageClient Triages
-@inject IPipelineApiConfigClient ConfigClient
+@inject IUiTriageClient Triages
+@inject IUiConfigClient UiConfig
 @inject CockpitState State
 @inject CurrentAccess Access
 @inject IAccessGuard Guard
@@ -233,11 +232,8 @@
         [("hour", "Last hour"), ("today", "Today"), ("week", "Last 7 days"), ("custom", "Custom")];
 
     private readonly CancellationTokenSource _cts = new();
-    private List<PipelineProject> _projects = [];
-    private IReadOnlyList<PipelineJobTemplate> _templates = [];
-    private IReadOnlyList<ProviderConfig> _repoConfigs = [];
-    private IReadOnlyList<AgentProfile> _profiles = [];
-    private PipelineConfiguration? _config;
+    private List<UiProject> _projects = [];
+    private IReadOnlyList<UiTemplate> _templates = [];
     private TriagePreview? _preview;
     private IReadOnlyList<TriageListItem> _similar = [];
     private int? _historyCount;
@@ -260,7 +256,7 @@
     private string? _links;
     private string? _alreadyTried;
 
-    private IEnumerable<PipelineJobTemplate> EnabledTemplates =>
+    private IEnumerable<UiTemplate> EnabledTemplates =>
         TemplateOrder.ByName(_templates.Where(t => t.Enabled), t => t.Name, t => t.Id);
 
     private string ProjectName => _projects.FirstOrDefault(p => p.Id == _projectId)?.Name ?? "";
@@ -276,19 +272,14 @@
     {
         try
         {
-            var projects = ConfigClient.GetProjectsAsync(_cts.Token);
-            var repoConfigs = ConfigClient.GetProviderConfigsAsync(ProviderKind.Repository, _cts.Token);
-            var profiles = ConfigClient.GetAgentProfilesAsync(_cts.Token);
-            var config = ConfigClient.GetPipelineConfigAsync(_cts.Token);
-            await Task.WhenAll(projects, repoConfigs, profiles, config);
+            var projects = UiConfig.GetProjectsAsync(_cts.Token);
+            var settings = UiConfig.GetPipelineSettingsAsync(_cts.Token);
+            await Task.WhenAll(projects, settings);
 
             // Spec 049: only projects the user may start work in
             _projects = projects.Result.Where(p => p.Enabled && Access.CanOperate(p.Id))
                 .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
-            _repoConfigs = repoConfigs.Result;
-            _profiles = profiles.Result;
-            _config = config.Result;
-            _retentionDays = _config.TriageRetentionDays;
+            _retentionDays = settings.Result.TriageRetentionDays;
 
             _projectId = _projects.Any(p => p.Id == State.SelectedProjectId)
                 ? State.SelectedProjectId
@@ -322,8 +313,8 @@
         _historyCount = null;
         try
         {
-            _templates = await ConfigClient.GetTemplatesForProjectAsync(_projectId, _cts.Token);
-            BuildPreview();
+            _templates = await UiConfig.GetTemplatesAsync(_projectId, _cts.Token);
+            await RefreshPreviewAsync();
             var history = await Triages.ListAsync(new TriageListQuery { ProjectId = _projectId, PageSize = 1 }, _cts.Token);
             _historyCount = history.Total;
         }
@@ -336,18 +327,27 @@
         await LoadSimilarAsync();
     }
 
-    private void OnStartInChanged(ChangeEventArgs e)
+    private async Task OnStartInChanged(ChangeEventArgs e)
     {
         var id = e.Value as string;
         _startInTemplateId = string.IsNullOrEmpty(id) ? null : id;
-        BuildPreview();
+        await RefreshPreviewAsync();
     }
 
-    private void BuildPreview()
+    /// <summary>What the triage would use, built by the API with the resolvers it dispatches the run with (spec 051 2.7).</summary>
+    private async Task RefreshPreviewAsync()
     {
-        var project = _projects.FirstOrDefault(p => p.Id == _projectId);
-        if (project is null || _config is null) return;
-        _preview = TriagePreviewBuilder.Build(project, _templates, _startInTemplateId, _repoConfigs, _profiles, _config);
+        if (_projectId.Length == 0) return;
+        try
+        {
+            _preview = await Triages.GetPreviewAsync(_projectId, _startInTemplateId, _cts.Token);
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "TriageNew: failed to load the triage preview");
+            _preview = new TriagePreview { Problem = "What the triage would use could not be loaded." };
+        }
     }
 
     private async Task LoadSimilarAsync()
@@ -436,7 +436,7 @@
             Nav.NavigateTo($"triage/{detail.Record.Id}");
         }
         catch (AccessDeniedException) { _error = AccessDeniedException.UserMessage; }
-        catch (TriageApiException ex) { _error = ex.Message; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested) { /* The page was left. */ }
         catch (OperationCanceledException) { _error = "The request timed out. Check the Triage list before starting it again."; }
         catch (Exception ex) { _error = $"Failed to start the triage: {ex.Message}"; }

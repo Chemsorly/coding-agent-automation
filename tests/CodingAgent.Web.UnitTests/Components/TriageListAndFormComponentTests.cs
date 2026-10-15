@@ -1,6 +1,8 @@
 using AwesomeAssertions;
 using Bunit;
-using CodingAgent.Api.Client;
+using CodingAgent.Api.Triage;
+using CodingAgent.Contracts.Ui;
+using CodingAgent.Web.Ui;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
@@ -17,10 +19,27 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// <summary>The triage list (spec 050, B1) and the new-triage form (B2).</summary>
 public class TriageListAndFormComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiTriageClient> _triages = new();
-    private readonly Mock<IPipelineApiConfigClient> _config = new();
+    private readonly Mock<IUiTriageClient> _triages = new();
+    private readonly Mock<IUiConfigClient> _config = new();
     private readonly CockpitState _state = new();
     private readonly List<TriageListQuery> _queries = [];
+
+    private static readonly PipelineProject Shop = new()
+    {
+        Id = ShopProjectId, Name = "Shop", Enabled = true, TemplateIds = ["t1", "t2"],
+        McpServers = [new McpServerConfig { Name = "grafana" }],
+    };
+    private static readonly PipelineProject Billing = new() { Id = OtherProjectId, Name = "Billing", Enabled = true };
+    private static readonly List<PipelineJobTemplate> ShopTemplates =
+    [
+        new() { Id = "t1", Name = "storefront-web", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+        new() { Id = "t2", Name = "checkout-api", IssueProviderId = "ip-2", RepoProviderId = "rp-2", Enabled = true },
+    ];
+    private static readonly List<AgentProfile> Profiles =
+    [
+        new() { Id = "p1", DisplayName = "default", AgentProviderConfigId = "ap-1", Enabled = true, MatchLabels = ["dotnet"],
+            McpServers = [new McpServerConfig { Name = "sonarqube" }, new McpServerConfig { Name = "grafana" }] },
+    ];
 
     public TriageListAndFormComponentTests()
     {
@@ -29,29 +48,24 @@ public class TriageListAndFormComponentTests : BunitContext
             .ReturnsAsync(new TriageListPage());
         _triages.Setup(t => t.FindSimilarAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
-        _config.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
+        // Spec 051 2.7: the API builds the preview; here the same builder answers from the arranged data.
+        _triages.Setup(t => t.GetPreviewAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns((string projectId, string? startIn, CancellationToken _) => Task.FromResult(projectId == ShopProjectId
+                ? TriagePreviewBuilder.Build(Shop, ShopTemplates, startIn, [], Profiles, new PipelineConfiguration())
+                : TriagePreviewBuilder.Build(Billing, [], startIn, [], Profiles, new PipelineConfiguration())));
+        _config.Setup(c => c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiPipelineSettings(3, new PipelineConfiguration().TriageRetentionDays));
         _config.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([
-            new PipelineProject { Id = ShopProjectId, Name = "Shop", Enabled = true, TemplateIds = ["t1", "t2"],
-                McpServers = [new McpServerConfig { Name = "grafana" }] },
-            new PipelineProject { Id = OtherProjectId, Name = "Billing", Enabled = true },
+            new UiProject(ShopProjectId, "Shop", true),
+            new UiProject(OtherProjectId, "Billing", true),
         ]);
-        _config.Setup(c => c.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        _config.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([
-            new AgentProfile { Id = "p1", DisplayName = "default", AgentProviderConfigId = "ap-1", Enabled = true, MatchLabels = ["dotnet"],
-                McpServers = [new McpServerConfig { Name = "sonarqube" }, new McpServerConfig { Name = "grafana" }] },
-        ]);
-        _config.Setup(c => c.GetTemplatesForProjectAsync(ShopProjectId, It.IsAny<CancellationToken>())).ReturnsAsync([
-            new PipelineJobTemplate { Id = "t1", Name = "storefront-web", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
-            new PipelineJobTemplate { Id = "t2", Name = "checkout-api", IssueProviderId = "ip-2", RepoProviderId = "rp-2", Enabled = true },
-        ]);
-        _config.Setup(c => c.GetTemplatesForProjectAsync(OtherProjectId, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _config.Setup(c => c.GetTemplatesAsync(ShopProjectId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ShopTemplates.Select(t => new UiTemplate(t.Id, t.Name, t.Enabled)).ToList());
+        _config.Setup(c => c.GetTemplatesAsync(OtherProjectId, It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         _state.SetProject(ShopProjectId, "Shop");
         Services.AddSingleton(_triages.Object);
         Services.AddSingleton(_config.Object);
-        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
-            c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>())
-                == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, new PipelineConfiguration().TriageRetentionDays))));
         Services.AddSingleton(_state);
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
@@ -210,7 +224,7 @@ public class TriageListAndFormComponentTests : BunitContext
     public void New_ApiRefusal_IsShown()
     {
         _triages.Setup(t => t.CreateAsync(It.IsAny<CreateTriageRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new TriageApiException(400, "'x' is not an enabled template of the project"));
+            .ThrowsAsync(new InvalidOperationException("'x' is not an enabled template of the project"));
         Services.AddTestAccess(TestAccess.Scoped((ShopProjectId, AccessRole.Operator)));
         var cut = Render<TriageNew>();
 

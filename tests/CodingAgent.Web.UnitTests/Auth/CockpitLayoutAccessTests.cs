@@ -48,7 +48,7 @@ public class CockpitLayoutAccessTests : BunitContext
 
         Services.AddSingleton(_configClient.Object);
         Services.AddSingleton(_runHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(_state);
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
         Services.AddSingleton<NotificationService>();

@@ -7,7 +7,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
-@inject IPipelineApiTriageClient Triages
+@inject IUiTriageClient Triages
 @inject IUiConfigClient UiConfig
 @inject CurrentAccess Access
 @inject IAccessGuard Guard
@@ -610,7 +610,7 @@
             if (await DemandOperatorAsync(action))
                 await body();
         }
-        catch (TriageApiException ex) { _error = ex.Message; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested) { /* The page was left. */ }
         catch (OperationCanceledException) { _error = TimedOut; }
         catch (Exception ex) { _error = $"The request failed: {ex.Message}"; }
@@ -730,7 +730,7 @@
                 : null;
         }
         catch (AccessDeniedException) { _editError = AccessDeniedException.UserMessage; }
-        catch (TriageApiException ex) { _editError = ex.Message; }
+        catch (InvalidOperationException ex) { _editError = ex.Message; }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested) { /* The page was left. */ }
         catch (OperationCanceledException) { _editError = TimedOut; }
         catch (Exception ex) { _editError = $"Saving failed: {ex.Message}"; }

@@ -18,7 +18,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class TriagePageComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiTriageClient> _triages = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiTriageClient> _triages = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _config = new();
 
     public TriagePageComponentTests()
@@ -211,7 +211,7 @@ public class TriagePageComponentTests : BunitContext
     {
         Returns(CauseFoundDetail());
         _triages.Setup(t => t.CreateIssuesAsync(TriageId, It.IsAny<CreateTriageIssuesRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new TriageApiException(409, "An attempt is running"));
+            .ThrowsAsync(new InvalidOperationException("An attempt is running"));
         var cut = RenderPage();
 
         cut.Find("[data-testid='triage-create']").Click();

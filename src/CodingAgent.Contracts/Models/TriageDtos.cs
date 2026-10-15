@@ -145,7 +145,7 @@ public sealed record TriageAttemptRunInfo
     public DateTimeOffset? CompletedAt { get; init; }
 }
 
-/// <summary>Body of <c>POST /api/triages</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages</c>.</summary>
 public sealed record CreateTriageRequest
 {
     public required string ProjectId { get; init; }
@@ -153,7 +153,7 @@ public sealed record CreateTriageRequest
     public required string RequestedBy { get; init; }
 }
 
-/// <summary>Body of <c>POST /api/triages/{id}/rerun</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages/{id}/rerun</c>.</summary>
 public sealed record RerunTriageRequest
 {
     public string? Feedback { get; init; }
@@ -161,7 +161,7 @@ public sealed record RerunTriageRequest
     public required string Author { get; init; }
 }
 
-/// <summary>Body of <c>PUT /api/triages/{id}/drafts/{draftId}</c>.</summary>
+/// <summary>Body of <c>PUT /api/ui/triages/{id}/drafts/{draftId}</c>.</summary>
 public sealed record UpdateTriageDraftRequest
 {
     public required TriageDraftKind Kind { get; init; }
@@ -171,7 +171,7 @@ public sealed record UpdateTriageDraftRequest
     public required string EditedBy { get; init; }
 }
 
-/// <summary>Body of <c>POST /api/triages/{id}/create-issues</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages/{id}/create-issues</c>.</summary>
 public sealed record CreateTriageIssuesRequest
 {
     public required IReadOnlyList<string> DraftIds { get; init; }
@@ -182,7 +182,7 @@ public sealed record CreateTriageIssuesRequest
     public required string CreatedBy { get; init; }
 }
 
-/// <summary>Response of <c>POST /api/triages/{id}/create-issues</c>.</summary>
+/// <summary>Response of <c>POST /api/ui/triages/{id}/create-issues</c>.</summary>
 public sealed record CreateTriageIssuesResult
 {
     public IReadOnlyList<TriageCreatedIssue> Created { get; init; } = [];
@@ -196,7 +196,7 @@ public sealed record TriageDraftError
     public required string Message { get; init; }
 }
 
-/// <summary>Body of <c>POST /api/triages/{id}/dismiss</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages/{id}/dismiss</c>.</summary>
 public sealed record DismissTriageRequest
 {
     public string? Reason { get; init; }

@@ -70,6 +70,9 @@ public class AgentCodingValidationBannerTests : BunitContext
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(_mockProjectStore.Object);
         Services.AddSingleton<IPipelineApiConfigClient>(_mockConfigClient.Object);
+        // Spec 051 2.7: the page reads /api/ui/pipelines and writes templates through Settings; both answer from the config mock.
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiConfig(_mockConfigClient).Object);
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiSettings(_mockConfigClient).Object);
 
         Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiAgentClient>().Object);
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
