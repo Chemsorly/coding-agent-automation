@@ -28,6 +28,16 @@ public class PipelineStepExtensionsTests
     [InlineData(PipelineStep.Completed, "Completed")]
     [InlineData(PipelineStep.Failed, "Failed")]
     [InlineData(PipelineStep.Cancelled, "Cancelled")]
+    [InlineData(PipelineStep.AnalyzingHotspots, "Analyzing Hotspots")]
+    [InlineData(PipelineStep.ReadingIssueContext, "Reading Issue Context")]
+    [InlineData(PipelineStep.ExtractingConventions, "Extracting Conventions")]
+    [InlineData(PipelineStep.DetectingFindings, "Detecting Findings")]
+    [InlineData(PipelineStep.AggregatingProposals, "Aggregating Proposals")]
+    [InlineData(PipelineStep.ReviewingProposals, "Reviewing Proposals")]
+    [InlineData(PipelineStep.CreatingRefactoringIssues, "Creating Issues")]
+    [InlineData(PipelineStep.ConsolidatingKnowledge, "Consolidating Knowledge")]
+    [InlineData(PipelineStep.ReviewingBrainChanges, "Reviewing Changes")]
+    [InlineData(PipelineStep.PushingBrainChanges, "Pushing to Brain")]
     public void ToDisplayName_KnownValues_ReturnExpectedLabel(PipelineStep step, string expected)
     {
         Assert.Equal(expected, step.ToDisplayName());

@@ -651,5 +651,136 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.Contains("Brain consolidation · tpl", headerText);
         Assert.DoesNotContain("Issue #", headerText);
     }
+
+    // ── Issue #3566: consolidation step ladder ─────────────────────────────
+
+    private static PipelineRun CreateConsolidationRun(
+        ConsolidationRunType consolidationType,
+        PipelineStep currentStep = PipelineStep.Created,
+        PipelineStep highWaterMark = PipelineStep.Created) => new()
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            CurrentStep = currentStep,
+            HighWaterMark = highWaterMark,
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = consolidationType
+        };
+
+    [Fact]
+    public void RefactoringScan_ShowsOnlyScanPhasesAndSteps()
+    {
+        var run = CreateConsolidationRun(ConsolidationRunType.RefactoringDetection);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        // Expected phases exist
+        Assert.NotNull(cut.Find("[data-testid='phase-preparation']"));
+        Assert.NotNull(cut.Find("[data-testid='phase-analysis']"));
+        Assert.NotNull(cut.Find("[data-testid='phase-review']"));
+        Assert.NotNull(cut.Find("[data-testid='phase-finalization']"));
+
+        // Scan-specific steps exist
+        Assert.NotNull(cut.Find("#step-DetectingFindings"));
+        Assert.NotNull(cut.Find("#step-CreatingRefactoringIssues"));
+
+        // Implementation steps must not appear
+        Assert.Empty(cut.FindAll("#step-CreatingBranch"));
+        Assert.Empty(cut.FindAll("#step-GeneratingCode"));
+        Assert.Empty(cut.FindAll("#step-RunningQualityGates"));
+        Assert.Empty(cut.FindAll("#step-ExtractingLinkedIssues"));
+        Assert.Empty(cut.FindAll("#step-FinalizingPullRequest"));
+    }
+
+    [Fact]
+    public void RefactoringScan_InProgress_MarksStepsBeforeCurrentCompleted()
+    {
+        var run = CreateConsolidationRun(
+            ConsolidationRunType.RefactoringDetection,
+            currentStep: PipelineStep.DetectingFindings,
+            highWaterMark: PipelineStep.DetectingFindings);
+
+        var cut = Render<PipelineSidebar>(p =>
+        {
+            p.Add(s => s.Run, run);
+            p.Add(s => s.IsRunning, true);
+        });
+
+        Assert.Contains("step-card-completed", cut.Find("#step-ExtractingConventions").GetAttribute("class") ?? "");
+        Assert.Contains("step-card-active", cut.Find("#step-DetectingFindings").GetAttribute("class") ?? "");
+        Assert.Contains("step-card-pending", cut.Find("#step-AggregatingProposals").GetAttribute("class") ?? "");
+    }
+
+    [Fact]
+    public void RefactoringScan_Failed_MarksLastReachedStepFailed()
+    {
+        var run = CreateConsolidationRun(
+            ConsolidationRunType.RefactoringDetection,
+            currentStep: PipelineStep.Failed,
+            highWaterMark: PipelineStep.CreatingRefactoringIssues);
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        Assert.Contains("step-card-failed", cut.Find("#step-CreatingRefactoringIssues").GetAttribute("class") ?? "");
+        Assert.Contains("step-card-completed", cut.Find("#step-ReviewingProposals").GetAttribute("class") ?? "");
+    }
+
+    [Fact]
+    public void BrainConsolidation_ShowsConsolidationPhase()
+    {
+        var run = CreateConsolidationRun(ConsolidationRunType.BrainConsolidation);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        Assert.NotNull(cut.Find("[data-testid='phase-consolidation']"));
+        Assert.NotNull(cut.Find("#step-PushingBrainChanges"));
+        Assert.Empty(cut.FindAll("#step-DetectingFindings"));
+    }
+
+    // TODO [WARNING]: Missing test — BrainConsolidation step-state rendering for in-progress scenario.
+    // The _logicalOrder values for brain consolidation (ConsolidatingKnowledge=50, ReviewingBrainChanges=51,
+    // PushingBrainChanges=52) are exercised by StepOrderTests.GetOrder_BrainConsolidationSteps_AreMonotonicallyIncreasing
+    // for the server-side StepOrder dictionary, but PipelineSidebar._logicalOrder is a separate dictionary that
+    // drives sidebar rendering. If those values were accidentally transposed, the step-card CSS states would be wrong
+    // but no test here would catch it.
+    // Add a test: BrainConsolidation_InProgress_MarksStepsBeforeCurrentCompleted:
+    //   CurrentStep = ReviewingBrainChanges, HighWaterMark = ReviewingBrainChanges, IsRunning = true.
+    //   Assert: #step-ConsolidatingKnowledge has step-card-completed, #step-ReviewingBrainChanges has step-card-active,
+    //   #step-PushingBrainChanges has step-card-pending.
+
+    [Fact]
+    public void HarnessSuggestions_HasNoPhases()
+    {
+        var run = CreateConsolidationRun(ConsolidationRunType.HarnessSuggestions);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        Assert.Empty(cut.FindAll("[data-testid^='phase-']"));
+        Assert.Empty(cut.FindAll("#step-GeneratingCode"));
+    }
+
+    [Fact]
+    public void ConsolidationRun_Completed_TicksOnlyItsOwnSteps()
+    {
+        var run = CreateConsolidationRun(
+            ConsolidationRunType.RefactoringDetection,
+            currentStep: PipelineStep.Completed,
+            highWaterMark: PipelineStep.CreatingRefactoringIssues);
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        // Every rendered step must be completed
+        var stepCards = cut.FindAll("[data-testid^='pipeline-step-']");
+        Assert.NotEmpty(stepCards);
+        foreach (var card in stepCards)
+        {
+            Assert.Contains("step-card-completed", card.GetAttribute("class") ?? "",
+                StringComparison.Ordinal);
+        }
+
+        // Implementation step must not be rendered
+        Assert.Empty(cut.FindAll("#step-GeneratingCode"));
+    }
 }
 
