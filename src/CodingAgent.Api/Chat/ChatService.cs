@@ -53,7 +53,7 @@ internal sealed class ChatService(
 
     private bool IsLaunchable(AgentProfile profile) =>
         profile.Enabled && profile.MatchLabels.Count > 0
-        && templates.Resolve(AgentSelectorKey.From(profile.MatchLabels)) is not null;
+        && templates.Resolve(profile.JobTemplateKey()) is not null;
 
     /// <summary>
     /// Launches a chat pod for the profile and waits until it connects, then records the session for
@@ -71,7 +71,7 @@ internal sealed class ChatService(
         try
         {
             agentId = await dispatcher.DispatchChatPodAsync(
-                AgentSelectorKey.From(profile.MatchLabels), model, agentConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Effort), ct);
+                profile.JobTemplateKey(), model, agentConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Effort), ct);
         }
         catch (NoPvcAvailableException)
         {

@@ -45,9 +45,14 @@ public class ThrowLoggingTests : IDisposable
 
         act.Should().Throw<ArgumentException>();
 
+        // TODO: [WARNING] This assertion checks only the raw Serilog template text, not the
+        // bound property value. If the `entityType` default were accidentally changed from "issue"
+        // to another value, this assertion would still pass. Strengthen by also asserting on the
+        // structured property: e.Properties.ContainsKey("EntityType") &&
+        // e.Properties["EntityType"].ToString() == "\"issue\"".
         _sink.Events.Should().Contain(e =>
             e.Level == LogEventLevel.Warning &&
-            e.MessageTemplate.Text.Contains("Invalid issue identifier"));
+            e.MessageTemplate.Text.Contains("Invalid {EntityType} identifier"));
     }
 
     #endregion
@@ -270,7 +275,7 @@ public class ThrowLoggingTests : IDisposable
         }
 
         public static int ExposedParseIssueIdentifier(string identifier)
-            => ParseIssueIdentifier(identifier);
+            => ParseIdentifier(identifier);
 
         public Task<T> InvokeWithRateLimitHandlingAsync<T>(Func<Task<T>> apiCall)
             => ExecuteWithRateLimitHandlingAsync(apiCall);

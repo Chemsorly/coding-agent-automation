@@ -303,6 +303,52 @@ public class VerifyBaselineStepTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WarmUpRefusesConfiguration_StopsBeforeWorkspaceBaseline()
+    {
+        var agentProviderMock = new Mock<IAgentProvider>();
+        agentProviderMock.Setup(a => a.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        agentProviderMock.Setup(a => a.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProviderUnavailableException(AgentErrorCategory.ProviderMisconfigured, "kiro-cli refused its configuration: x"));
+
+        var context = BuildContext(agentProviderMock: agentProviderMock, preResolvedQgcs: [CreateQgc()]);
+        var step = new VerifyBaselineStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Stop, result);
+        Assert.Equal(FailureReason.InfrastructureFailure, context.Run.FailureCategory);
+        context.Run.FailureReason.Should().Contain("refused its configuration");
+        _validator.Verify(v => v.ValidateAsync(
+            It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HealthyAgent_WarmsUpSessionBeforeWorkspaceBaseline()
+    {
+        var callOrder = new List<string>();
+        var agentProviderMock = new Mock<IAgentProvider>();
+        agentProviderMock.Setup(a => a.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("EnsureSession"))
+            .Returns(Task.CompletedTask);
+        _validator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("ValidateQgc"))
+            .ReturnsAsync(CreatePassingReport());
+
+        var context = BuildContext(agentProviderMock: agentProviderMock, preResolvedQgcs: [CreateQgc()]);
+        var step = new VerifyBaselineStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        agentProviderMock.Verify(a => a.EnsureSessionAsync(
+            (WorkspacePath)"/tmp/workspace", It.IsAny<CancellationToken>()), Times.Once);
+        callOrder.Should().HaveCount(2);
+        callOrder[0].Should().Be("EnsureSession");
+        callOrder[1].Should().Be("ValidateQgc");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_AgentValidateFails_ReturnsStopWithClearError()
     {
         var mockAgent = new Mock<IAgentProvider>();

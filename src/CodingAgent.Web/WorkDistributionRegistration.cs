@@ -4,7 +4,7 @@ using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Web.Services;
+using CodingAgent.Api.Client.Stores;
 using Serilog;
 
 namespace CodingAgent.Web;

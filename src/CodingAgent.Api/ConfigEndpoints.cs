@@ -213,6 +213,17 @@ public static class ConfigEndpoints
         if (message is not null)
             return TypedResults.BadRequest(message);
 
+        if (!string.IsNullOrWhiteSpace(profile.JobTemplate) && templates.GetAllTemplates().Count > 0)
+        {
+            var key = profile.JobTemplateKey();
+            if (templates.Resolve(key) is null)
+                // TODO: [WARNING] This BadRequest branch has no integration test. The issue test
+                // requirements list "An unknown key returns 400 when the template store has templates".
+                // Without a test, inverting the condition or changing the response code would go
+                // undetected by CI. See ConfigEndpointTests.cs for the tracking TODO.
+                return TypedResults.BadRequest($"Job template [{key}] does not exist in the Helm values (jobTemplates).");
+        }
+
         return await SaveAsync(() => store.SaveAgentProfileAsync(profile, ct));
     }
 
