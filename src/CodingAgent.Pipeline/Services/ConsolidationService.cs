@@ -67,8 +67,8 @@ public sealed class ConsolidationService : IConsolidationService
                 "Ensure AddConsolidationServices passes WorkDistributor.");
         }
 
-        var selectorLabels = await ResolveSelectorLabelsAsync(scope.RepoConfig, scope.Config, type, scope.TemplateIdValue, ct);
-        if (selectorLabels is null)
+        var selection = await ResolveSelectorAsync(scope.RepoConfig, scope.Config, type, scope.TemplateIdValue, ct);
+        if (selection is null)
             return null;
 
         var runId = Guid.NewGuid().ToString();
@@ -76,7 +76,7 @@ public sealed class ConsolidationService : IConsolidationService
         var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
 
-        var request = BuildConsolidationDistributionRequest(traceContext, type, selectorLabels, scope, autoDispatch);
+        var request = BuildConsolidationDistributionRequest(traceContext, type, selection, scope, autoDispatch);
 
         var result = await TryDistributeAsync(_workDistributor, request, type, scope.TemplateIdValue, ct);
         if (result is null)
@@ -188,7 +188,7 @@ public sealed class ConsolidationService : IConsolidationService
     private static JobDistributionRequest BuildConsolidationDistributionRequest(
         Dictionary<string, string>? traceContext,
         ConsolidationRunType type,
-        IReadOnlyList<string> selectorLabels,
+        ConsolidationAgentSelection selection,
         ConsolidationScope scope,
         bool autoDispatch)
     {
@@ -210,7 +210,8 @@ public sealed class ConsolidationService : IConsolidationService
             BrainProviderConfigId = scope.BrainProviderId,
             InitiatedBy = ConsolidationConstants.InitiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
-            AgentSelector = AgentSelectorKey.From(selectorLabels),
+            AgentSelector = selection.AgentSelector,
+            ResolvedProfileId = selection.ResolvedProfileId,
             TimeoutSeconds = (int)scope.Config.AgentTimeout.TotalSeconds,
             ConsolidationRunType = type,
             ConsolidationTemplateId = scope.TemplateIdValue,
@@ -227,10 +228,10 @@ public sealed class ConsolidationService : IConsolidationService
     }
 
     /// <summary>
-    /// Resolves the agent selector labels for a run. Returns null when the selector resolver
+    /// Resolves the agent selector for a run. Returns null when the selector resolver
     /// has no agent profiles available yet (startup race), which the caller treats as a transient failure.
     /// </summary>
-    private async Task<IReadOnlyList<string>?> ResolveSelectorLabelsAsync(
+    private async Task<ConsolidationAgentSelection?> ResolveSelectorAsync(
         ProviderConfig? repoConfig,
         PipelineConfiguration config,
         ConsolidationRunType type,
@@ -241,11 +242,14 @@ public sealed class ConsolidationService : IConsolidationService
         {
             // Fallback when no resolver is injected (tests, or legacy call sites).
             // Use LabelResolver which reads from repoConfig + DefaultRequiredAgentLabels.
-            return LabelResolver.ResolveRequiredLabels(repoConfig, config);
+            var labels = LabelResolver.ResolveRequiredLabels(repoConfig, config);
+            if (labels is null)
+                return null;
+            return new ConsolidationAgentSelection(AgentSelectorKey.From(labels), null);
         }
 
-        var selectorLabels = await _selectorResolver.ResolveAsync(repoConfig, config, ct);
-        if (selectorLabels is null)
+        var selection = await _selectorResolver.ResolveAsync(repoConfig, config, ct);
+        if (selection is null)
         {
             // Null = startup race (no profiles available yet). Treat as transient failure.
             _logger.Warning(
@@ -253,7 +257,7 @@ public sealed class ConsolidationService : IConsolidationService
                 "re-trigger after profiles are loaded",
                 type, templateIdValue ?? GlobalScopeName);
         }
-        return selectorLabels;
+        return selection;
     }
 
     /// <summary>

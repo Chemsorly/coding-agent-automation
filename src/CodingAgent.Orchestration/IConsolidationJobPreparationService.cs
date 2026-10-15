@@ -40,7 +40,12 @@ public interface IConsolidationJobPreparationService
     /// </summary>
     /// <param name="type">The consolidation run type (determines whether issues:write is included).</param>
     /// <param name="templateId">Template ID to resolve repo/brain/issue providers from.</param>
-    /// <param name="agentLabels">Agent labels for profile-based agent config resolution.</param>
+    /// <param name="profile">
+    /// The agent profile resolved at dispatch time. When non-null, the agent provider config
+    /// is taken from <see cref="AgentProfile.AgentProviderConfigId"/> directly without calling
+    /// <c>ProfileResolver.Resolve</c>. When null (work item queued before this change, or profile
+    /// deleted/disabled), no agent provider config is injected.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// Preparation result with vended provider configs, the resolved repo provider ID, and the
@@ -50,6 +55,6 @@ public interface IConsolidationJobPreparationService
     Task<ConsolidationJobPreparationResult> PrepareAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
-        IReadOnlyList<string> agentLabels,
+        AgentProfile? profile,
         CancellationToken ct);
 }

@@ -58,7 +58,7 @@ public sealed class ConsolidationServiceDedupTests
                 It.IsAny<ProviderConfig?>(),
                 It.IsAny<PipelineConfiguration>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)SelectorLabels);
+            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(SelectorLabels), null));
     }
 
     private ConsolidationService CreateSut(Mock<IWorkDistributor> mockDistributor)
