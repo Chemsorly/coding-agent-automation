@@ -6,12 +6,13 @@
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Orchestration
 @using CodingAgent.Orchestration.Dispatch
-@using CodingAgent.Orchestration.Registry
 @using CodingAgent.Web.Services
 
 <PageTitle>Pipelines - Coding Agent</PageTitle>
 
 <div class="cockpit-page">
+    @* The loop status comes from the API (spec 051 D11); a Start or Stop shows within one tick. *@
+    <AutoRefresh IntervalSeconds="5" OnTick="RefreshLoopAsync" />
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Pipelines</h1>
@@ -22,15 +23,15 @@
     @* ═══ Overlay toast stack ═══ *@
     <div class="agent-toast-stack">
         @* Spec 049: the loop spans every project — its details need a global role, its controls global operator. *@
-        @if (LoopService.IsCircuitBroken && Access.HasGlobalRead)
+        @if (_loop.IsCircuitBroken && Access.HasGlobalRead)
         {
             <div class="agent-summary-bar" style="background: var(--bg-error); color: var(--error); border-color: var(--error);">
-                @LoopService.StatusMessage
+                @_loop.StatusMessage
                 @if (Access.HasGlobalOperate)
                 {
                     <span style="margin-left: 1rem;">
                         <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
-                        <button class="btn-cancel" @onclick="StopLoop" disabled="@_stopPending">Stop</button>
+                        <button class="btn-cancel" @onclick="StopLoop" disabled="@(!_loop.RunRequested)">Stop</button>
                     </span>
                 }
             </div>
@@ -49,41 +50,6 @@
                 <button class="agent-summary-dismiss" @onclick="DismissError" title="Dismiss">✕</button>
             </div>
         }
-
-        @{
-            // Spec 044 (degraded mode): IOrchestratorRunService removed from monolith.
-            // Active run count unavailable — will be restored in Spec 045 via API hub streaming.
-            var agentRuns = System.Array.Empty<CodingAgent.Pipeline.Interfaces.ActiveRunSummary>();
-            var agentCount = Registry.GetAllAgents().Count;
-            // Queue depth now lives in IPendingWorkQuery (WorkItems table), not the in-memory guard.
-            // Not injected here — the agent summary below only gates on it being non-zero.
-            var queueLength = 0;
-            var implRunCount = 0;
-            var reviewRunCount = 0;
-        }
-        @if (_showAgentSummary && (agentRuns.Length > 0 || queueLength > 0))
-        {
-            <div class="agent-summary-bar">
-                <span>
-                    <Icon Name="bot" Size="16" /> @agentCount agent(s) registered ·
-                    @agentRuns.Length agent run(s) active
-                    @if (implRunCount > 0 && reviewRunCount > 0)
-                    {
-                        <text> (🔨@implRunCount impl · </text><Icon Name="search" Size="16" /><text>@reviewRunCount review)</text>
-                    }
-                    else if (reviewRunCount > 0)
-                    {
-                        <text> (</text><Icon Name="search" Size="16" /><text>@reviewRunCount review)</text>
-                    }
-                    @if (queueLength > 0)
-                    {
-                        <text> · @queueLength job(s) queued</text>
-                    }
-                    · <a href="work" style="color: var(--accent-light);">View work →</a>
-                </span>
-                <button class="agent-summary-dismiss" @onclick="DismissAgentSummary" title="Dismiss">✕</button>
-            </div>
-        }
     </div>
 
     <div class="agent-content-layout">
@@ -95,15 +61,15 @@
                     HasRepoProvider="@(_repoProviders.Count > 0)"
                     HasProject="@(_projects.Count > 0)"
                     HasTemplate="@(_templates.Count > 0)"
-                    IsLoopActive="LoopService.IsLoopActive"
+                    IsLoopActive="_loop.IsLoopActive"
                     OnAddTemplate="ShowAddForm" />
             }
 
             <TemplateTableSection Templates="_templates" Projects="_projects" CanEdit="Access.IsAdmin"
                 IssueProviders="_issueProviders" RepoProviders="_repoProviders"
                 BrainProviders="_brainProviders" PipelineProviders="_pipelineProviders"
-                IsLoopActive="LoopService.IsLoopActive" RecentlyToggled="_recentlyToggled"
-                TemplateStatuses="LoopService.TemplateStatuses"
+                IsLoopActive="_loop.IsLoopActive" RecentlyToggled="_recentlyToggled"
+                TemplateStatuses="_loop.TemplateStatuses"
                 QualityGateConfigs="_qualityGateConfigs" ReviewerConfigs="_reviewerConfigs"
                 AgentProfiles="_agentProfiles" PipelineConfig="_pipelineConfig"
                 ShowAddForm="_showAddForm" AddForm="_addForm" FormError="@_formError"
@@ -124,30 +90,28 @@
                 <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                     @if (!Access.HasGlobalOperate)
                     {
-                        <span class="monitoring-muted" style="font-size: 0.82rem;">Loop @(LoopService.IsLoopActive ? "running" : "stopped")</span>
+                        <span class="monitoring-muted" style="font-size: 0.82rem;">Loop @(_loop.IsLoopActive ? "running" : "stopped")</span>
                     }
-                    else if (!LoopService.IsLoopActive)
+                    else if (!_loop.RunRequested && !_loop.IsLoopActive)
                     {
                         <button class="btn-save" @onclick="StartLoop" disabled="@(!CanStartLoop)" title="@(!CanStartLoop ? StartLoopDisabledReason : null)"><Icon Name="play" Size="16" /> Start Loop</button>
                     }
                     else
                     {
-                        <button class="btn-cancel" @onclick="StopLoop" disabled="@_stopPending">⏹ Stop Loop</button>
+                        @* Stop also withdraws a Start the Scheduler has not applied, e.g. one it refused. *@
+                        <button class="btn-cancel" @onclick="StopLoop" disabled="@(!_loop.RunRequested)">⏹ Stop Loop</button>
                     }
-                    @if (LoopService.IsLoopActive)
+                    @if (LoopProgressText is { } progress)
                     {
-                        <span class="monitoring-muted" style="font-size: 0.82rem;">
-                            Polling template @(LoopService.CurrentCycleTemplateIndex + 1) of @LoopService.CurrentCycleTemplateCount
-                            · Processed: @LoopService.ProcessedCount · Failed: @LoopService.FailedCount
-                        </span>
+                        <span class="monitoring-muted" style="font-size: 0.82rem;" data-testid="loop-progress">@progress</span>
                     }
                 </div>
-                @if (LoopService.ValidationErrors.Count > 0)
+                @if (_loop.ValidationErrors.Count > 0)
                 {
                     <div class="settings-status status-error" style="margin-top: 8px;">
                         <strong>Validation errors:</strong>
                         <ul style="margin: 4px 0 0 16px; padding: 0;">
-                            @foreach (var err in LoopService.ValidationErrors)
+                            @foreach (var err in _loop.ValidationErrors)
                             {
                                 <li>@err</li>
                             }

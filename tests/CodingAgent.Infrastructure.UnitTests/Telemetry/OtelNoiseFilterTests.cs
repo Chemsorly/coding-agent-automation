@@ -36,7 +36,7 @@ public class OtelNoiseFilterTests : IDisposable
     [Theory]
     [InlineData("/healthz")]
     [InlineData("/readyz")]
-    [InlineData("/loop/status")]
+    [InlineData("/api/ui/loop/status")]
     public void FilterAspNetCoreRequest_NoisePaths_ReturnsFalse(string path)
     {
         var context = BuildHttpContext(path);
@@ -49,7 +49,7 @@ public class OtelNoiseFilterTests : IDisposable
     [InlineData("/api/agents/")]
     [InlineData("/hubs/agent")]
     [InlineData("/healthz/detail")]     // sub-path of a noise path — must be kept
-    [InlineData("/loop/status/full")]   // sub-path of a noise path — must be kept
+    [InlineData("/api/ui/loop/status/full")]   // sub-path of a noise path — must be kept
     [InlineData("/readyz/extra")]       // sub-path of a noise path — must be kept
     [InlineData("/")]
     public void FilterAspNetCoreRequest_NonNoisePaths_ReturnsTrue(string path)
@@ -78,15 +78,15 @@ public class OtelNoiseFilterTests : IDisposable
     [Property]
     public Property FilterAspNetCoreRequest_AnyPathOtherThanNoiseIsKept()
     {
-        var noisePaths = new HashSet<string> { "/healthz", "/readyz", "/loop/status" };
+        var noisePaths = new HashSet<string> { "/healthz", "/readyz", "/api/ui/loop/status" };
 
         // TODO: [WARNING] Gen.Elements cycles over only 7 fixed strings — FsCheck provides no real randomised
         // coverage. A regression dropping an arbitrary path would never be caught. Replace with
         // Arb.Default.NonEmptyString() (or similar) filtered to exclude the three exact noise paths, so the
         // invariant is verified against genuinely random input. See TestQualityReviewer finding at
         // OtelNoiseFilterTests.cs:83.
-        var gen = Gen.Elements("/api/x", "/dashboard", "/healthz/detail", "/other", "/loop/statuses",
-            "/readyz/probe", "/loop/status/extra");
+        var gen = Gen.Elements("/api/x", "/dashboard", "/healthz/detail", "/other", "/api/ui/loop/statuses",
+            "/readyz/probe", "/api/ui/loop/status/extra");
 
         return Prop.ForAll(gen.ToArbitrary(), path =>
         {
@@ -248,7 +248,7 @@ public class OtelNoiseFilterTests : IDisposable
     [Theory]
     [InlineData("/healthz")]
     [InlineData("/readyz")]
-    [InlineData("/loop/status")]
+    [InlineData("/api/ui/loop/status")]
     public void Processor_OnEnd_SuppressesProbeServerSpans(string path)
     {
         // The instrumentation filter did not drop the span when it started: the end-of-span check must.

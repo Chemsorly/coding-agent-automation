@@ -141,15 +141,6 @@ spec:
               {{- else -}}
                 {{- printf "%s/hubs/agent" (include "coding-agent-automation.apiBaseUrl" .) | quote }}
               {{- end }}
-            # Scheduler API URL — used by LoopStatusPollingService and scheduler loop controls.
-            # Defaults to the in-cluster scheduler service URL. Override via scheduler.baseUrl
-            # when the Scheduler is deployed externally or scheduler.enabled is false.
-            - name: SchedulerApi__BaseUrl
-              value: {{ if .Values.scheduler.baseUrl -}}
-                {{- .Values.scheduler.baseUrl | quote }}
-              {{- else -}}
-                {{- printf "http://%s-scheduler.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.scheduler.service.port | int) | quote }}
-              {{- end }}
             # Downward API: expose namespace and pod name so OTEL_RESOURCE_ATTRIBUTES can reference
             # them via $(VAR_NAME) substitution. These MUST come before OTEL_RESOURCE_ATTRIBUTES.
             {{- include "coding-agent-automation.otelEnv" (dict "serviceName" (.Values.otel.webServiceName | default "coding-agent-web") "deploymentName" (printf "%s-web" (include "coding-agent-automation.fullname" .)) "root" .) | nindent 12 }}

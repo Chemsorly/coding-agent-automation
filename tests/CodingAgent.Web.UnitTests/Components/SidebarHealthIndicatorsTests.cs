@@ -1,7 +1,7 @@
 using Bunit;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Components.Layout;
-using CodingAgent.Orchestration.Registry;
+using CodingAgent.Web.UnitTests.TestUtilities;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Ui;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,34 +12,22 @@ namespace CodingAgent.Web.UnitTests.Components;
 
 /// <summary>
 /// The sidebar's health section. Database and Redis come from the Pipeline API
-/// (<c>/api/ui/health</c>, spec 051); agents from the registry.
+/// (<c>/api/ui/health</c>, spec 051); agents from <c>/api/ui/agents</c>.
 /// </summary>
 public class SidebarHealthIndicatorsTests : BunitContext
 {
     private static readonly string[] DotnetLabels = ["dotnet"];
-    private readonly Mock<ILogger> _mockLogger = new();
     private readonly FakeUiHealthClient _health = new();
 
-    private AgentRegistryService CreateRegistry() => new(_mockLogger.Object);
+    private static AgentEntryDto Agent(string id, AgentStatus status = AgentStatus.Idle) =>
+        UiAgentClientStub.Agent(id, status, labels: DotnetLabels);
 
-    private AgentRegistryService RegistryWith(params (string Id, AgentStatus? Status)[] agents)
-    {
-        var registry = CreateRegistry();
-        foreach (var (id, status) in agents)
-        {
-            registry.Register(new AgentRegistrationMessage { AgentId = id, Hostname = $"host-{id}", Labels = DotnetLabels }, $"conn-{id}");
-            if (status is { } s)
-                registry.TransitionStatus(id, s);
-        }
-        return registry;
-    }
-
-    private IRenderedComponent<SidebarHealthIndicators> RenderSidebar(UiHealthResponse? health = null, AgentRegistryService? registry = null)
+    private IRenderedComponent<SidebarHealthIndicators> RenderSidebar(UiHealthResponse? health = null, params AgentEntryDto[] agents)
     {
         if (health is not null)
             _health.Response = health;
         Services.AddSingleton<IUiHealthClient>(_health);
-        Services.AddSingleton<IAgentRegistryService>(registry ?? CreateRegistry());
+        Services.AddSingleton(UiAgentClientStub.With(agents).Object);
         return Render<SidebarHealthIndicators>();
     }
 
@@ -105,7 +93,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
     [Fact]
     public void ShowsAgentGreenDot_WhenAllConnected()
     {
-        var cut = RenderSidebar(registry: RegistryWith(("agent-1", null), ("agent-2", null)));
+        var cut = RenderSidebar(null, Agent("agent-1"), Agent("agent-2"));
 
         Assert.Contains("dot-healthy", DotOf(cut, "Agents"));
         Assert.Contains("Agents: 2", cut.FindAll(".sidebar-health-item").First(i => i.TextContent.Contains("Agents")).TextContent);
@@ -114,7 +102,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
     [Fact]
     public void ShowsAgentYellowDot_WhenSomeDisconnected()
     {
-        var cut = RenderSidebar(registry: RegistryWith(("agent-1", null), ("agent-2", AgentStatus.Disconnected)));
+        var cut = RenderSidebar(null, Agent("agent-1"), Agent("agent-2", AgentStatus.Disconnected));
 
         Assert.Contains("dot-warning", DotOf(cut, "Agents"));
         Assert.Equal("Agents: 1 connected, 1 disconnected", TooltipOf(cut, "Agents"));
@@ -123,7 +111,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
     [Fact]
     public void ShowsAgentRedDot_WhenAllDisconnected()
     {
-        var cut = RenderSidebar(registry: RegistryWith(("agent-1", AgentStatus.Disconnected)));
+        var cut = RenderSidebar(null, Agent("agent-1", AgentStatus.Disconnected));
 
         Assert.Contains("dot-unhealthy", DotOf(cut, "Agents"));
     }
@@ -135,16 +123,5 @@ public class SidebarHealthIndicatorsTests : BunitContext
 
         Assert.Contains("dot-inactive", DotOf(cut, "Agents"));
         Assert.Contains("Agents: 0", cut.FindAll(".sidebar-health-item").First(i => i.TextContent.Contains("Agents")).TextContent);
-    }
-
-    [Fact]
-    public void ShowsAgents_BeforeTheFirstHealthRead()
-    {
-        _health.Gate = new TaskCompletionSource().Task;
-
-        var cut = RenderSidebar(registry: RegistryWith(("agent-1", null)));
-
-        Assert.Contains(cut.FindAll(".sidebar-health-item"), i => i.TextContent.Contains("Agents: 1"));
-        Assert.DoesNotContain(cut.FindAll(".sidebar-health-item"), i => i.TextContent.Contains("Database"));
     }
 }

@@ -1,8 +1,7 @@
 @implements IDisposable
-@using CodingAgent.Orchestration.Registry
 @using CodingAgent.Pipeline.Models
 @inject IUiHealthClient Health
-@inject IAgentRegistryService Registry
+@inject IUiAgentClient Agents
 
 @if (_sectionVisible)
 {
@@ -30,18 +29,16 @@
 }
 
 @code {
-    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
-
     /// <summary>
-    /// Database and Redis come from the Pipeline API (spec 051, <c>/api/ui/health</c>) with the
-    /// user's token: every 5th tick (10 s) is enough for a sidebar dot. Agents refresh every tick.
+    /// Database, Redis and the agent count come from the Pipeline API (spec 051, <c>/api/ui/health</c>
+    /// and <c>/api/ui/agents</c>) with the user's token; every 10 s is enough for a sidebar dot. A
+    /// project-scoped user counts only the agents running their projects' work.
     /// </summary>
-    private const int HealthEveryTicks = 5;
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
 
     private System.Threading.Timer? _refreshTimer;
     private bool _disposed;
-    private int _ticks;
-    private bool _healthInFlight;
+    private bool _refreshInFlight;
 
     private bool? _dbStatus;
     private bool? _redisStatus;
@@ -89,24 +86,35 @@
     }
     private string AgentTooltip => $"Agents: {_connectedCount} connected, {_totalCount - _connectedCount} disconnected";
 
-    protected override void OnInitialized()
-    {
-        RefreshAgents();
+    protected override void OnInitialized() =>
         _refreshTimer = new System.Threading.Timer(RefreshTick, null, RefreshInterval, RefreshInterval);
-    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Not during prerendering: the first health read waits until the circuit is interactive.
-        if (firstRender && await RefreshHealthAsync() && !_disposed)
+        // Not during prerendering: the first read waits until the circuit is interactive.
+        if (firstRender && await RefreshAsync() && !_disposed)
             StateHasChanged();
     }
 
-    private async Task<bool> RefreshHealthAsync()
+    private async Task<bool> RefreshAsync()
     {
-        if (_healthInFlight)
+        if (_refreshInFlight)
             return false;
-        _healthInFlight = true;
+        _refreshInFlight = true;
+        try
+        {
+            await Task.WhenAll(RefreshHealthAsync(), RefreshAgentsAsync());
+        }
+        finally
+        {
+            _refreshInFlight = false;
+        }
+        _sectionVisible = _dbStatus is not null || _redisStatus is not null || _connectedCount > 0;
+        return true;
+    }
+
+    private async Task RefreshHealthAsync()
+    {
         try
         {
             var health = await Health.GetAsync();
@@ -119,31 +127,21 @@
             // reached through it. Redis keeps its last known state.
             _dbStatus = false;
         }
-        finally
-        {
-            _healthInFlight = false;
-        }
-        UpdateVisibility();
-        return true;
     }
 
-    private void RefreshAgents()
+    private async Task RefreshAgentsAsync()
     {
         try
         {
-            var agents = Registry.GetAllAgents();
+            var agents = await Agents.GetAgentsAsync();
             _totalCount = agents.Count;
             _connectedCount = agents.Count(a => a.Status != AgentStatus.Disconnected);
         }
         catch
         {
-            // Graceful degradation — don't crash the sidebar render
+            // Graceful degradation: the counts keep their last values.
         }
-        UpdateVisibility();
     }
-
-    private void UpdateVisibility() =>
-        _sectionVisible = _dbStatus is not null || _redisStatus is not null || _connectedCount > 0;
 
     private async void RefreshTick(object? state)
     {
@@ -152,20 +150,13 @@
         {
             await InvokeAsync(async () =>
             {
-                if (_disposed) return;
-                if (++_ticks % HealthEveryTicks == 0)
-                    await RefreshHealthAsync();
-                if (_disposed) return;
-                RefreshAgents();
+                if (_disposed || !await RefreshAsync() || _disposed) return;
                 StateHasChanged();
             });
         }
         catch (ObjectDisposedException) { /* Intentional: component disposed between timer tick and InvokeAsync; no action needed. */ }
     }
 
-    // TODO: Consider switching to IAsyncDisposable with await _refreshTimer.DisposeAsync() to guarantee
-    // no timer callbacks are in-flight after disposal completes, eliminating the race window where
-    // InvokeAsync could throw ObjectDisposedException between the _disposed check and the call.
     public void Dispose()
     {
         _disposed = true;

@@ -279,7 +279,7 @@ Three high-volume span categories are kept out of the export (~70% of raw daily 
 
 | Noise | What is dropped |
 |-------|-----------------|
-| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz`, `/loop/status`; sub-paths like `/healthz/detail` are kept |
+| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz` and the UI's loop status poll `/api/ui/loop/status`; sub-paths like `/healthz/detail` are kept |
 | Kubernetes API server calls | Client spans to `KUBERNETES_SERVICE_HOST` (in-cluster) or `kubernetes.default.svc`, mostly leader-election leases (~387k spans per day) |
 | Chatty SignalR / Blazor circuit spans | Hub methods ending in `/Heartbeat`, `/ReportOutputLines`, `/OnRenderCompleted`; spans starting with `"Circuit "`; event callbacks starting with `"Event "` and containing `" -> "` |
 

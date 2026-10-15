@@ -28,7 +28,7 @@ public class AgentCodingPageServiceTests
     private readonly Mock<IIssueDrawerService> _mockIssueDrawerService;
     private readonly Mock<IPrReviewDrawerService> _mockPrReviewDrawerService;
     private readonly Mock<IEpicDrawerService> _mockEpicDrawerService;
-    private readonly Mock<ISchedulerApiClient> _mockSchedulerClient;
+    private readonly Mock<CodingAgent.Web.Ui.IUiLoopClient> _mockLoopClient = new();
     private readonly AgentCodingPageService _service;
 
     // Real drawer state services so property forwarding works in tests that check DrawerState
@@ -37,7 +37,7 @@ public class AgentCodingPageServiceTests
     private readonly DrawerStateService<IssueSummary> _epicDrawerState;
 
     // Spec 047: _mockLoopConfigStore and _mockLoopProjectStore removed — AgentCodingPageService
-    // no longer holds a PipelineLoopService; loop controls go through ISchedulerApiClient.
+    // no longer holds a PipelineLoopService; loop controls go through IUiLoopClient (spec 051 D11).
 
     public AgentCodingPageServiceTests()
     {
@@ -66,10 +66,6 @@ public class AgentCodingPageServiceTests
         _mockPrReviewDrawerService.Setup(s => s.DrawerState).Returns(_prDrawerState);
         _mockEpicDrawerService.Setup(s => s.DrawerState).Returns(_epicDrawerState);
 
-        // Spec 047: AgentCodingPageService now takes ISchedulerApiClient instead of PipelineLoopService.
-        _mockSchedulerClient = new Mock<ISchedulerApiClient>();
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(true, null));
 
         _service = CreateService();
     }
@@ -79,7 +75,7 @@ public class AgentCodingPageServiceTests
     {
         var (access, guard) = TestAccess.Create(grant);
         return new AgentCodingPageService(
-            _mockSchedulerClient.Object,
+            _mockLoopClient.Object,
             _mockConfigClient.Object,
             _mockIssueDrawerService.Object,
             _mockPrReviewDrawerService.Object,
@@ -391,54 +387,45 @@ public class AgentCodingPageServiceTests
     }
 
     // ── Loop Controls ──
+    // Spec 051 D11: each command only records the request through /api/ui/loop.
 
     [Fact]
-    public async Task StopLoopAsync_CallsSchedulerClient()
+    public async Task StopLoopAsync_SendsStop()
     {
-        _mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        var (success, error) = await _service.StopLoopAsync();
 
-        await _service.StopLoopAsync();
-
-        _mockSchedulerClient.Verify(c => c.StopLoopAsync(It.IsAny<CancellationToken>()), Times.Once,
-            "StopLoopAsync must delegate to ISchedulerApiClient.StopLoopAsync");
+        Assert.True(success);
+        Assert.Null(error);
+        _mockLoopClient.Verify(c => c.StopAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task StartLoopAsync_WhenSchedulerClientThrows_ReturnsErrorTuple()
+    public async Task StartLoopAsync_SendsStart()
     {
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+        var (success, error) = await _service.StartLoopAsync();
+
+        Assert.True(success);
+        Assert.Null(error);
+        _mockLoopClient.Verify(c => c.StartAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResumeLoopAsync_SendsResume()
+    {
+        (await _service.ResumeLoopAsync()).Should().Be((true, (string?)null));
+        _mockLoopClient.Verify(c => c.ResumeAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartLoopAsync_WhenTheApiFails_ReturnsTheReason()
+    {
+        _mockLoopClient.Setup(c => c.StartAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
         var (success, error) = await _service.StartLoopAsync();
 
         Assert.False(success);
-        Assert.NotNull(error);
-        Assert.Contains("connection refused", error);
-    }
-
-    [Fact]
-    public async Task StartLoopAsync_WhenSchedulerReturnsStarted_ReturnsSuccess()
-    {
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(true, null));
-
-        var (success, error) = await _service.StartLoopAsync();
-
-        Assert.True(success);
-        Assert.Null(error);
-    }
-
-    [Fact]
-    public async Task StartLoopAsync_WhenSchedulerReturnsNotStarted_ReturnsFailure()
-    {
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(false, "Loop is already active."));
-
-        var (success, error) = await _service.StartLoopAsync();
-
-        Assert.False(success);
-        Assert.Equal("Loop is already active.", error);
+        Assert.Equal("Failed to start loop: connection refused", error);
     }
 
     // ── Cross-drawer coordination via coordinator ──
@@ -802,6 +789,6 @@ public class AgentCodingPageServiceTests
         var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));
 
         (await service.StopLoopAsync()).Should().Be((false, AccessDeniedException.UserMessage));
-        _mockSchedulerClient.Verify(c => c.StopLoopAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _mockLoopClient.Verify(c => c.StopAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

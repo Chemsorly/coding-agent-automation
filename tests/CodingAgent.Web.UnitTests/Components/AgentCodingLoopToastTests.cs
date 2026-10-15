@@ -29,7 +29,7 @@ public class AgentCodingLoopToastTests : BunitContext
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly Mock<IProviderFactory> _mockFactory = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
-    private readonly Mock<ILoopStatusService> _mockLoopStatus = new();
+    private readonly CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient _loop = new();
 
     private static readonly string[] DefaultTemplateIds = ["t-1"];
 
@@ -54,32 +54,14 @@ public class AgentCodingLoopToastTests : BunitContext
         SetupProjectStoreMocks();
         SetupConfigClientMocks();
 
-        _mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
-        _mockLoopStatus.SetupGet(l => l.TemplateStatuses)
-            .Returns(new Dictionary<string, ConfigStatusSnapshot>());
-        _mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.CurrentCycleTemplateIndex).Returns(0);
-        _mockLoopStatus.SetupGet(l => l.CurrentCycleTemplateCount).Returns(1);
-        _mockLoopStatus.SetupGet(l => l.ProcessedCount).Returns(0);
-        _mockLoopStatus.SetupGet(l => l.FailedCount).Returns(0);
-
-        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
-        mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(true, null));
-        mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<ILoopStatusService>(_mockLoopStatus.Object);
-        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(_loop);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(_mockProjectStore.Object);
         Services.AddSingleton<IPipelineApiConfigClient>(_mockConfigClient.Object);
 
-        var registry = new AgentRegistryService(mockLogger.Object);
-        Services.AddSingleton(registry);
-        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiAgentClient>().Object);
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         // IssueDrawerService now requires IPipelineApiWorkItemClient for status-aware active-issue tracking.
@@ -104,9 +86,7 @@ public class AgentCodingLoopToastTests : BunitContext
     [Fact]
     public void WhenLoopActive_ToastStackDoesNotContainLoopStatusBar()
     {
-        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(true);
-        _mockLoopStatus.SetupGet(l => l.IsCircuitBroken).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("Running…");
+        _loop.Status = CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient.Running with { StatusMessage = "Running…" };
 
         var cut = Render<AgentCoding>();
 
@@ -119,9 +99,7 @@ public class AgentCodingLoopToastTests : BunitContext
     [Fact]
     public void WhenLoopActive_InlineSectionShowsStopLoopButton()
     {
-        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(true);
-        _mockLoopStatus.SetupGet(l => l.IsCircuitBroken).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("Running…");
+        _loop.Status = CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient.Running with { StatusMessage = "Running…" };
 
         var cut = Render<AgentCoding>();
 
@@ -141,9 +119,7 @@ public class AgentCodingLoopToastTests : BunitContext
     [Fact]
     public void WhenCircuitBroken_CircuitBrokenBarStillRendered()
     {
-        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(true);
-        _mockLoopStatus.SetupGet(l => l.IsCircuitBroken).Returns(true);
-        _mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("Circuit broken — too many failures");
+        _loop.Status = CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient.Running with { IsCircuitBroken = true, StatusMessage = "Circuit broken — too many failures" };
 
         var cut = Render<AgentCoding>();
 
@@ -159,9 +135,7 @@ public class AgentCodingLoopToastTests : BunitContext
     [Fact]
     public void WhenLoopInactive_InlineSectionShowsStartLoopButton()
     {
-        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.IsCircuitBroken).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
+        _loop.Status = CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient.Stopped;
 
         var cut = Render<AgentCoding>();
 

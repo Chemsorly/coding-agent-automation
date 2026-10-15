@@ -15,7 +15,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  Orchestrator  (CodingAgent.Web)                                           │
 │  ─────────────                                                              │
 │  Blazor Server UI                                                           │
-│  Polls /loop/status on Scheduler for UI state                               │
+│  Reads loop status and agents from /api/ui with the user's token            │
 │  No leader election, no Kubernetes API access, no SignalR hub of its own   │
 │                                                                             │
 │  No EF Core. No AgentHub. Connects to API via IPipelineApiConfigClient,    │
@@ -255,7 +255,6 @@ The five processes communicate strictly via defined interfaces:
 |------|----|-----------|
 | Orchestrator | Pipeline API | REST (HTTP via `IPipelineApiConfigClient`, `IPipelineApiWorkItemClient`, `IPipelineApiRunHistoryClient`) |
 | Orchestrator | Pipeline API | SignalR hub subscribe (`IAgentHubConnection`, scoped per Blazor circuit) |
-| Orchestrator | Scheduler | REST — `GET /loop/status`, `POST /loop/start`, `/loop/stop`, `/loop/resume` |
 | Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, `PUT /api/scheduler/loop-status` (leader only), among others |
 | Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |
@@ -345,70 +344,8 @@ The API keeps the last status in Redis (in memory without Redis) and serves it o
 `GET /api/ui/loop/status`. A status older than 2 minutes counts as missing, so the UI can tell a
 silent Scheduler from an idle loop.
 
-The `/loop/*` endpoints and the relay below still serve the web host until it switches to
-`/api/ui/loop` (spec 051 2.6b), which deletes them.
+The watchdog is also how the loop starts after a pod start or a leadership change; there is no
+separate auto-start. `PipelineLoopService` never writes `ClosedLoopAutoStart`, so a Stop that
+arrives while the loop starts is not undone: the next cycle reads it and stops. Nothing calls the
+Scheduler, so it has no Kubernetes Service.
 
----
-
-## Scheduler Loop Command Relay
-
-The Scheduler runs as multiple replicas behind a Kubernetes Service. Only the pod that holds the
-`caa-scheduler-lock` lease (the **leader**) executes the pipeline loop. When the Kubernetes Service
-sends a `POST /loop/start`, `/loop/stop`, or `/loop/resume` request to a **non-leader** pod, the
-request must be forwarded to the leader.
-
-### Relay mechanism
-
-**Non-leader side (`LoopCommandRelay.SendAsync`):**
-
-1. Writes `scheduler:loop-command` = JSON `{ "id": "<guid>", "command": "start|stop|resume" }` to
-   Redis with a 60 s expiry (`When.Always` — the last writer wins for concurrent commands).
-2. Polls `scheduler:loop-command-result:{id}` every 250 ms for up to 10 s.
-3. On success: deserializes the result and returns it to the caller.
-4. On timeout (10 s): returns `Started=false` for start; returns a 503 with error text
-   `"The scheduler leader did not confirm the command within 10 s."` for stop and resume.
-
-**Leader side (`LoopCommandHandlerService`):**
-
-1. A leader-gated `BackgroundService` polls `scheduler:loop-command` every 1 s.
-2. When the key is present and its `id` differs from the last handled id (`_lastHandledId`), it
-   executes the command via `ILoopCommandExecutor`.
-3. Writes `scheduler:loop-command-result:{id}` to Redis (60 s expiry) so the non-leader relay can
-   pick it up.
-4. Stores `_lastHandledId` so the same command id is never executed twice (idempotency guard).
-
-**Shared executor (`ILoopCommandExecutor` / `LoopCommandExecutor`):**
-
-Both the local path (leader or single-replica) and the relay path (leader handler) use the same
-`ILoopCommandExecutor` implementation, satisfying the "one shared implementation" acceptance criterion.
-
-### Stop durability guarantee
-
-The `/loop/stop` endpoint persists `ClosedLoopAutoStart=false` **locally** (on the receiving pod,
-via `ILoopCommandExecutor.ExecuteStopPersistAsync`) **before** writing the relay command to Redis.
-The `StopLoop()` call is then relayed to the leader via `ILoopCommandExecutor.ExecuteStopLoopOnlyAsync`.
-
-This split ensures the config flag is durable even when the leader does not confirm within 10 s:
-`LoopWatchdogService` reads `ClosedLoopAutoStart` and will not restart the loop after the timeout.
-
-### Single-replica and no-Redis behaviour
-
-When Redis is not configured, `ILoopCommandRelay` resolves to `NullLoopCommandRelay` (which throws
-`InvalidOperationException` if ever called) and `LoopCommandHandlerService` is not registered.
-The endpoint guard — `leaderGate is null || leaderGate.IsLeader || store is null` — routes all
-commands through the local path, preserving exactly-as-today behaviour for single-replica deployments.
-
-When `ILeaderGate` is null (no leader election configured), the local path also runs unconditionally,
-matching the pattern used by `WorkItemCountsService` and `LoopWatchdogService`.
-
-### Note on the cross-process communication table
-
-The Cross-Process Communication table entry `Orchestrator → Scheduler | REST — GET /loop/status,
-POST /loop/start, /loop/stop, /loop/resume` is unchanged. The relay is entirely internal to the
-Scheduler process and is transparent to Orchestrator callers.
-
-### Worst-case latency
-
-Command written at T=0 → leader handler misses on T<1 s poll → picks up at T≈1 s → result written
-→ relay reads at T≈1.25 s (5th 250 ms poll). Worst case (command written just after a handler tick):
-≈2 s. Well within the 10 s timeout.

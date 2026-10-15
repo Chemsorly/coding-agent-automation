@@ -141,6 +141,12 @@ Single-replica mode. Scale to multiple replicas with:
 Note: web.env.pipelineLoopStartupDelaySeconds and web.leaderElection.pipelineLoopLeaseName are
 no longer used (the web host runs no pipeline loop and holds no lease). Remove them from your values.
 {{- end }}
+{{- if or .Values.scheduler.baseUrl ((.Values.scheduler.service | default dict).type) }}
+
+Note: scheduler.baseUrl and scheduler.service.type are no longer used. The Scheduler has no Service:
+Start, Stop and Resume are recorded in the pipeline configuration through the Pipeline API, and the
+Scheduler leader applies them. Remove them from your values.
+{{- end }}
 
 {{- if .Values.api.enabled }}
 

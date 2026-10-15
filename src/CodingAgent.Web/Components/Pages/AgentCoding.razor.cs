@@ -1,11 +1,12 @@
 using CodingAgent.Orchestration.Dispatch;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Services;
 using CodingAgent.Web.Components.Layout;
 using CodingAgent.Web.Components.Shared;
+using CodingAgent.Web.Ui;
+using CodingAgent.Contracts.Ui;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 
@@ -16,8 +17,7 @@ public partial class AgentCoding : IDisposable
     private const string EnabledWord = "enabled";
     private const string DisabledWord = "disabled";
 
-    [Inject] private ILoopStatusService LoopService { get; set; } = default!;
-    [Inject] private IAgentRegistryService Registry { get; set; } = default!;
+    [Inject] private IUiLoopClient LoopClient { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
     [Inject] private CurrentAccess Access { get; set; } = default!;
@@ -39,8 +39,6 @@ public partial class AgentCoding : IDisposable
 
     private string? _errorMessage;
     private string? _successMessage;
-    private bool _showAgentSummary = true;
-    private bool _stopPending;
     private bool _disposed;
 
     // Template Table UI State
@@ -126,12 +124,11 @@ public partial class AgentCoding : IDisposable
 
     protected override async Task OnInitializedAsync()
     {
-        LoopService.OnChange += HandleStateChanged;
         if (Layout is not null)
             Layout.OnEscapePressed += HandleGlobalEscape;
 
         _errorMessage = await PageService.InitializeAsync();
-        _ = AutoDismissAgentSummary();
+        await RefreshLoopAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -410,7 +407,7 @@ public partial class AgentCoding : IDisposable
     }
 
     private string? WithLoopNote(string? message) =>
-        message is not null && LoopService.IsLoopActive ? $"{message} The running loop applies it from its next cycle." : message;
+        message is not null && _loop.IsLoopActive ? $"{message} The running loop applies it from its next cycle." : message;
 
     // ── Loop Controls ──
 
@@ -430,58 +427,51 @@ public partial class AgentCoding : IDisposable
         }
     }
 
-    private async Task StartLoop()
+    /// <summary>
+    /// The loop as the Scheduler leader last reported it, and whether Start was the last command
+    /// (spec 051 D11). Refreshed on load, every <c>AutoRefresh</c> tick and after each command.
+    /// </summary>
+    private UiLoopStatus _loop = UiLoopStatus.Unknown;
+
+    /// <summary>
+    /// What the loop is doing, next to the controls: a command the Scheduler has not applied yet, the
+    /// current cycle, or that the Scheduler is not reporting.
+    /// </summary>
+    private string? LoopProgressText => (_loop.RunRequested, _loop.IsLoopActive) switch
     {
-        _errorMessage = null;
+        _ when _loop.ReportedAt is null => string.IsNullOrEmpty(_loop.StatusMessage) ? null : _loop.StatusMessage,
+        (true, false) => "Start requested — the Scheduler starts the loop within a few seconds.",
+        (false, true) => "Stop requested — the loop stops after its current cycle.",
+        (true, true) => $"Polling template {_loop.CurrentCycleTemplateIndex + 1} of {_loop.CurrentCycleTemplateCount} · Processed: {_loop.ProcessedCount} · Failed: {_loop.FailedCount}",
+        _ => null,
+    };
+
+    /// <summary>Reads the loop status; on a failure the last one stays, and the next tick retries.</summary>
+    internal async Task RefreshLoopAsync()
+    {
         try
         {
-            var (success, error) = await PageService.StartLoopAsync();
-            if (!success) _errorMessage = error;
+            _loop = await LoopClient.GetStatusAsync();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _errorMessage = $"Failed to start loop: {ex.Message}";
+            // Keep the last status.
         }
     }
 
-    private async Task StopLoop()
-    {
-        // Guard: do not dispatch a second stop request while one is already in progress.
-        // The primary prevention mechanism is the disabled button attribute in the razor template,
-        // but this guard provides defence-in-depth for programmatic calls (keyboard shortcuts,
-        // automated tests, etc.) that bypass the disabled attribute.
-        if (_stopPending) return;
+    private Task StartLoop() => SendLoopCommandAsync(PageService.StartLoopAsync);
 
-        _stopPending = true;
-        // TODO: Consider replacing with `await InvokeAsync(StateHasChanged)` for consistency with
-        // HandleStateChanged, which always uses InvokeAsync for thread safety. Direct StateHasChanged()
-        // is safe here because StopLoop runs on the Blazor render thread (UI event), but the asymmetry
-        // is confusing and could silently fail if this method is ever called from a background context.
-        StateHasChanged(); // Forces Blazor to re-render before awaiting, disabling the button immediately
-        var (success, error) = await PageService.StopLoopAsync();
+    private Task StopLoop() => SendLoopCommandAsync(PageService.StopLoopAsync);
+
+    private Task ResumeLoop() => SendLoopCommandAsync(PageService.ResumeLoopAsync);
+
+    private async Task SendLoopCommandAsync(Func<Task<(bool Success, string? Error)>> command)
+    {
+        _errorMessage = null;
+        var (success, error) = await command();
         if (!success)
-        {
-            // Stop request failed (scheduler returned error, network failure, etc.).
-            // IsLoopActive will remain true — HandleStateChanged will never clear _stopPending.
-            // Reset it explicitly here so the button does not stay permanently disabled.
-            _stopPending = false;
             _errorMessage = error;
-            StateHasChanged();
-        }
-        // TODO: Add a try/catch around StopLoopAsync to handle unexpected exceptions
-        // (e.g. TaskCanceledException during component disposal, ObjectDisposedException).
-        // If an unhandled exception escapes this method, _stopPending stays true permanently,
-        // leaving the Stop button disabled. StartLoop() above wraps its call in try/catch for
-        // exactly this reason — StopLoop() should follow the same pattern. See review finding
-        // from DotNetSpecialist (issue #2369).
-        // On success: _stopPending stays true until HandleStateChanged sees !IsLoopActive,
-        // keeping the button disabled until the poller confirms the loop has actually stopped.
-    }
-
-    private async Task ResumeLoop()
-    {
-        var (success, error) = await PageService.ResumeLoopAsync();
-        if (!success) _errorMessage = error;
+        await RefreshLoopAsync();
     }
 
     // ── Drawer Mutual Exclusion ──
@@ -746,53 +736,7 @@ public partial class AgentCoding : IDisposable
         catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
-    private void DismissAgentSummary() => _showAgentSummary = false;
-
     private void DismissError() => _errorMessage = null;
-
-    private async Task AutoDismissAgentSummary()
-    {
-        await Task.Delay(8000, CancellationToken.None);
-        try
-        {
-            await InvokeAsync(() =>
-            {
-                if (_disposed)
-                {
-                    return;
-                }
-                _showAgentSummary = false;
-                StateHasChanged();
-            });
-        }
-        catch (ObjectDisposedException) { /* Already disposed. */ }
-    }
-
-    // ── Event Handlers ──
-
-    private async void HandleStateChanged()
-    {
-        if (_disposed) return;
-        try
-        {
-            await InvokeAsync(() =>
-            {
-                if (_disposed) return;
-                // Clear _stopPending when the poller confirms the loop has stopped.
-                // Must be inside InvokeAsync: HandleStateChanged fires on a background thread
-                // and state mutations must be marshalled to the Blazor render thread.
-                // TODO: There is a subtle race: if the loop stops and immediately restarts between two
-                // HandleStateChanged calls, _stopPending is cleared prematurely while a new cycle begins.
-                // Also note that _stopPending is cleared for any IsLoopActive=false transition, not only
-                // stop-requested ones — this is intentional (natural completion also releases the guard)
-                // but should be revisited if a dedicated IsStopPending DTO field is ever added (#2369).
-                if (!LoopService.IsLoopActive)
-                    _stopPending = false;
-                StateHasChanged();
-            });
-        }
-        catch (ObjectDisposedException) { /* Already disposed. */ }
-    }
 
     public void Dispose()
     {
@@ -806,7 +750,6 @@ public partial class AgentCoding : IDisposable
         _disposed = true;
         if (disposing)
         {
-            LoopService.OnChange -= HandleStateChanged;
             if (Layout is not null)
                 Layout.OnEscapePressed -= HandleGlobalEscape;
         }

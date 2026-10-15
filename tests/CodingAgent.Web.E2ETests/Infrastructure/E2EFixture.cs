@@ -26,7 +26,7 @@ namespace CodingAgent.Web.E2ETests.Infrastructure;
 ///
 /// Start order matters: the API must be listening before the Scheduler builds (it uses
 /// <c>PipelineApi:BaseUrl</c>), and both must be listening before the Blazor host builds, because
-/// the monolith reads <c>PipelineApi:BaseUrl</c> and <c>SchedulerApi:BaseUrl</c> during
+/// the monolith reads <c>PipelineApi:BaseUrl</c> during
 /// configuration and fast-fails without them.
 ///
 /// Playwright is started lazily by <see cref="GetBrowserAsync"/>. Tests that assert on state
@@ -105,19 +105,34 @@ public sealed class E2EFixture : IAsyncLifetime
         ?? throw new InvalidOperationException("Scheduler host not started");
 
     /// <summary>
+    /// Starts the closed loop the way Start does since spec 051 D11: it records the request
+    /// (<c>ClosedLoopAutoStart</c>), which the Scheduler's watchdog would otherwise undo, and starts
+    /// the loop at once rather than waiting for the watchdog's tick. True when the loop runs.
+    /// </summary>
+    public async Task<bool> StartLoopAsync()
+    {
+        await Factory.ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
+        // The watchdog may start it first, in which case this call finds it running.
+        var loop = SchedulerFactory.LoopService;
+        return await loop.StartLoopAsync() || loop.IsLoopActive;
+    }
+
+    /// <summary>
+    /// Stops the closed loop the way Stop does since spec 051 D11: it withdraws the request, so the
+    /// Scheduler's watchdog does not start the loop again, and asks the loop to stop after its cycle.
+    /// </summary>
+    public async Task StopLoopAsync()
+    {
+        await Factory.ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
+        SchedulerFactory.LoopService.StopLoop();
+    }
+
+    /// <summary>
     /// Chat job dispatcher. Moved to the API host (Spec 044/045) so it polls the registry
     /// that the hub actually writes to. Tests must use this rather than Factory.ChatDispatcher.
     /// </summary>
     public ChatJobDispatcher ChatDispatcher => _apiFactory?.ChatDispatcher
         ?? throw new InvalidOperationException("API host not started");
-
-    /// <summary>
-    /// Refreshes the Blazor host's <see cref="ApiAgentRegistryService"/> snapshot immediately.
-    /// Call this after connecting agents (which register on the API hub) and before navigating to a
-    /// Blazor page that renders agent status, so the page does not race the 2s background poll.
-    /// </summary>
-    public Task ForceAgentRegistryRefreshAsync(CancellationToken ct = default)
-        => Factory.ForceAgentRegistryRefreshAsync(ct);
 
     /// <summary>
     /// Run lifecycle manager. Spec 045 removed it from the monolith's DI and re-homed it in the
@@ -176,8 +191,7 @@ public sealed class E2EFixture : IAsyncLifetime
         Factory.ApiBaseUrl = _apiFactory.ServerAddress;
 
         // Build the Scheduler host after the API is listening, so PipelineApi__BaseUrl is
-        // resolvable. Must be built before the Blazor host because the Web app reads
-        // SchedulerApi__BaseUrl during configuration and fast-fails without it.
+        // resolvable.
         _schedulerFactory = new SchedulerE2EWebApplicationFactory(
             Factory.DbName,
             Factory.ConfigStore,
@@ -190,7 +204,6 @@ public sealed class E2EFixture : IAsyncLifetime
         // Force the Scheduler host to build and bind its Kestrel port.
         using (var schedulerClient = _schedulerFactory.CreateClient()) { }
 
-        Factory.SchedulerBaseUrl = _schedulerFactory.ServerAddress;
 
         using var appClient = Factory.CreateClient();
 
@@ -252,6 +265,10 @@ public sealed class E2EFixture : IAsyncLifetime
     /// </summary>
     public async Task ResetAllAsync()
     {
+        // Withdraw a Start first: the Scheduler's watchdog would otherwise restart the loop between
+        // the stop below and ResetAll (spec 051 D11).
+        await Factory.ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
+
         // PipelineLoopService lives in the Scheduler host; stop it there.
         if (_schedulerFactory is not null)
         {

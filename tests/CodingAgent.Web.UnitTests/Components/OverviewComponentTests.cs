@@ -55,7 +55,7 @@ public class OverviewComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
-        Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
         Services.AddSingleton(Mock.Of<IJSRuntime>());

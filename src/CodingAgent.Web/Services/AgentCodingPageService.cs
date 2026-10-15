@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
+using CodingAgent.Web.Ui;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web.Services;
@@ -17,7 +18,7 @@ namespace CodingAgent.Web.Services;
 /// </summary>
 public class AgentCodingPageService
 {
-    private readonly ISchedulerApiClient _schedulerClient;
+    private readonly IUiLoopClient _loopClient;
     private readonly IPipelineApiConfigClient _configClient;
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
@@ -26,7 +27,7 @@ public class AgentCodingPageService
     private readonly IAccessGuard _guard;
 
     public AgentCodingPageService(
-        ISchedulerApiClient schedulerClient,
+        IUiLoopClient loopClient,
         IPipelineApiConfigClient configClient,
         IIssueDrawerService issueDrawerService,
         IPrReviewDrawerService prReviewDrawerService,
@@ -36,7 +37,7 @@ public class AgentCodingPageService
     {
         _access = access;
         _guard = guard;
-        _schedulerClient = schedulerClient;
+        _loopClient = loopClient;
         _configClient = configClient;
         _issueDrawerService = issueDrawerService;
         _prReviewDrawerService = prReviewDrawerService;
@@ -318,47 +319,29 @@ public class AgentCodingPageService
     }
 
     // ── Loop Controls ──
+    // Spec 051 D11: each command only records the request; the Scheduler leader applies it within a
+    // few seconds. A start it refuses shows up in the loop status's validation errors.
 
-    public async Task<(bool Success, string? Error)> StartLoopAsync()
+    public Task<(bool Success, string? Error)> StartLoopAsync() =>
+        SendLoopCommandAsync(_loopClient.StartAsync, "start");
+
+    public Task<(bool Success, string? Error)> StopLoopAsync() =>
+        SendLoopCommandAsync(_loopClient.StopAsync, "stop");
+
+    public Task<(bool Success, string? Error)> ResumeLoopAsync() =>
+        SendLoopCommandAsync(_loopClient.ResumeAsync, "resume");
+
+    private async Task<(bool Success, string? Error)> SendLoopCommandAsync(Func<CancellationToken, Task> send, string verb)
     {
         if (await DeniedAsync(AccessRole.Operator) is { } denied) return (false, denied);
         try
         {
-            var result = await _schedulerClient.StartLoopAsync(CancellationToken.None);
-            // Persistence (ClosedLoopAutoStart=true) is handled by the Scheduler endpoint.
-            return (result.Started, result.Error);
-        }
-        catch (Exception ex)
-        {
-            return (false, $"Failed to start loop: {ex.Message}");
-        }
-    }
-
-    public async Task<(bool Success, string? Error)> StopLoopAsync()
-    {
-        if (await DeniedAsync(AccessRole.Operator) is { } denied) return (false, denied);
-        try
-        {
-            await _schedulerClient.StopLoopAsync(CancellationToken.None);
+            await send(CancellationToken.None);
             return (true, null);
         }
         catch (Exception ex)
         {
-            return (false, $"Failed to stop loop: {ex.Message}");
-        }
-    }
-
-    public async Task<(bool Success, string? Error)> ResumeLoopAsync()
-    {
-        if (await DeniedAsync(AccessRole.Operator) is { } denied) return (false, denied);
-        try
-        {
-            await _schedulerClient.ResumeLoopAsync(CancellationToken.None);
-            return (true, null);
-        }
-        catch (Exception ex)
-        {
-            return (false, $"Failed to resume loop: {ex.Message}");
+            return (false, $"Failed to {verb} loop: {ex.Message}");
         }
     }
 

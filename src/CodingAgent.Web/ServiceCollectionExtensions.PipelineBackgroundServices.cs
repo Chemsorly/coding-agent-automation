@@ -19,11 +19,8 @@ public static partial class ServiceCollectionExtensions
     /// - ApiConfigurationStore + IConfigurationStore + IAgentProfileStore +
     ///   IQualityGateConfigStore + IReviewerConfigStore
     ///   (sourced from CodingAgent.Api.Client.Stores)
-    /// Manual dispatch from the drawers runs in the API since spec 051 2.3c.
-    ///
-    /// ADDED (Spec 047):
-    /// - ILoopStatusService / LoopStatusPollingService (polls Scheduler /loop/status)
-    /// - ISchedulerApiClient / HttpSchedulerApiClient (calls Scheduler loop endpoints)
+    /// Manual dispatch from the drawers runs in the API since spec 051 2.3c. The loop status and
+    /// controls come from <c>/api/ui/loop</c> (spec 051 D11), so the web calls no Scheduler.
     /// </summary>
     private static void RegisterPipelineBackgroundServices(IServiceCollection services)
     {
@@ -31,7 +28,7 @@ public static partial class ServiceCollectionExtensions
         // Sets PooledConnectionLifetime so stale connections to replaced pod IPs (after a
         // rolling update) are recycled within 90s rather than persisting indefinitely.
         // Applied via ConfigureHttpClientDefaults so it covers every client registered in
-        // this method (ISchedulerApiClient).
+        // this container.
         // ConfigureHttpClientDefaults is additive — if AddPipelineApiClient also registered a
         // ConfigurePrimaryHttpMessageHandler, the last registration wins. Both register an
         // identical SocketsHttpHandler factory so the outcome is correct regardless of order.
@@ -45,51 +42,6 @@ public static partial class ServiceCollectionExtensions
                 PooledConnectionLifetime = TimeSpan.FromSeconds(90)
             });
         });
-
-        // ── Spec 047: Loop status polling (replaces in-process PipelineLoopService) ──────────
-        // Polls GET /loop/status on the Scheduler every 3 seconds (configurable via
-        // SchedulerApi:StatusPollIntervalSeconds). The Overview and Pipelines pages inject
-        // ILoopStatusService instead of IPipelineLoopService — same read-only surface.
-        // Register the concrete type as a singleton first so the hosted service and the
-        // ILoopStatusService alias both share the same instance. E2E tests replace only
-        // ILoopStatusService (with FakeLoopStatusService) — the hosted service registration
-        // below targets the concrete type directly and is not affected by that replacement.
-        services.AddSingleton<LoopStatusPollingService>(sp =>
-        {
-            var client = sp.GetRequiredService<ISchedulerApiClient>();
-            var cfg = sp.GetService<IConfiguration>();
-            var intervalSec = cfg?.GetValue<int?>("SchedulerApi:StatusPollIntervalSeconds");
-            var interval = intervalSec is > 0 ? TimeSpan.FromSeconds(intervalSec.Value) : (TimeSpan?)null;
-            return new LoopStatusPollingService(client, Log.Logger, interval);
-        });
-        services.AddSingleton<ILoopStatusService>(sp => sp.GetRequiredService<LoopStatusPollingService>());
-        services.AddHostedService(sp => sp.GetRequiredService<LoopStatusPollingService>());
-
-        // ── Spec 047: ISchedulerApiClient calls the Scheduler's loop control endpoints ────────
-        services.AddHttpClient<ISchedulerApiClient, HttpSchedulerApiClient>(c =>
-        {
-            // Base URL must be configured via SchedulerApi__BaseUrl env var.
-            // Injected via IHttpClientFactory and configured in AddHttpClient factory.
-        }).ConfigureHttpClient((sp, c) =>
-        {
-            var cfg = sp.GetRequiredService<IConfiguration>();
-            var baseUrl = cfg.GetValue<string>("SchedulerApi__BaseUrl")
-                ?? cfg.GetValue<string>("SchedulerApi:BaseUrl")
-                ?? "http://localhost:8080";
-
-            if (baseUrl == "http://localhost:8080")
-                Serilog.Log.Warning(
-                    "SchedulerApi__BaseUrl is not configured — using localhost:8080 fallback. " +
-                    "This is unreachable from WebUI pods in a Kubernetes deployment. " +
-                    "Set SchedulerApi__BaseUrl to the Scheduler service URL.");
-
-            c.BaseAddress = new Uri(baseUrl);
-            var apiKey = cfg.GetValue<string>("AGENT_API_KEY")
-                ?? cfg.GetValue<string>("AgentApiKey");
-            if (!string.IsNullOrEmpty(apiKey))
-                c.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
-        })
-        .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         // ── Spec 045 retained registrations ──────────────────────────────────────────────────
         // ApiConfigurationStore composed from three narrow store shims. Required by

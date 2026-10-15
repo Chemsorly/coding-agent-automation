@@ -120,7 +120,7 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
-        Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
         Services.AddSingleton(Mock.Of<IJSRuntime>());
@@ -310,7 +310,7 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new FakeUiHealthClient());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
             s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(true, false))));
-        Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With().Object);
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
         var cut = Render<CockpitLayout>();

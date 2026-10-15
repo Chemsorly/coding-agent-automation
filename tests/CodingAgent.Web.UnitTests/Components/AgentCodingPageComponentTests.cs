@@ -12,6 +12,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.Services;
 using CodingAgent.Web.TestUtilities;
+using CodingAgent.Web.UnitTests.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
@@ -30,7 +31,7 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<CodingAgent.Api.Client.IPipelineApiConfigClient> _mockConfigClient;
-    private readonly Mock<ILoopStatusService> _mockLoopStatus;
+    private readonly FakeUiLoopClient _loop = new();
 
     public AgentCodingPageComponentTests()
     {
@@ -57,27 +58,8 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
 
-        // Spec 047: AgentCoding.razor.cs now injects ILoopStatusService (not IPipelineLoopService).
-        // AgentCodingPageService now takes ISchedulerApiClient (not IPipelineLoopService).
-        _mockLoopStatus = new Mock<ILoopStatusService>();
-        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
-        _mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
-        _mockLoopStatus.SetupGet(l => l.TemplateStatuses)
-            .Returns(new Dictionary<string, CodingAgent.Pipeline.Models.ConfigStatusSnapshot>());
-        _mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
-        Services.AddSingleton(_mockLoopStatus.Object);
-        Services.AddSingleton<ILoopStatusService>(_mockLoopStatus.Object);
-
-        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
-        mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(true, null));
-        mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        mockSchedulerClient.Setup(c => c.ResumeLoopAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        Services.AddSingleton(mockSchedulerClient.Object);
-        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
+        // Spec 051 D11: the page reads the loop status and sends Start, Stop and Resume through /api/ui/loop.
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(_loop);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         _mockProjectStore = new Mock<IProjectStore>();
@@ -123,9 +105,7 @@ public class AgentCodingPageComponentTests : BunitContext
             .Returns(Task.CompletedTask);
         Services.AddSingleton<CodingAgent.Api.Client.IPipelineApiConfigClient>(_mockConfigClient.Object);
 
-        var registry = new AgentRegistryService(mockLogger.Object);
-        Services.AddSingleton(registry);
-        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiAgentClient>().Object);
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
@@ -727,15 +707,7 @@ public class AgentCodingPageComponentTests : BunitContext
     public async Task AgentCoding_AddTemplate_WhileLoopRuns_ShowsNextCycleMessage()
     {
         // Arrange: loop is active for this test
-        // TODO: [WARNING] _mockLoopStatus.SetupGet is called here (before Render<AgentCoding>()) to
-        // override the constructor's Returns(false) setup. This works because Moq replaces prior
-        // SetupGet setups on the same mock instance and the DI container holds the same reference.
-        // However, the ordering is fragile: if Render<AgentCoding>() is ever moved above this line,
-        // the component renders with IsLoopActive=false and the "next cycle" assertion fails silently.
-        // If AgentCoding ever caches IsLoopActive at construction time, WithLoopNote would see
-        // the cached false value and the assertion would also fail. Prefer a per-test factory or
-        // a dedicated fixture that provides IsLoopActive=true from the start.
-        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(true);
+        _loop.Status = FakeUiLoopClient.Running;
 
         // Add a second issue and repo provider so the new template doesn't conflict with t-1
         // (enabled templates may not share an issue tracker or repository).
@@ -916,17 +888,21 @@ public class AgentCodingPageComponentTests : BunitContext
 
         await component.InvokeAsync(() => startBtn.Click());
 
-        // After click, component should have attempted to start loop via PageService
-        // No error should appear (loop service returns false by default — no enabled templates with actual providers)
-        Assert.NotNull(component.Markup);
+        // Spec 051 D11: the click records the request, and the page shows it at once — Stop Loop (which
+        // can withdraw it) and the note that the Scheduler has not started the loop yet.
+        _loop.Commands.Should().Equal("start");
+        component.Markup.Should().Contain("Stop Loop").And.Contain("Start requested");
+        component.Markup.Should().NotContain("settings-status-toast status-error");
     }
 
     [Fact]
     public void AgentCoding_ShowsStopLoopButton_WhenLoopActive()
     {
+        _loop.Status = FakeUiLoopClient.Running;
+
         var component = Render<AgentCoding>();
-        // Default: loop is not active, Start Loop button is shown
-        Assert.Contains("Start Loop", component.Markup);
+
+        component.Markup.Should().Contain("Stop Loop").And.Contain("Polling template 1 of 1").And.NotContain("Start Loop");
     }
 
     // ── Error/Success Dismissal ──────────────────────────────────────────────
@@ -1161,12 +1137,6 @@ public class AgentCodingPageComponentTests : BunitContext
         // The dispatching flag should be properly reset
         Assert.False(pageService.IssueDrawerDispatching);
     }
-
-    // TODO: Add test coverage for the simplified HandleStateChanged method — verify that
-    // LoopService.OnChange triggers a UI re-render and that the loop toast auto-dismiss logic
-    // (AutoDismissLoopToast with Task.Delay) works correctly. The previous test
-    // AgentCoding_WhenNewRunStarts_ClearsOutputLines was removed along with the deleted
-    // functionality, leaving this async code path uncovered. (Review finding: WARNING)
 
     // ── Loop Controls ────────────────────────────────────────────────────────
 
@@ -1427,23 +1397,6 @@ public class AgentCodingPageComponentTests : BunitContext
     // ── DismissAgentSummary / DismissError ───────────────────────────────────
 
     [Fact]
-    public async Task AgentCoding_DismissAgentSummary_SetsFlag()
-    {
-        var component = Render<AgentCoding>();
-
-        await component.InvokeAsync(() =>
-        {
-            var method = typeof(AgentCoding).GetMethod("DismissAgentSummary",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            method?.Invoke(component.Instance, null);
-        });
-
-        var field = typeof(AgentCoding).GetField("_showAgentSummary",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        Assert.False((bool)field!.GetValue(component.Instance)!);
-    }
-
-    [Fact]
     public async Task AgentCoding_DismissError_ClearsField()
     {
         var component = Render<AgentCoding>();
@@ -1578,67 +1531,6 @@ public class AgentCodingPageComponentTests : BunitContext
         });
 
         Assert.Null(result);
-    }
-
-    // ── HandleStateChanged ────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task AgentCoding_HandleStateChanged_DoesNotThrowWhenNotDisposed()
-    {
-        var component = Render<AgentCoding>();
-
-        // HandleStateChanged is async void — invoke via the event
-        await component.InvokeAsync(() =>
-        {
-            var method = typeof(AgentCoding).GetMethod("HandleStateChanged",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            method?.Invoke(component.Instance, null);
-        });
-
-        // Drain the renderer sync context: HandleStateChanged's continuation posts
-        // StateHasChanged back via InvokeAsync, so a second no-op InvokeAsync flushes it.
-        await component.InvokeAsync(() => { });
-        Assert.NotNull(component.Markup);
-    }
-
-    [Fact]
-    public async Task HandleStateChanged_WhenLoopStatusCycleComplete_SetsHideLoopToastFalse()
-    {
-        var component = Render<AgentCoding>();
-
-        // Set _lastLoopStatus to something different so the update triggers
-        var lastStatusField = typeof(AgentCoding).GetField("_lastLoopStatus",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        lastStatusField?.SetValue(component.Instance, "Idle");
-
-        // HandleStateChanged reads from LoopService.StatusMessage which defaults to something non-CycleComplete
-        await component.InvokeAsync(() =>
-        {
-            var method = typeof(AgentCoding).GetMethod("HandleStateChanged",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            method?.Invoke(component.Instance, null);
-        });
-
-        // Drain continuations
-        await component.InvokeAsync(() => { });
-        Assert.NotNull(component.Markup);
-    }
-
-    [Fact]
-    public async Task HandleStateChanged_AfterDispose_DoesNotThrow()
-    {
-        var component = Render<AgentCoding>();
-        component.Instance.Dispose();
-
-        // HandleStateChanged after dispose must exit early without throwing
-        await component.InvokeAsync(() =>
-        {
-            var method = typeof(AgentCoding).GetMethod("HandleStateChanged",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            method?.Invoke(component.Instance, null);
-        });
-
-        Assert.NotNull(component.Markup);
     }
 
     // ── Spec 049: the loop is global, templates are admin configuration ──────

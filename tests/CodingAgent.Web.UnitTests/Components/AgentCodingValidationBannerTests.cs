@@ -9,6 +9,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.Services;
 using CodingAgent.Web.TestUtilities;
+using CodingAgent.Contracts.Ui;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
@@ -21,10 +22,10 @@ namespace CodingAgent.Web.UnitTests.Components;
 ///
 /// The banner at line 147 renders inside the Loop Controls &lt;section class="settings-section"&gt;,
 /// NOT inside the &lt;div class="agent-toast-stack"&gt;. These tests verify:
-/// - The banner appears when <see cref="ILoopStatusService.ValidationErrors"/> is non-empty.
+/// - The banner appears when <see cref="UiLoopStatus.ValidationErrors"/> is non-empty.
 /// - The banner is structurally inline (inside the section, not in the toast stack).
 /// - Each validation error message is individually rendered as a list item.
-/// - The banner is absent when <see cref="ILoopStatusService.ValidationErrors"/> is empty.
+/// - The banner is absent when <see cref="UiLoopStatus.ValidationErrors"/> is empty.
 /// - The toast error (_errorMessage) continues to render inside the toast stack as a regression guard.
 /// </summary>
 public class AgentCodingValidationBannerTests : BunitContext
@@ -34,7 +35,7 @@ public class AgentCodingValidationBannerTests : BunitContext
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly Mock<IProviderFactory> _mockFactory = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
-    private readonly Mock<ILoopStatusService> _mockLoopStatus = new();
+    private readonly CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient _loop = new();
 
     private static PipelineJobTemplate DefaultTemplate => new()
     {
@@ -62,38 +63,15 @@ public class AgentCodingValidationBannerTests : BunitContext
         SetupProjectStoreMocks();
         SetupConfigClientMocks();
 
-        // Default loop state: inactive, no validation errors (individual tests override as needed)
-        _mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.IsCircuitBroken).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.StatusMessage).Returns(string.Empty);
-        _mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
-        _mockLoopStatus.SetupGet(l => l.TemplateStatuses)
-            .Returns(new Dictionary<string, ConfigStatusSnapshot>());
-        _mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
-        _mockLoopStatus.SetupGet(l => l.CurrentCycleTemplateIndex).Returns(0);
-        _mockLoopStatus.SetupGet(l => l.CurrentCycleTemplateCount).Returns(0);
-        _mockLoopStatus.SetupGet(l => l.ProcessedCount).Returns(0);
-        _mockLoopStatus.SetupGet(l => l.FailedCount).Returns(0);
-
-        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
-        mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(true, null));
-        mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        mockSchedulerClient.Setup(c => c.ResumeLoopAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<ILoopStatusService>(_mockLoopStatus.Object);
-        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(_loop);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(_mockProjectStore.Object);
         Services.AddSingleton<IPipelineApiConfigClient>(_mockConfigClient.Object);
 
-        var registry = new AgentRegistryService(mockLogger.Object);
-        Services.AddSingleton(registry);
-        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiAgentClient>().Object);
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         // IssueDrawerService now requires IPipelineApiWorkItemClient for status-aware active-issue tracking.
@@ -121,8 +99,7 @@ public class AgentCodingValidationBannerTests : BunitContext
     public void AgentCoding_ValidationErrors_RendersInlineInLoopControlsSection()
     {
         // Arrange: set a validation error
-        _mockLoopStatus.SetupGet(l => l.ValidationErrors)
-            .Returns(new[] { "Template 'X' references non-existent issue provider 'ip-bad'." });
+        _loop.Status = _loop.Status with { ValidationErrors = new[] { "Template 'X' references non-existent issue provider 'ip-bad'." } };
 
         // Act
         var cut = Render<AgentCoding>();
@@ -146,8 +123,7 @@ public class AgentCodingValidationBannerTests : BunitContext
     public void AgentCoding_ValidationErrors_ShowsEachErrorAsListItem()
     {
         // Arrange: two distinct errors
-        _mockLoopStatus.SetupGet(l => l.ValidationErrors)
-            .Returns(new[] { "error one", "error two" });
+        _loop.Status = _loop.Status with { ValidationErrors = new[] { "error one", "error two" } };
 
         // Act
         var cut = Render<AgentCoding>();
@@ -177,7 +153,7 @@ public class AgentCodingValidationBannerTests : BunitContext
     public void AgentCoding_ValidationErrors_Empty_NoBannerRendered()
     {
         // Arrange: no errors (default, but explicit)
-        _mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        _loop.Status = _loop.Status with { ValidationErrors = [] };
 
         // Act
         var cut = Render<AgentCoding>();
@@ -197,7 +173,7 @@ public class AgentCodingValidationBannerTests : BunitContext
             .ThrowsAsync(new InvalidOperationException("store unavailable"));
 
         // ValidationErrors is empty — only the toast error should appear
-        _mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        _loop.Status = _loop.Status with { ValidationErrors = [] };
 
         // Act
         var cut = Render<AgentCoding>();

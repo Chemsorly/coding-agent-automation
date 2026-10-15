@@ -1,4 +1,4 @@
-using CodingAgent.Orchestration.Registry;
+using CodingAgent.Web.Ui;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -55,13 +55,16 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback OnRemoveTemplate { get; set; }
     [Parameter] public EventCallback OnCancelDelete { get; set; }
 
-    [Inject] private IAgentRegistryService Registry { get; set; } = default!;
+    [Inject] private IUiAgentClient AgentClient { get; set; } = default!;
+
+    /// <summary>The agents the label previews match against; read while one is shown.</summary>
+    private IReadOnlyList<AgentEntryDto> _agents = [];
 
     private string? _moveMenuTemplateId;
     private string? _expandedPreviewTemplateId;
     private string? _expandedFeaturesTemplateId;
 
-    private bool HasLiveValues => IsLoopActive || _expandedPreviewTemplateId != null || ShowAddForm;
+    private bool ShowsAgents => _expandedPreviewTemplateId != null || ShowAddForm;
 
     // Number of columns: 9 with the Actions column (admins), 8 without it.
     private int _columnCount => CanEdit ? 9 : 8;
@@ -69,8 +72,27 @@ public partial class TemplateTableSection
     private void ToggleMoveMenu(string? templateId) =>
         _moveMenuTemplateId = _moveMenuTemplateId == templateId ? null : templateId;
 
-    private void ToggleLabelPreview(string templateId) =>
+    protected override Task OnInitializedAsync() => RefreshAgentsAsync();
+
+    private async Task ToggleLabelPreview(string templateId)
+    {
         _expandedPreviewTemplateId = _expandedPreviewTemplateId == templateId ? null : templateId;
+        if (_expandedPreviewTemplateId is not null)
+            await RefreshAgentsAsync();
+    }
+
+    /// <summary>Reads the agents the user can see; on a failure the last list stays.</summary>
+    private async Task RefreshAgentsAsync()
+    {
+        try
+        {
+            _agents = await AgentClient.GetAgentsAsync();
+        }
+        catch (Exception)
+        {
+            // Keep the last list; the next tick retries.
+        }
+    }
 
     private void ToggleFeatureExpand(string templateId) =>
         _expandedFeaturesTemplateId = _expandedFeaturesTemplateId == templateId ? null : templateId;
@@ -142,7 +164,7 @@ public partial class TemplateTableSection
         var rvResolver = new ReviewerResolver();
         var matchedRvs = rvResolver.Resolve(ReviewerConfigs, resolveLabels);
 
-        var allAgents = Registry.GetAllAgents()
+        var allAgents = _agents
             .Where(a => !a.Disabled)
             .Where(a => labels.Count == 0 || labels.All(l => a.Labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
             .ToList();

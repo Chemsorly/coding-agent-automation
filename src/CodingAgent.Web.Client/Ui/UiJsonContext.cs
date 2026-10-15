@@ -55,4 +55,5 @@ namespace CodingAgent.Web.Ui;
 [JsonSerializable(typeof(UiConsolidationOverview))]
 [JsonSerializable(typeof(UiRefactoringScanSettings))]
 [JsonSerializable(typeof(UiConsolidationTriggerRequest))]
+[JsonSerializable(typeof(UiLoopStatus))]
 internal sealed partial class UiJsonContext : JsonSerializerContext;

@@ -3,12 +3,11 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Services
 <section class="settings-section">
-    @* The page re-renders only when the loop status changes, so values that move on their own are
-       redrawn here: "polled Xs ago" while the loop runs, and the agents matched in an open label
-       preview (the agent registry raises no change events). *@
-    @if (HasLiveValues)
+    @* The page re-renders on its loop-status tick, which redraws "polled Xs ago". The agents matched in an
+       open label preview come from /api/ui/agents, read while a preview or the add form is open. *@
+    @if (ShowsAgents)
     {
-        <AutoRefresh IntervalSeconds="3" OnTick="StateHasChanged" />
+        <AutoRefresh OnTick="RefreshAgentsAsync" />
     }
     <div class="cockpit-card-header"><h2>Pipeline Job Templates</h2></div>
     @if (Templates.Count == 0)

@@ -175,9 +175,24 @@ public sealed class LoopWatchdogService : BackgroundService
         _startFailing = true;
     }
 
+    /// <summary>The loop's state as the status the API serves to the UI.</summary>
+    internal static LoopStatusDto BuildStatus(IPipelineLoopService loop) => new(
+        loop.IsLoopActive,
+        loop.StatusMessage,
+        loop.CurrentIssueIdentifier,
+        loop.ProcessedCount,
+        loop.FailedCount,
+        loop.QueueCount,
+        loop.IsCircuitBroken,
+        loop.LastPollError,
+        loop.CurrentCycleTemplateIndex,
+        loop.CurrentCycleTemplateCount,
+        loop.ValidationErrors,
+        loop.TemplateStatuses);
+
     private async Task PushStatusAsync(CancellationToken ct)
     {
-        var status = SchedulerLoopEndpoints.BuildDto(_loopService);
+        var status = BuildStatus(_loopService);
         var serialized = JsonSerializer.Serialize(status, PipelineJsonOptions.Default);
         var now = _time.GetUtcNow();
         if (serialized == _pushedStatus && now - _pushedAt < StatusRefreshInterval)

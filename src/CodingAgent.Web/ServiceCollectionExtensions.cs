@@ -47,15 +47,13 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers multi-agent orchestration services: agent registry and the label service.
+    /// Registers multi-agent orchestration services: the label service. The agent list comes from
+    /// <c>/api/ui/agents</c> (spec 051 D8), so the web keeps no agent registry.
     /// HeartbeatMonitorService was deleted at Spec 041–045 arc close — agent timeouts
     /// are enforced by ReconciliationService in JobController.
     /// </summary>
     public static IServiceCollection AddOrchestrationServices(this IServiceCollection services)
     {
-        // ── Agent Registry ─────────────────────────────────────────────────
-        RegisterAgentRegistry(services);
-
         // ── Label Service ──────────────────────────────────────────────────
         RegisterLabelService(services);
 

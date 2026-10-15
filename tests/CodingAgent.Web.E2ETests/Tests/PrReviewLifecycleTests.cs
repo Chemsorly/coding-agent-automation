@@ -612,7 +612,7 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started, "StartLoopAsync should return true with valid config");
 
             // Assert: only PR 200 is dispatched
@@ -653,7 +653,7 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
             // the loop in an inconsistent state for subsequent loop tests in the same E2ECollection.
             // Additionally, if StartLoopAsync() throws, StopLoop() is called on an unstarted loop;
             // verify StopLoop() is a safe no-op in that state, or guard the call with a flag.
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 

@@ -318,7 +318,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // First cycle: exactly ONE decomposition should be dispatched
@@ -409,7 +409,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -474,7 +474,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // Collect both assignments concurrently — do not assume which agent gets which job.
@@ -510,7 +510,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 }

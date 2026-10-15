@@ -15,7 +15,7 @@ Supporting libraries (shared, not deployed independently):
 - **Orchestration** (`CodingAgent.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API, Scheduler, and Orchestrator. References `Infrastructure.Providers` directly; does not reference `Infrastructure.Persistence`.
 - **Infrastructure.Persistence** (`CodingAgent.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgent.Api` only. The Scheduler and Orchestrator have no direct or transitive reference to Persistence.
 - **Infrastructure.Providers** (`CodingAgent.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, Job Controller, and Orchestration.
-- **Pipeline** (`CodingAgent.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, `HousekeepingService`, `DispatchScheduler`, interfaces, constants. Linked into the Scheduler (which registers and runs these services), the Pipeline API, and the Orchestrator (for pipeline model types and loop-status polling).
+- **Pipeline** (`CodingAgent.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, `HousekeepingService`, `DispatchScheduler`, interfaces, constants. Linked into the Scheduler (which registers and runs these services), the Pipeline API, and the web host (for pipeline model types until spec 051 phase 4).
 - **Hub** (`CodingAgent.AgentGateway`) — Full hub implementation: `AgentHub` (split across 8 partial classes), authentication handlers (`AgentApiKeyAuthHandler`), chat pod dispatch and session management (`ChatJobDispatcher` — dispatch and lifecycle, `ChatSessionWatcher` — per-session idle-kill and watcher loop, `ChatHeartbeatTracker` — Redis cross-replica heartbeat storage), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
 ### Agent API Keys
@@ -222,7 +222,7 @@ Two independent leases are used — one per relevant process (the Pipeline API a
 
 **Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` dispatches without a per-selector guard — each API replica may dispatch independently. Set `signalr.redis.connectionString` when running more than one API replica.
 
-**Web host** — No leader election and no Kubernetes API access. It polls `/loop/status` on the Scheduler and sends dispatches to the Pipeline API over HTTP. Its pod mounts no service account token.
+**Web host** — No leader election and no Kubernetes API access. It reads and controls the loop through the Pipeline API's `/api/ui` surface with the signed-in user's token, and calls no Scheduler. Its pod mounts no service account token.
 
 **Scheduler** (`caa-{release}-scheduler-lock` lease):
 

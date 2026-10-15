@@ -7,7 +7,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
-@inject ILoopStatusService LoopService
+@inject IUiLoopClient LoopClient
 @inject IUiRunClient RunHistory
 @inject IUiAgentClient AgentClient
 @inject IUiWorkItemClient WorkItems
@@ -170,9 +170,13 @@
     private List<PipelineRunSummary> _activeRuns = new();
     private List<PipelineRunSummary> _recentRuns = new();
 
+    // The loop as the Scheduler leader last reported it (spec 051 D11). Unavailable when the status
+    // cannot be read or the Scheduler has not reported recently.
+    private UiLoopStatus _loop = UiLoopStatus.Unknown;
+    private bool _loopUnavailable;
+
     protected override void OnInitialized()
     {
-        LoopService.OnChange += HandleLoopChanged;
         State.OnProjectChanged += HandleProjectChanged;
     }
 
@@ -203,6 +207,15 @@
             catch (OperationCanceledException) { return; }
             catch { /* degrade — leave zeros */ }
         }
+
+        // Loop (filtered for project-scoped users)
+        try
+        {
+            _loop = await LoopClient.GetStatusAsync(_cts.Token);
+            _loopUnavailable = _loop.ReportedAt is null;
+        }
+        catch (OperationCanceledException) { return; }
+        catch { _loopUnavailable = true; }
 
         // Queue (pending work items)
         try
@@ -255,9 +268,9 @@
     {
         get
         {
-            if (LoopService.IsSchedulerUnreachable) return "Scheduler unavailable";
-            if (LoopService.IsCircuitBroken) return "Loop paused — circuit broken";
-            return LoopService.IsLoopActive ? "Closed-loop active" : "Loop idle";
+            if (_loopUnavailable) return "Scheduler unavailable";
+            if (_loop.IsCircuitBroken) return "Loop paused — circuit broken";
+            return _loop.IsLoopActive ? "Closed-loop active" : "Loop idle";
         }
     }
 
@@ -265,21 +278,21 @@
     {
         get
         {
-            if (LoopService.IsSchedulerUnreachable) return "Loop controls are disabled until the scheduler is reachable.";
-            if (LoopService.IsLoopActive)
-                return $"Polling template {LoopService.CurrentCycleTemplateIndex + 1} of {LoopService.CurrentCycleTemplateCount} · processed {LoopService.ProcessedCount} · failed {LoopService.FailedCount}";
+            if (_loopUnavailable) return "Loop controls are disabled until the scheduler is reachable.";
+            if (_loop.IsLoopActive)
+                return $"Polling template {_loop.CurrentCycleTemplateIndex + 1} of {_loop.CurrentCycleTemplateCount} · processed {_loop.ProcessedCount} · failed {_loop.FailedCount}";
             return "Start the closed loop from Pipelines to auto-dispatch queued work.";
         }
     }
 
-    private bool LoopIsDegraded => LoopService.IsSchedulerUnreachable || LoopService.IsCircuitBroken;
+    private bool LoopIsDegraded => _loopUnavailable || _loop.IsCircuitBroken;
 
     private string LoopIconBg
     {
         get
         {
             if (LoopIsDegraded) return "var(--warning-bg)";
-            return LoopService.IsLoopActive ? "var(--bg-info)" : "var(--surface-alt)";
+            return _loop.IsLoopActive ? "var(--bg-info)" : "var(--surface-alt)";
         }
     }
 
@@ -288,19 +301,12 @@
         get
         {
             if (LoopIsDegraded) return "var(--warning)";
-            return LoopService.IsLoopActive ? "#0E7490" : "var(--text-muted)";
+            return _loop.IsLoopActive ? "#0E7490" : "var(--text-muted)";
         }
-    }
-
-    private async void HandleLoopChanged()
-    {
-        try { await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     public async ValueTask DisposeAsync()
     {
-        LoopService.OnChange -= HandleLoopChanged;
         State.OnProjectChanged -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();

@@ -55,13 +55,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     /// </summary>
     public string? ApiBaseUrl { get; set; }
 
-    /// <summary>
-    /// Base URL of the Scheduler host, set by the fixture before this host builds. Left null
-    /// when the Blazor app runs alone, in which case an unroutable address is used instead — see
-    /// <see cref="E2ETestDefaults.UnreachableSchedulerBaseUrl"/>.
-    /// </summary>
-    public string? SchedulerBaseUrl { get; set; }
-
     // Shared fake instances — accessible by tests for seeding and assertions
     public InMemoryConfigurationStore ConfigStore { get; } = new(FakeProviderFactory.ExtraProviderConfigs);
     public FakeProviderFactory FakeProviders { get; } = new();
@@ -79,25 +72,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     /// </summary>
     public FakeKubernetesJobClient FakeK8sClient { get; } = new();
 
-    // Resettable services — created during ConfigureServices, used in ResetAll
-    private AgentRegistryService? _registry;
-
-    /// <summary>Exposes the agent registry for test assertions and wait helpers.</summary>
-    public AgentRegistryService AgentRegistry => _registry ?? throw new InvalidOperationException("Not initialized");
-
-    /// <summary>
-    /// Refreshes the Blazor host's <see cref="ApiAgentRegistryService"/> snapshot immediately.
-    ///
-    /// <para>
-    /// <see cref="AgentRegistrySyncService"/> does run in this host — the harness only unhosts
-    /// <c>PipelineLoopService</c> — so the snapshot catches up on its own within one poll interval
-    /// (2s). This exists to collapse that interval: a test that connects an agent and then
-    /// navigates to a page rendering agent status would otherwise be racing the poller, and
-    /// "sometimes the agent is not listed yet" is the flakiest kind of failure to read.
-    /// </para>
-    /// </summary>
-    public Task ForceAgentRegistryRefreshAsync(CancellationToken ct = default)
-        => Services.GetRequiredService<ApiAgentRegistryService>().RefreshAsync(ct);
 
     /// <summary>
     /// ChatJobDispatcher moved to the API host (Spec 044/045). Use <c>E2EFixture.ChatDispatcher</c>
@@ -153,20 +127,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.
         Environment.SetEnvironmentVariable(
             "PipelineApi__BaseUrl", ApiBaseUrl ?? E2ETestDefaults.UnreachableApiBaseUrl);
-
-        // Issue #3085: point the Web host's ISchedulerApiClient at the real Scheduler host.
-        // Reduce the status poll interval to 1s so loop state propagates to the UI quickly
-        // and LoopControlTests (5s timeout) have sufficient headroom above the poll cycle.
-        // TODO [WARNING]: These are process-global environment variable writes shared with
-        // SchedulerE2EWebApplicationFactory.ConfigureWebHost and ApiE2EWebApplicationFactory.
-        // In a parallel test runner or if factories are constructed out of order, these writes
-        // can race with reads in other factories. The current deterministic start order in
-        // E2EFixture.InitializeAsync (API → Scheduler → Web) is safe, but this is an implicit
-        // ordering dependency. Prefer builder.UseSetting() / builder.ConfigureAppConfiguration()
-        // to scope configuration to the factory rather than the process.
-        Environment.SetEnvironmentVariable(
-            "SchedulerApi__BaseUrl", SchedulerBaseUrl ?? E2ETestDefaults.UnreachableSchedulerBaseUrl);
-        Environment.SetEnvironmentVariable("SchedulerApi__StatusPollIntervalSeconds", "1");
 
         // No config caching: the harness seeds through the store between assertions and a stale
         // read would make tests depend on wall-clock timing.
@@ -236,15 +196,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             services.AddSingleton(new DatabaseHealthState());
             services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
 
-            // Replace singleton services with resettable subclasses
-            ReplaceWithResettableServices(services);
-
-            // Issue #3085: PipelineLoopService now lives in SchedulerE2EWebApplicationFactory.
-            // The Web host talks to the Scheduler over real HTTP via HttpSchedulerApiClient
-            // (driven by SchedulerApi__BaseUrl set above), and ILoopStatusService is the
-            // production LoopStatusPollingService polling /loop/status on the Scheduler.
-            // No in-process loop registration, FakeSchedulerApiClient, or FakeLoopStatusService
-            // is needed here.
+            // PipelineLoopService lives in SchedulerE2EWebApplicationFactory. The web host reads the
+            // loop status and sends Start, Stop and Resume through /api/ui/loop on the API host
+            // (spec 051 D11); the Scheduler's watchdog applies them. The web calls no Scheduler.
 
             // Shutdown timeout: must exceed ChatTerminationGracePeriodSeconds (10s) so that
             // Blazor circuits calling TerminateChatSessionAsync on dispose (triggered by
@@ -257,13 +211,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         });
     }
 
-    private void ReplaceWithResettableServices(IServiceCollection services)
-    {
-        // AgentRegistryService — sealed, uses internal Reset()
-        _registry = new AgentRegistryService(Serilog.Log.Logger);
-        RemoveService<AgentRegistryService>(services);
-        services.AddSingleton(_registry);
-    }
 
     /// <summary>
     /// Resets all fakes and singleton services for test isolation.
@@ -299,8 +246,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             db.SaveChanges();
         }
 
-        // Reset resettable service subclasses
-        _registry?.Reset();
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class

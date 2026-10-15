@@ -51,9 +51,9 @@ namespace CodingAgent.Web.E2ETests.Infrastructure;
 ///   <item>
 ///     <term><see cref="IPipelineApiConfigClient"/> is replaced with an in-memory fake.</term>
 ///     <description>
-///     <c>AutoStartSchedulerLoopAsync</c> calls the config client before <c>RunAsync</c>, with
-///     exponential back-off up to ten minutes on failure. The fake returns immediately with
-///     <c>ClosedLoopAutoStart = false</c> so auto-start is skipped and test startup is instant.
+///     It reads the shared harness store, so the Scheduler sees what a test seeds (including
+///     <c>ClosedLoopAutoStart</c>, which its watchdog reconciles the loop against) without an HTTP
+///     round trip.
 ///     </description>
 ///   </item>
 /// </list>
@@ -183,10 +183,8 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
             services.RemoveAll<ILeaderElectionService>();
 
             // ── IPipelineApiConfigClient — replace with in-memory fake ────────────────────────────
-            // AutoStartSchedulerLoopAsync (runs before app.RunAsync()) calls GetPipelineConfigAsync
-            // with exponential back-off up to 10 minutes. The InMemoryPipelineApiConfigClient
-            // returns immediately with ClosedLoopAutoStart=false (default), so auto-start is
-            // skipped and test startup is instant. Also backs the ApiPipelineConfigStore /
+            // Reads the shared harness store directly, so the watchdog sees the ClosedLoopAutoStart a
+            // test (or /api/ui/loop on the API host) wrote, with no HTTP round trip. Also backs the ApiPipelineConfigStore /
             // ApiProviderConfigStore / ApiProjectStore / ApiConfigurationStore shims that the
             // Scheduler resolves for PipelineLoopServiceDependencies.
             var configClient = new InMemoryPipelineApiConfigClient(_configStore);
@@ -249,7 +247,7 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
             // ── Job templates ─────────────────────────────────────────────────────────────────────
             E2ETestDefaults.InstallJobTemplates(services);
 
-            // ── Remove all background services except PipelineLoopService ────────────────────────
+            // ── Remove all background services except PipelineLoopService and the watchdog ────────────────────────
             // Use the same global RemoveAll<IHostedService>() pattern as ApiE2EWebApplicationFactory.
             // Re-add PipelineLoopService as the sole hosted service: its ExecuteAsync parks on an
             // activation channel and must stay running for StartLoopAsync/StopLoop to work.
@@ -278,6 +276,21 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
             services.RemoveAll<IHostedService>();
             // Re-add PipelineLoopService as the sole hosted service.
             services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
+
+            // Spec 051 D11: the watchdog applies Start, Stop and Resume from the pipeline config and
+            // pushes the loop status to the API host, so LoopControlTests drive the real path. It runs
+            // with no leader gate and a short tick to keep the tests fast. Tests that start or stop
+            // the loop directly go through E2EFixture.StartLoopAsync / StopLoopAsync, which record the
+            // request the watchdog reconciles against.
+            services.RemoveAll<LoopWatchdogService>();
+            services.AddSingleton(sp => new LoopWatchdogService(
+                sp.GetRequiredService<IPipelineLoopService>(),
+                sp.GetRequiredService<IPipelineApiConfigClient>(),
+                sp.GetRequiredService<ISchedulerApiClient>(),
+                leaderGate: null,
+                Serilog.Log.Logger,
+                TimeSpan.FromMilliseconds(250)));
+            services.AddHostedService(sp => sp.GetRequiredService<LoopWatchdogService>());
         });
     }
 }

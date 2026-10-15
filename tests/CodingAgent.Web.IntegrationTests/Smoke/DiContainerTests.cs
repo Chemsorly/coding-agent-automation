@@ -48,49 +48,14 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     /// <summary>
-    /// The monolith must read agent presence from the Pipeline API, not from a local registry.
-    ///
-    /// <para>
-    /// Spec 044 left <c>MapHub&lt;AgentHub&gt;</c> — and with it <c>RegisterAgent</c>, the only
-    /// writer of any agent registry — in the API process, while this host kept binding
-    /// <c>IAgentRegistryService</c> to its own <c>AgentRegistryService</c>. Nothing ever wrote to
-    /// that instance, so <c>Fleet</c>, <c>SidebarHealthIndicators</c> and the drawer
-    /// services reported an empty cluster in every deployment. Rebinding it to the local type again
-    /// would restore that defect silently, which is what this test is here to prevent.
-    /// </para>
+    /// Spec 051 D8: pages read the agents with the user's token (<c>/api/ui/agents</c>), so the web host
+    /// keeps no agent registry and polls nothing in the background with the master key.
     /// </summary>
     [Fact]
-    public void AgentRegistryInterface_IsBoundToTheApiBackedImplementation()
+    public void WebHost_KeepsNoAgentRegistry()
     {
-        var registry = _factory.Services.GetRequiredService<IAgentRegistryService>();
-
-        Assert.IsType<ApiAgentRegistryService>(registry);
-    }
-
-    /// <summary>
-    /// The poller and the readers must share one instance. <c>AgentRegistrySyncService</c> resolves
-    /// <c>ApiAgentRegistryService</c> by its concrete type while every consumer injects
-    /// <c>IAgentRegistryService</c>; if those two registrations produced separate objects the poller
-    /// would faithfully refresh a snapshot nobody reads, and the UI would stay empty exactly as
-    /// before.
-    /// </summary>
-    [Fact]
-    public void ApiBackedRegistry_IsASingleton_SharedWithTheInterfaceRegistration()
-    {
-        var byInterface = _factory.Services.GetRequiredService<IAgentRegistryService>();
-        var byConcreteType = _factory.Services.GetRequiredService<ApiAgentRegistryService>();
-
-        Assert.Same(byConcreteType, byInterface);
-        Assert.Same(byInterface, _factory.Services.GetRequiredService<IAgentRegistryService>());
-    }
-
-    /// <summary>
-    /// The local registry stays registered under its concrete type — the E2E factories resolve it directly.
-    /// </summary>
-    [Fact]
-    public void LocalAgentRegistry_RemainsResolvableByConcreteType()
-    {
-        Assert.NotNull(_factory.Services.GetRequiredService<AgentRegistryService>());
+        Assert.Null(_factory.Services.GetService<IAgentRegistryService>());
+        Assert.Null(_factory.Services.GetService<AgentRegistryService>());
     }
 
     /// <summary>

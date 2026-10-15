@@ -520,13 +520,10 @@ scheduler:
     tag: ""
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
+  # Port the Scheduler listens on for its health probes. Nothing calls the Scheduler: loop control is
+  # desired state in the pipeline config (spec 051 D11), so it has no Service.
   service:
-    type: ClusterIP
     port: 8080
-  # URL the web service uses to reach the Scheduler's loop control endpoints.
-  # Empty (default) = computed in-cluster: http://{fullname}-scheduler.{namespace}.svc.cluster.local:{port}
-  # Set when scheduler.enabled is false or the Scheduler is reachable via a non-default address.
-  baseUrl: ""
   resources:
     requests:
       memory: "256Mi"

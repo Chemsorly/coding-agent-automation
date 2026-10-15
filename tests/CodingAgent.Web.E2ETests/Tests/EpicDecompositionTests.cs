@@ -59,7 +59,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -96,7 +96,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -143,7 +143,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -194,7 +194,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -241,7 +241,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // Wait for the job assignment — may need to skip stale drain dispatches from previous tests
@@ -288,7 +288,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 }
