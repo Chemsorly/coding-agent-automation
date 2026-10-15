@@ -37,9 +37,9 @@ public static class ConfigEndpoints
     /// </summary>
     public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
     {
-        // Spec 051: Settings writes (provider configs included), the model fetch and the first-run
+        // Spec 051: Settings writes (provider configs and templates included), the model fetch and the first-run
         // state are not mapped here; the web host makes them as the signed-in admin through
-        // /api/ui/settings (UiSettingsEndpoints, UiProviderEndpoints), which reuses these handlers. What stays is what the Scheduler and the web host still read or write with
+        // /api/ui/settings (UiSettingsEndpoints, UiProviderEndpoints), which reuses these handlers. What stays is what the Scheduler still reads or writes with
         // the API key, plus export and import, which operators script with the key (docs/bootstrap.md).
         var group = app.MapGroup("/api/config")
             .RequireAuthorization(ApiAuthPolicies.Operator);
@@ -55,7 +55,6 @@ public static class ConfigEndpoints
 
         // ── Provider configs ────────────────────────────────────────────
         group.MapGet("/provider-configs", GetProviderConfigs);
-        group.MapGet("/provider-configs/{id}", GetProviderConfigById);
 
         // ── Agent profiles ──────────────────────────────────────────────
         group.MapGet("/agent-profiles", GetAgentProfiles);
@@ -72,11 +71,7 @@ public static class ConfigEndpoints
 
         // ── Templates ───────────────────────────────────────────────────
         group.MapGet("/templates", GetAllTemplates);
-        group.MapPost("/templates/move", MoveTemplateFlat);
         group.MapGet("/projects/{projectId}/templates", GetTemplatesForProject);
-        group.MapPut("/projects/{projectId}/templates", SaveTemplate);
-        group.MapDelete("/projects/{projectId}/templates/{templateId}", DeleteTemplate);
-        group.MapPost("/projects/{sourceProjectId}/templates/{templateId}/move", MoveTemplate);
     }
 
     // ── Pipeline config ────────────────────────────────────────────────────
@@ -134,25 +129,6 @@ public static class ConfigEndpoints
             return TypedResults.Ok(configs.ToList());
 
         return TypedResults.Ok(configs.Select(RedactProviderConfig).ToList());
-    }
-
-    /// <summary>
-    /// GET /api/config/provider-configs/{id}?kind={kind}&amp;includeSecrets={bool}
-    /// Returns a single config by ID. See <see cref="GetProviderConfigs"/> for why the
-    /// unredacted form is opt-in rather than the default.
-    /// </summary>
-    internal static async Task<IResult> GetProviderConfigById(
-        string id,
-        ProviderKind kind,
-        IProviderConfigStore store,
-        CancellationToken ct,
-        bool includeSecrets = false)
-    {
-        var config = await store.GetProviderConfigByIdAsync(id, kind, ct);
-        if (config is null)
-            return TypedResults.NotFound();
-
-        return TypedResults.Ok(includeSecrets ? config : RedactProviderConfig(config));
     }
 
     /// <summary>Saves the config as given; the UI handler restores masked credentials first (<c>UiProviderEndpoints</c>).</summary>
@@ -410,14 +386,6 @@ public static class ConfigEndpoints
         await store.DeleteTemplateAsync(projectId, new TemplateId(templateId), ct);
         return TypedResults.Ok();
     }
-
-    internal static Task<IResult> MoveTemplate(
-        string sourceProjectId,
-        string templateId,
-        string targetProjectId,
-        IProjectStore store,
-        CancellationToken ct)
-        => MoveTemplateToProjectAsync(sourceProjectId, targetProjectId, templateId, store, ct);
 
     private static async Task<IResult> MoveTemplateToProjectAsync(
         string sourceProjectId,
@@ -906,7 +874,7 @@ public sealed class ImportExportResult
     public required string Message { get; init; }
 }
 
-/// <summary>Request body for POST /api/config/templates/move.</summary>
+/// <summary>Request body for POST /api/ui/settings/templates/move.</summary>
 public sealed class MoveTemplateFlatRequest
 {
     public required string SourceProjectId { get; init; }

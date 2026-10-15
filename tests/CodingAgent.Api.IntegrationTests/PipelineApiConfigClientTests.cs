@@ -87,9 +87,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         };
     }
 
-    private static HttpResponseMessage Empty(HttpStatusCode status = HttpStatusCode.OK)
-        => new(status) { Content = new StringContent("") };
-
     private static ProviderConfig MakeProviderConfig() => new()
     {
         Id = "p1",
@@ -419,20 +416,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task DeleteTemplateAsync_EncodesProjectAndTemplateIdInPath()
-    {
-        // WireMock matches decoded paths
-        _server.Given(Request.Create()
-                .WithPath("/api/config/projects/proj/1/templates/tmpl/1")
-                .UsingDelete())
-            .RespondWith(Response.Create().WithStatusCode(200));
-
-        await _client.DeleteTemplateAsync("proj/1", "tmpl/1");
-
-        _server.LogEntries.Should().HaveCount(1);
-    }
-
-    [Fact]
     public async Task GetTemplatesForProjectAsync_EncodesProjectId()
     {
         var (client, handler) = CreateWithStubHandler();
@@ -444,51 +427,15 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task MoveTemplateAsync_UsesPost()
+    public async Task SavePipelineConfigAsync_RefusedWithAJsonString_ThrowsWithTheApiReason()
     {
         var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => Empty();
+        handler.Respond = _ => JsonResponse("AgentTimeout must be at least 60 seconds.", HttpStatusCode.BadRequest);
 
-        await client.MoveTemplateAsync("src", "dst", "tmpl-1");
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
-        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/config/templates/move");
-    }
-
-    [Fact]
-    public async Task SaveTemplateAsync_RefusedByTheApi_ThrowsWithTheApiReason()
-    {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => JsonResponse("The repository is already used by the enabled template \"Api\".", HttpStatusCode.BadRequest);
-        var template = new PipelineJobTemplate { Id = "t1", Name = "Web", IssueProviderId = "ip", RepoProviderId = "rp" };
-
-        var act = () => client.SaveTemplateAsync("proj-1", template);
+        var act = () => client.SavePipelineConfigAsync(new PipelineConfiguration());
 
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("The repository is already used by the enabled template \"Api\".");
-    }
-
-    [Fact]
-    public async Task MoveTemplateAsync_UnknownTargetProject_ThrowsWithTheApiReason()
-    {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => JsonResponse("Project dst does not exist.", HttpStatusCode.NotFound);
-
-        var act = () => client.MoveTemplateAsync("src", "dst", "tmpl-1");
-
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("Project dst does not exist.");
-    }
-
-    [Fact]
-    public async Task SaveTemplateAsync_ServerError_StillThrowsHttpRequestException()
-    {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => Empty(HttpStatusCode.InternalServerError);
-        var template = new PipelineJobTemplate { Id = "t1", Name = "Web", IssueProviderId = "ip", RepoProviderId = "rp" };
-
-        var act = () => client.SaveTemplateAsync("proj-1", template);
-
-        await act.Should().ThrowAsync<HttpRequestException>();
+            .WithMessage("AgentTimeout must be at least 60 seconds.");
     }
 
     // ── GetQualityGateConfigsAsync / GetReviewerConfigsAsync ─────────────

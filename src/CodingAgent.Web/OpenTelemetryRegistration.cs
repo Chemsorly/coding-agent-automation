@@ -1,4 +1,3 @@
-using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using OpenTelemetry.Metrics;
 
@@ -28,9 +27,6 @@ internal static class OpenTelemetryRegistration
                 t.AddSource("Microsoft.AspNetCore.SignalR.Server");
             },
             configureMetrics: m => m
-                // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
-                // Not registered in the agent — agent pods must not emit these series.
-                .AddMeter(GitHubTelemetry.MeterName)
                 // Drop low-value built-in ASP.NET Core metrics to reduce OTLP cardinality.
                 // aspnetcore.components.active_circuits (circuit count) is intentionally kept;
                 // the other components.* and memory_pool.* instruments are high-volume noise.

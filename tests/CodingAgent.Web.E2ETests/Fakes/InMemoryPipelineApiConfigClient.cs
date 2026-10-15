@@ -110,15 +110,6 @@ public sealed class InMemoryPipelineApiConfigClient : IPipelineApiConfigClient
     public Task<IReadOnlyList<PipelineJobTemplate>> GetTemplatesForProjectAsync(string projectId, CancellationToken ct = default)
         => _store.LoadTemplatesForProjectAsync(projectId, ct);
 
-    public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct = default)
-        => _store.SaveTemplateAsync(projectId, template, ct);
-
-    public Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default)
-        => _store.DeleteTemplateAsync(projectId, new TemplateId(templateId), ct);
-
-    public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default)
-        => _store.MoveTemplateAsync(sourceProjectId, targetProjectId, new TemplateId(templateId), ct);
-
     // ── Key-value ────────────────────────────────────────────────────────
     public Task<string?> GetKeyValueAsync(string key, CancellationToken ct = default)
         => Task.FromResult(_keyValues.TryGetValue(key, out var v) ? v : null);

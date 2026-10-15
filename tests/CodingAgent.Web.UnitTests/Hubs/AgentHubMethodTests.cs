@@ -27,7 +27,7 @@ public sealed class AgentHubMethodTests
     private readonly Mock<IAgentJobLifecycleService> _lifecycleService = new();
     private readonly Mock<IAgentTokenRefreshService> _tokenRefreshService = new();
     private readonly Mock<IAgentOrphanRecoveryService> _orphanRecoveryService = new();
-    private readonly Mock<IHubContext<AgentHub>> _uiContext = new();
+    private readonly Mock<IHubContext<UiHub>> _uiContext = new();
     private readonly Mock<IClientProxy> _uiClientProxy = new();
     private readonly Mock<IHubClients> _uiClients = new();
     private readonly Mock<HubCallerContext> _hubCallerContext = new();
@@ -79,32 +79,6 @@ public sealed class AgentHubMethodTests
     // ── AgentHub.Chat ──────────────────────────────────────────────────
 
     [Fact]
-    public async Task SubscribeToChatSession_CallsAddToGroupAsync()
-    {
-        _groupManager
-            .Setup(g => g.AddToGroupAsync("agent-conn-1", "chat-session-my-session", default))
-            .Returns(Task.CompletedTask);
-
-        var hub = CreateHub();
-        await hub.SubscribeToChatSession("my-session");
-
-        _groupManager.Verify(g => g.AddToGroupAsync("agent-conn-1", "chat-session-my-session", default), Times.Once);
-    }
-
-    [Fact]
-    public async Task UnsubscribeFromChatSession_CallsRemoveFromGroupAsync()
-    {
-        _groupManager
-            .Setup(g => g.RemoveFromGroupAsync("agent-conn-1", "chat-session-my-session", default))
-            .Returns(Task.CompletedTask);
-
-        var hub = CreateHub();
-        await hub.UnsubscribeFromChatSession("my-session");
-
-        _groupManager.Verify(g => g.RemoveFromGroupAsync("agent-conn-1", "chat-session-my-session", default), Times.Once);
-    }
-
-    [Fact]
     public async Task ReportChatResponse_AgentOwnsSession_BroadcastsToUiGroup()
     {
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeChatSessionId: "session-abc");
@@ -126,7 +100,7 @@ public sealed class AgentHubMethodTests
         var hub = CreateHub();
         await hub.ReportChatResponse(message);
 
-        _uiClients.Verify(c => c.Group("chat-session-session-abc"), Times.Once);
+        _uiClients.Verify(c => c.Group("chat-agent-1"), Times.Once);
         _uiClientProxy.Verify(p => p.SendCoreAsync(
             HubMethodNames.OnChatResponse,
             It.Is<object?[]>(a => a[0] != null && a[0]!.ToString() == "session-abc"),
@@ -206,7 +180,7 @@ public sealed class AgentHubMethodTests
             AgentFieldNames.ActiveChatSessionId,
             null), Times.Once);
 
-        _uiClients.Verify(c => c.Group("chat-session-session-abc"), Times.Once);
+        _uiClients.Verify(c => c.Group("chat-agent-1"), Times.Once);
         _chatNotifier.Verify(n => n.NotifyChatCompleted("session-abc", 0, null), Times.Once);
     }
 

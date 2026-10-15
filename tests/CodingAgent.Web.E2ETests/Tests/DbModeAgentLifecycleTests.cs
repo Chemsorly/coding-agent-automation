@@ -145,7 +145,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
 
         // Act: dispatch with label requirement
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
 
         var request = await orchService.PrepareDistributionRequestAsync(
@@ -227,7 +227,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
         await backendAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
 
         // Dispatch frontend issue

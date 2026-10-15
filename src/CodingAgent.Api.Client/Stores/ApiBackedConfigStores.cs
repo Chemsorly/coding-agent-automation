@@ -195,27 +195,14 @@ public sealed class ApiProjectStore : IProjectStore
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
         => LoadCachedAsync(_templatesCache, _client.GetAllTemplatesAsync, ct);
 
-    public async Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
-    {
-        await _client.SaveTemplateAsync(projectId, template, ct);
-        lock (_cacheLock) { _templatesCache.Clear(); }
-    }
+    public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
+        => SettingsWrites.NotHere("Saving a template");
 
-    public async Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
-    {
-        await _client.DeleteTemplateAsync(projectId, templateId.ToString(), ct);
-        lock (_cacheLock) { _templatesCache.Clear(); }
-    }
+    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
+        => SettingsWrites.NotHere("Deleting a template");
 
-    public async Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
-    {
-        await _client.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.ToString(), ct);
-        lock (_cacheLock)
-        {
-            _templatesCache.Clear();
-            _projectsCache.Clear();
-        }
-    }
+    public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
+        => SettingsWrites.NotHere("Moving a template");
 
     public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
         => SettingsWrites.NotHere<bool>("The first-run check");

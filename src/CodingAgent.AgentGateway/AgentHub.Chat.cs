@@ -9,33 +9,6 @@ public sealed partial class AgentHub
 {
     // ── Interactive chat ─────────────────────────────────────────────────
 
-    // ── UI group subscriptions for chat sessions ─────────────────────────
-
-    /// <summary>
-    /// Adds the caller's connection to the <c>chat-session-{sessionId}</c> SignalR group
-    /// so that <see cref="IAgentHubUiClient.OnChatResponse"/> and
-    /// <see cref="IAgentHubUiClient.OnChatCompleted"/> events are delivered to it.
-    ///
-    /// Called by <c>AgentChat.razor</c> immediately after sending a chat prompt.
-    /// Only operator (non-agent) connections may subscribe — agents have no business
-    /// receiving their own streamed output via a UI group.
-    /// </summary>
-    public Task SubscribeToChatSession(string sessionId)
-    {
-        ArgumentNullException.ThrowIfNull(sessionId);
-        return Groups.AddToGroupAsync(Context.ConnectionId, $"chat-session-{sessionId}");
-    }
-
-    /// <summary>
-    /// Removes the caller's connection from the <c>chat-session-{sessionId}</c> group.
-    /// Called when the session ends or the UI navigates away.
-    /// </summary>
-    public Task UnsubscribeFromChatSession(string sessionId)
-    {
-        ArgumentNullException.ThrowIfNull(sessionId);
-        return Groups.RemoveFromGroupAsync(Context.ConnectionId, $"chat-session-{sessionId}");
-    }
-
     /// <summary>
     /// Returns the agent's display ID and whether it owns the given chat session.
     /// Pure logic — no I/O, no side effects.
@@ -61,8 +34,8 @@ public sealed partial class AgentHub
 
         var caller = await ValidateOwnershipAsync("ReportChatResponse", message.SessionId, Context.ConnectionAborted);
 
-        // Broadcast to subscribed UI circuits
-        await _uiContext.Clients.Group($"chat-session-{message.SessionId}")
+        // Push to the UI connections watching this chat pod
+        await _uiContext.Clients.Group(UiHubGroups.Chat(caller.AgentId.Value))
             .SendAsync(HubMethodNames.OnChatResponse, message.SessionId, message.Lines);
 
         _chatNotifier.NotifyChatResponse(message.SessionId, message.Lines);
@@ -92,8 +65,8 @@ public sealed partial class AgentHub
         _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
             message.SessionId, caller.AgentId, message.ExitCode);
 
-        // Broadcast to subscribed UI circuits
-        await _uiContext.Clients.Group($"chat-session-{message.SessionId}")
+        // Push to the UI connections watching this chat pod
+        await _uiContext.Clients.Group(UiHubGroups.Chat(caller.AgentId.Value))
             .SendAsync(HubMethodNames.OnChatCompleted, message.SessionId, message.ExitCode, message.Error);
 
         _chatNotifier.NotifyChatCompleted(message.SessionId, message.ExitCode, message.Error);

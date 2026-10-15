@@ -12,7 +12,7 @@ The Pipeline API (`CodingAgent.Api`, port **8080**) exposes HTTP API endpoints f
 | Health Probes (`/healthz`, `/readyz`) | ✅ |
 | UI surface (`/api/ui/`) | ✅ |
 
-> **Note:** The SignalR hub (`/hubs/agent`) is a WebSocket transport endpoint used for real-time agent communication. It is not a REST API and is not covered in this reference.
+> **Note:** The agents' SignalR hub (`/hubs/agent`) is a WebSocket transport endpoint, not a REST API, and is not covered in this reference. The UI hub (`/hubs/ui`) is described under [UI Surface Endpoints](#ui-hub-hubsui).
 
 ## Authentication
 
@@ -39,7 +39,7 @@ GET /api/work-items/{id}/assignment?access_token=<token>
 
 ### Token Derivation
 
-The orchestrator supports two authentication modes:
+The service surface supports two kinds of API key:
 
 1. **Master key (legacy)** — Use the raw `AGENT_API_KEY` value directly as the Bearer token. This works when no `agentId` query parameter is provided.
 
@@ -49,7 +49,7 @@ The orchestrator supports two authentication modes:
    ```
    Pass the derived key as the Bearer token and include `?agentId=<agent_id>` as a query parameter.
 
-The `AGENT_API_KEY` environment variable on the orchestrator sets the master key. See [Configuration](configuration.md#orchestrator) for details.
+The `AGENT_API_KEY` environment variable of the Pipeline API (and of the Scheduler and Job Controller, which call it) sets the master key. See [Configuration](configuration.md#pipeline-api) for details.
 
 ---
 
@@ -243,20 +243,21 @@ List work items that are `Dispatched` or `Running` and were dispatched more than
 
 ## Triage Endpoints
 
-The [triage](triage.md) endpoints under `/api/triages`. All of them need the **OperatorApiKey**; agent-derived keys get `403`. The web host checks the signed-in user's role on the triage's stored project before it calls them. Bodies and responses use the pipeline's JSON options (camelCase, snake_case enum values such as `need_you` or `cause_found`). Refusals are problem responses whose `detail` is the reason shown to the user.
+The [triage](triage.md) endpoints, on the UI surface under `/api/ui/triages` (spec 051 2.7). They take only the signed-in user's token. Reading needs read on the triage's project; a list without `projectId` needs a global role. Starting, re-running, editing drafts, creating issues and dismissing need `operator` on the project. Every call that names a triage is checked against the project of the stored triage, so a triage the user cannot see answers `404`. The API records the acting user (`requestedBy`, `author`, `editedBy`, `createdBy`, `by`) from the token, whatever the body says. Bodies and responses use camelCase with snake_case enum values such as `need_you` or `cause_found`. A refusal answers with the reason as a JSON string.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/triages` | List: `projectId` (omit for all projects), `tab` (`all`, `need_you`, `investigating`, `done`), `source` (`operator`, `issue`), `q` (title contains), `page`, `pageSize`. Returns `{ items, total }` |
-| GET | `/api/triages/similar` | Triages of `projectId` from the last 30 days whose titles share words with `title` (at most 3) |
-| GET | `/api/triages/by-run/{runId}` | `{ id }` of the triage a run belongs to, or `404` |
-| GET | `/api/triages/{id}` | The triage record with its status, the running attempt's WorkItem id and run facts per attempt |
-| POST | `/api/triages` | Start an operator triage: `{ projectId, requestedBy, request: { title, whatHappened, expected, from?, until?, environment?, where?, startInTemplateId?, version?, links?, alreadyTried? } }`. Writes the triage and its Pending WorkItem together. `201` |
-| POST | `/api/triages/{id}/rerun` | Start another attempt: `{ author, feedback?, answers?: [{ question, answer }] }` (the first 10 answers are kept; feedback and answers together have at most 40,000 characters). For a label triage it posts the feedback on the issue and sets `agent:triage`; the loop then starts the attempt. `202` |
-| PUT | `/api/triages/{id}/drafts/{draftId}` | Edit a draft: `{ kind, targetRepository, title, body, editedBy }` (title at most 200, body at most 12,000 characters) |
-| POST | `/api/triages/{id}/drafts/{draftId}/reset` | Restore the agent's version of a draft |
-| POST | `/api/triages/{id}/create-issues` | Create issues from drafts: `{ draftIds, queue, createdBy }` → `{ created, errors }`. Drafts already created are skipped |
-| POST | `/api/triages/{id}/dismiss` | Dismiss: `{ by, reason? }` |
+| GET | `/api/ui/triages` | List: `projectId` (omit for all projects, global readers only), `tab` (`all`, `need_you`, `investigating`, `done`), `source` (`operator`, `issue`), `q` (title contains), `page`, `pageSize`. Returns `{ items, total }` |
+| GET | `/api/ui/triages/similar` | Triages of `projectId` from the last 30 days whose titles share words with `title` (at most 3) |
+| GET | `/api/ui/triages/preview` | What an operator triage of `projectId` would use, started in `startIn` (optional template id): the repositories (and which one runs the job), the MCP servers, tracker count, brain, steering, time limit, and why it cannot start, if so. Needs `operator` on the project |
+| GET | `/api/ui/triages/by-run/{runId}` | `{ id }` of the triage a run belongs to, or `404` |
+| GET | `/api/ui/triages/{id}` | The triage record with its status, the running attempt's WorkItem id and run facts per attempt |
+| POST | `/api/ui/triages` | Start an operator triage: `{ projectId, request: { title, whatHappened, expected, from?, until?, environment?, where?, startInTemplateId?, version?, links?, alreadyTried? } }`. Writes the triage and its Pending WorkItem together |
+| POST | `/api/ui/triages/{id}/rerun` | Start another attempt: `{ feedback?, answers?: [{ question, answer }] }` (the first 10 answers are kept; feedback and answers together have at most 40,000 characters). For a label triage it posts the feedback on the issue and sets `agent:triage`; the loop then starts the attempt |
+| PUT | `/api/ui/triages/{id}/drafts/{draftId}` | Edit a draft: `{ kind, targetRepository, title, body }` (title at most 200, body at most 12,000 characters) |
+| POST | `/api/ui/triages/{id}/drafts/{draftId}/reset` | Restore the agent's version of a draft |
+| POST | `/api/ui/triages/{id}/create-issues` | Create issues from drafts: `{ draftIds, queue }` → `{ created, errors }`. Drafts already created are skipped |
+| POST | `/api/ui/triages/{id}/dismiss` | Dismiss: `{ reason? }` |
 
 **Status codes:** `400` invalid input (for example a repository or start-in template that is not an enabled template of the triage's project, or a project without an enabled template), `404` unknown triage, draft or project, `409` an attempt is running (re-run, create issues, dismiss), the draft's issue already exists, or the triage changed meanwhile, `502` a label triage's issue could not be updated for a re-run (no attempt was queued).
 
@@ -517,6 +518,7 @@ These return slim views of the configuration for pages outside Settings. They ne
 | `GET /api/ui/projects` | The projects the user can read, as `{ id, name, enabled }`, by name. A global reader gets all of them; a project-scoped user gets only its own. |
 | `GET /api/ui/projects/{projectId}/templates` | The project's job templates as `{ id, name, enabled }`. `404` when the user cannot read the project or it does not exist. |
 | `GET /api/ui/pipeline-settings` | `{ maxRetries, triageRetentionDays }`: global values, without project overrides. |
+| `GET /api/ui/pipelines` | The Pipelines page: `{ projects, templates, issueProviders, repoProviders, pipelineProviders, qualityGateConfigs, reviewerConfigs, agentProfiles, defaultRequiredAgentLabels, maxRetries }`. Only the readable projects' templates (a template without a project only for global readers); projects carry only their id, name, enabled flag and template ids; providers and agent profiles come with secrets masked. A project-scoped user gets only the providers their templates use, and empty quality gate, reviewer and agent profile lists. |
 
 ### Runs and work items (any role)
 
@@ -591,7 +593,7 @@ Every path needs an operator role. A chat runs with the MCP servers, secrets and
 |---|---|
 | `GET /api/ui/chat/options` | Returns `{ profiles, connectTimeoutSeconds }`. `profiles` lists the enabled agent profiles whose labels name a job template, as `{ id, displayName, matchLabels }`. |
 | `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId }` with the profile's selector and its provider's model and effort, then waits until the pod connects (up to `connectTimeoutSeconds`). Returns `{ agentId, model }`, where `model` is `auto` when the provider sets none. |
-| `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the `chat-session-{sessionId}` hub group. Returns `204`. |
+| `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the chat's group on the [UI hub](#ui-hub-hubsui), tagged with the `sessionId`. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/keepalive` | Resets the idle clock of the chat's pod. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/terminate` | Ends the chat and stops its pod. Returns `204`. |
 
@@ -618,9 +620,20 @@ Loop control is desired state. Start, Stop and Resume only record the request in
 
 Saving the pipeline settings through `PUT /api/ui/settings/pipeline` keeps the stored loop request, so a settings page loaded before a Start or Stop does not undo it.
 
+### UI hub (`/hubs/ui`)
+
+The SignalR hub of the signed-in UI: live output of runs and replies of chats. It takes the user token (any role) over WebSockets, JSON protocol only; API keys and anonymous callers are refused. The connect token lasts the session and carries `use=hub`: only the hub accepts it, every `/api/ui` endpoint answers it with `403`, so it is no HTTP credential. The hub closes the connection when the token expires. A connection joins the groups of what it shows, and the hub has no other methods:
+
+| Method | Allowed when | Then receives |
+|---|---|---|
+| `SubscribeToRun(runId)` / `UnsubscribeFromRun(runId)` | The user can read the project of the run's work item. | The output so far and, while the run is active, a `RunStateSnapshot`; then `OnOutputLines`, `OnStepTransition`, `OnChatEntry`, `OnQualityGateResult`, `OnBrainSyncResult` and `OnRunCompleted`. |
+| `SubscribeToChat(agentId)` / `UnsubscribeFromChat(agentId)` | The user launched the chat (or is a global `admin`) and can still operate on its project, as for the chat endpoints. | `OnChatResponse` and `OnChatCompleted` for every prompt of the chat; each carries the prompt's `sessionId`. |
+
+A refused subscription fails with a `HubException` that reads the same whether the run or chat does not exist or belongs to someone else. `/hubs/agent` is for agent pods only: a connection without an `agentId` is closed, and user tokens are refused.
+
 ### Settings (admin)
 
-`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, template moves, config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). Validation is the same as on the service surface.
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both.
 
 Secrets never leave the API here, not even for an admin:
 - These values come back as `****`:
@@ -707,7 +720,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
 | POST | `/api/work-items/{id}/priority` | OperatorApiKey | Set dispatch priority weight (Pending items only) |
 | GET | `/api/work-items/active` | OperatorApiKey | List Dispatched and Running work items older than a threshold |
-| GET, POST, PUT | `/api/triages/…` | OperatorApiKey | [Triage endpoints](#triage-endpoints): list, read, start, re-run, edit drafts, create issues, dismiss |
+| GET, POST, PUT | `/api/ui/triages/…` | User token; read or operator on the triage's project | [Triage endpoints](#triage-endpoints): list, read, preview, start, re-run, edit drafts, create issues, dismiss |
 | GET | `/api/config/export` | OperatorApiKey | Download config bundle |
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |
@@ -716,6 +729,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/projects` | User token | Projects the user can read |
 | GET | `/api/ui/projects/{projectId}/templates` | User token | Templates of a readable project |
 | GET | `/api/ui/pipeline-settings` | User token | Global settings pages outside Settings show |
+| GET | `/api/ui/pipelines` | User token | The Pipelines page: readable projects' templates and the configuration the template table shows (secrets masked) |
 | GET | `/api/ui/runs`, `/api/ui/runs/{runId}` | User token | Run history and run detail (per project) |
 | GET | `/api/ui/work-items/pending`, `/api/ui/work-items/active` | User token | Queue and in-flight work items (per project) |
 | POST, PUT | `/api/ui/work-items/{id}/cancel`, `/api/ui/work-items/{id}/priority` | User token, operator of the item's project | Cancel a run or queued item; set queue priority |

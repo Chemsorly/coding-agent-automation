@@ -18,7 +18,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class TriagePageComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineApiTriageClient> _triages = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiTriageClient> _triages = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _config = new();
 
     public TriagePageComponentTests()
@@ -88,7 +88,7 @@ public class TriagePageComponentTests : BunitContext
         cut.Find("[data-testid='triage-create']").Click();
 
         _triages.Verify(t => t.CreateIssuesAsync(TriageId,
-            It.Is<CreateTriageIssuesRequest>(r => r.DraftIds.SequenceEqual(new[] { "d1" }) && r.Queue && r.CreatedBy == "tester"),
+            It.Is<CreateTriageIssuesRequest>(r => r.DraftIds.SequenceEqual(new[] { "d1" }) && r.Queue),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -185,7 +185,7 @@ public class TriagePageComponentTests : BunitContext
         cut.Find("[data-testid='triage-rerun']").Click();
 
         _triages.Verify(t => t.RerunAsync(TriageId,
-            It.Is<RerunTriageRequest>(r => r.Feedback == "Look at the worker's memory limit" && r.Author == "tester"),
+            It.Is<RerunTriageRequest>(r => r.Feedback == "Look at the worker's memory limit"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -202,7 +202,7 @@ public class TriagePageComponentTests : BunitContext
         cut.Find("[data-testid='triage-dismiss']").Click();
 
         _triages.Verify(t => t.DismissAsync(TriageId,
-            It.Is<DismissTriageRequest>(r => r.Reason == "Known, tracked in Jira" && r.By == "tester"),
+            It.Is<DismissTriageRequest>(r => r.Reason == "Known, tracked in Jira"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -211,7 +211,7 @@ public class TriagePageComponentTests : BunitContext
     {
         Returns(CauseFoundDetail());
         _triages.Setup(t => t.CreateIssuesAsync(TriageId, It.IsAny<CreateTriageIssuesRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new TriageApiException(409, "An attempt is running"));
+            .ThrowsAsync(new InvalidOperationException("An attempt is running"));
         var cut = RenderPage();
 
         cut.Find("[data-testid='triage-create']").Click();
@@ -235,8 +235,7 @@ public class TriagePageComponentTests : BunitContext
         _triages.Verify(t => t.UpdateDraftAsync(TriageId, "d1",
             It.Is<UpdateTriageDraftRequest>(r => r.TargetRepository == "checkout-api"
                 && r.Title == "Acknowledge after the order is paid"
-                && r.Body == "Move the ack after MarkPaidAsync."
-                && r.EditedBy == "tester"),
+                && r.Body == "Move the ack after MarkPaidAsync."),
             It.IsAny<CancellationToken>()), Times.Once);
         cut.FindAll("[data-testid='triage-draft-editor']").Should().BeEmpty("the drawer closes after saving");
     }

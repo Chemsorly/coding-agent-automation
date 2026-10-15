@@ -87,7 +87,7 @@ internal static class UiChatEndpoints
     /// The session, when the caller launched it or is an admin, and may still operate on its project;
     /// otherwise null (404), so another user's chat looks like none at all.
     /// </summary>
-    private static async Task<ChatSessionRecord?> FindOwnedAsync(string agentId, IUserAccess access, ChatSessionStore sessions)
+    internal static async Task<ChatSessionRecord?> FindOwnedAsync(string agentId, IUserAccess access, ChatSessionStore sessions)
     {
         var session = await sessions.FindAsync(agentId);
         if (session is null)

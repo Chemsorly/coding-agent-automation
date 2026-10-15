@@ -152,8 +152,8 @@ Created issues and tracker comments stay.
 ## Permissions
 
 Viewing a triage needs `readonly` on its project; starting, editing, creating, re-running and dismissing need
-`operator`. The web checks the role against the project stored on the triage. The triage API is operator-tier
-(master key); agent keys cannot reach it.
+`operator`. The Pipeline API checks the role against the project stored on the triage, on its UI surface
+(`/api/ui/triages`, user tokens only), and records who acted from the token. Agent keys cannot reach it.
 
 ## Settings
 

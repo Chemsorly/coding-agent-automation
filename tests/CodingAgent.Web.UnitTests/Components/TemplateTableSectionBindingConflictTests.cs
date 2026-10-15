@@ -19,7 +19,7 @@ public class TemplateTableSectionBindingConflictTests : BunitContext
 {
     public TemplateTableSectionBindingConflictTests()
     {
-        Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(new Mock<ILogger>().Object));
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With().Object);
     }
 
     private static PipelineJobTemplate Template(string id, string name, string repo, bool enabled = true) => new()

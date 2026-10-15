@@ -9,4 +9,11 @@ namespace CodingAgent.Web.Ui;
 public interface IUiAccessTokenSource
 {
     ValueTask<string?> GetTokenAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// The token the UI hub connects with (spec 051 D2, D7). It lasts until the session ends, so a long-lived
+    /// connection is not dropped every few minutes; the hub closes it when the session ends. Unless a host
+    /// mints a separate one, it is the same token.
+    /// </summary>
+    ValueTask<string?> GetHubTokenAsync(CancellationToken ct = default) => GetTokenAsync(ct);
 }

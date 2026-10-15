@@ -60,10 +60,11 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
         await SeedTemplateAndProfileAsync();
         await using var agent = new FakeAgentClient("agent-triage-e2e", AgentLabel);
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-        using var api = Fixture.CreateApiClient();
+        // Spec 051 2.7: the Triage pages reach the API on its UI surface, with the user's token.
+        using var api = Fixture.CreateUiApiClient();
 
         // Start: the triage row and its Pending WorkItem in one call
-        var created = await api.PostAsJsonAsync("/api/triages", new CreateTriageRequest
+        var created = await api.PostAsJsonAsync("/api/ui/triages", new CreateTriageRequest
         {
             ProjectId = WellKnownIds.DefaultProjectId,
             RequestedBy = "anna",
@@ -74,7 +75,7 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
                 Expected = "Checkout completes",
             },
         }, PipelineJsonOptions.Default);
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
         var triage = (await created.Content.ReadFromJsonAsync<TriageDetail>(PipelineJsonOptions.Default))!;
 
         // The job controller hands the run to the agent with the triage context
@@ -101,7 +102,7 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
 
         var detail = await WaitForAsync(async () =>
         {
-            var d = await api.GetFromJsonAsync<TriageDetail>($"/api/triages/{triage.Record.Id}", PipelineJsonOptions.Default);
+            var d = await api.GetFromJsonAsync<TriageDetail>($"/api/ui/triages/{triage.Record.Id}", PipelineJsonOptions.Default);
             return d is { Status: TriageStatus.NeedsReview } ? d : null;
         });
         Assert.Equal(TriageVerdict.CauseFound, detail.Record.LatestResult!.Verdict);
@@ -109,12 +110,12 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
         Assert.Equal("a1-d1", Assert.Single(detail.Record.Drafts).Current.Id);
 
         // The run page's link back to the triage
-        var byRun = await api.GetAsync($"/api/triages/by-run/{assignment.JobId}");
+        var byRun = await api.GetAsync($"/api/ui/triages/by-run/{assignment.JobId}");
         Assert.Equal(HttpStatusCode.OK, byRun.StatusCode);
 
         // A person creates the draft as an issue in the repository's tracker
         var issuesBefore = Fixture.IssueProvider.CreatedIssues.Count;
-        var createIssues = await api.PostAsJsonAsync($"/api/triages/{triage.Record.Id}/create-issues", new CreateTriageIssuesRequest
+        var createIssues = await api.PostAsJsonAsync($"/api/ui/triages/{triage.Record.Id}/create-issues", new CreateTriageIssuesRequest
         {
             DraftIds = ["a1-d1"],
             Queue = true,
@@ -131,7 +132,7 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
         Assert.Contains(AgentLabels.Next, issue.Labels!);
         Assert.Contains(AgentLabels.Generated, issue.Labels!);
 
-        var final = await api.GetFromJsonAsync<TriageDetail>($"/api/triages/{triage.Record.Id}", PipelineJsonOptions.Default);
+        var final = await api.GetFromJsonAsync<TriageDetail>($"/api/ui/triages/{triage.Record.Id}", PipelineJsonOptions.Default);
         Assert.Equal(TriageStatus.IssuesCreated, final!.Status);
     }
 

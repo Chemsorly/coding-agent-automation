@@ -37,6 +37,11 @@ public interface IUiSettingsClient
     Task<IReadOnlyList<PipelineJobTemplate>> GetAllTemplatesAsync(CancellationToken ct = default);
     Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default);
 
+    /// <summary>Adds or replaces a template of the project. A template that clashes with another (same repository or tracker) is refused with the reason.</summary>
+    Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct = default);
+
+    Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct = default);
+
     /// <summary>The full configuration bundle, unredacted (spec 051 Q1): it contains live credentials.</summary>
     Task<byte[]> ExportConfigAsync(CancellationToken ct = default);
     Task ImportConfigAsync(Stream jsonStream, string fileName, CancellationToken ct = default);
@@ -110,6 +115,12 @@ public sealed class UiSettingsClient(HttpClient http, IUiAccessTokenSource token
         SendJsonAsync(HttpMethod.Post, $"{Settings}/templates/move",
             new UiMoveTemplateRequest(sourceProjectId.Value, targetProjectId.Value, templateId),
             UiJsonContext.Default.UiMoveTemplateRequest, ct);
+
+    public Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct = default) =>
+        SendJsonAsync(HttpMethod.Put, $"{Settings}/projects/{Id(projectId.Value)}/templates", template, UiJsonContext.Default.PipelineJobTemplate, ct);
+
+    public Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Delete, $"{Settings}/projects/{Id(projectId.Value)}/templates/{Id(templateId.Value)}", ct);
 
     public async Task<byte[]> ExportConfigAsync(CancellationToken ct = default)
     {

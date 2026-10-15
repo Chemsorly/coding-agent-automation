@@ -23,19 +23,12 @@ public class ConsolidationActionsColumnTests : BunitContext
 {
     private readonly Mock<IUiConsolidationClient> _mockConsolidationClient = new();
     private readonly Mock<IUiRunClient> _mockRunHistoryClient = new();
-    private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
 
     public ConsolidationActionsColumnTests()
     {
         Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         _mockConsolidationClient.Setup(s => s.GetOverviewAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiConsolidationOverview([], new Dictionary<string, string>(), null));
-
-        // Hub mock: return a no-op disposable for event subscription
-        _mockHubConnection
-            .Setup(h => h.On<string, JobCompletionPayload>(It.IsAny<string>(), It.IsAny<Action<string, JobCompletionPayload>>()))
-            .Returns(Mock.Of<IDisposable>());
-        _mockHubConnection.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
         // Default run history: empty
         _mockRunHistoryClient
@@ -47,7 +40,6 @@ public class ConsolidationActionsColumnTests : BunitContext
 
         Services.AddSingleton(_mockConsolidationClient.Object);
         Services.AddSingleton(_mockRunHistoryClient.Object);
-        Services.AddSingleton<IAgentHubConnection>(_mockHubConnection.Object);
         Services.AddSingleton(new Mock<IUiWorkItemClient>().Object);
     }
 

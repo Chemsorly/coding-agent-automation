@@ -17,80 +17,50 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
         _factory = factory;
     }
 
+    // Spec 051 4.1: pages read and act through the API's /api/ui surface and UI hub as the signed-in user.
     [Theory]
-    [InlineData(typeof(IConfigurationStore))]
-    [InlineData(typeof(IProviderFactory))]
-    [InlineData(typeof(IQualityGateValidator))]
-    // PipelineLoopService was moved to CodingAgent.Scheduler in Spec 047 — no longer
-    // registered in the WebUI DI container. Removed from this smoke test.
-    [InlineData(typeof(IPipelineRunHistoryService))]
-    [InlineData(typeof(IAgentPhaseExecutor))]
-    [InlineData(typeof(IQualityGateExecutor))]
-    public void Key_Service_Resolves_Without_Error(Type serviceType)
+    [InlineData(typeof(CodingAgent.Web.Ui.IUiRunClient))]
+    [InlineData(typeof(CodingAgent.Web.Ui.IUiSettingsClient))]
+    [InlineData(typeof(CodingAgent.Web.Ui.IUiHubConnection))]
+    [InlineData(typeof(CodingAgent.Web.Ui.IUiAccessTokenSource))]
+    [InlineData(typeof(AgentCodingPageService))]
+    public async Task Key_Service_Resolves_Without_Error(Type serviceType)
     {
-        using var scope = _factory.Services.CreateScope();
+        // Async: the UI hub connection is only IAsyncDisposable.
+        await using var scope = _factory.Services.CreateAsyncScope();
         var service = scope.ServiceProvider.GetService(serviceType);
 
         Assert.NotNull(service);
     }
 
-    [Theory]
-    // PipelineLoopService was moved to CodingAgent.Scheduler in Spec 047 — no longer
-    // registered in the WebUI DI container. Removed from this smoke test.
-    [InlineData(typeof(IConfigurationStore))]
-    [InlineData(typeof(IProviderFactory))]
-    public void Singleton_Services_Return_Same_Instance(Type serviceType)
+    /// <summary>
+    /// Spec 051 4.1: the web host holds no agent API key and none of the services that need one: no work
+    /// distributor, no run history or configuration store, no pipeline executors.
+    /// </summary>
+    [Fact]
+    public void WebHost_RegistersNoServerService()
     {
-        var first = _factory.Services.GetRequiredService(serviceType);
-        var second = _factory.Services.GetRequiredService(serviceType);
+        _ = _factory.Services;
 
-        Assert.Same(first, second);
+        string[] serverNamespaces = ["CodingAgent.Orchestration", "CodingAgent.AgentGateway", "CodingAgent.Api.Client"];
+        var offenders = _factory.ProductionServices
+            .Select(d => d.ImplementationType ?? d.ServiceType)
+            .Where(t => serverNamespaces.Any(ns => t.Namespace?.StartsWith(ns, StringComparison.Ordinal) == true)
+                        || t.Assembly.GetName().Name is "CodingAgent.Pipeline" or "CodingAgent.Orchestration" or "CodingAgent.AgentGateway" or "CodingAgent.Api.Client")
+            .Select(t => t.FullName)
+            .ToList();
+        Assert.Empty(offenders);
     }
 
     /// <summary>
-    /// The monolith must read agent presence from the Pipeline API, not from a local registry.
-    ///
-    /// <para>
-    /// Spec 044 left <c>MapHub&lt;AgentHub&gt;</c> — and with it <c>RegisterAgent</c>, the only
-    /// writer of any agent registry — in the API process, while this host kept binding
-    /// <c>IAgentRegistryService</c> to its own <c>AgentRegistryService</c>. Nothing ever wrote to
-    /// that instance, so <c>Fleet</c>, <c>SidebarHealthIndicators</c> and the drawer
-    /// services reported an empty cluster in every deployment. Rebinding it to the local type again
-    /// would restore that defect silently, which is what this test is here to prevent.
-    /// </para>
+    /// Spec 051 D8: pages read the agents with the user's token (<c>/api/ui/agents</c>), so the web host
+    /// keeps no agent registry and polls nothing in the background with the master key.
     /// </summary>
     [Fact]
-    public void AgentRegistryInterface_IsBoundToTheApiBackedImplementation()
+    public void WebHost_KeepsNoAgentRegistry()
     {
-        var registry = _factory.Services.GetRequiredService<IAgentRegistryService>();
-
-        Assert.IsType<ApiAgentRegistryService>(registry);
-    }
-
-    /// <summary>
-    /// The poller and the readers must share one instance. <c>AgentRegistrySyncService</c> resolves
-    /// <c>ApiAgentRegistryService</c> by its concrete type while every consumer injects
-    /// <c>IAgentRegistryService</c>; if those two registrations produced separate objects the poller
-    /// would faithfully refresh a snapshot nobody reads, and the UI would stay empty exactly as
-    /// before.
-    /// </summary>
-    [Fact]
-    public void ApiBackedRegistry_IsASingleton_SharedWithTheInterfaceRegistration()
-    {
-        var byInterface = _factory.Services.GetRequiredService<IAgentRegistryService>();
-        var byConcreteType = _factory.Services.GetRequiredService<ApiAgentRegistryService>();
-
-        Assert.Same(byConcreteType, byInterface);
-        Assert.Same(byInterface, _factory.Services.GetRequiredService<IAgentRegistryService>());
-    }
-
-    /// <summary>
-    /// The local registry stays registered under its concrete type — the E2E factories resolve it directly.
-    /// </summary>
-    [Fact]
-    public void LocalAgentRegistry_RemainsResolvableByConcreteType()
-    {
-        Assert.NotNull(_factory.Services.GetRequiredService<AgentRegistryService>());
+        Assert.Null(_factory.Services.GetService<IAgentRegistryService>());
+        Assert.Null(_factory.Services.GetService<AgentRegistryService>());
     }
 
     /// <summary>
@@ -108,7 +78,8 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
                         && !d.ServiceType.IsGenericTypeDefinition
                         && d.ServiceType.Namespace?.StartsWith("CodingAgent", StringComparison.Ordinal) == true)
             .Select(d => d.ServiceType);
-        var componentInjections = typeof(Program).Assembly.GetTypes()
+        var componentInjections = new[] { typeof(Program).Assembly, typeof(CodingAgent.Web.Components.Layout.CockpitLayout).Assembly }
+            .SelectMany(a => a.GetTypes())
             .Where(t => typeof(Microsoft.AspNetCore.Components.ComponentBase).IsAssignableFrom(t))
             .SelectMany(t => t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             .Where(p => p.GetCustomAttribute<Microsoft.AspNetCore.Components.InjectAttribute>() is not null)

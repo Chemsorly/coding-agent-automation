@@ -87,10 +87,4 @@ var app = builder.Build();
 // instead of re-declaring inline copies (which would test routing, not production code).
 app.MapSchedulerHealthEndpoints();
 
-// ── Loop control endpoints ────────────────────────────────────────────────
-app.MapSchedulerLoopEndpoints();
-
-// ── Auto-start pipeline loop if configured ────────────────────────────────
-await app.AutoStartSchedulerLoopAsync();
-
 await app.RunAsync();

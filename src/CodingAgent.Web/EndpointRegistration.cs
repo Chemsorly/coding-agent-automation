@@ -50,8 +50,10 @@ internal static class EndpointRegistration
         // Config import/export endpoints now served by CodingAgent.Api.
 
         // frame-ancestors is part of the policy UseSecurityHeaders sends on every response.
+        // The routed pages live in CodingAgent.Web.Client (spec 051 D9); Login stays in this assembly.
         app.MapRazorComponents<App>()
-            .AddInteractiveServerRenderMode(options => options.ContentSecurityFrameAncestorsPolicy = null);
+            .AddInteractiveServerRenderMode(options => options.ContentSecurityFrameAncestorsPolicy = null)
+            .AddAdditionalAssemblies(Components.Routes.ClientAssembly);
 
         return app;
     }

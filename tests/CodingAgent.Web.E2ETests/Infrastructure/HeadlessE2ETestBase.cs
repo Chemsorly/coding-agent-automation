@@ -45,7 +45,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         await Fixture.ResetAllAsync();
 
         // Guard: verify DI replacement worked
-        var factory = Fixture.Factory.Services.GetRequiredService<IProviderFactory>();
+        var factory = Fixture.ApiServices.GetRequiredService<IProviderFactory>();
         if (factory is not FakeProviderFactory)
             throw new InvalidOperationException(
                 $"DI replacement failed: IProviderFactory resolved as {factory.GetType().Name} instead of FakeProviderFactory");
@@ -67,7 +67,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         CancellationToken ct = default)
     {
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
 
         projectId ??= WellKnownIds.DefaultProjectId;
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(projectId, ct)
@@ -161,7 +161,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         // mirrors the existing DispatchIssueAsync pattern. Verify both are Singleton/Transient; if
         // either is Scoped, wrap the resolution and use in a CreateScope() block.
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
 
         projectId ??= WellKnownIds.DefaultProjectId;
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(projectId, ct)
@@ -200,7 +200,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         string issueIdentifier,
         string agentSelector = "kiro,dotnet")
     {
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var request = new JobDistributionRequest
         {
             IssueIdentifier = issueIdentifier,

@@ -84,7 +84,7 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IAgentTokenRefreshService>(),
             Log.Logger,
             sp.GetRequiredService<IAgentOrphanRecoveryService>(),
-            sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub>>(),
+            sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<UiHub>>(),
             sp.GetService<IHubTriageOperations>()));
 
         return services;

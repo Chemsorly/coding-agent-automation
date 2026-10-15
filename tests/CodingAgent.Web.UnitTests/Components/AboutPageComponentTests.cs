@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using CodingAgent.Web.Auth;
 using AwesomeAssertions;
 using CodingAgent.Web.UnitTests.Auth;
@@ -19,9 +20,9 @@ public class AboutPageComponentTests : BunitContext
 
     private void RegisterDefaults(IReadOnlyList<PipelineRunSummary>? history = null)
     {
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(history ?? Array.Empty<PipelineRunSummary>());
+        var mockHistory = new Mock<IUiRunClient>();
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = (history ?? []).ToList(), Page = 1, PageSize = 1000, HasMore = false });
         Services.AddSingleton(mockHistory.Object);
         Services.AddSingleton(new BuildInfo());
     }

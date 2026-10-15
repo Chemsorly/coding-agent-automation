@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
@@ -81,6 +82,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
+            // The registrations of Program.cs itself, before the overrides below.
+            ProductionServices = services.ToList();
             // Reduce shutdown timeout to prevent test host hangs
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
 
@@ -154,10 +157,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);
 
-            // Spec 045: IAgentHubConnection is scoped (one per Blazor circuit). Replace with a mock
-            // to prevent real SignalR connection attempts to localhost:9999/hubs/agent in tests.
-            services.RemoveAll<IAgentHubConnection>();
-            services.AddScoped<IAgentHubConnection>(_ => new Mock<IAgentHubConnection>().Object);
+            // The UI hub connection is scoped (one per Blazor circuit). Replace it with a mock so pages
+            // make no SignalR connection attempts to localhost:9999/hubs/ui in tests.
+            services.RemoveAll<IUiHubConnection>();
+            services.AddScoped<IUiHubConnection>(_ => new Mock<IUiHubConnection>().Object);
 
             // Spec 045: IPipelineApiRunHistoryClient is registered by AddPipelineApiClient() and would
             // try to connect to localhost:9999. Replace with a mock to prevent real HTTP calls.
@@ -175,6 +178,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             RegisteredServices = services.ToList();
         });
     }
+
+    /// <summary>The registrations Program.cs made, before this factory replaced any.</summary>
+    public IReadOnlyList<ServiceDescriptor> ProductionServices { get; private set; } = [];
 
     /// <summary>The host's final service registrations, for the DI resolution test.</summary>
     public IReadOnlyList<ServiceDescriptor> RegisteredServices { get; private set; } = [];

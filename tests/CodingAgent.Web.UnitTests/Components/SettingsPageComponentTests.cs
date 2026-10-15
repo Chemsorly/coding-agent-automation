@@ -343,7 +343,7 @@ public class SettingsPageComponentTests : BunitContext
         var testDir = AppContext.BaseDirectory;
         // Navigate from bin/Debug/net10.0 up to the solution root, then to the source file
         var solutionRoot = Path.GetFullPath(Path.Combine(testDir, "..", "..", "..", "..", ".."));
-        var razorPath = Path.Combine(solutionRoot, "src", "CodingAgent.Web", "Components", "Pages", "SettingsModals.razor");
+        var razorPath = Path.Combine(solutionRoot, "src", "CodingAgent.Web.Client", "Components", "Pages", "SettingsModals.razor");
 
         // Skip if source file not available (e.g., in CI with only binaries)
         if (!File.Exists(razorPath))
@@ -379,7 +379,7 @@ public class SettingsPageComponentTests : BunitContext
     public void Settings_ConfigureLabelsModal_HasAccessibilityAttributes()
     {
         var razorPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..",
-            "src", "CodingAgent.Web", "Components", "Pages", "SettingsModals.razor");
+            "src", "CodingAgent.Web.Client", "Components", "Pages", "SettingsModals.razor");
         if (!File.Exists(razorPath))
         {
             Assert.Fail($"Source file not found at {razorPath}. Skipping accessibility attribute check.");

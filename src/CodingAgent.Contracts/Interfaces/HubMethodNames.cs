@@ -10,25 +10,25 @@ public static class HubMethodNames
     public const string RegisterAgent = nameof(IAgentHub.RegisterAgent);
     public const string DeregisterAgent = nameof(IAgentHub.DeregisterAgent);
 
-    // UI group subscriptions
-    public const string SubscribeToRun = nameof(IAgentHub.SubscribeToRun);
-    public const string UnsubscribeFromRun = nameof(IAgentHub.UnsubscribeFromRun);
-    public const string SubscribeToChatSession = nameof(IAgentHub.SubscribeToChatSession);
-    public const string UnsubscribeFromChatSession = nameof(IAgentHub.UnsubscribeFromChatSession);
+    // UI hub group subscriptions
+    public const string SubscribeToRun = nameof(IUiHub.SubscribeToRun);
+    public const string UnsubscribeFromRun = nameof(IUiHub.UnsubscribeFromRun);
+    public const string SubscribeToChat = nameof(IUiHub.SubscribeToChat);
+    public const string UnsubscribeFromChat = nameof(IUiHub.UnsubscribeFromChat);
 
-    // UI push events (server → UI circuit via hub group)
-    public const string OnOutputLines = nameof(IAgentHubUiClient.OnOutputLines);
-    public const string OnStepTransition = nameof(IAgentHubUiClient.OnStepTransition);
-    public const string OnRunCompleted = nameof(IAgentHubUiClient.OnRunCompleted);
-    public const string OnChatEntry = nameof(IAgentHubUiClient.OnChatEntry);
-    public const string OnQualityGateResult = nameof(IAgentHubUiClient.OnQualityGateResult);
-    public const string OnBrainSyncResult = nameof(IAgentHubUiClient.OnBrainSyncResult);
+    // UI hub push events (to a run group)
+    public const string OnOutputLines = nameof(IUiHubClient.OnOutputLines);
+    public const string OnStepTransition = nameof(IUiHubClient.OnStepTransition);
+    public const string OnRunCompleted = nameof(IUiHubClient.OnRunCompleted);
+    public const string OnChatEntry = nameof(IUiHubClient.OnChatEntry);
+    public const string OnQualityGateResult = nameof(IUiHubClient.OnQualityGateResult);
+    public const string OnBrainSyncResult = nameof(IUiHubClient.OnBrainSyncResult);
 
     /// <summary>
-    /// Sent point-to-point (caller only) in SubscribeToRun with the full live run state snapshot.
+    /// Sent to the caller only, in SubscribeToRun, with the full live run state snapshot.
     /// Used to seed the PipelineSidebar on modal open, including HighWaterMark and IssueLabels.
     /// </summary>
-    public const string OnRunStateSnapshot = nameof(IAgentHubUiClient.OnRunStateSnapshot);
+    public const string OnRunStateSnapshot = nameof(IUiHubClient.OnRunStateSnapshot);
 
     // Job lifecycle
     public const string JobAccepted = nameof(IAgentHub.JobAccepted);
@@ -72,9 +72,9 @@ public static class HubMethodNames
     public const string ReportChatResponse = nameof(IAgentHub.ReportChatResponse);
     public const string ReportChatCompleted = nameof(IAgentHub.ReportChatCompleted);
 
-    // UI push events — chat (server → UI circuit via chat-session group)
-    public const string OnChatResponse = nameof(IAgentHubUiClient.OnChatResponse);
-    public const string OnChatCompleted = nameof(IAgentHubUiClient.OnChatCompleted);
+    // UI hub push events (to a chat group)
+    public const string OnChatResponse = nameof(IUiHubClient.OnChatResponse);
+    public const string OnChatCompleted = nameof(IUiHubClient.OnChatCompleted);
 
     // Model fetch
     public const string ReportFetchModelsResult = nameof(IAgentHub.ReportFetchModelsResult);

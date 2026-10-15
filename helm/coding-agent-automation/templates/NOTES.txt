@@ -141,9 +141,20 @@ Single-replica mode. Scale to multiple replicas with:
 Note: web.env.pipelineLoopStartupDelaySeconds and web.leaderElection.pipelineLoopLeaseName are
 no longer used (the web host runs no pipeline loop and holds no lease). Remove them from your values.
 {{- end }}
+{{- if or .Values.scheduler.baseUrl ((.Values.scheduler.service | default dict).type) }}
+
+Note: scheduler.baseUrl and scheduler.service.type are no longer used. The Scheduler has no Service:
+Start, Stop and Resume are recorded in the pipeline configuration through the Pipeline API, and the
+Scheduler leader applies them. Remove them from your values.
+{{- end }}
 
 {{- if .Values.api.enabled }}
 
 Pipeline API: api.replicas > 1 requires signalr.redis.connectionString, so all replicas
 share agent and run state through Redis. The chart refuses to render without it.
+{{- end }}
+{{- if .Values.api.hubUrl }}
+
+Note: api.hubUrl is no longer used. The web connects to the UI hub at api.baseUrl + /hubs/ui with the
+signed-in user's token; only agents use /hubs/agent. Remove it from your values.
 {{- end }}

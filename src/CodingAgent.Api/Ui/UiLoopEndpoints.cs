@@ -80,11 +80,7 @@ internal static class UiLoopEndpoints
     private static UiLoopStatus ToUiStatus(LoopStatusReport? report, bool runRequested)
     {
         if (report is null)
-        {
-            return new UiLoopStatus(
-                false, runRequested, NotReportingMessage, null, 0, 0, 0, false, null, 0, 0,
-                [], new Dictionary<string, ConfigStatusSnapshot>(), null);
-        }
+            return UiLoopStatus.NotReported(runRequested, NotReportingMessage);
 
         var s = report.Status;
         return new UiLoopStatus(

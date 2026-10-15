@@ -42,7 +42,7 @@ public sealed class AuthOptions
 /// <summary>The built-in break-glass account <c>admin</c>. Always a global admin.</summary>
 public sealed class LocalAdminOptions
 {
-    public const string Username = "admin";
+    public const string Username = AuthPrincipals.LocalAdminUsername;
 
     public bool Enabled { get; set; } = true;
 
@@ -113,4 +113,10 @@ public sealed class RoleBindingOptions
     /// binding. Not allowed with <c>admin</c>.
     /// </summary>
     public string? ProjectId { get; set; }
+}
+
+/// <summary>The pages' view of <see cref="AuthOptions"/> (spec 051 5.2).</summary>
+internal sealed class AuthUiInfo(Microsoft.Extensions.Options.IOptions<AuthOptions> options) : IAuthUiInfo
+{
+    public string OidcProviderName => options.Value.Oidc.Name;
 }

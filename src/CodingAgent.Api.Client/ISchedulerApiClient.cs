@@ -3,25 +3,12 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Api.Client;
 
 /// <summary>
-/// HTTP client for the Scheduler microservice's loop-control endpoints and maintenance endpoints.
-/// The WebUI uses this to start/stop/resume the loop and poll status.
-/// The Scheduler uses TriggerRetentionSweepAsync, GetWorkItemCountsAsync, GetAgentsAsync and
-/// GetCredentialPoolAsync to call the API.
+/// HTTP client the Scheduler uses for the API's maintenance and metrics endpoints, and for pushing the
+/// loop status (spec 051 D11). Loop control itself is desired state in the pipeline config, so nothing
+/// calls the Scheduler.
 /// </summary>
 public interface ISchedulerApiClient
 {
-    /// <summary>GET /loop/status — current loop state snapshot.</summary>
-    Task<LoopStatusDto> GetLoopStatusAsync(CancellationToken ct = default);
-
-    /// <summary>POST /loop/start — start the pipeline loop; also persists ClosedLoopAutoStart=true.</summary>
-    Task<LoopStartResultDto> StartLoopAsync(CancellationToken ct = default);
-
-    /// <summary>POST /loop/stop — stop the pipeline loop; also persists ClosedLoopAutoStart=false.</summary>
-    Task StopLoopAsync(CancellationToken ct = default);
-
-    /// <summary>POST /loop/resume — resume the loop after circuit-breaker trip.</summary>
-    Task ResumeLoopAsync(CancellationToken ct = default);
-
     /// <summary>
     /// POST /api/scheduler/maintenance/retention-sweep on the API.
     /// Executes all five DatabaseMaintenanceService sweep operations and returns counts.

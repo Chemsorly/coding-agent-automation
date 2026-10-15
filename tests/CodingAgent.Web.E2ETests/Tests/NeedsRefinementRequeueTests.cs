@@ -317,7 +317,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         // in E2EFixture.ResetAllAsync before proceeding (already attempted with a 10s timeout).
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started, "StartLoopAsync should return true with valid template config");
 
             // Wait for at least one cycle to complete (up to 15s)
@@ -339,7 +339,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
 
         // Assert: no WorkItem was created for this issue

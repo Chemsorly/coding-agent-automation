@@ -145,33 +145,36 @@ public sealed record TriageAttemptRunInfo
     public DateTimeOffset? CompletedAt { get; init; }
 }
 
-/// <summary>Body of <c>POST /api/triages</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages</c>.</summary>
 public sealed record CreateTriageRequest
 {
     public required string ProjectId { get; init; }
     public required TriageRequest Request { get; init; }
-    public required string RequestedBy { get; init; }
+    /// <summary>Who acts. The UI surface ignores it and records the user from the token.</summary>
+    public string RequestedBy { get; init; } = "";
 }
 
-/// <summary>Body of <c>POST /api/triages/{id}/rerun</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages/{id}/rerun</c>.</summary>
 public sealed record RerunTriageRequest
 {
     public string? Feedback { get; init; }
     public IReadOnlyList<TriageAnswer> Answers { get; init; } = [];
-    public required string Author { get; init; }
+    /// <summary>Who acts. The UI surface ignores it and records the user from the token.</summary>
+    public string Author { get; init; } = "";
 }
 
-/// <summary>Body of <c>PUT /api/triages/{id}/drafts/{draftId}</c>.</summary>
+/// <summary>Body of <c>PUT /api/ui/triages/{id}/drafts/{draftId}</c>.</summary>
 public sealed record UpdateTriageDraftRequest
 {
     public required TriageDraftKind Kind { get; init; }
     public required string TargetRepository { get; init; }
     public required string Title { get; init; }
     public required string Body { get; init; }
-    public required string EditedBy { get; init; }
+    /// <summary>Who acts. The UI surface ignores it and records the user from the token.</summary>
+    public string EditedBy { get; init; } = "";
 }
 
-/// <summary>Body of <c>POST /api/triages/{id}/create-issues</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages/{id}/create-issues</c>.</summary>
 public sealed record CreateTriageIssuesRequest
 {
     public required IReadOnlyList<string> DraftIds { get; init; }
@@ -179,10 +182,11 @@ public sealed record CreateTriageIssuesRequest
     /// <summary>Also label the issues <c>agent:next</c>, so the loop implements them.</summary>
     public bool Queue { get; init; }
 
-    public required string CreatedBy { get; init; }
+    /// <summary>Who acts. The UI surface ignores it and records the user from the token.</summary>
+    public string CreatedBy { get; init; } = "";
 }
 
-/// <summary>Response of <c>POST /api/triages/{id}/create-issues</c>.</summary>
+/// <summary>Response of <c>POST /api/ui/triages/{id}/create-issues</c>.</summary>
 public sealed record CreateTriageIssuesResult
 {
     public IReadOnlyList<TriageCreatedIssue> Created { get; init; } = [];
@@ -196,9 +200,10 @@ public sealed record TriageDraftError
     public required string Message { get; init; }
 }
 
-/// <summary>Body of <c>POST /api/triages/{id}/dismiss</c>.</summary>
+/// <summary>Body of <c>POST /api/ui/triages/{id}/dismiss</c>.</summary>
 public sealed record DismissTriageRequest
 {
     public string? Reason { get; init; }
-    public required string By { get; init; }
+    /// <summary>Who acts. The UI surface ignores it and records the user from the token.</summary>
+    public string By { get; init; } = "";
 }

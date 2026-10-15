@@ -64,7 +64,7 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started, "StartLoopAsync should return true with valid config");
 
             // Wait for the agent to receive the job assignment
@@ -81,7 +81,7 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 }

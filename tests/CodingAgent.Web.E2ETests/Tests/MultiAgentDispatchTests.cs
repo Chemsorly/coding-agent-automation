@@ -25,10 +25,6 @@ public sealed class MultiAgentDispatchTests : E2ETestBase
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // Force the Blazor host's ApiAgentRegistryService to refresh its snapshot — the
-        // AgentRegistrySyncService background poller is disabled in the E2E harness.
-        await Fixture.ForceAgentRegistryRefreshAsync();
-
         // Act: navigate to the Fleet page
         var fleet = new FleetPage(Page, BaseUrl);
         await fleet.NavigateAsync();

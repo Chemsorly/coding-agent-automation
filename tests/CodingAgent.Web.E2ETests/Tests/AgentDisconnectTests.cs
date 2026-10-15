@@ -169,9 +169,6 @@ public sealed class AgentDisconnectTests : E2ETestBase
         Assert.NotNull(agentBefore);
         Assert.NotEqual(AgentStatus.Disconnected, agentBefore.Status);
 
-        // Force the Blazor host's ApiAgentRegistryService to refresh its snapshot so the UI
-        // picks up the connected agent — the AgentRegistrySyncService poller is disabled in the E2E harness.
-        await Fixture.ForceAgentRegistryRefreshAsync();
 
         // Act + Assert: the idle agent is visible with an Idle status on /fleet.
         var fleet = new FleetPage(Page, BaseUrl);

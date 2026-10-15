@@ -1,0 +1,239 @@
+using CodingAgent.Web.Ui;
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.Services;
+using Microsoft.AspNetCore.Components;
+
+namespace CodingAgent.Web.Components.Pages;
+
+public partial class TemplateTableSection
+{
+    [Parameter, EditorRequired] public IReadOnlyList<PipelineJobTemplate> Templates { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<PipelineProject> Projects { get; set; } = [];
+
+    /// <summary>
+    /// Spec 049: whether the signed-in user may change template configuration (global admin). When
+    /// false the toggles, edit/remove/move and add controls are not rendered. The page service
+    /// enforces the same rule on the server.
+    /// </summary>
+    [Parameter] public bool CanEdit { get; set; } = true;
+    // TODO: IssueProviders, RepoProviders, BrainProviders, and PipelineProviders should be IReadOnlyList<ProviderConfig>
+    // to prevent child components from accidentally mutating parent state (same rationale as Templates/RecentlyToggled).
+    // Update GetProviderDisplayName and GetLabelPreview signatures at the same time to avoid a compile error.
+    [Parameter, EditorRequired] public List<ProviderConfig> IssueProviders { get; set; } = [];
+    [Parameter, EditorRequired] public List<ProviderConfig> RepoProviders { get; set; } = [];
+    [Parameter, EditorRequired] public List<ProviderConfig> BrainProviders { get; set; } = [];
+    [Parameter, EditorRequired] public List<ProviderConfig> PipelineProviders { get; set; } = [];
+    [Parameter, EditorRequired] public bool IsLoopActive { get; set; }
+    [Parameter, EditorRequired] public IReadOnlySet<string> RecentlyToggled { get; set; } = new HashSet<string>();
+    [Parameter, EditorRequired] public IReadOnlyDictionary<string, ConfigStatusSnapshot> TemplateStatuses { get; set; } = new Dictionary<string, ConfigStatusSnapshot>();
+    [Parameter, EditorRequired] public IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<AgentProfile> AgentProfiles { get; set; } = [];
+    [Parameter, EditorRequired] public PipelineConfiguration PipelineConfig { get; set; } = new();
+
+    [Parameter] public bool ShowAddForm { get; set; }
+    [Parameter] public TemplateFormModel AddForm { get; set; } = new();
+    [Parameter] public string? FormError { get; set; }
+    [Parameter] public bool ShowDeleteConfirm { get; set; }
+    [Parameter] public PipelineJobTemplate? DeletingTemplate { get; set; }
+
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleEnabled { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleImplementation { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleTriage { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleHousekeeping { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleBranchCleanup { get; set; }
+    [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
+    [Parameter] public EventCallback<PipelineJobTemplate> OnEditTemplate { get; set; }
+    [Parameter] public EventCallback<(TemplateId TemplateId, string SourceProjectId, string TargetProjectId)> OnMoveTemplate { get; set; }
+    [Parameter] public EventCallback OnShowAddForm { get; set; }
+    [Parameter] public EventCallback OnAddTemplate { get; set; }
+    [Parameter] public EventCallback OnCancelAdd { get; set; }
+    [Parameter] public EventCallback OnRemoveTemplate { get; set; }
+    [Parameter] public EventCallback OnCancelDelete { get; set; }
+
+    [Inject] private IUiAgentClient AgentClient { get; set; } = default!;
+
+    /// <summary>The agents the label previews match against; read while one is shown.</summary>
+    private IReadOnlyList<AgentEntryDto> _agents = [];
+
+    private string? _moveMenuTemplateId;
+    private string? _expandedPreviewTemplateId;
+    private string? _expandedFeaturesTemplateId;
+
+    private bool ShowsAgents => _expandedPreviewTemplateId != null || ShowAddForm;
+
+    // Number of columns: 9 with the Actions column (admins), 8 without it.
+    private int _columnCount => CanEdit ? 9 : 8;
+
+    private void ToggleMoveMenu(string? templateId) =>
+        _moveMenuTemplateId = _moveMenuTemplateId == templateId ? null : templateId;
+
+    protected override Task OnInitializedAsync() => RefreshAgentsAsync();
+
+    private async Task ToggleLabelPreview(string templateId)
+    {
+        _expandedPreviewTemplateId = _expandedPreviewTemplateId == templateId ? null : templateId;
+        if (_expandedPreviewTemplateId is not null)
+            await RefreshAgentsAsync();
+    }
+
+    /// <summary>Reads the agents the user can see; on a failure the last list stays.</summary>
+    private async Task RefreshAgentsAsync()
+    {
+        try
+        {
+            _agents = await AgentClient.GetAgentsAsync();
+        }
+        catch (Exception)
+        {
+            // Keep the last list; the next tick retries.
+        }
+    }
+
+    private void ToggleFeatureExpand(string templateId) =>
+        _expandedFeaturesTemplateId = _expandedFeaturesTemplateId == templateId ? null : templateId;
+
+    private async Task MoveTemplate(TemplateId templateId, string sourceProjectId, string targetProjectId)
+    {
+        _moveMenuTemplateId = null;
+        await OnMoveTemplate.InvokeAsync((templateId, sourceProjectId, targetProjectId));
+    }
+
+    private ConfigStatusSnapshot? GetTemplateStatus(TemplateId templateId)
+    {
+        TemplateStatuses.TryGetValue(templateId.Value, out var status);
+        return status;
+    }
+
+    private bool IsProviderMissing(PipelineJobTemplate template) =>
+        !IssueProviders.Any(p => p.Id == template.IssueProviderId)
+        || !RepoProviders.Any(p => p.Id == template.RepoProviderId);
+
+    // TODO: Update parameter type to IReadOnlyList<ProviderConfig> when the [Parameter] properties above are converted.
+    private static string GetProviderDisplayName(string providerId, List<ProviderConfig> providers)
+    {
+        var provider = providers.FirstOrDefault(p => p.Id == providerId);
+        return provider?.DisplayName ?? UiFormatters.Truncate(providerId, 12);
+    }
+
+    private List<ProjectTemplateGroup> GetTemplatesByProject()
+    {
+        var groups = new List<ProjectTemplateGroup>();
+        var templateLookup = Templates.ToDictionary(t => t.Id);
+
+        foreach (var project in Projects.OrderBy(p => p.Name, StringComparer.Ordinal))
+        {
+            var projectTemplates = project.TemplateIds
+                .Where(id => templateLookup.ContainsKey(id))
+                .Select(id => templateLookup[id])
+                .ToList();
+
+            if (projectTemplates.Count > 0)
+                groups.Add(new ProjectTemplateGroup { Project = project, Templates = projectTemplates });
+        }
+
+        // Every template records its own project, so each one appears under that project here.
+
+        return groups;
+    }
+
+    internal LabelPreviewResult GetLabelPreview(string repoProviderId)
+    {
+        var repoConfig = RepoProviders.FirstOrDefault(p => p.Id == repoProviderId);
+        if (repoConfig is null)
+            return new LabelPreviewResult();
+
+        var labels = LabelResolver.ResolveRequiredLabels(repoConfig, PipelineConfig);
+        if (labels.Count == 0)
+            return new LabelPreviewResult();
+
+        // Profile: resolve what dispatch would use (fewest covering labels wins, then Priority, then Id).
+        // ResolveByRequiredLabels is static — no ProfileResolver instance needed.
+        var matchedProfile = ProfileResolver.ResolveByRequiredLabels(AgentProfiles, labels);
+
+        // QG and Reviewers: resolved against the profile's MatchLabels when a profile was found,
+        // mirroring AssignmentEnricher behaviour. Fall back to repo labels when no profile matched.
+        var resolveLabels = matchedProfile?.MatchLabels ?? labels;
+        var qgResolver = new QualityGateResolver();
+        var matchedQgs = qgResolver.Resolve(QualityGateConfigs, resolveLabels);
+
+        var rvResolver = new ReviewerResolver();
+        var matchedRvs = rvResolver.Resolve(ReviewerConfigs, resolveLabels);
+
+        var allAgents = _agents
+            .Where(a => !a.Disabled)
+            .Where(a => labels.Count == 0 || labels.All(l => a.Labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+        var onlineCount = allAgents.Count(a => a.Status != AgentStatus.Disconnected);
+
+        return new LabelPreviewResult
+        {
+            Labels = labels,
+            QualityGates = matchedQgs.Select(q => q.DisplayName).ToList(),
+            Reviewers = matchedRvs.Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})").ToList(),
+            Profiles = matchedProfile is not null ? [matchedProfile.DisplayName] : [],
+            Agents = allAgents.Select(a => a.AgentId.Value).ToList(),
+            OnlineAgentCount = onlineCount
+        };
+    }
+
+    public sealed class LabelPreviewResult
+    {
+        public IReadOnlyList<string> Labels { get; init; } = [];
+        public IReadOnlyList<string> QualityGates { get; init; } = [];
+        public IReadOnlyList<string> Reviewers { get; init; } = [];
+        public IReadOnlyList<string> Profiles { get; init; } = [];
+        public IReadOnlyList<string> Agents { get; init; } = [];
+        public int OnlineAgentCount { get; init; }
+    }
+
+    public class TemplateFormModel
+    {
+        /// <summary>The template being edited; null when the form adds a new one.</summary>
+        public string? EditingTemplateId { get; set; }
+        public string Name { get; set; } = "";
+        public string ProjectId { get; set; } = "";
+        public string IssueProviderId { get; set; } = "";
+        public string RepoProviderId { get; set; } = "";
+        public string BrainProviderId { get; set; } = "";
+        public string PipelineProviderId { get; set; } = "";
+        public bool HousekeepingEnabled { get; set; } = false;
+        public int? HousekeepingConcurrencyLimit { get; set; } = null;
+        public bool HousekeepingBranchCleanupEnabled { get; set; } = false;
+        public bool BrainReadOnly { get; set; }
+        public bool ImplementationEnabled { get; set; } = true;
+        public bool ReviewEnabled { get; set; } = true;
+        public bool DecompositionEnabled { get; set; }
+        public bool TriageEnabled { get; set; }
+
+        /// <summary>A form that edits <paramref name="template"/>, filled with its current values.</summary>
+        public static TemplateFormModel ForEdit(PipelineJobTemplate template, string projectId) => new()
+        {
+            EditingTemplateId = template.Id,
+            Name = template.Name,
+            ProjectId = projectId,
+            IssueProviderId = template.IssueProviderId,
+            RepoProviderId = template.RepoProviderId,
+            BrainProviderId = template.BrainProviderId ?? "",
+            PipelineProviderId = template.PipelineProviderId ?? "",
+            HousekeepingEnabled = template.HousekeepingEnabled,
+            HousekeepingConcurrencyLimit = template.HousekeepingConcurrencyLimit,
+            HousekeepingBranchCleanupEnabled = template.HousekeepingBranchCleanupEnabled,
+            BrainReadOnly = template.BrainReadOnly,
+            ImplementationEnabled = template.ImplementationEnabled,
+            ReviewEnabled = template.ReviewEnabled,
+            DecompositionEnabled = template.DecompositionEnabled,
+            TriageEnabled = template.TriageEnabled,
+        };
+    }
+
+    private sealed class ProjectTemplateGroup
+    {
+        public required PipelineProject Project { get; init; }
+        public List<PipelineJobTemplate> Templates { get; set; } = new();
+    }
+}

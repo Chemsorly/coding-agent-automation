@@ -1,3 +1,4 @@
+using CodingAgent.Web.Ui;
 using AwesomeAssertions;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.UnitTests.Auth;
@@ -47,12 +48,9 @@ public class RunPageComponentTests : BunitContext
     /// </summary>
     private void RegisterServices(PipelineRunSummary summary, Mock<CodingAgent.Web.Ui.IUiRunClient> mockRunHistory)
     {
-        var mockHub = new Mock<IAgentHubConnection>();
+        var mockHub = new Mock<IUiHubConnection>();
         mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
         mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>())).Returns(Mock.Of<IDisposable>());
-        mockHub.Setup(h => h.On<It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType>>()))
-            .Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType>>()))
             .Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType, It.IsAnyType>>()))
@@ -70,7 +68,7 @@ public class RunPageComponentTests : BunitContext
 
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
             c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
@@ -1034,7 +1032,7 @@ public class RunPageComponentTests : BunitContext
 /// <summary>
 /// Tests that RunPage re-joins its run group after a hub reconnect and that
 /// the reconnect handler is removed on dispose.
-/// Issue #3551: hub group membership is lost on reconnect; IAgentHubConnection.Reconnected
+/// Issue #3551: hub group membership is lost on reconnect; IUiHubConnection.Reconnected
 /// must be used to re-invoke SubscribeToRun so output lines keep arriving.
 /// </summary>
 public class RunPageReconnectTests : BunitContext
@@ -1048,13 +1046,13 @@ public class RunPageReconnectTests : BunitContext
     // ── Shared scaffolding ────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds a mock IAgentHubConnection whose State transitions to Connected after StartAsync,
+    /// Builds a mock IUiHubConnection whose State transitions to Connected after StartAsync,
     /// matching the real behaviour. Returns the mock so tests can raise Reconnected and verify
     /// InvokeAsync call counts.
     /// </summary>
-    private static Mock<IAgentHubConnection> MakeConnectedHubMock()
+    private static Mock<IUiHubConnection> MakeConnectedHubMock()
     {
-        var mockHub = new Mock<IAgentHubConnection>();
+        var mockHub = new Mock<IUiHubConnection>();
         var connected = false;
         mockHub.Setup(h => h.State)
             .Returns(() => connected ? HubConnectionState.Connected : HubConnectionState.Disconnected);
@@ -1063,10 +1061,6 @@ public class RunPageReconnectTests : BunitContext
             .Returns(Task.CompletedTask);
         mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>()))
-            .Returns(Mock.Of<IDisposable>());
-        mockHub.Setup(h => h.On<It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType>>()))
-            .Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType>>()))
             .Returns(Mock.Of<IDisposable>());
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType, It.IsAnyType>>()))
@@ -1075,7 +1069,7 @@ public class RunPageReconnectTests : BunitContext
         return mockHub;
     }
 
-    private void RegisterServices(PipelineRunSummary summary, Mock<IAgentHubConnection> mockHub)
+    private void RegisterServices(PipelineRunSummary summary, Mock<IUiHubConnection> mockHub)
     {
         var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory
@@ -1093,7 +1087,7 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
             c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(new CockpitState());
     }
 
@@ -1238,7 +1232,7 @@ public class RunPageReconnectTests : BunitContext
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>(c =>
             c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiPipelineSettings(3, 30))));
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(new CockpitState());
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));

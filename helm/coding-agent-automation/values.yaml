@@ -430,9 +430,8 @@ api:
   # key (WorkDistribution__OrchestratorUrl) — changing it re-points both shapes simultaneously
   # (Spec 044 Req C2.1 option a). Default derives from release name and api.service.port.
   serviceUrl: ""
-  # Spec 045 Req 6.4/6.5: API base URL and hub URL for the web service to connect
-  # to the Pipeline API for config loading (IPipelineApiConfigClient) and live streaming
-  # (IAgentHubConnection). When empty, the chart computes the default in-cluster URL from
+  # The Pipeline API URL the web service calls as the signed-in user: /api/ui for its data and
+  # /hubs/ui for live streaming (spec 051). When empty, the chart computes the default in-cluster URL from
   # the release name, namespace, and api.service.port. Override for external or custom routing.
   # REQUIRED when api.enabled is false. When empty and api.enabled is false, the chart
   # fails at render time — the web service would otherwise compute an in-cluster URL
@@ -440,7 +439,6 @@ api:
   # that does not exist, causing silent runtime failures on the first HTTP call.
   # Set to the URL of the externally deployed Pipeline API (e.g. http://api.example.com:8080).
   baseUrl: ""    # override if API is not in same cluster/namespace
-  hubUrl: ""     # override for hub URL (defaults to baseUrl + /hubs/agent)
   resources:
     requests:
       cpu: 100m
@@ -520,13 +518,10 @@ scheduler:
     tag: ""
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
+  # Port the Scheduler listens on for its health probes. Nothing calls the Scheduler: loop control is
+  # desired state in the pipeline config (spec 051 D11), so it has no Service.
   service:
-    type: ClusterIP
     port: 8080
-  # URL the web service uses to reach the Scheduler's loop control endpoints.
-  # Empty (default) = computed in-cluster: http://{fullname}-scheduler.{namespace}.svc.cluster.local:{port}
-  # Set when scheduler.enabled is false or the Scheduler is reachable via a non-default address.
-  baseUrl: ""
   resources:
     requests:
       memory: "256Mi"

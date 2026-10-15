@@ -58,26 +58,6 @@ public sealed class AgentHubChatTests
         ActiveChatSessionId = activeSessionId
     };
 
-    // ── SubscribeToChatSession ────────────────────────────────────────────
-
-    [Fact]
-    public async Task SubscribeToChatSession_NullSessionId_Throws()
-    {
-        var hub = CreateHub();
-        var act = () => hub.SubscribeToChatSession(null!);
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    // ── UnsubscribeFromChatSession ────────────────────────────────────────
-
-    [Fact]
-    public async Task UnsubscribeFromChatSession_NullSessionId_Throws()
-    {
-        var hub = CreateHub();
-        var act = () => hub.UnsubscribeFromChatSession(null!);
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
     // ── ReportChatResponse — session not owned → HubException ────────────
 
     [Fact]
@@ -302,7 +282,7 @@ public sealed class AgentHubChatTests
             .Returns(Task.CompletedTask);
         var uiClients = new Mock<IHubClients>();
         uiClients.Setup(c => c.Group(It.IsAny<string>())).Returns(uiClientProxy.Object);
-        var uiContext = new Mock<IHubContext<AgentHub>>();
+        var uiContext = new Mock<IHubContext<UiHub>>();
         uiContext.Setup(c => c.Clients).Returns(uiClients.Object);
 
         var mockCtx = new Mock<HubCallerContext>();

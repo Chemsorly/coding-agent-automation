@@ -1,3 +1,4 @@
+using CodingAgent.Web.Models;
 using Bunit;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Models;
@@ -10,16 +11,14 @@ namespace CodingAgent.Web.UnitTests.Components;
 // TODO: Add test assertions for remaining icon substitutions (phase state icons, step state icons for Completed/Active/Failed/Cancelled, quality gate pass/fail icons, chevron toggles) to catch misspelled icon names that would silently render empty SVGs.
 public class PipelineSidebarComponentTests : BunitContext
 {
-    private static PipelineRun CreateRun(
+    private static RunSidebarModel CreateRun(
         PipelineStep currentStep = PipelineStep.GeneratingCode,
         PipelineStep highWaterMark = PipelineStep.Created) => new()
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "42",
             IssueTitle = "Test Issue",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CurrentStep = currentStep,
             HighWaterMark = highWaterMark
         };
@@ -137,7 +136,7 @@ public class PipelineSidebarComponentTests : BunitContext
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = false }
         };
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -148,7 +147,7 @@ public class PipelineSidebarComponentTests : BunitContext
     public void CompletedState_AllWorkflowSteps_AreCompleted()
     {
         var run = CreateRun(PipelineStep.Completed, PipelineStep.Completed);
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -169,7 +168,7 @@ public class PipelineSidebarComponentTests : BunitContext
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true }
         };
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -304,16 +303,14 @@ public class PipelineSidebarComponentTests : BunitContext
 
     // --- Brain sync step rendering ---
 
-    private static PipelineRun CreateBrainRun(
+    private static RunSidebarModel CreateBrainRun(
         PipelineStep currentStep,
         PipelineStep highWaterMark) => new()
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "42",
             IssueTitle = "Test Issue",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CurrentStep = currentStep,
             HighWaterMark = highWaterMark,
             BrainProviderConfigId = "brain-1"
@@ -337,7 +334,7 @@ public class PipelineSidebarComponentTests : BunitContext
         var run = CreateBrainRun(PipelineStep.Completed, PipelineStep.Completed);
         run.BrainUpdatesPushed = true;
         run.BrainFilesCommitted = 3;
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -349,7 +346,7 @@ public class PipelineSidebarComponentTests : BunitContext
     {
         var run = CreateBrainRun(PipelineStep.Completed, PipelineStep.Completed);
         run.BrainUpdatesPushed = false;
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -407,7 +404,7 @@ public class PipelineSidebarComponentTests : BunitContext
     public void ReflectingOnRun_WhenCompleted_ShowsComplete()
     {
         var run = CreateBrainRun(PipelineStep.Completed, PipelineStep.Completed);
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -417,17 +414,15 @@ public class PipelineSidebarComponentTests : BunitContext
     [Fact]
     public void ReflectingOnRun_WhenNoBrainProvider_DoesNotExpand()
     {
-        var run = new PipelineRun
+        var run = new RunSidebarModel
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "42",
             IssueTitle = "Test Issue",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CurrentStep = PipelineStep.Completed,
             HighWaterMark = PipelineStep.Completed,
-            CompletedAt = DateTime.UtcNow,
+            CompletedAtOffset = DateTimeOffset.UtcNow,
             BrainProviderConfigId = null
         };
 
@@ -454,7 +449,7 @@ public class PipelineSidebarComponentTests : BunitContext
     public void CostBreakdown_WhenPhaseBreakdownHasEntries_IsRendered()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+        run.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -470,8 +465,8 @@ public class PipelineSidebarComponentTests : BunitContext
     public void CostBreakdown_RendersPhaseRows_WithFormattedValues()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
-        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));
+        run.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+        run.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -501,9 +496,9 @@ public class PipelineSidebarComponentTests : BunitContext
     public void CostBreakdown_IsSortedByCostDescending()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(1000, 0.01m));
-        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(8000, 0.05m));
-        run.Metrics.PhaseBreakdown.TryAdd("review_Correctness", new PhaseUsage(3000, 0.03m));
+        run.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(1000, 0.01m));
+        run.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(8000, 0.05m));
+        run.PhaseBreakdown.TryAdd("review_Correctness", new PhaseUsage(3000, 0.03m));
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -522,9 +517,9 @@ public class PipelineSidebarComponentTests : BunitContext
     public void CostBreakdown_WhenCostIsNull_SortsByTokensDescendingAndDisplaysDash()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(2000, null));
-        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(8000, null));
-        run.Metrics.PhaseBreakdown.TryAdd("reflection", new PhaseUsage(500, null));
+        run.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(2000, null));
+        run.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(8000, null));
+        run.PhaseBreakdown.TryAdd("reflection", new PhaseUsage(500, null));
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -553,7 +548,7 @@ public class PipelineSidebarComponentTests : BunitContext
     public void CostBreakdown_IsCollapsedByDefault_CanBeExpanded()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+        run.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -574,18 +569,16 @@ public class PipelineSidebarComponentTests : BunitContext
     [Fact]
     public async Task CostBreakdown_ExpandedStatePreservedAcrossRerender()
     {
-        var run = new PipelineRun
+        var run = new RunSidebarModel
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "42",
             IssueTitle = "Test Issue",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CurrentStep = PipelineStep.GeneratingCode,
             HighWaterMark = PipelineStep.GeneratingCode
         };
-        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+        run.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -593,11 +586,11 @@ public class PipelineSidebarComponentTests : BunitContext
         cut.Find(".phase-breakdown-header").Click();
         Assert.NotEmpty(cut.FindAll(".phase-breakdown-body"));
 
-        // Simulate a live update: add a new phase to the same PipelineRun object and force re-render.
+        // Simulate a live update: add a new phase to the same RunSidebarModel object and force re-render.
         // In production, StateHasChanged is called on the parent (RunPage.razor) which passes
-        // the same PipelineRun reference. Here we trigger StateHasChanged directly on the component
+        // the same RunSidebarModel reference. Here we trigger StateHasChanged directly on the component
         // via reflection (it is protected on ComponentBase).
-        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));
+        run.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));
         run.CurrentStep = PipelineStep.ReviewingCode;
 
         var stateHasChangedMethod = typeof(Microsoft.AspNetCore.Components.ComponentBase)
@@ -638,15 +631,13 @@ public class PipelineSidebarComponentTests : BunitContext
     [Fact]
     public void ConsolidationRun_HeaderShowsKindAndTemplate()
     {
-        // RunType is init-only on PipelineRun — build inline; cannot use CreateRun().
-        var run = new PipelineRun
+        // RunType is init-only on RunSidebarModel — build inline; cannot use CreateRun().
+        var run = new RunSidebarModel
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "42",
             IssueTitle = "Test Issue",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CurrentStep = PipelineStep.Completed,
             HighWaterMark = PipelineStep.Created,
             RunType = PipelineRunType.Consolidation,

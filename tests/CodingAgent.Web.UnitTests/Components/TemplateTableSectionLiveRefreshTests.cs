@@ -1,18 +1,16 @@
 using Bunit;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Components.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
-using Serilog;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
 /// <summary>
-/// The page re-renders only when the loop status changes, so TemplateTableSection redraws the values
-/// that move on their own — "polled Xs ago" while the loop runs, and the agents matched in an open
-/// label preview — with its own timer, and runs that timer only while such values are on screen.
+/// The page re-renders on its loop-status tick (spec 051 D11), which redraws "polled Xs ago". The table
+/// runs its own timer only while it shows agents — an open label preview or the add form — to read them
+/// again from /api/ui/agents.
 /// </summary>
 public class TemplateTableSectionLiveRefreshTests : BunitContext
 {
@@ -21,7 +19,7 @@ public class TemplateTableSectionLiveRefreshTests : BunitContext
 
     public TemplateTableSectionLiveRefreshTests()
     {
-        Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(new Mock<ILogger>().Object));
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With().Object);
     }
 
     private IRenderedComponent<TemplateTableSection> RenderSection(bool isLoopActive, DateTimeOffset? lastPoll = null) =>
@@ -56,11 +54,12 @@ public class TemplateTableSectionLiveRefreshTests : BunitContext
     }
 
     [Fact]
-    public void LoopActive_RunsTimer()
+    public void LoopActive_NoPreviewOpen_RunsNoTimer()
     {
+        // The page re-renders on its loop-status tick, which redraws "polled Xs ago".
         var cut = RenderSection(isLoopActive: true);
 
-        Assert.Single(cut.FindComponents<AutoRefresh>());
+        Assert.Empty(cut.FindComponents<AutoRefresh>());
     }
 
     [Fact]
@@ -76,14 +75,15 @@ public class TemplateTableSectionLiveRefreshTests : BunitContext
     }
 
     [Fact]
-    public void LoopActive_PollAgeAdvancesWithoutParentRender()
+    public void LabelPreviewOpened_ReadsTheAgentsAgain()
     {
-        var cut = RenderSection(isLoopActive: true, lastPoll: DateTimeOffset.UtcNow.AddSeconds(-10));
-        var initial = cut.Find(".monitoring-status-idle").TextContent;
+        var agents = CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With();
+        Services.AddSingleton(agents.Object);
+        var cut = RenderSection(isLoopActive: false);
 
-        // Only the component's own timer can redraw it here; the test never re-renders it.
-        cut.WaitForAssertion(
-            () => Assert.NotEqual(initial, cut.Find(".monitoring-status-idle").TextContent),
-            TimeSpan.FromSeconds(10));
+        cut.Find(".btn-label-preview").Click();
+
+        // Once on first render, once when the preview opens.
+        agents.Verify(a => a.GetAgentsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 }

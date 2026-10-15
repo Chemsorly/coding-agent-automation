@@ -16,6 +16,15 @@ public static class UserTokenClaimTypes
 
     /// <summary>One claim per project role, "{projectId}:{role}".</summary>
     public const string ProjectRole = "caa_prj";
+
+    /// <summary>
+    /// What the token may be used for: <see cref="HubUse"/> marks the session-long UI hub token (spec 051 D7),
+    /// which the HTTP UI surface refuses. HTTP tokens carry none.
+    /// </summary>
+    public const string Use = "use";
+
+    /// <summary>The <see cref="Use"/> value of a UI hub connect token.</summary>
+    public const string HubUse = "hub";
 }
 
 /// <summary>

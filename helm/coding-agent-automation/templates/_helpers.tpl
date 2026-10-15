@@ -119,6 +119,14 @@ Usage (inside an env: list, indented to 12):
     secretKeyRef:
       name: {{ include "coding-agent-automation.secretName" . }}
       key: agent-api-key
+{{ include "coding-agent-automation.otelHeadersEnv" . }}
+{{- end }}
+
+{{/*
+The optional OTLP exporter headers from the release Secret. The web pod gets only these: it calls the
+API as the signed-in user and holds no agent API key (spec 051 4.1).
+*/}}
+{{- define "coding-agent-automation.otelHeadersEnv" -}}
 - name: OTEL_EXPORTER_OTLP_HEADERS
   valueFrom:
     secretKeyRef:
