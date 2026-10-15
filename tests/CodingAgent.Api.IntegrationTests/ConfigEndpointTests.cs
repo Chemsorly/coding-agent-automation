@@ -1433,6 +1433,7 @@ public sealed class ApiWebApplicationFactoryWithKiroTemplate : ApiWebApplication
 /// delegating to ConfigEndpoints, the direct API paths would be unprotected and untested.
 /// Consider adding parallel tests that call /api/config/* directly with the operator API key.
 /// </remarks>
+[Collection(ApiIntegrationTestCollection.Name)]
 public sealed class ConfigEndpointTypeMismatchTests : IClassFixture<ApiWebApplicationFactoryWithKiroTemplate>
 {
     private static readonly System.Text.Json.JsonSerializerOptions JsonOptions =

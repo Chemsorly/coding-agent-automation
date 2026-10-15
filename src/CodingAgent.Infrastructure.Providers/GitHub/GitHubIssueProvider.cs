@@ -38,7 +38,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
-        var issueNumber = ParseIssueIdentifier(identifier);
+        var issueNumber = ParseIdentifier(identifier);
 
         var issue = await ExecuteWithResilienceAsync(
             client => client.Issue.Get(Owner, Repo, issueNumber),
@@ -96,7 +96,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(body);
-        var issueNumber = ParseIssueIdentifier(identifier);
+        var issueNumber = ParseIdentifier(identifier);
 
         var comment = await ExecuteWithResilienceAsync(
             client => client.Issue.Comment.Create(Owner, Repo, issueNumber, body),
@@ -108,7 +108,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(body);
-        ParseIssueIdentifier(issueIdentifier);
+        ParseIdentifier(issueIdentifier);
 
         // GitHub comment IDs exceed int.MaxValue; Octokit's Update takes the ID as long, so pass it through.
         await ExecuteWithResilienceAsync(
@@ -119,7 +119,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<IReadOnlyList<PipelineIssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
-        var issueNumber = ParseIssueIdentifier(identifier);
+        var issueNumber = ParseIdentifier(identifier);
 
         var comments = await ExecuteWithResilienceAsync(
             client => client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber,
@@ -143,7 +143,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(labels);
-        var issueNumber = ParseIssueIdentifier(identifier);
+        var issueNumber = ParseIdentifier(identifier);
 
         await ExecuteWithResilienceAsync(
             client => client.Issue.Labels.AddToIssue(Owner, Repo, issueNumber, labels.ToArray()),
@@ -155,7 +155,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(label);
-        var issueNumber = ParseIssueIdentifier(identifier);
+        var issueNumber = ParseIdentifier(identifier);
 
         try
         {
@@ -245,7 +245,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<bool> IsIssueClosedAsync(IssueIdentifier identifier, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
-        var issueNumber = ParseIssueIdentifier(identifier);
+        var issueNumber = ParseIdentifier(identifier);
 
         try
         {
@@ -265,7 +265,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task CloseIssueAsync(IssueIdentifier identifier, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
-        var issueNumber = ParseIssueIdentifier(identifier);
+        var issueNumber = ParseIdentifier(identifier);
 
         await ExecuteWithResilienceAsync(
             client => client.Issue.Update(Owner, Repo, issueNumber, new IssueUpdate { State = ItemState.Closed }),
