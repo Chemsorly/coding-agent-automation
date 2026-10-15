@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.Services;
+using CodingAgent.Api.Client.Stores;
 using Moq;
 
 namespace CodingAgent.Web.UnitTests.Services;

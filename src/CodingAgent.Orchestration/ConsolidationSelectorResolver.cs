@@ -23,7 +23,7 @@ namespace CodingAgent.Orchestration;
 /// </list>
 /// </para>
 /// </summary>
-internal sealed class ConsolidationSelectorResolver : IConsolidationSelectorResolver
+public sealed class ConsolidationSelectorResolver : IConsolidationSelectorResolver
 {
     private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<ConsolidationSelectorResolver>();
 
