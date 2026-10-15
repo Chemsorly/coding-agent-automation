@@ -184,6 +184,28 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
+    public async Task EnsureSessionAsync_ConfigurationRefused_ThrowsProviderMisconfigured()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
+                {
+                    onOutput?.Invoke("Error: failed to set agent 'x': Internal error (code -32603): Mode 'x' not found");
+                })
+            .ReturnsAsync(4);
+        _mockOrchestrator.Setup(o => o.LastRunRejectedConfiguration).Returns(true);
+
+        var act = () => _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<ProviderUnavailableException>();
+        ex.Which.Category.Should().Be(AgentErrorCategory.ProviderMisconfigured);
+        ex.Which.Message.Should().Contain("Mode 'x' not found");
+    }
+
+    [Fact]
     public async Task EnsureSessionAsync_NonZeroWarmUpExit_DoesNotMarkSessionEstablished()
     {
         _mockOrchestrator

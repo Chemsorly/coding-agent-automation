@@ -45,6 +45,8 @@ public sealed class VerifyBaselineStep : IPipelineStep
         try
         {
             await context.AgentProvider.ValidateAsync(ct);
+            if (!string.IsNullOrEmpty(context.Run.WorkspacePath))
+                await context.AgentProvider.EnsureSessionAsync(context.Run.WorkspacePath, ct);
             context.Callbacks.EmitOutputLine("✅ Agent environment healthy");
             return true;
         }
@@ -54,7 +56,7 @@ public sealed class VerifyBaselineStep : IPipelineStep
             // Fatal: set Error status on the VerifyBaseline span before failing the run.
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
-            await context.FailRunAsync($"Agent environment unhealthy: {ex.Message}", ct);
+            await context.FailRunAsync($"Agent environment unhealthy: {ex.Message}", FailureReason.InfrastructureFailure, ct);
             return false;
         }
     }

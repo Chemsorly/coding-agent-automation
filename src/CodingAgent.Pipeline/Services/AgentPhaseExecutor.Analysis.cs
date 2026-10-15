@@ -33,7 +33,15 @@ public partial class AgentPhaseExecutor
 
         if (existingAnalysis != null)
         {
-            await UseExistingAnalysisAsync(context, existingAnalysis, ct);
+            try
+            {
+                await UseExistingAnalysisAsync(context, existingAnalysis, ct);
+            }
+            catch (ProviderUnavailableException ex)
+            {
+                await FailForUnavailableProviderAsync(context, ex);
+                return false;
+            }
             return true;
         }
 
