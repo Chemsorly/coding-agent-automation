@@ -96,6 +96,27 @@
             <div class="summary-failure-callout" role="alert"><Icon Name="alert-triangle" Size="14" /> @run.FailureReason</div>
         }
 
+        @if (_diagnosis is not null)
+        {
+            <div class="cockpit-card diagnosis-card" data-testid="diagnosis-card">
+                <div class="cockpit-card-pad">
+                    <span class="cockpit-chip diagnosis-chip diagnosis-@_diagnosis.Verdict.ToString().ToLowerInvariant()" data-testid="diagnosis-verdict">@_diagnosis.Verdict</span>
+                    <h2 data-testid="diagnosis-title">@_diagnosis.Title</h2>
+                    <p>@_diagnosis.Explanation</p>
+                    <p><strong>Next step:</strong> @_diagnosis.NextStep</p>
+                    @if (_diagnosis.Evidence.Count > 0)
+                    {
+                        <ul class="diagnosis-evidence">
+                            @foreach (var line in _diagnosis.Evidence)
+                            {
+                                <li><code>@line</code></li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        }
+
         var implPr = run.RunType != PipelineRunType.Review ? run.PullRequestUrl : null;
         var reviewPr = run.RunType == PipelineRunType.Review ? run.ReviewPrUrl : null;
         @if (!string.IsNullOrEmpty(run.IssueUrl) || !string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr) || _triageId is not null || run.RunType == PipelineRunType.Consolidation)
@@ -387,6 +408,9 @@
     private string? _redispatchError;
     private string? _redispatchMessage;
 
+    // Diagnosis — computed once after loading a failed run; null for non-failed or non-diagnosed runs.
+    private RunDiagnosis? _diagnosis;
+
     // Cancel state — mirrors the re-dispatch confirm pattern
     // TODO: [WARNING] No double-submit guard: if the sidebar's confirmation is re-opened and
     // "Yes, cancel" is clicked a second time before the first PostStatusAsync completes, two
@@ -409,6 +433,7 @@
         _resolvedAgentName = null;
         _triageId = null;
         _model = null;
+        _diagnosis = null;
 
         if (!Guid.TryParse(RunId, out var id))
         {
@@ -447,6 +472,24 @@
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to load the pipeline settings for MaxRetries; using default"); }
+
+            if (_run?.FinalStep == PipelineStep.Failed)
+            {
+                IReadOnlyList<PipelineRunSummary> recentFailed = [];
+                try
+                {
+                    var hist = await RunHistory.GetRunHistoryAsync(
+                        new RunHistoryQuery(Page: 1, PageSize: 100, FinalStep: PipelineStep.Failed,
+                            Since: _run.StartedAtOffset.AddHours(-24)), _cts.Token);
+                    recentFailed = hist?.Items ?? [];
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Warning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
+                }
+                _diagnosis = RunDiagnoser.Diagnose(_run, recentFailed);
+            }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
@@ -638,6 +681,24 @@
                 // Seed CompletedAtOffset so GetElapsedTime() and Dur() show the real duration
                 // instead of continuing to use DateTimeOffset.UtcNow after the run finishes.
                 _model.CompletedAtOffset = _run.CompletedAtOffset;
+            }
+
+            if (_run?.FinalStep == PipelineStep.Failed)
+            {
+                IReadOnlyList<PipelineRunSummary> recentFailed = [];
+                try
+                {
+                    var hist = await RunHistory.GetRunHistoryAsync(
+                        new RunHistoryQuery(Page: 1, PageSize: 100, FinalStep: PipelineStep.Failed,
+                            Since: _run.StartedAtOffset.AddHours(-24)), _cts.Token);
+                    recentFailed = hist?.Items ?? [];
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Warning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
+                }
+                _diagnosis = RunDiagnoser.Diagnose(_run, recentFailed);
             }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }

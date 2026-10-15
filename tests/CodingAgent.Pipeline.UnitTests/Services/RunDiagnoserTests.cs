@@ -178,6 +178,10 @@ public class RunDiagnoserTests
     }
 
     // ── Rule 2: OOM ───────────────────────────────────────────────────────────
+    // TODO: [WARNING] OOM detection is only tested with original-case strings ("OOMKilled",
+    // "exit code 137"). The implementation uses StringComparison.OrdinalIgnoreCase but no test
+    // exercises variant casing (e.g. "oomkilled" or "EXIT CODE 137"). If OrdinalIgnoreCase were
+    // changed to Ordinal, both existing OOM tests would still pass. Add tests with variant casing.
 
     [Fact]
     public void Diagnose_OomKilled_IsConfiguration()
@@ -378,6 +382,12 @@ public class RunDiagnoserTests
     }
 
     // ── Rule 8: gate failed only on this run ──────────────────────────────────
+    // TODO: [WARNING] No test exercises the exclusive lower boundary of the rule-7 time window.
+    // The test Diagnose_SameGateExactly24HoursBefore_Counts confirms the inclusive lower bound
+    // (exactly −24 h counts), but no test places others at BaseTime.AddHours(-24).AddSeconds(-1)
+    // (just outside the window). Without this test, relaxing the lower-bound check from
+    // >= run.StartedAtOffset.AddHours(-24) to >= run.StartedAtOffset.AddHours(-48) would not be caught.
+    // Add a test: others at startedAt = BaseTime.AddHours(-24).AddSeconds(-1) must fall to rule 8.
     // TODO: [WARNING] No test exercises the run.RepoProviderConfigId == null code path. When
     // RepoProviderConfigId is null the diagnoser skips the cross-run count entirely and falls
     // unconditionally to rule 8 (Agent). Add a test: run with gate failure, repoProviderConfigId: null,
@@ -468,6 +478,14 @@ public class RunDiagnoserTests
     }
 
     // ── Evidence ──────────────────────────────────────────────────────────────
+
+    // TODO: [WARNING] Diagnose_Evidence_IsCappedAt3EntriesOf300Chars only asserts Count <= 3, but
+    // BuildEvidence is structurally incapable of producing more than 2 entries from any single rule:
+    // entry 2 (pod/output log line) is mutually exclusive with entry 3 (gate names). The EvidenceMaxEntries
+    // = 3 cap and the entries.Count < EvidenceMaxEntries guard are dead-code paths. The count assertion
+    // is therefore vacuously true and would not catch a regression that raised the achievable entry count
+    // above 3. Consider replacing with an assertion on the exact count and exact content for a known rule,
+    // or adding a hypothetical test using a helper that bypasses structural exclusivity to exercise the cap.
 
     [Fact]
     public void Diagnose_Evidence_IsCappedAt3EntriesOf300Chars()

@@ -3,6 +3,7 @@
 @layout CockpitLayout
 @implements IAsyncDisposable
 @using CodingAgent.Pipeline.Models
+@using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
 @inject IUiRunClient RunHistory
@@ -152,8 +153,9 @@
 
     private static string AttentionItemsLabel(int count) => count == 1 ? "1 item" : $"{count} items";
 
-    private static string FailedRunSubline(PipelineRunSummary run)
+    internal static string FailedRunSubline(PipelineRunSummary run, RunDiagnosis? diagnosis)
     {
+        if (diagnosis is not null) return $"{diagnosis.Verdict}: {diagnosis.Title}";
         if (!string.IsNullOrEmpty(run.FailureReason)) return run.FailureReason;
         return run.RetryCount > 0 ? $"Failed after {run.RetryCount} retries" : "Failed";
     }
@@ -175,6 +177,7 @@
     private string? _error;
     private List<Section> _sections = new();
     private IReadOnlyList<TriageListItem> _triages = [];
+    private Dictionary<string, RunDiagnosis?> _diagnoses = new();
 
     // Blocked issues are a LIVE provider query (see BlockedIssuesService) — loaded after first render.
     private IReadOnlyList<BlockedIssue> _blockedIssues = [];
@@ -255,12 +258,16 @@
             var attn = AttentionAggregator.Aggregate(items, triages);
             _triages = attn.TriagesNeedingYou;
 
+            _diagnoses = attn.FailedRuns.ToDictionary(
+                r => r.RunId,
+                r => RunDiagnoser.Diagnose(r, items));
+
             _sections = new()
             {
                 new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", attn.NeedsRefinement.ToList(),
                     _ => "Confidence gate: scope not ready — refine on the issue", "needs-refinement"),
                 new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", attn.FailedRuns.ToList(),
-                    FailedRunSubline, "failed-runs"),
+                    run => FailedRunSubline(run, _diagnoses.GetValueOrDefault(run.RunId)), "failed-runs"),
                 new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", attn.PlansToApprove.ToList(),
                     _ => "Plan posted — approve by adding agent:epic-approved on the issue", "plans-posted"),
             };
