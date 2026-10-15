@@ -17,7 +17,6 @@ WORKDIR /src
 # Copy only the project files needed for the web service and its dependencies (not test projects)
 COPY Directory.Build.props ./
 COPY Directory.Packages.props ./
-COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgent.Pipeline.CodeReview/CodingAgent.Pipeline.CodeReview.csproj src/CodingAgent.Pipeline.CodeReview/
 COPY src/CodingAgent.Contracts/CodingAgent.Contracts.csproj src/CodingAgent.Contracts/
 COPY src/CodingAgent.Infrastructure.Common/CodingAgent.Infrastructure.Common.csproj src/CodingAgent.Infrastructure.Common/

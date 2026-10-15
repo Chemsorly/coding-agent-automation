@@ -19,12 +19,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgent.Web" />
     <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.IntegrationTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.E2ETests" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Components and their authorization. No FrameworkReference to ASP.NET Core: that is server-only. -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" />
+    <!-- IHttpClientFactory for the typed UI clients; it also works in the browser. -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
     <!-- The UI hub (spec 051 D7). The .NET SignalR client also runs in the browser. -->
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+    <!-- Components log through Serilog's static logger; a browser host would route it to the console. -->
+    <PackageReference Include="Serilog" />
   </ItemGroup>
 
   <ItemGroup>

@@ -78,7 +78,8 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
                         && !d.ServiceType.IsGenericTypeDefinition
                         && d.ServiceType.Namespace?.StartsWith("CodingAgent", StringComparison.Ordinal) == true)
             .Select(d => d.ServiceType);
-        var componentInjections = typeof(Program).Assembly.GetTypes()
+        var componentInjections = new[] { typeof(Program).Assembly, typeof(CodingAgent.Web.Components.Layout.CockpitLayout).Assembly }
+            .SelectMany(a => a.GetTypes())
             .Where(t => typeof(Microsoft.AspNetCore.Components.ComponentBase).IsAssignableFrom(t))
             .SelectMany(t => t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             .Where(p => p.GetCustomAttribute<Microsoft.AspNetCore.Components.InjectAttribute>() is not null)

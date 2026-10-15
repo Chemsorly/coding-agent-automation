@@ -44,7 +44,7 @@ public partial class AgentCodingScopedCssTests
 
     private static string FindPagesFile(string fileName)
     {
-        var relative = Path.Combine("src", "CodingAgent.Web", "Components", "Pages", fileName);
+        var relative = Path.Combine("src", "CodingAgent.Web.Client", "Components", "Pages", fileName);
         var dir = new DirectoryInfo(Path.GetDirectoryName(typeof(AgentCodingScopedCssTests).Assembly.Location)!);
         while (dir != null)
         {

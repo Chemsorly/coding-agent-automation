@@ -52,4 +52,63 @@ public partial class LayerBoundaryTests
             .ToList();
         Assert.True(offenders.Count == 0, $"The web host's closure pulls in server libraries: {string.Join(", ", offenders)}");
     }
+
+    // ── Spec 051 5.3: the WebAssembly-ready gate ──
+    // The pages, layout, UI services and UI clients live in CodingAgent.Web.Client so they can later run in the
+    // browser unchanged. It references Contracts only and nothing of ASP.NET Core that needs a server.
+
+    /// <summary>The ASP.NET Core assemblies that also run in the browser: components, authorization and the SignalR client.</summary>
+    private static readonly string[] BrowserSafeAspNetCoreAssemblies =
+    [
+        "Microsoft.AspNetCore.Components", "Microsoft.AspNetCore.Components.Web", "Microsoft.AspNetCore.Components.Forms",
+        "Microsoft.AspNetCore.Components.Authorization", "Microsoft.AspNetCore.Authorization", "Microsoft.AspNetCore.Metadata",
+        "Microsoft.AspNetCore.SignalR.Client", "Microsoft.AspNetCore.SignalR.Client.Core", "Microsoft.AspNetCore.SignalR.Common",
+        "Microsoft.AspNetCore.SignalR.Protocols.Json", "Microsoft.AspNetCore.Http.Connections.Client",
+        "Microsoft.AspNetCore.Http.Connections.Common",
+    ];
+
+    [Fact]
+    public void WebClient_ProjectReferenceClosure_IsContractsOnly()
+    {
+        var graph = SrcProjectReferenceGraph();
+        Assert.Contains("CodingAgent.Web.Client", graph.Keys);
+
+        var closure = ProjectReferenceClosure(graph, "CodingAgent.Web.Client");
+        var offenders = closure.Except(["CodingAgent.Contracts", "CodingAgent.Pipeline.CodeReview"]).ToList();
+        Assert.True(offenders.Count == 0,
+            $"CodingAgent.Web.Client must reference Contracts only (spec 051 D9), but reaches: {string.Join(", ", offenders)}");
+    }
+
+    [Fact]
+    public void WebClient_HasNoServerFrameworkReference()
+    {
+        var projects = new[] { "CodingAgent.Web.Client", "CodingAgent.Contracts", "CodingAgent.Pipeline.CodeReview" };
+        var offenders = projects
+            .Select(p => Directory.EnumerateFiles(Path.Combine(RepoRoot, "src", p), p + ".csproj").Single())
+            .Where(path => System.Xml.Linq.XDocument.Load(path).Descendants()
+                .Any(e => e.Name.LocalName == "FrameworkReference"))
+            .Select(Path.GetFileNameWithoutExtension)
+            .ToList();
+        Assert.True(offenders.Count == 0,
+            $"A FrameworkReference (Microsoft.AspNetCore.App) is server-only, but these projects of the Web.Client closure have one: {string.Join(", ", offenders)}");
+    }
+
+    [Fact]
+    public void WebClient_ReferencesOnlyBrowserSafeAspNetCoreAssemblies()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "CodingAgent.Web.Client.dll");
+        Assert.True(File.Exists(path), $"CodingAgent.Web.Client.dll not found at {path} — build first.");
+
+        var references = System.Reflection.Assembly.LoadFrom(path).GetReferencedAssemblies().Select(a => a.Name!).ToList();
+        Assert.Contains("Microsoft.AspNetCore.Components", references); // positive control
+
+        var offenders = references
+            .Where(name => name.StartsWith("Microsoft.AspNetCore.", StringComparison.Ordinal) && !BrowserSafeAspNetCoreAssemblies.Contains(name))
+            .Concat(references.Where(name => name.StartsWith("CodingAgent.", StringComparison.Ordinal)
+                                             && name is not ("CodingAgent.Contracts" or "CodingAgent.Pipeline.CodeReview")))
+            .ToList();
+        Assert.True(offenders.Count == 0,
+            $"CodingAgent.Web.Client references assemblies that need a server: {string.Join(", ", offenders)}. " +
+            "Keep server code in CodingAgent.Web and reach it through an interface the host registers (spec 051 5.2).");
+    }
 }

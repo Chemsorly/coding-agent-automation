@@ -35,12 +35,15 @@ public static class AuthPrincipals
 {
     public const string LocalAdminSubject = "local:admin";
 
+    /// <summary>The user name of the built-in break-glass account.</summary>
+    public const string LocalAdminUsername = "admin";
+
     /// <summary>Authentication type of every session identity (also the cookie scheme name).</summary>
     public const string AuthenticationType = "Cookies";
 
     public static ClaimsPrincipal CreateLocalAdmin(DateTimeOffset expiresAt) =>
-        Create(IdentitySources.Local, LocalAdminSubject, LocalAdminOptions.Username, email: null,
-            displayName: LocalAdminOptions.Username, groups: [], expiresAt);
+        Create(IdentitySources.Local, LocalAdminSubject, LocalAdminUsername, email: null,
+            displayName: LocalAdminUsername, groups: [], expiresAt);
 
     public static ClaimsPrincipal Create(
         string identitySource,

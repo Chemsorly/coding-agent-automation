@@ -174,7 +174,7 @@ public class BuildInfoTests
     {
         // Load looks for build-info.json in AppContext.BaseDirectory
         // In test context, this file likely doesn't exist
-        var info = BuildInfo.Load();
+        var info = BuildInfoLoader.Load();
 
         info.Should().NotBeNull();
         // Either it loads the actual file or returns defaults

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace CodingAgent.Web.Models;
@@ -46,25 +45,4 @@ public record BuildInfo
     public string RunUrl => IsCI && !string.IsNullOrEmpty(RunId) && !string.IsNullOrEmpty(RepositoryUrl)
         ? $"{RepositoryUrl.TrimEnd('/')}/actions/runs/{RunId}"
         : "";
-
-    /// <summary>
-    /// Loads build info from build-info.json next to the application binary.
-    /// Returns defaults if the file is missing or unreadable.
-    /// </summary>
-    public static BuildInfo Load()
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, "build-info.json");
-        if (!File.Exists(path))
-            return new BuildInfo();
-
-        try
-        {
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<BuildInfo>(json) ?? new BuildInfo();
-        }
-        catch (JsonException)
-        {
-            return new BuildInfo();
-        }
-    }
 }

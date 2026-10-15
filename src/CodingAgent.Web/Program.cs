@@ -41,7 +41,7 @@ builder.Services.AddRazorComponents()
         options.EnableDetailedErrors = builder.Environment.IsDevelopment();
     });
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton(BuildInfo.Load());
+builder.Services.AddSingleton(BuildInfoLoader.Load());
 
 // Configure JSON serialization for minimal API endpoints (enum-as-string to match agent DTOs)
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -94,21 +94,6 @@ catch (InvalidOperationException ex)
 // Spec 051 4.1: the web host holds no agent API key. Everything it shows comes from /api/ui and the UI
 // hub, called as the signed-in user; the drain service keeps /readyz honest during shutdown.
 builder.Services.AddReadinessDrain();
-
-// Frontend observability (Faro) — scoped so each Blazor circuit gets its own instance.
-// FaroService wraps IJSRuntime; NotificationFaroBridge forwards notifications to Faro.
-// Both silently no-op if Faro is not configured (Faro:CollectorUrl env var absent).
-builder.Services.AddScoped<CodingAgent.Web.Services.IFaroService, CodingAgent.Web.Services.FaroService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.NotificationFaroBridge>();
-
-// Page-level services (scoped — one instance per Blazor circuit)
-builder.Services.AddScoped<CodingAgent.Web.Services.IIssueDrawerService, CodingAgent.Web.Services.IssueDrawerService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.IPrReviewDrawerService, CodingAgent.Web.Services.PrReviewDrawerService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.IEpicDrawerService, CodingAgent.Web.Services.EpicDrawerService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.AgentCodingPageService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.NotificationService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.CockpitState>();
-builder.Services.AddScoped<CodingAgent.Web.Services.BlockedIssuesService>();
 
 // User authentication (cookie, local admin, OIDC, role bindings)
 builder.Services.AddUserAuthentication(builder.Configuration);

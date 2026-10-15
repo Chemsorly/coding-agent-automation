@@ -8,7 +8,7 @@
     </summary>
     <div class="cockpit-user-menu-panel">
         <a href="@AuthPaths.Profile.TrimStart('/')" data-testid="user-menu-profile">Profile</a>
-        <form method="post" action="@AuthEndpoints.LogoutEndpoint.TrimStart('/')" data-testid="logout-form">
+        <form method="post" action="@AuthPaths.Logout.TrimStart('/')" data-testid="logout-form">
             <AntiforgeryToken />
             <button type="submit" data-testid="logout-button">Log out</button>
         </form>

@@ -1,7 +1,7 @@
 @using CodingAgent.Web.Components.Auth
 @using Microsoft.AspNetCore.Components.Authorization
 
-<Router AppAssembly="typeof(Program).Assembly">
+<Router AppAssembly="typeof(Program).Assembly" AdditionalAssemblies="[ClientAssembly]">
     <Found Context="routeData">
         @* Spec 049: page policies apply on full page loads (endpoint metadata) and here for in-app navigation. *@
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.CockpitLayout)">
@@ -26,3 +26,8 @@
         </LayoutView>
     </NotFound>
 </Router>
+
+@code {
+    /// <summary>The assembly of the routed pages: <c>CodingAgent.Web.Client</c> (spec 051 D9).</summary>
+    internal static readonly System.Reflection.Assembly ClientAssembly = typeof(Layout.CockpitLayout).Assembly;
+}

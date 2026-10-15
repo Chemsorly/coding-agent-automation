@@ -12,6 +12,8 @@ The application runs on Kubernetes as five distinct processes:
 
 Supporting libraries (shared, not deployed independently):
 
+- **Web.Client** (`CodingAgent.Web.Client`) — The pages, layout, UI services and the typed `/api/ui` and UI hub clients. It references Contracts only and nothing of ASP.NET Core that needs a server, so it can later run as WebAssembly unchanged (spec 051 D9; architecture tests in `LayerBoundaryTests.WebHost.cs` keep it that way). The web host adds the server-only parts: sign-in, token minting, `App.razor`, `Login`.
+
 - **Orchestration** (`CodingAgent.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API and the Scheduler. References `Infrastructure.Providers` directly; does not reference `Infrastructure.Persistence`.
 - **Infrastructure.Persistence** (`CodingAgent.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgent.Api` only. The Scheduler and the web host have no direct or transitive reference to Persistence.
 - **Infrastructure.Providers** (`CodingAgent.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, Job Controller, and Orchestration.

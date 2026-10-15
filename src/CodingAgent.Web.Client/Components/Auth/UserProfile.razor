@@ -1,8 +1,7 @@
 @page "/user"
 @layout AuthLayout
-@using Microsoft.Extensions.Options
 @inject CurrentAccess Access
-@inject IOptions<AuthOptions> AuthOptions
+@inject IAuthUiInfo AuthUi
 @inject IUiMeClient Me
 @inject ILogger<UserProfile> Logger
 
@@ -37,7 +36,7 @@
                 {
                     <a class="btn-cancel" href="@AuthPaths.DefaultLanding.TrimStart('/')">Back to overview</a>
                 }
-                <form method="post" action="@AuthEndpoints.LogoutEndpoint.TrimStart('/')">
+                <form method="post" action="@AuthPaths.Logout.TrimStart('/')">
                     <AntiforgeryToken />
                     <button type="submit" class="btn-save" data-testid="profile-logout">Log out</button>
                 </form>
@@ -116,7 +115,7 @@
     private string IdentitySourceLabel =>
         Access.User.FindFirst(AuthClaimTypes.IdentitySource)?.Value == IdentitySources.Local
             ? "Local admin"
-            : AuthOptions.Value.Oidc.Name;
+            : AuthUi.OidcProviderName;
 
     private string DefaultRoleNote =>
         Access.GlobalRole > AccessRole.None
