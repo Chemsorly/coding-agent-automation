@@ -113,7 +113,7 @@
     private string? _steeringContent;
     private List<SecretEntry> _secrets = new();
     private List<SetupStepEntry> _setupSteps = new();
-    private HashSet<int> _revealedSecrets = new();
+    private readonly HashSet<int> _revealedSecrets = new();
     private bool _secretsExpanded;
     private bool _setupStepsExpanded;
 

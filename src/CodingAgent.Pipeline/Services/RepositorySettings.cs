@@ -22,7 +22,7 @@ public static class RepositorySettings
     {
         // TODO: [WARNING] ArgumentNullException.ThrowIfNull(templates) is missing; a null argument
         // causes NullReferenceException with no indication of which parameter was null.
-        // Add: ArgumentNullException.ThrowIfNull(templates);
+        // Fix: add a null-guard for the templates parameter before the LINQ call.
         return templates
             .Where(t => t.RepoProviderId == repoProviderId)
             .OrderByDescending(t => t.Enabled)
@@ -42,7 +42,7 @@ public static class RepositorySettings
     {
         // TODO: [WARNING] ArgumentNullException.ThrowIfNull(repoConfig) is missing; a null argument
         // causes NullReferenceException accessing repoConfig.DisplayName below.
-        // Add: ArgumentNullException.ThrowIfNull(repoConfig);
+        // Fix: add a null-guard for the repoConfig parameter before the object initializer.
         return new ProviderConfig
         {
             // Connection fields — copied unchanged
