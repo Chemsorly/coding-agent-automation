@@ -254,4 +254,64 @@ public sealed class ConsolidationSelectorResolverTests
         result!.AgentSelector.Should().Be("kiro");
         result.ResolvedProfileId.Should().Be("a-profile");
     }
+
+    // ── Step 3: dispatchableSelectors filter ─────────────────────────────
+
+    [Fact]
+    public void Resolve_Step3_WithDispatchableSelectors_PicksHighestPriorityProfileWithTemplate()
+    {
+        // Profiles: kiro,dotnet,dotnet10 (priority 0) and kiro,python,python312 (priority 10).
+        // Templates exist for: dotnet,dotnet10,kiro | claude,dotnet,dotnet10 | dotnet,dotnet10,opencode
+        // No default labels configured.
+        // Expected: resolver returns kiro-dotnet profile → selector "dotnet,dotnet10,kiro",
+        // even though kiro-python has higher numeric priority.
+        // TODO [WARNING]: Both profiles here use JobTemplate = null, so JobTemplateKey() always falls back to
+        // AgentSelectorKey.From(MatchLabels). When AgentProfile.JobTemplate is non-null, JobTemplateKey()
+        // returns a key derived from that field ("dotnet,kiro" for jobTemplate:"kiro,dotnet") rather than from
+        // MatchLabels. The dispatchableSelectors.Contains(p.JobTemplateKey()) check then uses the override key
+        // instead of the MatchLabels key, which can cause a profile to match or miss a template entry in
+        // unexpected ways. This interaction between the JobTemplate override field and dispatchableSelectors is
+        // untested. Consider adding a test: profile with matchLabels=["kiro","dotnet","dotnet10"] and
+        // jobTemplate="kiro,dotnet" → JobTemplateKey()="dotnet,kiro"; verify the filter uses "dotnet,kiro",
+        // not "dotnet,dotnet10,kiro".
+        var profiles = new List<AgentProfile>
+        {
+            MakeProfile("kiro-dotnet", ["kiro", "dotnet", "dotnet10"], priority: 0),
+            MakeProfile("kiro-python", ["kiro", "python", "python312"], priority: 10),
+        };
+        var dispatchableSelectors = new HashSet<string>(
+            ["dotnet,dotnet10,kiro", "claude,dotnet,dotnet10", "dotnet,dotnet10,opencode"],
+            StringComparer.Ordinal);
+
+        var result = ConsolidationSelectorResolver.Resolve(
+            null, MakeConfig(), MakeConfig(), profiles, dispatchableSelectors);
+
+        result.Should().NotBeNull();
+        result!.AgentSelector.Should().Be("dotnet,dotnet10,kiro");
+        result.ResolvedProfileId.Should().Be("kiro-dotnet");
+    }
+
+    [Fact]
+    public void Resolve_Step3_WithDispatchableSelectors_NoTemplateForAnyEnabledProfile_ReturnsNull()
+    {
+        // The only enabled profile has no matching job template → resolver returns null and logs Warning.
+        // TODO [WARNING]: This test only asserts the null return value. The Log.Warning(...) call in the
+        // withTemplate.Count == 0 branch is the only operational signal telling operators why a consolidation
+        // run was rejected. A future refactor that removes that log call would leave this test passing silently.
+        // Consider capturing the Serilog static logger via a test sink (see LifecycleCaptureSink pattern used
+        // in PipelineRunLifecycleServiceLoggingTests) and asserting that a Warning was emitted with the
+        // expected profile name(s).
+        var profiles = new List<AgentProfile>
+        {
+            MakeProfile("kiro-python", ["kiro", "python", "python312"], priority: 10),
+        };
+        var dispatchableSelectors = new HashSet<string>(
+            ["dotnet,dotnet10,kiro", "dotnet,dotnet10,opencode"],
+            StringComparer.Ordinal);
+
+        var result = ConsolidationSelectorResolver.Resolve(
+            null, MakeConfig(), MakeConfig(), profiles, dispatchableSelectors);
+
+        result.Should().BeNull();
+    }
 }
