@@ -79,9 +79,7 @@ public class AgentCodingPageServiceTests
             _mockLoopClient.Object,
             ConfigBackedPipelinesClients.UiConfig(_mockConfigClient).Object,
             ConfigBackedPipelinesClients.UiSettings(_mockConfigClient).Object,
-            _mockIssueDrawerService.Object,
-            _mockPrReviewDrawerService.Object,
-            _mockEpicDrawerService.Object,
+            new DispatchDrawers(_mockIssueDrawerService.Object, _mockPrReviewDrawerService.Object, _mockEpicDrawerService.Object),
             access,
             guard);
     }

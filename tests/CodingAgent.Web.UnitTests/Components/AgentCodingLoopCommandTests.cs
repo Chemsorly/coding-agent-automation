@@ -86,6 +86,7 @@ public class AgentCodingLoopCommandTests : BunitContext
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
         Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
+        Services.AddScoped<DispatchDrawers>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
     }
@@ -219,7 +220,7 @@ public class AgentCodingLoopCommandTests : BunitContext
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>
             {
-                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", Enabled = true, TemplateIds = new[] { "t-1" } }
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", Enabled = true, TemplateIds = ["t-1"] }
             });
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { DefaultTemplate });

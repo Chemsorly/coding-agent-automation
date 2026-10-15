@@ -32,6 +32,10 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
     private const string ProjectT = "6f1c2a9e-0000-0000-0000-0000000000d1";
     private const string ProjectU = "6f1c2a9e-0000-0000-0000-0000000000d2";
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(15);
+    private static readonly string[] SecretLines = ["secret"];
+    private static readonly string[] HelloLines = ["hello"];
+    private static readonly string[] ChatLines = ["hi", "there"];
+    private static readonly string[] OutputLines = ["a", "b"];
 
     private Uri HubUrl
     {
@@ -149,8 +153,8 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
             .Should().ThrowAsync<HubException>();
         await connection.InvokeAsync(HubMethodNames.SubscribeToRun, visible);
 
-        await UiClients.Group(UiHubGroups.Run(invisible)).SendAsync(HubMethodNames.OnOutputLines, invisible, new[] { "secret" });
-        await UiClients.Group(UiHubGroups.Run(visible)).SendAsync(HubMethodNames.OnOutputLines, visible, new[] { "hello" });
+        await UiClients.Group(UiHubGroups.Run(invisible)).SendAsync(HubMethodNames.OnOutputLines, invisible, SecretLines);
+        await UiClients.Group(UiHubGroups.Run(visible)).SendAsync(HubMethodNames.OnOutputLines, visible, HelloLines);
 
         await WaitUntilAsync(() => received.Contains(visible));
         received.Should().Equal(visible);
@@ -177,7 +181,7 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
         anna.On<string, int, string?>(HubMethodNames.OnChatCompleted, (s, code, error) => completed.Enqueue((s, code, error)));
         await anna.InvokeAsync(HubMethodNames.SubscribeToChat, agentId);
 
-        await UiClients.Group(UiHubGroups.Chat(agentId)).SendAsync(HubMethodNames.OnChatResponse, "s1", new[] { "hi", "there" });
+        await UiClients.Group(UiHubGroups.Chat(agentId)).SendAsync(HubMethodNames.OnChatResponse, "s1", ChatLines);
         await UiClients.Group(UiHubGroups.Chat(agentId)).SendAsync(HubMethodNames.OnChatCompleted, "s1", 1, "boom");
 
         await WaitUntilAsync(() => !completed.IsEmpty);
@@ -233,7 +237,7 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
             ChatHistory = [new ChatEntry { Role = ChatRole.Agent, Content = "working", Timestamp = at }],
         };
         var group = UiClients.Group(UiHubGroups.Run(run));
-        await group.SendAsync(HubMethodNames.OnOutputLines, run, new[] { "a", "b" });
+        await group.SendAsync(HubMethodNames.OnOutputLines, run, OutputLines);
         await group.SendAsync(HubMethodNames.OnStepTransition, run, PipelineStep.RunningQualityGates, at);
         await group.SendAsync(HubMethodNames.OnRunCompleted, run, completion);
         await group.SendAsync(HubMethodNames.OnChatEntry, run, ChatRole.User, "hi");
@@ -242,7 +246,7 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
         await group.SendAsync(HubMethodNames.OnRunStateSnapshot, run, snapshot);
 
         await WaitUntilAsync(() => received.Count == 7);
-        received[HubMethodNames.OnOutputLines].Should().BeEquivalentTo(new[] { "a", "b" });
+        received[HubMethodNames.OnOutputLines].Should().BeEquivalentTo(OutputLines);
         received[HubMethodNames.OnStepTransition].Should().Be((PipelineStep.RunningQualityGates, at));
         received[HubMethodNames.OnRunCompleted].Should().BeEquivalentTo(completion);
         received[HubMethodNames.OnChatEntry].Should().Be((ChatRole.User, "hi"));

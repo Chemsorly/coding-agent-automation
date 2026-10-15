@@ -29,9 +29,7 @@ public class AgentCodingPageService
         IUiLoopClient loopClient,
         IUiConfigClient uiConfig,
         IUiSettingsClient settings,
-        IIssueDrawerService issueDrawerService,
-        IPrReviewDrawerService prReviewDrawerService,
-        IEpicDrawerService epicDrawerService,
+        DispatchDrawers drawers,
         CurrentAccess access,
         IAccessGuard guard)
     {
@@ -40,9 +38,9 @@ public class AgentCodingPageService
         _loopClient = loopClient;
         _uiConfig = uiConfig;
         _settings = settings;
-        _issueDrawerService = issueDrawerService;
-        _prReviewDrawerService = prReviewDrawerService;
-        _epicDrawerService = epicDrawerService;
+        _issueDrawerService = drawers.Issue;
+        _prReviewDrawerService = drawers.PrReview;
+        _epicDrawerService = drawers.Epic;
     }
 
     // ── Configuration state ──
@@ -533,3 +531,6 @@ public class AgentCodingPageService
     private Task<string?> DeniedForTemplateAsync(AccessRole role, TemplateId templateId, [CallerMemberName] string action = "") =>
         DeniedAsync(role, GetParentProject(templateId)?.Id, action);
 }
+
+/// <summary>The Pipelines page's three dispatch drawers (issues, pull requests, epics), resolved together.</summary>
+public sealed record DispatchDrawers(IIssueDrawerService Issue, IPrReviewDrawerService PrReview, IEpicDrawerService Epic);

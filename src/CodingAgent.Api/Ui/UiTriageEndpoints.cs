@@ -35,9 +35,9 @@ internal static class UiTriageEndpoints
 
     /// <summary>GET /api/ui/triages — one page of a project's triages, or all projects' for a global reader.</summary>
     internal static async Task<IResult> List(
-        [FromQuery] string? projectId, [FromQuery] string? tab, [FromQuery] string? source, [FromQuery] string? q,
-        [FromQuery] int? page, [FromQuery] int? pageSize, IUserAccess access, TriageService service, CancellationToken ct)
+        [AsParameters] TriageListParameters query, IUserAccess access, TriageService service, CancellationToken ct)
     {
+        var (projectId, tab, source, q, page, pageSize) = query;
         projectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
         access.DemandList(projectId);
         return TypedResults.Ok(await service.ListAsync(new TriageListQuery
@@ -61,10 +61,10 @@ internal static class UiTriageEndpoints
 
     /// <summary>GET /api/ui/triages/preview — what a triage of the project, started in the given template, would use.</summary>
     internal static async Task<IResult> Preview(
-        [FromQuery] string projectId, [FromQuery] string? startIn, IUserAccess access,
-        IProjectStore projects, IProviderConfigStore providers, IAgentProfileStore profiles, IPipelineConfigStore config,
+        [FromQuery] string projectId, [FromQuery] string? startIn, IUserAccess access, [AsParameters] TriagePreviewStores stores,
         CancellationToken ct)
     {
+        var (projects, providers, profiles, config) = stores;
         access.DemandOperate(projectId);
         var project = await projects.GetProjectByIdAsync(projectId, ct);
         if (project is null)
@@ -107,30 +107,30 @@ internal static class UiTriageEndpoints
 
     /// <summary>POST /api/ui/triages/{id}/rerun</summary>
     internal static Task<IResult> Rerun(Guid id, [FromBody] RerunTriageRequest request, IUserAccess access, TriageService service, CancellationToken ct) =>
-        OnOperableTriageAsync(id, access, service, ct,
-            async () => TypedResults.Ok(await service.RerunAsync(id, request with { Author = Actor(access) }, ct)));
+        OnOperableTriageAsync(id, access, service,
+            async () => TypedResults.Ok(await service.RerunAsync(id, request with { Author = Actor(access) }, ct)), ct);
 
     /// <summary>PUT /api/ui/triages/{id}/drafts/{draftId}</summary>
     internal static Task<IResult> UpdateDraft(
         Guid id, string draftId, [FromBody] UpdateTriageDraftRequest request, IUserAccess access, TriageService service, CancellationToken ct) =>
-        OnOperableTriageAsync(id, access, service, ct,
-            async () => TypedResults.Ok(await service.UpdateDraftAsync(id, draftId, request with { EditedBy = Actor(access) }, ct)));
+        OnOperableTriageAsync(id, access, service,
+            async () => TypedResults.Ok(await service.UpdateDraftAsync(id, draftId, request with { EditedBy = Actor(access) }, ct)), ct);
 
     /// <summary>POST /api/ui/triages/{id}/drafts/{draftId}/reset</summary>
     internal static Task<IResult> ResetDraft(Guid id, string draftId, IUserAccess access, TriageService service, CancellationToken ct) =>
-        OnOperableTriageAsync(id, access, service, ct,
-            async () => TypedResults.Ok(await service.ResetDraftAsync(id, draftId, ct)));
+        OnOperableTriageAsync(id, access, service,
+            async () => TypedResults.Ok(await service.ResetDraftAsync(id, draftId, ct)), ct);
 
     /// <summary>POST /api/ui/triages/{id}/create-issues</summary>
     internal static Task<IResult> CreateIssues(
         Guid id, [FromBody] CreateTriageIssuesRequest request, IUserAccess access, TriageService service, TriageIssueCreator creator, CancellationToken ct) =>
-        OnOperableTriageAsync(id, access, service, ct,
-            async () => TypedResults.Ok(await creator.CreateAsync(id, request with { CreatedBy = Actor(access) }, ct)));
+        OnOperableTriageAsync(id, access, service,
+            async () => TypedResults.Ok(await creator.CreateAsync(id, request with { CreatedBy = Actor(access) }, ct)), ct);
 
     /// <summary>POST /api/ui/triages/{id}/dismiss</summary>
     internal static Task<IResult> Dismiss(Guid id, [FromBody] DismissTriageRequest request, IUserAccess access, TriageService service, CancellationToken ct) =>
-        OnOperableTriageAsync(id, access, service, ct,
-            async () => TypedResults.Ok(await service.DismissAsync(id, request with { By = Actor(access) }, ct)));
+        OnOperableTriageAsync(id, access, service,
+            async () => TypedResults.Ok(await service.DismissAsync(id, request with { By = Actor(access) }, ct)), ct);
 
     /// <summary>Accepts the JSON name (<c>need_you</c>) and the member name (<c>NeedYou</c>) of a filter value.</summary>
     internal static T? ParseEnum<T>(string? value) where T : struct, Enum
@@ -145,7 +145,7 @@ internal static class UiTriageEndpoints
 
     /// <summary>Runs <paramref name="action"/> when the stored triage exists and the user operates its project.</summary>
     private static async Task<IResult> OnOperableTriageAsync(
-        Guid id, IUserAccess access, TriageService service, CancellationToken ct, Func<Task<IResult>> action)
+        Guid id, IUserAccess access, TriageService service, Func<Task<IResult>> action, CancellationToken ct)
     {
         if (await service.GetAsync(id, ct) is not { } detail)
             return TypedResults.NotFound();
@@ -165,3 +165,12 @@ internal static class UiTriageEndpoints
         }
     }
 }
+
+/// <summary>The query of <c>GET /api/ui/triages</c>.</summary>
+internal sealed record TriageListParameters(
+    string? ProjectId, string? Tab, string? Source,
+    string? Q, int? Page, int? PageSize);
+
+/// <summary>The stores a triage preview is built from.</summary>
+internal sealed record TriagePreviewStores(
+    IProjectStore Projects, IProviderConfigStore Providers, IAgentProfileStore Profiles, IPipelineConfigStore Config);

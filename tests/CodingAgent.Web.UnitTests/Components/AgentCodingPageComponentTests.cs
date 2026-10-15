@@ -127,6 +127,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
         Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
+        Services.AddScoped<DispatchDrawers>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
     }

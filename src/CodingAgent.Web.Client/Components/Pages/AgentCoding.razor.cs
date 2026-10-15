@@ -747,10 +747,7 @@ public partial class AgentCoding : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        if (disposing)
-        {
-            if (Layout is not null)
-                Layout.OnEscapePressed -= HandleGlobalEscape;
-        }
+        if (disposing && Layout is not null)
+            Layout.OnEscapePressed -= HandleGlobalEscape;
     }
 }
