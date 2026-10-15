@@ -12,13 +12,13 @@ namespace CodingAgent.AgentGateway;
 /// Used by both the hub (for agent-initiated requests) and the lifecycle service
 /// (for post-completion label swaps and feedback comments).
 /// </summary>
-public sealed class AgentIssueOperations : IHubIssueOperations
+public sealed class HubIssueOperations : IHubIssueOperations
 {
     private readonly IAgentHubFacade _facade;
     private readonly ILabelService _labelService;
     private readonly ILogger _logger;
 
-    public AgentIssueOperations(
+    public HubIssueOperations(
         IAgentHubFacade facade,
         ILabelService labelService,
         ILogger logger)

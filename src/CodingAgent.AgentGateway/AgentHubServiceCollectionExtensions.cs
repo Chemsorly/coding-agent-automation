@@ -32,7 +32,7 @@ public static class AgentHubServiceCollectionExtensions
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
             sp.GetRequiredService<AgentHubFacadeDependencies>()));
 
-        services.AddSingleton<IHubIssueOperations>(sp => new AgentIssueOperations(
+        services.AddSingleton<IHubIssueOperations>(sp => new HubIssueOperations(
             sp.GetRequiredService<IAgentHubFacade>(),
             sp.GetRequiredService<ILabelService>(),
             Log.Logger));

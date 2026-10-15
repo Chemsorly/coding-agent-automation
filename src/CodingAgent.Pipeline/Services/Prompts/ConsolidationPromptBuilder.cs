@@ -316,6 +316,7 @@ public static partial class ConsolidationPromptBuilder
             - `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` (Agent A)
             - `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` (Agent B)
             - `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` (Agent C)
+            - `{AgentWorkspacePaths.RefactoringTestGapFindingsFilePath}` (Agent D)
             - `{AgentWorkspacePaths.RefactoringConventionsFilePath}` (project conventions)
             If `{AgentWorkspacePaths.RefactoringIssueContextFilePath}` exists, read it: it lists the open issues and past proposals the new proposals must not duplicate.
             """,

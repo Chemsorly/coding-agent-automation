@@ -138,6 +138,11 @@ public static class AgentWorkspacePaths
     public const string RefactoringDesignFindingsFilePath = ".agent/refactoring-design-findings.json";
 
     /// <summary>
+    /// The file (relative to workspace) where refactoring Phase 1 Agent D (test gaps) writes its findings.
+    /// </summary>
+    public const string RefactoringTestGapFindingsFilePath = ".agent/refactoring-test-gap-findings.json";
+
+    /// <summary>
     /// The file path (relative to workspace) where the refactoring aggregation step writes its analysis log
     /// (findings received, dropped and why, ranking scores) for the review step to read.
     /// </summary>

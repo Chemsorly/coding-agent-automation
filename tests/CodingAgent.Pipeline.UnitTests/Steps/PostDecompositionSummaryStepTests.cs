@@ -344,4 +344,24 @@ public class PostDecompositionSummaryStepTests
         capturedBody.Should().Contain("⏭️ Not created (cap)");
         capturedBody.Should().Contain("Issue 2");
     }
+
+    // ── Cell escaping ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void FormatSummaryComment_TitleWithNewline_FlattenedInTableCell()
+    {
+        // EscapeMarkdownPipe (old code) did NOT flatten newlines — this test locks in
+        // the correct behaviour after migration to MarkdownTableHelper.SanitizeTableCell.
+        var results = new List<SubIssueCreationResult>
+        {
+            new() { Title = "First line\nSecond line", Success = true,
+                    Identifier = "101", Url = "https://github.com/test/101" }
+        };
+
+        var summary = PostDecompositionSummaryStep.FormatSummaryComment(results, 1, 1, 0);
+
+        // The newline must be replaced with a space so the markdown table cell stays on one line.
+        summary.Should().NotContain("First line\nSecond line");
+        summary.Should().Contain("First line Second line");
+    }
 }
