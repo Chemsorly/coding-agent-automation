@@ -437,6 +437,17 @@
 .cockpit-stat-v { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
 .cockpit-chip { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; color: var(--text-muted); background: var(--surface-alt); margin: 0 3px 3px 0; }
 
+/* ---- Failure diagnosis card (issue #3589) --------------------------------- */
+.diagnosis-card h2 { font-size: 15px; font-weight: 700; margin: 6px 0; }
+.diagnosis-evidence { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12px; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.diagnosis-chip.diagnosis-transient     { background: var(--bg-info);    color: var(--accent); }
+.diagnosis-chip.diagnosis-configuration { background: var(--warning-bg); color: var(--warning); }
+.diagnosis-chip.diagnosis-repository    { background: var(--bg-active);  color: var(--nav-active-fg); }
+.diagnosis-chip.diagnosis-agent         { background: var(--error-bg);   color: var(--error); }
+/* TODO: [WARNING] .diagnosis-chip.diagnosis-unknown is missing. The requirement lists all five verdict
+   classes and requires one colour entry per class. Add distinct colours for the Unknown verdict.
+   Example: { background: var(--surface-alt); color: var(--text-faint); } or similar low-emphasis token. */
+
 /* Compact time-window selector inside a stat label */
 .time-window-select {
     display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;

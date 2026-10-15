@@ -276,6 +276,38 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 
 When Kubernetes marks an agent Job failed because its pods crashed or ran out of memory, the agent cannot report its outcome. The Job Controller then records the failure category and the last 100 lines of the last failed pod's log on the run, and the run page shows them under "Agent pod log". The log is capped and secrets that look like `token=…` are masked. The Job Controller needs `get` on `pods/log` for this; the Helm chart grants it.
 
+### Failure diagnosis
+
+Every failed run is diagnosed on page render by `RunDiagnoser.Diagnose` (in `CodingAgent.Pipeline.Services`). The diagnosis is a verdict, a title, an explanation, a next step, and up to three evidence lines. It is computed from the run summary and the recent run history — **nothing is stored** — so it appears on page load without any extra pipeline work.
+
+The run page shows the diagnosis as a card below the failure callout. The Attention page shows `{Verdict}: {Title}` as the subline on each failed run row.
+
+#### Verdicts
+
+| Verdict | Meaning |
+|---------|---------|
+| `Transient` | A platform hiccup; re-dispatching is enough |
+| `Configuration` | A deployment setting must change (memory, timeout, credentials) |
+| `Repository` | The repository is the cause (a gate that fails across runs) |
+| `Agent` | The agent crashed or could not finish the change |
+| `Unknown` | No rule matched |
+
+#### Rules (first match wins)
+
+| # | Condition | Verdict |
+|---|-----------|---------|
+| 1 | Platform category and ≥ 3 other failed runs with a platform category and a different issue within 10 minutes | Transient |
+| 2 | `ExitCodeFailure` and reason contains `OOMKilled` or `exit code 137` | Configuration |
+| 3 | `TokenRefreshFailure` | Configuration |
+| 4 | `Timeout` | Configuration |
+| 5 | `InfrastructureFailure` | Transient |
+| 6 | `ExitCodeFailure` (non-OOM) | Agent |
+| 7 | Quality gate failed and ≥ 2 other runs of the same repo failed the same gate in the last 24 hours | Repository |
+| 8 | Quality gate failed (cross-run condition not met) | Agent |
+| 9 | Anything else | Unknown |
+
+`RunDiagnoser.Diagnose` returns `null` for non-failed runs and for `GateRejected` runs (the gate comment already explains the outcome).
+
 ## Orphaned Label Recovery
 
 The `OrphanedLabelRecoveryService` (in `CodingAgent.Scheduler`) is a background service that detects issues stuck with the `agent:in-progress` label when no corresponding active run exists in the orchestrator. This can happen when:
