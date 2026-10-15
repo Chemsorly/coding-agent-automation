@@ -21,6 +21,8 @@ internal static class JobCompletionMapper
         run.CurrentStep = payload.FinalStep;
         run.MarkCompleted(payload.CompletedAt);
         run.FailureReason = payload.FailureReason;
+        if (payload.FailureCategory is not null)
+            run.FailureCategory = payload.FailureCategory;
         // Only overwrite PullRequestUrl when the payload carries a value.
         // For terminal paths like ConflictRestart the agent sends PullRequestUrl = null because it
         // did not create a PR in that run — but PullRequestOrchestrator may have already set the

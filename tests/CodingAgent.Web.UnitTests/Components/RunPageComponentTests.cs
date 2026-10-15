@@ -484,6 +484,53 @@ public class RunPageComponentTests : BunitContext
         Assert.Empty(cut.FindAll("pre.run-live-log"));
     }
 
+    // ── Issue #3588: Pod log tail card ────────────────────────────────────
+
+    [Fact]
+    public void WithPodLogTail_RendersCard()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3588",
+            IssueTitle = "Pod log tail test",
+            FinalStep = PipelineStep.Failed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PodLogTail = ["line1", "line2"]
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var card = cut.Find("[data-testid='pod-log-tail-card']");
+        Assert.NotNull(card);
+        Assert.Contains("line1", card.TextContent);
+        Assert.Contains("line2", card.TextContent);
+    }
+
+    [Fact]
+    public void WithoutPodLogTail_DoesNotRenderCard()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3588",
+            IssueTitle = "No pod log test",
+            FinalStep = PipelineStep.Failed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PodLogTail = null
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        Assert.Empty(cut.FindAll("[data-testid='pod-log-tail-card']"));
+    }
+
     // ── Issue #2948: Re-dispatch button ──────────────────────────────────
     // TODO: [WARNING] Missing negative test: a Review or Decomposition run type with FinalStep=Failed and
     // provider IDs should NOT show the re-dispatch button (CanRedispatch gates on RunType==Implementation).
@@ -911,6 +958,76 @@ public class RunPageComponentTests : BunitContext
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
 
         cut.FindAll("[data-testid='redispatch-btn']").Should().ContainSingle();
+    }
+
+    // ── Issue #3565: consolidation run identity ────────────────────────────
+
+    /// <summary>
+    /// A completed consolidation run must show the kind chip, a human-readable title without the
+    /// dedup key, a result section, and a "Consolidation page →" link.
+    /// </summary>
+    [Fact]
+    public void ConsolidationRun_ShowsKindTitleResultAndConsolidationLink_WithoutIssueNumber()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateName = "my-template",
+            ConsolidationTemplateId = "tpl-1",
+            IssueIdentifier = "RefactoringDetection:tpl-1",
+            IssueTitle = "RefactoringDetection:tpl-1",
+            ConsolidationResultSummary = "Created 3 refactoring issue(s): #1, #2, #3",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Title must be the human-readable kind+template form (not the dedup key).
+        cut.Find("h1").TextContent.Should().Be("Refactoring scan · my-template");
+
+        // The raw dedup key must not appear in the rendered markup.
+        cut.Markup.Should().NotContain("#RefactoringDetection");
+
+        // Kind chip must show the specific type.
+        cut.Find("[data-testid='consolidation-type-chip']").TextContent.Should().Be("Refactoring Scan");
+
+        // Result section must be present and contain the summary.
+        cut.Find("[data-testid='consolidation-result']").TextContent.Should().Contain("Created 3 refactoring issue(s): #1, #2, #3");
+
+        // Consolidation link must point to the internal Consolidation page.
+        cut.Find("[data-testid='consolidation-page-link']").GetAttribute("href").Should().Be("consolidation");
+    }
+
+    /// <summary>
+    /// When ConsolidationResultSummary is null, the result section must be absent from the page.
+    /// </summary>
+    [Fact]
+    public void ConsolidationRun_WithoutResultSummary_HasNoResultSection()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateName = "my-template",
+            ConsolidationTemplateId = "tpl-1",
+            IssueIdentifier = "RefactoringDetection:tpl-1",
+            IssueTitle = "RefactoringDetection:tpl-1",
+            ConsolidationResultSummary = null,
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.FindAll("[data-testid='consolidation-result']").Should().BeEmpty();
     }
 }
 

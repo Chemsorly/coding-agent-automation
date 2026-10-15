@@ -92,4 +92,29 @@ public static class UiFormatters
         PipelineRunType.Triage => "Triage",
         _ => "Implementation"
     };
+
+    /// <summary>Display name of a consolidation kind, as the Consolidation page's trigger buttons name it.</summary>
+    public static string FormatConsolidationType(ConsolidationRunType? type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
+        ConsolidationRunType.RefactoringDetection => "Refactoring Scan",
+        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
+        _ => "Consolidation"
+    };
+
+    /// <summary>
+    /// Title of a consolidation run: its kind and what it ran on. Consolidation runs have no issue; their
+    /// IssueIdentifier is an internal deduplication key and is never shown.
+    /// </summary>
+    public static string FormatConsolidationTitle(ConsolidationRunType? type, string? templateName, string? templateId)
+    {
+        var scope = templateName ?? templateId;
+        return type switch
+        {
+            ConsolidationRunType.HarnessSuggestions => "Harness suggestions · all projects",
+            ConsolidationRunType.BrainConsolidation => scope is null ? "Brain consolidation" : $"Brain consolidation · {scope}",
+            ConsolidationRunType.RefactoringDetection => scope is null ? "Refactoring scan" : $"Refactoring scan · {scope}",
+            _ => scope is null ? "Consolidation" : $"Consolidation · {scope}"
+        };
+    }
 }

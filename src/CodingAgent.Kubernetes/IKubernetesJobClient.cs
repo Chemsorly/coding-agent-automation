@@ -15,5 +15,5 @@ public interface IKubernetesJobClient
     Task CreateSecretAsync(V1Secret secret, string ns, CancellationToken ct = default);
     Task DeleteSecretAsync(string name, string ns, CancellationToken ct = default);
     Task<V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default);
-    Task<string> ReadPodLogsAsync(string podName, string ns, CancellationToken ct = default);
+    Task<string> ReadPodLogTailAsync(string podName, string ns, string container, int tailLines, CancellationToken ct = default);
 }

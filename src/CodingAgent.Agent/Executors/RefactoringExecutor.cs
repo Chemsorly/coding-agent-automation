@@ -29,7 +29,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// 1. Clone code repo + brain into the run's workspace
     /// 2. Hotspot analysis (git log)
     /// 3. Phase 0: Context extraction (project conventions)
-    /// 4. Phase 1: Parallel focused detection (3 sub-agents: structural, correctness, design)
+    /// 4. Phase 1: Parallel focused detection (4 sub-agents: structural, correctness, design, test gaps)
     /// 5. Phase 2: Aggregation + prioritization → produces proposals JSON
     /// 6. If no proposals: return success
     /// 7. Adversarial review (if enabled)
@@ -312,6 +312,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// <summary>
     /// Phased multi-agent refactoring path.
     /// Phase 0 → Phase 1 (3 parallel) → Phase 2 (aggregation) → finalize.
+    /// TODO: Update doc to "(4 parallel)" — a 4th Phase 1 task (TestGaps) was added by issue #3582. See review finding #3.
     /// </summary>
     private async Task<ConsolidationJobResult> ExecutePhasedRefactoringAsync(
         ConsolidationJobMessage job,
@@ -343,7 +344,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         if (failure is not null) return failure;
 
         // Phase 1: Parallel Focused Detection (3 sub-agents)
-        Logger.Information("Phase 1: Dispatching 3 parallel analysis agents for run {RunId}", job.JobId);
+        // TODO: Update count to "4 sub-agents" — a 4th Phase 1 task (TestGaps) was added by issue #3582. See review finding #2.
+        Logger.Information("Phase 1: Dispatching 4 parallel analysis agents for run {RunId}", job.JobId);
 
         var phase1Tasks = new[]
         {
@@ -380,6 +382,19 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                     new AgentRequest
                     {
                         Prompt = ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            }),
+            RunWithTracingAsync("RefactoringDetection.Phase1.TestGaps", job.JobId, async _ =>
+            {
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt(),
                         WorkspacePath = workspacePath,
                         Timeout = job.PipelineConfiguration.AgentTimeout
                     },

@@ -26,7 +26,7 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     /// <summary>Jobs that have been deleted via DeleteJobAsync.</summary>
     public ConcurrentBag<string> DeletedJobs { get; } = new();
 
-    /// <summary>Pod logs keyed by pod name. Used by ReadPodLogsAsync.</summary>
+    /// <summary>Pod logs keyed by pod name. Used by ReadPodLogTailAsync.</summary>
     public ConcurrentDictionary<string, string> PodLogs { get; } = new();
 
     /// <summary>If set, CreateJobAsync will throw this exception.</summary>
@@ -157,7 +157,7 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         return Task.FromResult(new V1PodList { Items = new List<V1Pod>() });
     }
 
-    public Task<string> ReadPodLogsAsync(string podName, string ns, CancellationToken ct = default)
+    public Task<string> ReadPodLogTailAsync(string podName, string ns, string container, int tailLines, CancellationToken ct = default)
     {
         PodLogs.TryGetValue(podName, out var logs);
         return Task.FromResult(logs ?? string.Empty);

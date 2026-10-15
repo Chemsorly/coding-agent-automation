@@ -424,15 +424,15 @@ internal sealed class ApiKestrelFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("UserToken__SigningKey", ApiWebApplicationFactory.UserTokenSigningKey);
 
         // Silence the logger to avoid frozen-logger errors across multiple factory instances
-        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
-            .MinimumLevel.Warning()
-            .CreateBootstrapLogger();
-
+        // Fix: use service override instead of Log.Logger global write — see ApiWebApplicationFactory.
         builder.UseEnvironment("Development");
 
         builder.ConfigureServices(services =>
         {
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+            services.RemoveAll<Serilog.ILogger>();
+            services.AddSingleton<Serilog.ILogger>(
+                new Serilog.LoggerConfiguration().MinimumLevel.Warning().CreateLogger());
             services.RemoveAll<IHostedService>();
 
             RemoveDbContextRegistrations(services);

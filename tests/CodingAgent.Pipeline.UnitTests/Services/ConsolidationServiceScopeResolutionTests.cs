@@ -57,7 +57,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
 
         _selectorResolver
             .Setup(r => r.ResolveAsync(It.IsAny<ProviderConfig?>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)["dotnet", "kiro"]);
+            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(["dotnet", "kiro"]), null));
 
         _distributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))

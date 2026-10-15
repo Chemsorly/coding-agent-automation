@@ -261,4 +261,34 @@ public sealed class JobCompletionMapperTests
         // Add assertions for PullRequestNumber in both the null-preservation test and this update
         // test to fully lock in the symmetric guard behaviour. (TestQualityReviewer, issue #2947)
     }
+
+    [Fact]
+    public void Apply_CopiesFailureCategory()
+    {
+        var run = CreateRun();
+
+        // Payload with a FailureCategory → run.FailureCategory is set
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FailureCategory = FailureReason.GateRejected
+        };
+        JobCompletionMapper.Apply(run, payload);
+        run.FailureCategory.Should().Be(FailureReason.GateRejected,
+            "Apply must copy a non-null payload.FailureCategory to run.FailureCategory");
+
+        // Null FailureCategory in payload must not overwrite an existing value
+        var run2 = CreateRun();
+        run2.FailureCategory = FailureReason.ExitCodeFailure;
+        var payloadNullCat = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FailureCategory = null
+        };
+        JobCompletionMapper.Apply(run2, payloadNullCat);
+        run2.FailureCategory.Should().Be(FailureReason.ExitCodeFailure,
+            "Apply must not overwrite run.FailureCategory when payload.FailureCategory is null");
+    }
 }
