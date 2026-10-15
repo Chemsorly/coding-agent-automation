@@ -685,6 +685,70 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PrepareDistributionRequestAsync_ProfileWithJobTemplate_UsesTemplateKeyNotMatchLabels()
+    {
+        // ARRANGE: profile has MatchLabels = [kiro, dotnet, dotnet10, sonnet] but
+        // JobTemplate = "kiro,dotnet,dotnet10". The AgentSelector must be the
+        // sorted JobTemplate key, not the MatchLabels key.
+        SetupStandardMocks();
+
+        var profileWithTemplate = new AgentProfile
+        {
+            Id = "profile-with-template",
+            DisplayName = "Profile With Template",
+            AgentProviderConfigId = "agent-config-1",
+            Enabled = true,
+            MatchLabels = ["kiro", "dotnet", "dotnet10", "sonnet"],
+            JobTemplate = "kiro,dotnet,dotnet10",
+            McpServers = []
+        };
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithTemplate });
+        _mockProviderConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithTemplate });
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["kiro", "dotnet", "dotnet10"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        // ACT
+        var request = await iface.PrepareDistributionRequestAsync(
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
+
+        // ASSERT
+        request.Should().NotBeNull();
+        // The AgentSelector must come from JobTemplate (sorted: dotnet,dotnet10,kiro),
+        // NOT from MatchLabels (which would give dotnet,dotnet10,kiro,sonnet).
+        request!.AgentSelector.Should().Be("dotnet,dotnet10,kiro",
+            "a profile with JobTemplate set must use the template key as AgentSelector, not MatchLabels");
+        request.ResolvedProfileId.Should().Be("profile-with-template",
+            "the resolved profile's ID must be stored in ResolvedProfileId");
+    }
+
+    [Fact]
     public async Task PrepareDistributionRequestAsync_WhenNoMatchingProfile_ReturnsNull()
     {
         SetupStandardMocks();

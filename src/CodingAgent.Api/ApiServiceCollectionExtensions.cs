@@ -556,7 +556,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IProjectStore>(),
                 sp.GetRequiredService<ITokenVendingService>(),
                 Log.Logger,
-                sp.GetRequiredService<IAgentProfileStore>(),
                 sp.GetRequiredService<IPipelineConfigStore>()));
     }
 

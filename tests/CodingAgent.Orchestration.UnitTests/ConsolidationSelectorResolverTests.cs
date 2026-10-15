@@ -16,14 +16,16 @@ public sealed class ConsolidationSelectorResolverTests
         string id,
         string[] matchLabels,
         bool enabled = true,
-        int priority = 0) => new()
+        int priority = 0,
+        string? jobTemplate = null) => new()
         {
             Id = id,
             DisplayName = id,
             AgentProviderConfigId = "agent-cfg",
             MatchLabels = matchLabels,
             Enabled = enabled,
-            Priority = priority
+            Priority = priority,
+            JobTemplate = jobTemplate
         };
 
     private static ProviderConfig MakeRepoConfig(string[]? requiredLabels = null) => new()
@@ -43,7 +45,7 @@ public sealed class ConsolidationSelectorResolverTests
     // ── Step 1: required labels from repoConfig ──────────────────────────
 
     [Fact]
-    public void Resolve_RepoConfigWithRequiredLabels_MatchingProfile_ReturnProfileMatchLabels()
+    public void Resolve_RepoConfigWithRequiredLabels_MatchingProfile_ReturnProfileSelector()
     {
         // Arrange
         var profiles = new List<AgentProfile>
@@ -57,16 +59,17 @@ public sealed class ConsolidationSelectorResolverTests
         // Act
         var result = ConsolidationSelectorResolver.Resolve(repoConfig, staticConfig, liveConfig, profiles);
 
-        // Assert
+        // Assert: returns the profile's JobTemplateKey (MatchLabels, sorted) and the profile ID
         result.Should().NotBeNull();
-        result.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
+        result!.AgentSelector.Should().Be("dotnet,kiro");
+        result.ResolvedProfileId.Should().Be("p1");
     }
 
     [Fact]
     public void Resolve_RepoConfigWithRequiredLabels_NoMatchingProfile_ReturnRequiredLabelsDirectly()
     {
         // When required labels are present but no profile matches, the labels themselves
-        // are used as the selector (not the profile's MatchLabels).
+        // are used as the selector (not the profile's MatchLabels) and no profile ID.
         var profiles = new List<AgentProfile>
         {
             MakeProfile("p1", ["opencode"])
@@ -78,11 +81,12 @@ public sealed class ConsolidationSelectorResolverTests
         var result = ConsolidationSelectorResolver.Resolve(repoConfig, staticConfig, liveConfig, profiles);
 
         result.Should().NotBeNull();
-        result.Should().BeEquivalentTo(new[] { "kiro" });
+        result!.AgentSelector.Should().Be("kiro");
+        result.ResolvedProfileId.Should().BeNull();
     }
 
     [Fact]
-    public void Resolve_StaticConfigDefaultRequiredLabels_NoRepoConfig_MatchingProfile_ReturnProfileMatchLabels()
+    public void Resolve_StaticConfigDefaultRequiredLabels_NoRepoConfig_MatchingProfile_ReturnProfileSelector()
     {
         // Step 1 via staticConfig.DefaultRequiredAgentLabels when repoConfig is null.
         var profiles = new List<AgentProfile>
@@ -95,7 +99,28 @@ public sealed class ConsolidationSelectorResolverTests
         var result = ConsolidationSelectorResolver.Resolve(null, staticConfig, liveConfig, profiles);
 
         result.Should().NotBeNull();
-        result.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
+        result!.AgentSelector.Should().Be("dotnet,kiro");
+        result.ResolvedProfileId.Should().Be("p1");
+    }
+
+    // ── Step 1 with JobTemplate ──────────────────────────────────────────
+
+    [Fact]
+    public void Resolve_MatchingProfile_WithJobTemplate_ReturnsJobTemplateKey()
+    {
+        // A profile with JobTemplate set returns the template key, not MatchLabels key.
+        var profiles = new List<AgentProfile>
+        {
+            MakeProfile("p1", ["kiro", "dotnet", "sonnet"], jobTemplate: "kiro,dotnet")
+        };
+        var repoConfig = MakeRepoConfig(["kiro"]);
+
+        var result = ConsolidationSelectorResolver.Resolve(repoConfig, MakeConfig(), MakeConfig(), profiles);
+
+        result.Should().NotBeNull();
+        // JobTemplateKey() of "kiro,dotnet" → ordinal-sorted: "dotnet,kiro"
+        result!.AgentSelector.Should().Be("dotnet,kiro");
+        result.ResolvedProfileId.Should().Be("p1");
     }
 
     // ── Step 2: live DefaultRequiredAgentLabels fallback ─────────────────
@@ -113,7 +138,8 @@ public sealed class ConsolidationSelectorResolverTests
         var result = ConsolidationSelectorResolver.Resolve(null, MakeConfig(), liveConfig, profiles);
 
         result.Should().NotBeNull();
-        result.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
+        result!.AgentSelector.Should().Be("dotnet,kiro");
+        result.ResolvedProfileId.Should().Be("p1");
     }
 
     [Fact]
@@ -128,20 +154,22 @@ public sealed class ConsolidationSelectorResolverTests
         var result = ConsolidationSelectorResolver.Resolve(null, MakeConfig(), liveConfig, profiles);
 
         result.Should().NotBeNull();
-        result.Should().BeEquivalentTo(new[] { "kiro" });
+        result!.AgentSelector.Should().Be("kiro");
+        result.ResolvedProfileId.Should().BeNull();
     }
 
     [Fact]
     public void Resolve_LiveConfigHasMultipleDefaultLabels_ParsesCommaSeparated()
     {
-        // Verify comma splitting with whitespace trimming.
+        // Verify comma splitting with whitespace trimming and no profile match → labels-only result.
         var profiles = new List<AgentProfile>();
         var liveConfig = MakeConfig(defaultRequiredAgentLabels: " kiro , dotnet ");
 
         var result = ConsolidationSelectorResolver.Resolve(null, MakeConfig(), liveConfig, profiles);
 
         result.Should().NotBeNull();
-        result.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
+        result!.AgentSelector.Should().Be("dotnet,kiro");
+        result.ResolvedProfileId.Should().BeNull();
     }
 
     // ── Step 3: first enabled profile fallback ───────────────────────────
@@ -158,8 +186,9 @@ public sealed class ConsolidationSelectorResolverTests
         var result = ConsolidationSelectorResolver.Resolve(null, MakeConfig(), MakeConfig(), profiles);
 
         result.Should().NotBeNull();
-        // Should pick the highest-priority profile's MatchLabels.
-        result.Should().BeEquivalentTo(new[] { "kiro" });
+        // Should pick the highest-priority profile's selector and its ID.
+        result!.AgentSelector.Should().Be("kiro");
+        result.ResolvedProfileId.Should().Be("high");
     }
 
     [Fact]
@@ -202,7 +231,9 @@ public sealed class ConsolidationSelectorResolverTests
         var result = ConsolidationSelectorResolver.Resolve(repoConfig, MakeConfig(), liveConfig, profiles);
 
         // Falls through to step 2 (live config) then matches p1.
-        result.Should().BeEquivalentTo(new[] { "kiro" });
+        result.Should().NotBeNull();
+        result!.AgentSelector.Should().Be("kiro");
+        result.ResolvedProfileId.Should().Be("p1");
     }
 
     [Fact]
@@ -219,6 +250,8 @@ public sealed class ConsolidationSelectorResolverTests
             null, MakeConfig(), MakeConfig(), profiles);
 
         // Smallest Id → "a-profile" → MatchLabels = ["kiro"]
-        result.Should().BeEquivalentTo(new[] { "kiro" });
+        result.Should().NotBeNull();
+        result!.AgentSelector.Should().Be("kiro");
+        result.ResolvedProfileId.Should().Be("a-profile");
     }
 }

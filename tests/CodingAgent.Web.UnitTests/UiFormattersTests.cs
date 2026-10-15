@@ -101,6 +101,27 @@ public class UiFormattersTests
             because: "Consolidation is a distinct run type and must not fall through to the Implementation default");
     }
 
+    [Theory]
+    [InlineData(ConsolidationRunType.RefactoringDetection, "my-template", null, "Refactoring scan · my-template")]
+    [InlineData(ConsolidationRunType.RefactoringDetection, null, "tpl-1", "Refactoring scan · tpl-1")]
+    [InlineData(ConsolidationRunType.BrainConsolidation, "my-template", null, "Brain consolidation · my-template")]
+    [InlineData(ConsolidationRunType.HarnessSuggestions, "my-template", null, "Harness suggestions · all projects")]
+    [InlineData(null, null, null, "Consolidation")]
+    public void FormatConsolidationTitle_ReturnsExpected(ConsolidationRunType? type, string? templateName, string? templateId, string expected)
+    {
+        UiFormatters.FormatConsolidationTitle(type, templateName, templateId).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(ConsolidationRunType.BrainConsolidation, "Brain Consolidation")]
+    [InlineData(ConsolidationRunType.RefactoringDetection, "Refactoring Scan")]
+    [InlineData(ConsolidationRunType.HarnessSuggestions, "Harness Suggestions")]
+    [InlineData(null, "Consolidation")]
+    public void FormatConsolidationType_ReturnsExpected(ConsolidationRunType? type, string expected)
+    {
+        UiFormatters.FormatConsolidationType(type).Should().Be(expected);
+    }
+
     // ── StripMarkdown tests (AC6: drawer preview renders plain text) ──────────
 
     [Fact]
