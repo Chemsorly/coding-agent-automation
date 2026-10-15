@@ -38,7 +38,7 @@ public static class OtelNoiseFilter
     public static bool FilterAspNetCoreRequest(Microsoft.AspNetCore.Http.HttpContext context) =>
         !IsNoisePath(context.Request.Path.Value);
 
-    private static bool IsNoisePath(string? path) => path is "/healthz" or "/readyz" or "/loop/status";
+    private static bool IsNoisePath(string? path) => path is "/healthz" or "/readyz" or "/api/ui/loop/status";
 
     // ── HttpClient request filter ─────────────────────────────────────────────
 

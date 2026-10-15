@@ -23,7 +23,7 @@ public class TemplateTableSectionLabelPreviewTests : BunitContext
 
     public TemplateTableSectionLabelPreviewTests()
     {
-        Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(new Mock<ILogger>().Object));
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With().Object);
     }
 
     private IRenderedComponent<TemplateTableSection> RenderSection(

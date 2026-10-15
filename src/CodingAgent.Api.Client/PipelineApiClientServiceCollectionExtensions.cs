@@ -11,8 +11,7 @@ public static class PipelineApiClientServiceCollectionExtensions
 {
     private const string BearerScheme = "Bearer";
     /// <summary>
-    /// Registers all typed HTTP clients, the <see cref="IAgentHubConnection"/> factory,
-    /// and the <see cref="PipelineApiClientOptions"/> singleton.
+    /// Registers all typed HTTP clients and the <see cref="PipelineApiClientOptions"/> singleton.
     /// </summary>
     /// <exception cref="ArgumentException">Thrown when <see cref="PipelineApiClientOptions.AgentApiKey"/> is null or empty.</exception>
     public static IServiceCollection AddPipelineApiClient(
@@ -96,22 +95,6 @@ public static class PipelineApiClientServiceCollectionExtensions
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-
-        // Triage client — authenticated (operator tier; master key required).
-        // No resilience handler: its POSTs are not idempotent (a retried re-run would start a second attempt;
-        // issue creation is guarded on the server, but a retry would only queue behind the first). Creating
-        // several issues on a slow tracker can take longer than the default 30 s.
-        services.AddHttpClient<IPipelineApiTriageClient, PipelineApiTriageClient>(client =>
-        {
-            client.BaseAddress = new Uri(options.BaseUrl);
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
-            client.Timeout = TimeSpan.FromMinutes(2);
-        });
-
-        // Hub connection — transient so each caller owns its own connection lifecycle
-        services.AddTransient<IAgentHubConnection>(_ =>
-            new AgentHubConnection($"{options.BaseUrl.TrimEnd('/')}/hubs/agent", options.AgentApiKey));
 
         return services;
     }

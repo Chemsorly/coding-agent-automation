@@ -7,7 +7,7 @@
 # Covers:
 #   1. No service account token is mounted into the web pod
 #   2. No leader-election settings are passed to the web pod
-#   3. The web ConfigMap carries only the work-distribution key the web host reads
+#   3. The web ConfigMap carries no work-distribution keys
 #   4. The removed pipeline-loop startup delay is not rendered
 
 suite: web cluster access
@@ -45,14 +45,11 @@ tests:
             name: LeaderElection__Namespace
           any: true
 
-  - it: carries only the chat connect timeout from the work-distribution settings
+  - it: carries no work-distribution settings (the chat connect timeout comes from the API)
     template: templates/web-env-configmap.yaml
-    set:
-      workDistribution.dispatch.chatPodConnectTimeoutSeconds: 90
     asserts:
-      - equal:
+      - notExists:
           path: data.WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds
-          value: "90"
       - notExists:
           path: data.WorkDistribution__OrchestratorUrl
       - notExists:
@@ -65,3 +62,18 @@ tests:
     asserts:
       - notExists:
           path: data.PIPELINE_LOOP_STARTUP_DELAY_SECONDS
+
+  # Spec 051 4.1: the web calls the API as the signed-in user, never with the agent API key.
+  - it: gives the web pod no agent API key and no job templates
+    template: templates/web-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENT_API_KEY
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: job-templates
+          any: true

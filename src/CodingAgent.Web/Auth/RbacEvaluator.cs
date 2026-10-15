@@ -3,12 +3,6 @@ using Microsoft.Extensions.Options;
 
 namespace CodingAgent.Web.Auth;
 
-/// <summary>Maps an authenticated principal to its roles (Spec 049 Req 5).</summary>
-public interface IRbacEvaluator
-{
-    Task<AccessGrant> EvaluateAsync(ClaimsPrincipal user, CancellationToken ct = default);
-}
-
 /// <summary>
 /// Evaluates the configured bindings against the principal's username and groups. A project
 /// binding grants its role on the bound project ID as configured, without looking the project up

@@ -17,7 +17,7 @@ internal static class AuthEndpoints
 {
     public const string LoginEndpoint = "/auth/login";
     public const string OidcEndpoint = "/auth/oidc";
-    public const string LogoutEndpoint = "/auth/logout";
+    public const string LogoutEndpoint = AuthPaths.Logout;
 
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {

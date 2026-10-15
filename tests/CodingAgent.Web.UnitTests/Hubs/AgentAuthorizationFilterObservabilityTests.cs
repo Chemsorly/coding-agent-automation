@@ -23,7 +23,7 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// Observability tests for <see cref="AgentAuthorizationFilter"/>.
 /// Verifies that:
 /// - <see cref="PipelineTelemetry.HubAuthRejections"/> is emitted with the correct reason tag
-///   for each rejection path (not_registered, reconnect_race, job_mismatch, operator_forbidden).
+///   for each rejection path (not_registered, reconnect_race, job_mismatch).
 /// - Reconnect-race rejections (agentId query param present) log at Debug.
 /// - True unregistered connections log at Warning.
 /// </summary>
@@ -356,11 +356,6 @@ public class AgentAuthorizationFilterObservabilityTests
 
     // ── Reason constants match expected string values ─────────────────────
 
-    // TODO [WARNING]: No test verifies that the operator_forbidden counter is actually incremented
-    // when an operator connection calls a restricted method. The test below only asserts the
-    // constant's string value. Add a test that exercises GuardOperatorMethod with a non-UI-subscription
-    // method and verifies the counter emits with reason=operator_forbidden. (Test Quality Review)
-
     // TODO [WARNING]: No test verifies that true unregistered connections log at Warning
     // (_logger.Warning called). The reconnect-race Debug path is covered by
     // ReconnectRace_AgentIdWithNewlines_LogsEscapedAgentIdAtDebug; add a Moq Verify assertion
@@ -383,10 +378,6 @@ public class AgentAuthorizationFilterObservabilityTests
     [Fact]
     public void HubAuthRejectionReasons_JobMismatch_Value()
         => PipelineTelemetry.HubAuthRejectionReasons.JobMismatch.Should().Be("job_mismatch");
-
-    [Fact]
-    public void HubAuthRejectionReasons_OperatorForbidden_Value()
-        => PipelineTelemetry.HubAuthRejectionReasons.OperatorForbidden.Should().Be("operator_forbidden");
 
     // ── Helpers ──────────────────────────────────────────────────────────
 

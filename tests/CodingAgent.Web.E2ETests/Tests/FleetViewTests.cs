@@ -104,8 +104,6 @@ public sealed class FleetViewTests : E2ETestBase
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
         var runId = await SeedAndDispatchAsync(agent, "Fleet Link Template", "2337-link");
 
-        await Fixture.ForceAgentRegistryRefreshAsync();
-
         var fleet = new FleetPage(Page, BaseUrl);
         await fleet.NavigateAsync();
         await fleet.WaitForAgentStatusAsync("fleet-link-agent-1", "Busy", timeoutMs: 15_000);
@@ -124,8 +122,6 @@ public sealed class FleetViewTests : E2ETestBase
     {
         await using var agent = new FakeAgentClient("fleet-idle-agent-1", "e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        await Fixture.ForceAgentRegistryRefreshAsync();
 
         var fleet = new FleetPage(Page, BaseUrl);
         await fleet.NavigateAsync();
@@ -159,8 +155,6 @@ public sealed class FleetViewTests : E2ETestBase
             var run = runService.GetActiveRuns().FirstOrDefault(r => r.IssueIdentifier == "2337-pr");
             return run?.PullRequestUrl != null;
         });
-
-        await Fixture.ForceAgentRegistryRefreshAsync();
 
         var fleet = new FleetPage(Page, BaseUrl);
         await fleet.NavigateAsync();
@@ -248,12 +242,6 @@ public sealed class FleetViewTests : E2ETestBase
             var run = runService.GetActiveRuns().FirstOrDefault(r => r.IssueIdentifier == issueId);
             return run?.IssueUrl != null;
         });
-
-        // TODO: ForceAgentRegistryRefreshAsync is called once here, but there is a window between
-        // the refresh and the browser request where the snapshot could be stale. If this test
-        // flakes in CI (the re-registration adds an extra async cycle the other fleet tests lack),
-        // consider calling the refresh again inside WaitForAgentStatusAsync or after NavigateAsync.
-        await Fixture.ForceAgentRegistryRefreshAsync();
 
         // ── Assert: Fleet shows the issue chip and run link ───────────────────────────────────
         var fleet = new FleetPage(Page, BaseUrl);

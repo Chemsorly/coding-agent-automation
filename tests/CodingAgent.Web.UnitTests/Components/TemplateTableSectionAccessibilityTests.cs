@@ -29,9 +29,7 @@ public class TemplateTableSectionAccessibilityTests : BunitContext
 
     public TemplateTableSectionAccessibilityTests()
     {
-        var registry = new AgentRegistryService(Log.Logger);
-        Services.AddSingleton(registry);
-        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With().Object);
     }
 
     private IRenderedComponent<TemplateTableSection> RenderMinimal(PipelineJobTemplate? template = null)

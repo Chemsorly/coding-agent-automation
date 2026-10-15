@@ -54,19 +54,8 @@ public class DispatchFeedbackComponentTests : BunitContext
 
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        // Spec 047: component injects ILoopStatusService (not IPipelineLoopService)
-        var mockLoopStatus = new Mock<ILoopStatusService>();
-        mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
-        mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
-        mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
-        mockLoopStatus.SetupGet(l => l.TemplateStatuses)
-            .Returns(new Dictionary<string, CodingAgent.Pipeline.Models.ConfigStatusSnapshot>());
-        mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
-        Services.AddSingleton<ILoopStatusService>(mockLoopStatus.Object);
-        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
-        mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new LoopStartResultDto(true, null));
-        mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
+        // Spec 051 D11: the page reads the loop status through /api/ui/loop.
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         Services.AddSingleton<IProjectStore>(_mockStore.Object);
@@ -87,15 +76,13 @@ public class DispatchFeedbackComponentTests : BunitContext
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
         mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
-        mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         Services.AddSingleton<CodingAgent.Api.Client.IPipelineApiConfigClient>(mockConfigClient.Object);
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiConfig(mockConfigClient).Object);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiSettingsClient>().Object);
 
-        var registry = new AgentRegistryService(mockLogger.Object);
-        Services.AddSingleton(registry);
-        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiAgentClient>().Object);
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         // IssueDrawerService now requires IPipelineApiWorkItemClient for status-aware active-issue tracking.
@@ -113,6 +100,7 @@ public class DispatchFeedbackComponentTests : BunitContext
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
         Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
+        Services.AddScoped<DispatchDrawers>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
     }

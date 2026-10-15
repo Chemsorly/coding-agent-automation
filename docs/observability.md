@@ -12,7 +12,7 @@ Custom metrics live on three meters. Agent pods (K8s Jobs) export **no metrics**
 |-------|------------|---------------|
 | `CodingAgent.Pipeline` | `PipelineTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/`) | API, Scheduler, Job Controller, Web |
 | `CodingAgent.WorkDistribution` | `WorkDistributionTelemetry.cs`, `ChatTelemetry.cs` (same folder) | API, Scheduler, Job Controller, Web |
-| `CodingAgent.GitHub` | `GitHubTelemetry.cs` (`src/CodingAgent.Infrastructure.Providers/GitHub/`) | API, Scheduler, Job Controller, Web |
+| `CodingAgent.GitHub` | `GitHubTelemetry.cs` (`src/CodingAgent.Infrastructure.Providers/GitHub/`) | API, Scheduler, Job Controller |
 
 Every host also exports the built-in ASP.NET Core, `HttpClient` and `System.Runtime` (.NET runtime) meters; the API also exports `Npgsql`. All metric readers use cumulative temporality (Grafana Cloud drops delta histograms).
 
@@ -101,7 +101,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 |--------|------|------|-------------|
 | `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, polled from the agent registry by the Scheduler leader |
 | `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
-| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`, `operator_forbidden` |
+| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch` |
 | `token_vending.failures` | Counter | — | Token vending failures |
 
 ### Tag Schema
@@ -279,7 +279,7 @@ Three high-volume span categories are kept out of the export (~70% of raw daily 
 
 | Noise | What is dropped |
 |-------|-----------------|
-| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz`, `/loop/status`; sub-paths like `/healthz/detail` are kept |
+| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz` and the UI's loop status poll `/api/ui/loop/status`; sub-paths like `/healthz/detail` are kept |
 | Kubernetes API server calls | Client spans to `KUBERNETES_SERVICE_HOST` (in-cluster) or `kubernetes.default.svc`, mostly leader-election leases (~387k spans per day) |
 | Chatty SignalR / Blazor circuit spans | Hub methods ending in `/Heartbeat`, `/ReportOutputLines`, `/OnRenderCompleted`; spans starting with `"Circuit "`; event callbacks starting with `"Event "` and containing `" -> "` |
 

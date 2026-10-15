@@ -1,0 +1,159 @@
+@page "/user"
+@layout AuthLayout
+@inject CurrentAccess Access
+@inject IAuthUiInfo AuthUi
+@inject IUiMeClient Me
+@inject ILogger<UserProfile> Logger
+
+@* Spec 049 Req 9: who am I, which groups does the IdP send, and what do the bindings make of them.
+   Reachable by every signed-in principal, including one without any role. *@
+<PageTitle>Profile · Coding Agent</PageTitle>
+
+<div class="auth-main-wide-host">
+    @if (Access.IsReady)
+    {
+        <section class="cockpit-card auth-card" data-testid="profile">
+            <h1>@(DisplayName ?? Access.Username)</h1>
+            <dl class="auth-dl">
+                <dt>Username</dt>
+                <dd data-testid="profile-username">@Access.Username</dd>
+                @if (Email is not null)
+                {
+                    <dt>Email</dt>
+                    <dd>@Email</dd>
+                }
+                <dt>Signed in with</dt>
+                <dd data-testid="profile-source">@IdentitySourceLabel</dd>
+                <dt>Subject</dt>
+                <dd><code>@Subject</code></dd>
+                <dt>Session expires</dt>
+                <dd>@(Expiry is { } e ? e.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—")</dd>
+                <dt>Global role</dt>
+                <dd data-testid="profile-global-role">@AccessRoleNames.ToName(Access.GlobalRole)</dd>
+            </dl>
+            <div class="auth-actions">
+                @if (Access.Grant.HasAnyAccess)
+                {
+                    <a class="btn-cancel" href="@AuthPaths.DefaultLanding.TrimStart('/')">Back to overview</a>
+                }
+                <form method="post" action="@AuthPaths.Logout.TrimStart('/')">
+                    <AntiforgeryToken />
+                    <button type="submit" class="btn-save" data-testid="profile-logout">Log out</button>
+                </form>
+            </div>
+        </section>
+
+        <section class="cockpit-card auth-card">
+            <h1>Groups</h1>
+            @if (Groups.Count == 0)
+            {
+                <p data-testid="profile-no-groups">The identity provider sent no groups for this account.</p>
+            }
+            else
+            {
+                <p>Values of the groups claim, exactly as bindings must reference them.</p>
+                <ul class="auth-groups" data-testid="profile-groups">
+                    @foreach (var group in Groups)
+                    {
+                        <li>@group</li>
+                    }
+                </ul>
+            }
+        </section>
+
+        <section class="cockpit-card auth-card">
+            <h1>Role bindings</h1>
+            @if (AuthPrincipals.IsLocalAdmin(Access.User))
+            {
+                <p>The local admin account is always a global admin. Bindings do not apply to it.</p>
+            }
+            else if (Access.Grant.Matches.Count == 0)
+            {
+                <p data-testid="profile-no-bindings">No binding matches this account@(DefaultRoleNote).</p>
+            }
+            else
+            {
+                @foreach (var match in Access.Grant.Matches.Where(IsUnknownProject))
+                {
+                    <div class="auth-warning" data-testid="profile-binding-warning">
+                        Binding @match.Subject → @AccessRoleNames.ToName(match.Role) on project <code>@match.ProjectId</code> opens nothing: no project has this ID.
+                    </div>
+                }
+                @if (_projectsUnavailable)
+                {
+                    <p data-testid="profile-projects-unavailable">Project names could not be loaded. The bindings below show project IDs only.</p>
+                }
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table" data-testid="profile-bindings">
+                        <thead>
+                            <tr><th>Scope</th><th>Role</th><th>Matched by</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var match in Access.Grant.Matches.Where(m => !IsUnknownProject(m)))
+                            {
+                                <tr>
+                                    <td>@ScopeLabel(match)</td>
+                                    <td>@AccessRoleNames.ToName(match.Role)</td>
+                                    <td><code>@match.Subject</code></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<string> Groups => AuthPrincipals.GetGroups(Access.User);
+    private string? DisplayName => Access.User.FindFirst(AuthClaimTypes.DisplayName)?.Value;
+    private string? Email => Access.User.FindFirst(AuthClaimTypes.Email)?.Value;
+    private string? Subject => Access.User.FindFirst(AuthClaimTypes.Subject)?.Value;
+    private DateTimeOffset? Expiry => AuthPrincipals.GetSessionExpiry(Access.User);
+
+    private string IdentitySourceLabel =>
+        Access.User.FindFirst(AuthClaimTypes.IdentitySource)?.Value == IdentitySources.Local
+            ? "Local admin"
+            : AuthUi.OidcProviderName;
+
+    private string DefaultRoleNote =>
+        Access.GlobalRole > AccessRole.None
+            ? $"; the default role '{AccessRoleNames.ToName(Access.GlobalRole)}' applies"
+            : "";
+
+    // Spec 051 D2a: bindings grant on project IDs as configured; the Pipeline API knows which
+    // projects exist, so names and unknown IDs come from /api/ui/me.
+    private IReadOnlyDictionary<string, UiMeProjectRole> _projects = new Dictionary<string, UiMeProjectRole>();
+    private bool _projectsUnavailable;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Access.InitializeAsync();
+        if (Access.Grant.ProjectRoles.Count == 0)
+            return;
+
+        try
+        {
+            var me = await Me.GetAsync();
+            _projects = me.ProjectRoles.ToDictionary(p => p.ProjectId, StringComparer.Ordinal);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            Logger.LogWarning(ex, "Profile: could not load the project names from the Pipeline API");
+            _projectsUnavailable = true;
+        }
+    }
+
+    private bool IsUnknownProject(MatchedBinding match) =>
+        match.ProjectId is not null && _projects.TryGetValue(match.ProjectId, out var project) && !project.Known;
+
+    private string ScopeLabel(MatchedBinding match)
+    {
+        if (match.ProjectId is null)
+            return "Global";
+        return _projects.TryGetValue(match.ProjectId, out var project) && project.ProjectName is not null
+            ? $"Project {project.ProjectName} ({match.ProjectId})"
+            : $"Project {match.ProjectId}";
+    }
+}

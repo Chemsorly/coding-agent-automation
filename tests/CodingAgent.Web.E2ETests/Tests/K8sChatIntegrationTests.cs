@@ -257,11 +257,11 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
         };
 
         var registry = Fixture.AgentRegistry;
-        var hubContext = Fixture.Factory.Services.GetRequiredService<
+        var hubContext = Fixture.ApiServices.GetRequiredService<
             Microsoft.AspNetCore.SignalR.IHubContext<
                 CodingAgent.AgentGateway.AgentHub,
                 CodingAgent.Pipeline.Interfaces.IAgentHubClient>>();
-        var templateStore = Fixture.Factory.Services.GetRequiredService<JobTemplateStore>();
+        var templateStore = Fixture.ApiServices.GetRequiredService<JobTemplateStore>();
 
         var testJobClient = new FakeKubernetesJobClient();
 

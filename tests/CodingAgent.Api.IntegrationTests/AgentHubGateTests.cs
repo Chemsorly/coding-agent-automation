@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
+using CodingAgent.Api.IntegrationTests.Security;
+using CodingAgent.Contracts.Auth;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Kubernetes;
@@ -281,14 +283,14 @@ public sealed class AgentHubGateTests
         }
     }
 
-    // ── Req 5.3a: Agent cannot subscribe to another agent's run ────────────────
+    // ── Req 5.3a: Agents cannot subscribe to runs ────────────────
 
     /// <summary>
-    /// Req 5.3a: SubscribeToRun rejects an agent connection that is not assigned to the run.
-    /// An agent authenticated as agentA should be rejected when subscribing to agentB's run.
+    /// Req 5.3a, spec 051 3.3: the agent hub has no subscribe methods any more, so an agent cannot join any run's
+    /// output stream, not even its own (the UI watches runs on /hubs/ui).
     /// </summary>
     [Fact]
-    public async Task SubscribeToRun_AgentConnectionNotAssignedToRun_IsRejected()
+    public async Task SubscribeToRun_OnTheAgentHub_IsRejected()
     {
         using var client = _factory.CreateClient();
         var serverAddress = _factory.ServerAddress;
@@ -326,7 +328,7 @@ public sealed class AgentHubGateTests
             // agentB (a different agent connection) tries to subscribe to agentA's run
             Func<Task> act = () => connB.InvokeAsync("SubscribeToRun", jobId);
             await act.Should().ThrowAsync<Exception>(
-                "an agent connection not assigned to the run must be rejected by SubscribeToRun (Req 5.3a)");
+                "the agent hub offers no SubscribeToRun (Req 5.3a, spec 051 3.3)");
         }
         finally
         {
@@ -622,32 +624,32 @@ public sealed class AgentHubGateTests
     }
 
     /// <summary>
-    /// An operator/UI connection may subscribe to run groups but must not be able to drive the
-    /// agent-facing surface (reporting output, completing jobs).
+    /// A UI connection may subscribe to run groups but cannot reach the agent-facing methods (reporting output,
+    /// completing jobs): they are not on the UI hub.
     /// </summary>
     [Fact]
-    public async Task OperatorConnection_InvokingAgentMethod_IsRejected()
+    public async Task UiConnection_InvokingAgentMethod_IsRejected()
     {
         using var client = _factory.CreateClient();
         var serverAddress = _factory.ServerAddress;
 
         var jobId = Guid.NewGuid().ToString("N");
+        SeedWorkItem(_factory, jobId);
 
         var uiConnection = BuildUiConnection(serverAddress);
         try
         {
             await uiConnection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
 
-            // SubscribeToRun is allowed for operators — this is the UI's live-streaming path.
+            // SubscribeToRun is the UI's live-streaming path.
             await uiConnection.InvokeAsync("SubscribeToRun", jobId);
 
             // ReportOutputLines is not.
             Func<Task> act = () => uiConnection.InvokeAsync(
                 "ReportOutputLines", new JobId(jobId), new List<string> { "line" });
 
-            (await act.Should().ThrowAsync<HubException>(
-                    "operator connections must not be able to report agent output"))
-                .WithMessage("*not available to operator connections*");
+            await act.Should().ThrowAsync<HubException>(
+                "UI connections must not be able to report agent output");
         }
         finally
         {
@@ -739,6 +741,7 @@ public sealed class AgentHubGateTests
         var serverAddress = _factory.ServerAddress;
 
         var jobId = Guid.NewGuid().ToString();
+        SeedWorkItem(_factory, jobId);
         var connection = BuildUiConnection(serverAddress);
         try
         {
@@ -802,16 +805,35 @@ public sealed class AgentHubGateTests
     }
 
     /// <summary>
-    /// Builds an operator/UI-authenticated SignalR connection (no agentId param).
-    /// Uses the master API key directly — this is the "operator" credential path.
+    /// Builds a UI connection: the UI hub (spec 051 D7) with a global reader's user token, so it may watch
+    /// every run that has a work item (<see cref="SeedWorkItem"/>).
     /// </summary>
     private static HubConnection BuildUiConnection(string serverAddress)
     {
         return new HubConnectionBuilder()
-            .WithUrl($"{serverAddress}{HubRoutes.Agent}",
+            .WithUrl($"{serverAddress}{HubRoutes.Ui}",
                 options => options.AccessTokenProvider = () =>
-                    Task.FromResult<string?>(ApiWebApplicationFactory.ApiKey))
+                    Task.FromResult<string?>(TestUserTokens.For(TestUserTokens.Global(AccessRole.ReadOnly))))
             .Build();
+    }
+
+    /// <summary>The work item of a run: the UI hub checks the reader against its project.</summary>
+    private static void SeedWorkItem(AgentHubGateKestrelFactory factory, string jobId)
+    {
+        using var db = factory.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>().CreateDbContext();
+        db.WorkItems.Add(new Infrastructure.Persistence.Entities.WorkItemEntity
+        {
+            Id = Guid.Parse(jobId),
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = "42",
+            IssueProviderConfigId = "test-prov",
+            Status = WorkItemStatus.Running,
+            Payload = "{}",
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        db.SaveChanges();
     }
 
     /// <summary>
@@ -839,6 +861,7 @@ public sealed class AgentHubGateTests
             InitiatedBy = "gate-test",
         };
         runService.AddRun(run);
+        SeedWorkItem(factory, jobId);
 
         // Set agent entry to Busy with this jobId so [RequiresActiveJob] passes
         var entry = registry.GetByAgentId(agentId);

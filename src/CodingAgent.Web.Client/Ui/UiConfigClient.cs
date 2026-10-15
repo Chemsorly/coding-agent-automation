@@ -12,6 +12,9 @@ public interface IUiConfigClient
     Task<IReadOnlyList<UiTemplate>> GetTemplatesAsync(string projectId, CancellationToken ct = default);
 
     Task<UiPipelineSettings> GetPipelineSettingsAsync(CancellationToken ct = default);
+
+    /// <summary>The Pipelines page: the readable projects' templates and the configuration the template table shows.</summary>
+    Task<UiPipelinesPage> GetPipelinesPageAsync(CancellationToken ct = default);
 }
 
 public sealed class UiConfigClient(HttpClient http, IUiAccessTokenSource tokens) : UiApiClient(http, tokens), IUiConfigClient
@@ -24,4 +27,7 @@ public sealed class UiConfigClient(HttpClient http, IUiAccessTokenSource tokens)
 
     public Task<UiPipelineSettings> GetPipelineSettingsAsync(CancellationToken ct = default) =>
         GetAsync("/api/ui/pipeline-settings", UiJsonContext.Default.UiPipelineSettings, ct);
+
+    public Task<UiPipelinesPage> GetPipelinesPageAsync(CancellationToken ct = default) =>
+        GetAsync("/api/ui/pipelines", UiJsonContext.Default.UiPipelinesPage, ct);
 }

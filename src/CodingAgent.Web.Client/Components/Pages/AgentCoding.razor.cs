@@ -1,0 +1,754 @@
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Auth;
+using CodingAgent.Web.Services;
+using CodingAgent.Web.Components.Layout;
+using CodingAgent.Web.Components.Shared;
+using CodingAgent.Web.Ui;
+using CodingAgent.Contracts.Ui;
+using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
+
+namespace CodingAgent.Web.Components.Pages;
+
+public partial class AgentCoding : IDisposable
+{
+    private const string EnabledWord = "enabled";
+    private const string DisabledWord = "disabled";
+
+    [Inject] private IUiLoopClient LoopClient { get; set; } = default!;
+    [Inject] private AgentCodingPageService PageService { get; set; } = default!;
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+    [Inject] private CurrentAccess Access { get; set; } = default!;
+    [CascadingParameter] private CockpitLayout? Layout { get; set; }
+
+    /// <summary>Spec 049: dispatch controls render only for an operator of the template's project.</summary>
+    private bool CanDispatchFrom(PipelineJobTemplate? template) =>
+        template is not null && PageService.CanDispatch(template.Id);
+
+    /// <summary>
+    /// When <c>dispatch=issues</c> is present in the query string, the issue drawer is opened
+    /// automatically after the page finishes loading — implementing the "Browse &amp; dispatch"
+    /// deep-link from the Work page.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "dispatch")]
+    public string? DispatchParam { get; set; }
+
+    private const string TemplateStorageKey = "manualDispatch.lastTemplateId";
+
+    private string? _errorMessage;
+    private string? _successMessage;
+    private bool _disposed;
+
+    // Template Table UI State
+    private bool _showAddForm;
+    private TemplateTableSection.TemplateFormModel _addForm = new();
+#pragma warning disable CS0414 // Value is read in .razor partial
+    private string? _formError;
+#pragma warning restore CS0414
+    private bool _showDeleteConfirm;
+    private PipelineJobTemplate? _deletingTemplate;
+    private HashSet<string> _recentlyToggled = new();
+    private UndoSnackbar _undoSnackbar = default!;
+
+    // Manual Dispatch UI State
+    private string _manualDispatchTemplateId = "";
+    private bool _drawerOpen => PageService.IsIssueDrawerOpen;
+    private PipelineJobTemplate? _drawerTemplate => PageService.IssueDrawerTemplate;
+    private bool _drawerDispatching => PageService.IssueDrawerDispatching;
+
+    // Trigger button references for focus-return on drawer close
+    private ElementReference _issueDrawerTrigger;
+    private ElementReference _prDrawerTrigger;
+    private ElementReference _epicDrawerTrigger;
+
+    // PR Drawer UI State
+    private bool _prDrawerOpen => PageService.IsPrDrawerOpen;
+    private PipelineJobTemplate? _prDrawerTemplate => PageService.PrDrawerTemplate;
+    private bool _prDrawerDispatching => PageService.PrDrawerDispatching;
+
+    // Epic Drawer UI State
+    private bool _epicDrawerOpen => PageService.IsEpicDrawerOpen;
+    private PipelineJobTemplate? _epicDrawerTemplate => PageService.EpicDrawerTemplate;
+    private bool _epicDrawerDispatching => PageService.EpicDrawerDispatching;
+
+    // ── Delegate properties for .razor template binding ──
+
+    private List<PipelineJobTemplate> _templates => PageService.Templates;
+    private IReadOnlyList<PipelineProject> _projects => PageService.Projects;
+    private List<ProviderConfig> _issueProviders => PageService.IssueProviders;
+    private List<ProviderConfig> _repoProviders => PageService.RepoProviders;
+    private List<ProviderConfig> _brainProviders => PageService.BrainProviders;
+    private List<ProviderConfig> _pipelineProviders => PageService.PipelineProviders;
+    private IReadOnlyList<QualityGateConfiguration> _qualityGateConfigs => PageService.QualityGateConfigs;
+    private IReadOnlyList<ReviewerConfiguration> _reviewerConfigs => PageService.ReviewerConfigs;
+    private IReadOnlyList<AgentProfile> _agentProfiles => PageService.AgentProfiles;
+    private PipelineConfiguration _pipelineConfig => PageService.PipelineConfig;
+    private List<IssueSummary> _drawerIssues => PageService.DrawerIssues;
+    private bool _drawerLoading => PageService.DrawerLoading;
+    private int _drawerPage => PageService.DrawerPage;
+    private bool _drawerHasMore => PageService.DrawerHasMore;
+    private Dictionary<string, Pipeline.Models.DependencyCheckResult> _drawerReadiness => PageService.DrawerReadiness;
+    private List<string> _drawerLabels => PageService.DrawerLabels;
+    private List<string> _drawerSelectedLabels => PageService.DrawerSelectedLabels;
+    private List<PullRequestSummary> _prDrawerPrs => PageService.PrDrawerPrs;
+    private bool _prDrawerLoading => PageService.PrDrawerLoading;
+    private int _prDrawerPage => PageService.PrDrawerPage;
+    private bool _prDrawerHasMore => PageService.PrDrawerHasMore;
+    private List<string> _prDrawerLabels => PageService.PrDrawerLabels;
+    private List<string> _prDrawerSelectedLabels => PageService.PrDrawerSelectedLabels;
+    private List<IssueSummary> _epicDrawerIssues => PageService.EpicDrawerIssues;
+    private bool _epicDrawerLoading => PageService.EpicDrawerLoading;
+    private int _epicDrawerPage => PageService.EpicDrawerPage;
+    private bool _epicDrawerHasMore => PageService.EpicDrawerHasMore;
+    private List<string> _epicDrawerLabels => PageService.EpicDrawerLabels;
+    private List<string> _epicDrawerSelectedLabels => PageService.EpicDrawerSelectedLabels;
+
+    // OnTemplateChanged is async void because Blazor change event handlers cannot return Task.
+    // PersistLastTemplateAsync catches all known exceptions (including OperationCanceledException
+    // from circuit tear-down) to prevent unobserved exceptions from escaping the async void.
+    // TODO: [WARNING] PersistLastTemplateAsync catches a finite list of exception types. If
+    // JS.InvokeVoidAsync throws an exception type NOT in that list (e.g. TaskCanceledException,
+    // which is distinct from OperationCanceledException in some older Blazor Server paths), it
+    // will escape PersistLastTemplateAsync and propagate through this async void, becoming an
+    // unobserved exception. Consider adding a bare catch-all Exception handler as a final safety
+    // net inside PersistLastTemplateAsync, logging the unexpected type and suppressing it.
+    // (DotNetSpecialist, issue #2947)
+    private async void OnTemplateChanged(ChangeEventArgs e)
+    {
+        _manualDispatchTemplateId = e.Value?.ToString() ?? "";
+        if (!string.IsNullOrEmpty(_manualDispatchTemplateId))
+            await PersistLastTemplateAsync(_manualDispatchTemplateId);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Layout is not null)
+            Layout.OnEscapePressed += HandleGlobalEscape;
+
+        _errorMessage = await PageService.InitializeAsync();
+        await RefreshLoopAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        // Restore the last-used template selection from localStorage.
+        // Called here (not in OnInitializedAsync) so JS interop is always safe — no need
+        // to suppress pre-render JS exceptions.
+        await RestoreLastTemplateAsync();
+
+        // After restore, apply single-template auto-preselect if no stored preference exists.
+        // Avoids a required manual pick when exactly one enabled template is configured.
+        // TODO: [WARNING] This block only runs on firstRender. If template loading becomes lazy
+        // or streamed in the future (i.e. _templates is populated after the first render cycle),
+        // the preselect will never fire because the if (!firstRender) return guard above
+        // short-circuits all subsequent OnAfterRenderAsync calls. Currently safe because
+        // OnInitializedAsync awaits InitializeAsync() before the first render, but this correctness
+        // depends on initialization ordering that is not enforced locally. (Correctness, issue #2947)
+        if (string.IsNullOrEmpty(_manualDispatchTemplateId))
+        {
+            var enabled = _templates.Where(t => t.Enabled).ToList();
+            if (enabled.Count == 1)
+            {
+                _manualDispatchTemplateId = enabled[0].Id;
+                await PersistLastTemplateAsync(_manualDispatchTemplateId);
+                // StateHasChanged() is required: Blazor does NOT automatically re-render after
+                // OnAfterRenderAsync completes. Without it, the <select> binding and the three
+                // browse-button disabled states remain stale until an unrelated render fires.
+                StateHasChanged();
+            }
+        }
+
+        // Handle ?dispatch=issues deep-link: open the issue drawer automatically.
+        // Runs after first render so the interactive circuit is established (drawers require it).
+        // NOTE: StateHasChanged() is called only inside the conditional branches, not unconditionally
+        // at the end. Blazor does schedule a re-render after an async OnAfterRenderAsync completes,
+        // so skipping an unconditional call avoids one extra render on the non-dispatch path.
+        // On the dispatch=issues path, StateHasChanged() is called explicitly before Blazor's own
+        // scheduled re-render, resulting in two re-renders — acceptable but worth noting.
+        // TODO: [WARNING] The comment previously stated Blazor does NOT schedule a re-render after
+        // async OnAfterRenderAsync — that was inaccurate. Blazor does schedule a re-render when
+        // the returned Task completes. The explicit StateHasChanged() calls in the dispatch=issues
+        // branches are therefore redundant (but harmless). (DotNetSpecialist, issue #2947)
+        if (string.Equals(DispatchParam, "issues", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrEmpty(_manualDispatchTemplateId))
+            {
+                var error = await PageService.OpenIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+                if (error != null)
+                    _errorMessage = error;
+                StateHasChanged();
+            }
+            else
+            {
+                // No template is selected (multiple templates configured, no saved preference).
+                // Surface feedback so the operator knows they need to pick a template first.
+                _errorMessage = "Select a pipeline template to browse and dispatch issues.";
+                StateHasChanged();
+            }
+        }
+    }
+
+    // ── Template selection helpers ────────────────────────────────────────
+
+    private async Task RestoreLastTemplateAsync()
+    {
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorageGet", TemplateStorageKey);
+            if (!string.IsNullOrEmpty(stored) && _templates.Any(t => t.Id == stored && t.Enabled))
+                _manualDispatchTemplateId = stored;
+        }
+        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSException) { /* JS interop unavailable, skip */ }
+        catch (ObjectDisposedException) { /* component disposed, skip */ }
+        catch (OperationCanceledException) { /* circuit torn down, skip */ }
+        // TODO: [WARNING] Unlike PersistLastTemplateAsync, this method does not catch
+        // InvalidOperationException. Currently safe because RestoreLastTemplateAsync is only
+        // called from OnAfterRenderAsync (post-first-render, after pre-rendering is complete).
+        // If this method is ever called earlier (e.g. from OnInitializedAsync), the missing guard
+        // would cause an unhandled exception during server-side pre-rendering. Add
+        // catch (InvalidOperationException) as a precaution if the call site changes.
+        // (DotNetSpecialist, issue #2947)
+    }
+
+    private async Task PersistLastTemplateAsync(string templateId)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorageSet", TemplateStorageKey, templateId);
+        }
+        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSException) { /* JS interop unavailable, skip */ }
+        catch (ObjectDisposedException) { /* component disposed, skip */ }
+        catch (OperationCanceledException) { /* circuit torn down, skip */ }
+        catch (InvalidOperationException) { /* pre-render pass, skip */ }
+    }
+
+    private async void HandleGlobalEscape()
+    {
+        if (_disposed) return;
+        PageService.CloseActiveDrawer();
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { /* Intentional: component disposed before escape key handler ran; no action needed. */ }
+    }
+
+    // ── Template Table Callbacks ──
+
+    private void ShowAddForm()
+    {
+        _addForm = new TemplateTableSection.TemplateFormModel();
+        var defaultProject = _projects.FirstOrDefault(p => p.Id == WellKnownIds.DefaultProjectId) ?? _projects.FirstOrDefault();
+        if (defaultProject != null) _addForm.ProjectId = defaultProject.Id;
+        _formError = null;
+        _showAddForm = true;
+    }
+
+    private void EditTemplate(PipelineJobTemplate template)
+    {
+        var projectId = _projects.FirstOrDefault(p => p.TemplateIds.Contains(template.Id))?.Id ?? WellKnownIds.DefaultProjectId;
+        _addForm = TemplateTableSection.TemplateFormModel.ForEdit(template, projectId);
+        _formError = null;
+        _showAddForm = true;
+    }
+
+    private void CancelAddForm() { _showAddForm = false; _formError = null; }
+    private void CancelDelete() => _showDeleteConfirm = false;
+    private void ConfirmRemoveTemplate(PipelineJobTemplate template) { _deletingTemplate = template; _showDeleteConfirm = true; }
+
+    private async Task ToggleTemplateEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleTemplateEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Template {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleTemplateEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ToggleImplementationEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleImplementationEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Implementation {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleImplementationEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ToggleReviewEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleReviewEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Review {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleReviewEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ToggleDecompositionEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleDecompositionEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Decomposition {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleDecompositionEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ToggleTriageEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleTriageEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Triage {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleTriageEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ToggleHousekeepingEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleHousekeepingEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Housekeeping {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleHousekeepingEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ToggleBranchCleanupEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleBranchCleanupEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Branch cleanup {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleBranchCleanupEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    /// <summary>Saves the template form: a new template, or an edit when the form was opened from a template's Edit button.</summary>
+    private async Task AddTemplate()
+    {
+        _formError = null;
+        var editing = _addForm.EditingTemplateId is not null;
+        var (valid, formError) = editing ? PageService.ValidateEditTemplate(_addForm) : PageService.ValidateAddTemplate(_addForm);
+        if (!valid) { _formError = formError; return; }
+
+        var (success, error, successMessage) = editing
+            ? await PageService.UpdateTemplateAsync(_addForm)
+            : await PageService.AddTemplateAsync(_addForm);
+        if (!success) { _errorMessage = error; return; }
+        _showAddForm = false;
+        _successMessage = WithLoopNote(successMessage);
+        _ = ClearSuccessAfterDelay();
+    }
+
+    private async Task RemoveTemplate()
+    {
+        if (_deletingTemplate == null) return;
+        var (success, error, successMessage) = await PageService.RemoveTemplateAsync(_deletingTemplate);
+        if (!success) { _errorMessage = error; return; }
+        _showDeleteConfirm = false;
+        _successMessage = WithLoopNote(successMessage);
+        _deletingTemplate = null;
+        _ = ClearSuccessAfterDelay();
+    }
+
+    private async Task MoveTemplateToProject((TemplateId TemplateId, string SourceProjectId, string TargetProjectId) args)
+    {
+        var (success, error, successMessage) = await PageService.MoveTemplateToProjectAsync(args.TemplateId, args.SourceProjectId, args.TargetProjectId);
+        if (!success) { _errorMessage = error; return; }
+        if (successMessage != null) { _successMessage = WithLoopNote(successMessage); _ = ClearSuccessAfterDelay(); }
+    }
+
+    private string? WithLoopNote(string? message) =>
+        message is not null && _loop.IsLoopActive ? $"{message} The running loop applies it from its next cycle." : message;
+
+    // ── Loop Controls ──
+
+    private bool CanStartLoop =>
+        _templates.Any(t => t.Enabled) &&
+        _issueProviders.Count > 0 &&
+        _repoProviders.Count > 0;
+
+    private string? StartLoopDisabledReason
+    {
+        get
+        {
+            if (!_templates.Any(t => t.Enabled)) return "No enabled pipeline templates configured";
+            if (_issueProviders.Count == 0) return "No issue provider configured";
+            if (_repoProviders.Count == 0) return "No repository provider configured";
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The loop as the Scheduler leader last reported it, and whether Start was the last command
+    /// (spec 051 D11). Refreshed on load, every <c>AutoRefresh</c> tick and after each command.
+    /// </summary>
+    private UiLoopStatus _loop = UiLoopStatus.Unknown;
+
+    /// <summary>
+    /// What the loop is doing, next to the controls: a command the Scheduler has not applied yet, the
+    /// current cycle, or that the Scheduler is not reporting.
+    /// </summary>
+    private string? LoopProgressText => (_loop.RunRequested, _loop.IsLoopActive) switch
+    {
+        _ when _loop.ReportedAt is null => string.IsNullOrEmpty(_loop.StatusMessage) ? null : _loop.StatusMessage,
+        (true, false) when _loop.ValidationErrors.Count > 0 => "Start refused — fix the problems below; the Scheduler retries while Start stays requested.",
+        (true, false) => "Start requested — the Scheduler starts the loop within a few seconds.",
+        (false, true) => "Stop requested — the loop stops after its current cycle.",
+        (true, true) => $"Polling template {_loop.CurrentCycleTemplateIndex + 1} of {_loop.CurrentCycleTemplateCount} · Processed: {_loop.ProcessedCount} · Failed: {_loop.FailedCount}",
+        _ => null,
+    };
+
+    /// <summary>Reads the loop status; on a failure the last one stays, and the next tick retries.</summary>
+    internal async Task RefreshLoopAsync()
+    {
+        try
+        {
+            _loop = await LoopClient.GetStatusAsync();
+        }
+        catch (Exception)
+        {
+            // Keep the last status.
+        }
+    }
+
+    private Task StartLoop() => SendLoopCommandAsync(PageService.StartLoopAsync);
+
+    private Task StopLoop() => SendLoopCommandAsync(PageService.StopLoopAsync);
+
+    private Task ResumeLoop() => SendLoopCommandAsync(PageService.ResumeLoopAsync);
+
+    private async Task SendLoopCommandAsync(Func<Task<(bool Success, string? Error)>> command)
+    {
+        _errorMessage = null;
+        var (success, error) = await command();
+        if (!success)
+            _errorMessage = error;
+        await RefreshLoopAsync();
+    }
+
+    // ── Drawer Mutual Exclusion ──
+
+    private PipelineJobTemplate? ActiveDrawerTemplate => PageService.ActiveDrawerTemplate;
+
+    private async Task SwitchToIssueDrawer()
+    {
+        var error = await PageService.SwitchToIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task SwitchToPrDrawer()
+    {
+        var error = await PageService.SwitchToPrDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task SwitchToEpicDrawer()
+    {
+        var error = await PageService.SwitchToEpicDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
+    }
+
+    // ── Issue Drawer ──
+
+    private async Task OpenDrawer()
+    {
+        var error = await PageService.OpenIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task CloseDrawer()
+    {
+        PageService.CloseIssueDrawer();
+        if (_issueDrawerTrigger.Id != null)
+            await _issueDrawerTrigger.FocusAsync();
+    }
+
+    private async Task DrawerPrevPage()
+    {
+        if (_drawerPage > 1 && _drawerTemplate != null)
+        {
+            var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage - 1);
+            if (error != null) _errorMessage = error;
+            else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
+        }
+    }
+
+    private async Task DrawerNextPage()
+    {
+        if (_drawerHasMore && _drawerTemplate != null)
+        {
+            var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage + 1);
+            if (error != null) _errorMessage = error;
+            else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
+        }
+    }
+
+    private async Task DrawerToggleLabel(string label)
+    {
+        if (_drawerTemplate == null) return;
+        PageService.IssueDrawer.ToggleLabel(label);
+        var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+        else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
+    }
+
+    private async Task DrawerClearLabels()
+    {
+        if (_drawerTemplate == null) return;
+        PageService.IssueDrawer.ClearLabelFilter();
+        var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+        else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
+    }
+
+    private async Task CheckDrawerDependenciesInBackground(PipelineJobTemplate template)
+    {
+        try
+        {
+            await PageService.CheckDrawerDependenciesAsync(
+                template, () => InvokeAsync(StateHasChanged), PageService.IssueDrawer.CancellationToken);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) { /* expected on drawer close */ }
+    }
+
+    private async Task DispatchFromDrawer(IssueSummary issue)
+    {
+        PageService.IssueDrawerDispatching = true;
+        StateHasChanged();
+        try
+        {
+            var (success, error, successMessage) = await PageService.DispatchFromIssueDrawerAsync(issue);
+            if (success) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
+            else _errorMessage = error;
+        }
+        catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
+        finally { StateHasChanged(); }
+    }
+
+    // ── PR Drawer ──
+
+    private async Task OpenPrDrawer()
+    {
+        var error = await PageService.OpenPrDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task ClosePrDrawer()
+    {
+        PageService.ClosePrDrawer();
+        if (_prDrawerTrigger.Id != null)
+            await _prDrawerTrigger.FocusAsync();
+    }
+
+    private async Task PrDrawerNextPage()
+    {
+        if (_prDrawerTemplate != null)
+        {
+            var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, _prDrawerPage + 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
+
+    private async Task PrDrawerPrevPage()
+    {
+        if (_prDrawerPage > 1 && _prDrawerTemplate != null)
+        {
+            var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, _prDrawerPage - 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
+
+    private async Task PrDrawerToggleLabel(string label)
+    {
+        if (_prDrawerTemplate == null) return;
+        PageService.PrDrawer.ToggleLabel(label);
+        var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task PrDrawerClearLabels()
+    {
+        if (_prDrawerTemplate == null) return;
+        PageService.PrDrawer.ClearLabelFilter();
+        var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task DispatchPrReviewFromDrawer(PullRequestSummary pr)
+    {
+        PageService.PrDrawerDispatching = true;
+        StateHasChanged();
+        try
+        {
+            var (success, error, successMessage) = await PageService.DispatchFromPrDrawerAsync(pr);
+            if (success) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
+            else _errorMessage = error;
+        }
+        catch (Exception ex) { _errorMessage = $"Failed to dispatch PR review: {ex.Message}"; }
+        finally { StateHasChanged(); }
+    }
+
+    // ── Epic Drawer ──
+
+    private async Task OpenEpicDrawer()
+    {
+        var error = await PageService.OpenEpicDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task CloseEpicDrawer()
+    {
+        PageService.CloseEpicDrawer();
+        if (_epicDrawerTrigger.Id != null)
+            await _epicDrawerTrigger.FocusAsync();
+    }
+
+    private async Task EpicDrawerNextPage()
+    {
+        if (_epicDrawerHasMore && _epicDrawerTemplate != null)
+        {
+            var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, _epicDrawerPage + 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
+
+    private async Task EpicDrawerPrevPage()
+    {
+        if (_epicDrawerPage > 1 && _epicDrawerTemplate != null)
+        {
+            var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, _epicDrawerPage - 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
+
+    private async Task EpicDrawerToggleLabel(string label)
+    {
+        if (_epicDrawerTemplate == null) return;
+        PageService.EpicDrawer.ToggleLabel(label);
+        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task EpicDrawerClearLabels()
+    {
+        if (_epicDrawerTemplate == null) return;
+        PageService.EpicDrawer.ClearLabelFilter();
+        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task DispatchDecompositionFromDrawer(IssueSummary issue)
+    {
+        PageService.EpicDrawerDispatching = true;
+        StateHasChanged();
+        try
+        {
+            var (success, error, successMessage) = await PageService.DispatchFromEpicDrawerAsync(issue);
+            if (success) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
+            else _errorMessage = error;
+        }
+        catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
+        finally { StateHasChanged(); }
+    }
+
+    // ── Helpers ──
+
+    /// <summary>
+    /// Synchronous check against the preloaded active issues map.
+    /// Used by drawer component <c>GetProcessingStatus</c> parameter (Func&lt;string, WorkItemStatus?&gt;).
+    /// Returns Pending (Queued), Running (Running/Dispatched), or null (not active).
+    /// </summary>
+    private WorkItemStatus? IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
+        => PageService.GetIssueWorkItemStatus(issueIdentifier, issueProviderConfigId);
+
+    private async Task ClearRecentlyToggledAfterDelay(string templateId)
+    {
+        await Task.Delay(3000, CancellationToken.None);
+        _recentlyToggled.Remove(templateId);
+        try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
+    }
+
+    private async Task ClearSuccessAfterDelay()
+    {
+        await Task.Delay(3000, CancellationToken.None);
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+                _successMessage = null;
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
+    }
+
+    private void DismissError() => _errorMessage = null;
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (disposing && Layout is not null)
+            Layout.OnEscapePressed -= HandleGlobalEscape;
+    }
+}

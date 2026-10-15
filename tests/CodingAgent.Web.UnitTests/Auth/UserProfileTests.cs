@@ -18,7 +18,7 @@ public class UserProfileTests : BunitContext
 
     public UserProfileTests()
     {
-        Services.AddSingleton(Options.Create(new AuthOptions { Oidc = { Name = "Keycloak" } }));
+        Services.AddSingleton<IAuthUiInfo>(new AuthUiInfo(Options.Create(new AuthOptions { Oidc = { Name = "Keycloak" } })));
         Services.AddSingleton<IUiMeClient>(_me);
     }
 

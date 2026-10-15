@@ -18,8 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Contracts references only the leaf CodeReview contracts lib and KiroCliLib; NEVER Pipeline. -->
+    <!-- Contracts references only the leaf CodeReview contracts lib; NEVER Pipeline. It must stay browser-safe (spec 051 D9). -->
     <ProjectReference Include="..\CodingAgent.Pipeline.CodeReview\CodingAgent.Pipeline.CodeReview.csproj" />
-    <ProjectReference Include="..\KiroCliLib\KiroCliLib.csproj" />
   </ItemGroup>
 </Project>

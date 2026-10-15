@@ -526,7 +526,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // leaking any resources it holds for the lifetime of the test fixture. Consider resolving
         // these via Fixture.Factory.Services.CreateScope() and disposing the scope after the call.
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
         var reviewRequest = new ReviewDispatchRequest
         {
@@ -742,7 +742,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // TODO [WARNING]: IWorkDistributor is resolved from the root service provider without a scope.
         // If it is registered as Scoped, this creates a captive-scope instance. Prefer resolving via
         // CreateScope() + dispose. See similar pattern in Scenario 4b.
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var request = new JobDistributionRequest
         {
             IssueIdentifier = failedRun.IssueIdentifier,

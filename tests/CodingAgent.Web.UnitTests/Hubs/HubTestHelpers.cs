@@ -16,7 +16,7 @@ internal static class HubTestHelpers
     /// Required because AgentHub.Lifecycle.cs calls <c>_uiContext.Clients.Group(...).SendAsync(...)</c>
     /// after the hub group push was added in Spec 044 Task 5.
     /// </summary>
-    public static IHubContext<AgentHub> CreateNoOpHubContext()
+    public static IHubContext<UiHub> CreateNoOpHubContext()
     {
         var mockClientProxy = new Mock<IClientProxy>();
         mockClientProxy
@@ -28,7 +28,7 @@ internal static class HubTestHelpers
             .Setup(c => c.Group(It.IsAny<string>()))
             .Returns(mockClientProxy.Object);
 
-        var mockContext = new Mock<IHubContext<AgentHub>>();
+        var mockContext = new Mock<IHubContext<UiHub>>();
         mockContext
             .Setup(h => h.Clients)
             .Returns(mockClients.Object);

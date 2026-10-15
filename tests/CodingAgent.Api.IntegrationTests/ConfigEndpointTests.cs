@@ -887,11 +887,11 @@ public sealed class ConfigEndpointTests
     };
 
     private Task<HttpResponseMessage> PutTemplateAsync(string projectId, PipelineJobTemplate template) =>
-        _client.PutAsJsonAsync($"/api/config/projects/{projectId}/templates", template, PipelineJsonOptions.Default);
+        _admin.PutAsJsonAsync($"/api/ui/settings/projects/{projectId}/templates", template, PipelineJsonOptions.Default);
 
     private Task<HttpResponseMessage> PostMoveAsync(string sourceProjectId, string targetProjectId, string templateId) =>
-        _client.PostAsJsonAsync(
-            "/api/config/templates/move",
+        _admin.PostAsJsonAsync(
+            "/api/ui/settings/templates/move",
             new { SourceProjectId = sourceProjectId, TargetProjectId = targetProjectId, TemplateId = templateId },
             PipelineJsonOptions.Default);
 
@@ -911,35 +911,6 @@ public sealed class ConfigEndpointTests
 
         var delete = await _admin.DeleteAsync($"/api/ui/settings/agent-profiles/{profileId}");
         delete.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    // ── ProviderConfig by id / includeSecrets ─────────────────────────────────────
-
-    [Fact]
-    public async Task ProviderConfigById_Returns200_WhenIncludeSecrets()
-    {
-        var configId = Guid.NewGuid().ToString();
-        var config = new ProviderConfig
-        {
-            Id = configId,
-            Kind = ProviderKind.Issue,
-            DisplayName = "Secrets Test Provider",
-            ProviderType = "github",
-            Secrets = new Dictionary<string, string> { ["token"] = "real-token" }
-        };
-        await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", config, PipelineJsonOptions.Default);
-
-        var response = await _client.GetAsync($"/api/config/provider-configs/{configId}?kind=Issue&includeSecrets=true");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var fetched = await response.Content.ReadFromJsonAsync<ProviderConfig>(PipelineJsonOptions.Default);
-        fetched!.Secrets!["token"].Should().Be("real-token");
-    }
-
-    [Fact]
-    public async Task ProviderConfigById_Returns404_WhenNotFound()
-    {
-        var response = await _client.GetAsync($"/api/config/provider-configs/{Guid.NewGuid()}?kind=Issue");
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     // ── AgentTimeout minimum validation ──────────────────────────────────────────

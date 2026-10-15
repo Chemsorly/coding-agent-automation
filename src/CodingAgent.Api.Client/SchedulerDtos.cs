@@ -3,9 +3,9 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Api.Client;
 
 /// <summary>
-/// Loop state snapshot returned by GET /loop/status on the Scheduler.
-/// Mirrors the read-only surface of IPipelineLoopService so the WebUI polling adapter
-/// can expose the same properties without changing any Blazor component.
+/// The loop state the Scheduler leader pushes to PUT /api/scheduler/loop-status (spec 051 D11).
+/// Mirrors the read-only surface of IPipelineLoopService; the API serves it to the UI as
+/// <c>UiLoopStatus</c>, filtered for project-scoped users.
 /// </summary>
 public record LoopStatusDto(
     bool IsLoopActive,
@@ -28,9 +28,6 @@ public record LoopStatusDto(
         new Dictionary<string, ConfigStatusSnapshot>())
     { }
 }
-
-/// <summary>Response from POST /loop/start.</summary>
-public record LoopStartResultDto(bool Started, string? Error);
 
 /// <summary>
 /// Result of a full retention sweep triggered via POST /api/scheduler/maintenance/retention-sweep.

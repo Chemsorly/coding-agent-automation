@@ -73,14 +73,14 @@ public sealed class DistributedRunServiceChatHistoryTests
             .Which.Should().Be("analysis complete");
     }
 
-    private static IHubContext<AgentHub> CreateNoOpHubContext()
+    private static IHubContext<UiHub> CreateNoOpHubContext()
     {
         var proxy = new Mock<IClientProxy>();
         proxy.Setup(p => p.SendCoreAsync(It.IsAny<string>(), It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var clients = new Mock<IHubClients>();
         clients.Setup(c => c.Group(It.IsAny<string>())).Returns(proxy.Object);
-        var context = new Mock<IHubContext<AgentHub>>();
+        var context = new Mock<IHubContext<UiHub>>();
         context.Setup(h => h.Clients).Returns(clients.Object);
         return context.Object;
     }

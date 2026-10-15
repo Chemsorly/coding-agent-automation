@@ -1,3 +1,4 @@
+using CodingAgent.Web.Models;
 using Bunit;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Models;
@@ -10,7 +11,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class PipelineSidebarPhaseTests : BunitContext
 {
-    private static PipelineRun CreateRun(
+    private static RunSidebarModel CreateRun(
         PipelineStep currentStep,
         PipelineStep highWaterMark,
         string? brainProviderConfigId = null) => new()
@@ -18,9 +19,7 @@ public class PipelineSidebarPhaseTests : BunitContext
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "99",
             IssueTitle = "Phase Test",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-3),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-3),
             CurrentStep = currentStep,
             HighWaterMark = highWaterMark,
             BrainProviderConfigId = brainProviderConfigId
@@ -67,7 +66,7 @@ public class PipelineSidebarPhaseTests : BunitContext
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = false }
         };
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -83,7 +82,7 @@ public class PipelineSidebarPhaseTests : BunitContext
     public void PhaseState_ConflictRestart_ShowsRestartedNotFailed()
     {
         var run = CreateRun(PipelineStep.ConflictRestart, PipelineStep.FinalizingPullRequest);
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -150,7 +149,7 @@ public class PipelineSidebarPhaseTests : BunitContext
     public void PhaseState_CompletedRun_AllPhasesCompleted()
     {
         var run = CreateRun(PipelineStep.Completed, PipelineStep.Completed);
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -208,7 +207,7 @@ public class PipelineSidebarPhaseTests : BunitContext
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = false }
         };
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
@@ -415,7 +414,7 @@ public class PipelineSidebarPhaseTests : BunitContext
     {
         // Visible content must never be aria-hidden="true". All bodies use aria-hidden="false".
         var run = CreateRun(PipelineStep.Completed, PipelineStep.Completed);
-        run.CompletedAt = DateTime.UtcNow;
+        run.CompletedAtOffset = DateTimeOffset.UtcNow;
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
         var phaseBodies = cut.FindAll(".phase-body");

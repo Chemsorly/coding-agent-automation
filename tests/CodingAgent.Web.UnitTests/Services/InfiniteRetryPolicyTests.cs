@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgent.Api.Client;
+using CodingAgent.Web.Ui;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
@@ -9,7 +9,7 @@ namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for <see cref="InfiniteRetryPolicy"/> — the SignalR reconnection backoff policy
-/// used by <see cref="AgentHubConnection"/>.
+/// used by <see cref="UiHubConnection"/>.
 ///
 /// The policy implements: delay = 2^min(retryCount, 7) seconds + jitter [0, 1000) ms,
 /// capped at 120 s total (applied after jitter).

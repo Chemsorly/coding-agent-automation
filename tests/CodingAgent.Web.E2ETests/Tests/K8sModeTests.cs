@@ -65,7 +65,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(r1.Success);
 
         // Second distribution for same issue — should detect existing active WorkItem
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var isDuplicate = await distributor.IsIssueDistributedAsync("k8s-issue-101", "issue-e2e", CancellationToken.None);
 
         Assert.True(isDuplicate, "Issue should be detected as already distributed");
@@ -107,16 +107,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     // ═══════════════════════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════════════
-    // G4: KubernetesWorkDistributor is the active distributor
+    // G4: the work distributor (in the API host) enqueues as Pending
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task K8sMode_DistributorIsKubernetesType()
+    public async Task K8sMode_DistributorEnqueuesAsPending()
     {
-        // Verify the factory correctly wired KubernetesWorkDistributor
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
-        Assert.IsType<KubernetesWorkDistributor>(distributor);
-
+        // The API host's distributor (the web host has none since spec 051 4.1).
         // Verify it enqueues as Pending (Queued=true — item enters the visible UI queue first)
         var result = await DistributeDirectlyAsync("k8s-type-check-500");
         Assert.True(result.Success);
@@ -143,7 +140,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var workItemId = result.WorkItemId!;
 
         // Act: cancel via IWorkDistributor
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var cancelled = await distributor.CancelJobAsync(workItemId, CancellationToken.None);
 
         Assert.True(cancelled);
@@ -165,7 +162,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(result.Success);
 
         // Act: query status
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var status = await distributor.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
 
         // Assert: should be Pending (item is enqueued as Pending; WorkItemDispatchLoop creates pod)
@@ -1114,7 +1111,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         }, CancellationToken.None);
 
         // ── Step 1: Distribute via KubernetesWorkDistributor (synchronous dispatch) ──
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var distResult = await distributor.DistributeAsync(new JobDistributionRequest
         {
             IssueIdentifier = "k8s-lifecycle-e2e-9999",

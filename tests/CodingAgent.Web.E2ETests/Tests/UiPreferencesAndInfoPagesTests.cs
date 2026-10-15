@@ -347,20 +347,13 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
     [Fact]
     public async Task Health_WithFakeAgents_ShowsHealthyDbAndAgentCount()
     {
-        // Connect 2 agents before navigating so _connectedCount > 0 on the first RefreshState() tick,
+        // Connect 2 agents before navigating so _connectedCount > 0 after the sidebar's first read,
         // which makes _sectionVisible=true immediately without waiting for the DB poll to return.
         await using var agent1 = new FakeAgentClient("health-test-agent-1", "e2e");
         await using var agent2 = new FakeAgentClient("health-test-agent-2", "e2e");
 
         await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
         await agent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Sync the Blazor host's registry snapshot immediately (avoids the 2s poll race)
-        // TODO [WARNING]: agent1 and agent2 are constructed inside await using scopes (disposal
-        // is guaranteed), but ConnectAsync is called after construction outside the using-initializer.
-        // If ForceAgentRegistryRefreshAsync throws, disposal still runs via the await using scope —
-        // .NET semantics are correct — but this is worth noting as a pattern to be aware of.
-        await Fixture.ForceAgentRegistryRefreshAsync();
 
         await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
@@ -397,11 +390,10 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         // Connect a 3rd agent — count should update to 3
         await using var agent3 = new FakeAgentClient("health-test-agent-3", "e2e");
         await agent3.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-        await Fixture.ForceAgentRegistryRefreshAsync();
 
         await Page.WaitForSelectorAsync(
             ".sidebar-health-label:text('Agents: 3')",
-            new() { Timeout = 15_000 });
+            new() { Timeout = 25_000 }); // the sidebar reads /api/ui/agents every 10 s
     }
 
     // ── Scenario 5: About page ────────────────────────────────────────────

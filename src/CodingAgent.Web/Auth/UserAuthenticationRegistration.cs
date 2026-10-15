@@ -41,8 +41,9 @@ internal static class UserAuthenticationRegistration
         var authorization = services.AddAuthorizationBuilder();
         authorization
             .SetFallbackPolicy(new AuthorizationPolicyBuilder(CookieScheme).RequireAuthenticatedUser().Build());
-        AccessPolicies.Register(authorization);
+        AccessPolicyRegistration.Register(authorization);
         services.AddSingleton<IAuthorizationHandler, AccessAuthorizationHandler>();
+        services.AddSingleton<IAuthUiInfo, AuthUiInfo>();
 
         // The antiforgery cookie defaults to no Secure flag; behind the TLS ingress it gets one.
         services.AddAntiforgery(options => options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest);
@@ -50,8 +51,6 @@ internal static class UserAuthenticationRegistration
         services.AddCascadingAuthenticationState();
         services.AddScoped<AuthenticationStateProvider, SessionRevalidatingAuthenticationStateProvider>();
         services.AddSingleton<IRbacEvaluator, RbacEvaluator>();
-        services.AddScoped<CurrentAccess>();
-        services.AddScoped<IAccessGuard, AccessGuard>();
 
         services.AddRateLimiter(options =>
         {
@@ -121,16 +120,6 @@ internal static class UserAuthenticationRegistration
             context.Response.Redirect(context.RedirectUri);
         return Task.CompletedTask;
     }
-}
-
-/// <summary>Paths and query values of the authentication UI.</summary>
-public static class AuthPaths
-{
-    public const string Login = "/login";
-    public const string AccessDenied = "/access-denied";
-    public const string Profile = "/user";
-    public const string DefaultLanding = "/overview";
-    public const string ReturnUrlParameter = "returnUrl";
 }
 
 /// <summary>Values of the <c>error</c> query parameter of the login page. Never echoed back.</summary>

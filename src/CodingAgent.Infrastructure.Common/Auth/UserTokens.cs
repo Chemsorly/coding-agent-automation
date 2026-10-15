@@ -48,7 +48,8 @@ public static class UserTokens
 
     /// <summary>Signs a token for <paramref name="subject"/> with the claims of <paramref name="grant"/>.</summary>
     public static string Create(
-        UserTokenSubject subject, AccessGrant grant, DateTimeOffset issuedAt, DateTimeOffset expires, SecurityKey signingKey)
+        UserTokenSubject subject, AccessGrant grant, DateTimeOffset issuedAt, DateTimeOffset expires, SecurityKey signingKey,
+        string? use = null)
     {
         ArgumentNullException.ThrowIfNull(subject);
         ArgumentNullException.ThrowIfNull(grant);
@@ -62,6 +63,8 @@ public static class UserTokens
         if (!string.IsNullOrEmpty(subject.IdentitySource))
             claims.Add(new Claim(UserTokenClaimTypes.IdentitySource, subject.IdentitySource));
         claims.AddRange(AccessGrantClaims.ToClaims(grant));
+        if (!string.IsNullOrEmpty(use))
+            claims.Add(new Claim(UserTokenClaimTypes.Use, use));
 
         var descriptor = new SecurityTokenDescriptor
         {

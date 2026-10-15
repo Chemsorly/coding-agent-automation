@@ -57,10 +57,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await using var agent = new FakeAgentClient("ui-monitor-agent-1", "ui-test");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // The agent registered on the API's hub; the Blazor host reads a snapshot of that registry
-        // refreshed on a poll that is disabled in the harness. Pull it forward so the page renders
-        // the agent on first load.
-        await Fixture.ForceAgentRegistryRefreshAsync();
+        // The agent registered on the API's hub; Fleet reads /api/ui/agents when it loads.
 
         // Navigate to the Fleet page
         var fleet = new FleetPage(Page, BaseUrl);

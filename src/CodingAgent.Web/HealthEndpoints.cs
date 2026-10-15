@@ -1,4 +1,3 @@
-using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -32,16 +31,13 @@ public static class HealthEndpoints
         }).AllowAnonymous();
 
         // Readiness: Can this pod serve traffic?
-        // 503 during graceful shutdown drain or database unreachable.
+        // 503 during graceful shutdown drain. The web host has no database of its own.
         endpoints.MapMethods("/readyz", probeMethods, (HttpContext httpContext) =>
         {
             var readiness = httpContext.RequestServices.GetRequiredService<ReadinessState>();
-            var dbHealth = httpContext.RequestServices.GetService<CodingAgent.Infrastructure.DatabaseHealthState>();
 
             if (!readiness.IsReady)
                 return Results.Json(new { status = "draining", timestamp = DateTime.UtcNow }, statusCode: 503);
-            if (dbHealth is not null && !dbHealth.IsDatabaseHealthy)
-                return Results.Json(new { status = "unhealthy", reason = "database_unreachable", timestamp = DateTime.UtcNow }, statusCode: 503);
 
             return Results.Ok(new { status = "ready", timestamp = DateTime.UtcNow });
         }).AllowAnonymous();

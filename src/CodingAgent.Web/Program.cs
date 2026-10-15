@@ -1,13 +1,9 @@
 using CodingAgent.Web;
-using CodingAgent.Api.Client;
-using CodingAgent.AgentGateway;
-using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Common.Auth;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Models;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Web.Services;
@@ -20,8 +16,6 @@ using OpenTelemetry.Trace;
 using Serilog;
 
 // Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
-// TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
-const string AgentApiKeyConfigKey = "AGENT_API_KEY"; // S1192: single source for repeated literal
 Log.Logger = HostBootstrap.CreateBootstrapLogger();
 // TODO: Web host has no startup-identity log; the other three hosts (Api, Scheduler, JobController)
 // all call HostBootstrap.LogStartupIdentity(...) immediately after CreateBootstrapLogger(). Add a
@@ -47,7 +41,7 @@ builder.Services.AddRazorComponents()
         options.EnableDetailedErrors = builder.Environment.IsDevelopment();
     });
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton(BuildInfo.Load());
+builder.Services.AddSingleton(BuildInfoLoader.Load());
 
 // Configure JSON serialization for minimal API endpoints (enum-as-string to match agent DTOs)
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -97,47 +91,9 @@ catch (InvalidOperationException ex)
     return;
 }
 
-var agentApiKey = builder.Configuration.GetValue<string>(AgentApiKeyConfigKey)
-    ?? Environment.GetEnvironmentVariable(AgentApiKeyConfigKey)
-    ?? "";
-
-builder.Services.AddPipelineApiClient(new PipelineApiClientOptions
-{
-    BaseUrl = apiBaseUrl,
-    AgentApiKey = agentApiKey
-});
-
-// Scoped hub connection — one per Blazor circuit (overrides the Transient registered
-// by AddPipelineApiClient above). Connects to the API hub using AGENT_API_KEY as Bearer.
-// Helm injects PipelineApi__HubUrl (double-underscore → PipelineApi:HubUrl IConfiguration key).
-// Falls back to baseUrl + /hubs/agent if HubUrl is not set.
-// See Req 3.6 L1 for the explicit wiring requirement.
-var apiHubUrl = builder.Configuration.GetValue<string>("PipelineApi:HubUrl")
-    ?? $"{apiBaseUrl.TrimEnd('/')}/hubs/agent";
-builder.Services.AddScoped<IAgentHubConnection>(_ => new AgentHubConnection(apiHubUrl, agentApiKey));
-
-builder.Services.AddInfrastructureServices();
-builder.Services.AddPipelineServices(Serilog.Log.Logger);
-builder.Services.AddPipelineCoreServices();
-builder.Services.AddOrchestrationServices();
-// The Consolidation page triggers through the API since spec 051 2.4b, so this host registers no
-// consolidation service.
-builder.Services.AddWorkDistribution(builder.Configuration);
-
-// Frontend observability (Faro) — scoped so each Blazor circuit gets its own instance.
-// FaroService wraps IJSRuntime; NotificationFaroBridge forwards notifications to Faro.
-// Both silently no-op if Faro is not configured (Faro:CollectorUrl env var absent).
-builder.Services.AddScoped<CodingAgent.Web.Services.IFaroService, CodingAgent.Web.Services.FaroService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.NotificationFaroBridge>();
-
-// Page-level services (scoped — one instance per Blazor circuit)
-builder.Services.AddScoped<CodingAgent.Web.Services.IIssueDrawerService, CodingAgent.Web.Services.IssueDrawerService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.IPrReviewDrawerService, CodingAgent.Web.Services.PrReviewDrawerService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.IEpicDrawerService, CodingAgent.Web.Services.EpicDrawerService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.AgentCodingPageService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.NotificationService>();
-builder.Services.AddScoped<CodingAgent.Web.Services.CockpitState>();
-builder.Services.AddScoped<CodingAgent.Web.Services.BlockedIssuesService>();
+// Spec 051 4.1: the web host holds no agent API key. Everything it shows comes from /api/ui and the UI
+// hub, called as the signed-in user; the drain service keeps /readyz honest during shutdown.
+builder.Services.AddReadinessDrain();
 
 // User authentication (cookie, local admin, OIDC, role bindings)
 builder.Services.AddUserAuthentication(builder.Configuration);
@@ -152,10 +108,9 @@ var app = builder.Build();
 
 // ── Post-Build startup sequence ─────────────────────────────────────────────
 // Each concern is extracted into its own WebApplication extension method.
-// Ordering: ValidateShutdownBudget, ValidateDiWiring, then MapApplicationEndpoints.
+// Ordering: ValidateShutdownBudget, then MapApplicationEndpoints.
 
 app.ValidateShutdownBudget();
-app.ValidateDiWiring();
 app.MapApplicationEndpoints();
 
 await app.RunAsync();

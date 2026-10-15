@@ -1,0 +1,885 @@
+@page "/runs/{RunId}"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgent.Pipeline.Interfaces
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Pipeline.Services
+@using CodingAgent.Web.Components.Shared
+@using CodingAgent.Web.Services
+@using Microsoft.AspNetCore.SignalR.Client
+@inject IUiRunClient RunHistory
+@inject IUiWorkItemClient WorkItemActions
+@inject IUiConfigClient UiConfig
+@inject IUiTriageClient Triages
+@inject IUiHubConnection HubConnection
+@inject NavigationManager Nav
+@inject CurrentAccess Access
+@inject IAccessGuard Guard
+
+@*
+    Run Page — the deep-linkable run detail (see docs/frontend-redesign-handoff.md).
+    Data: IUiRunClient.GetRunAsync(Guid) → UiRunDetail (the run and its agent provider's name).
+    Every field shown is a real property on the summary (tokens, cost, cache, phase
+    breakdown, review findings, feedback). This page replaced the old run-detail modal and
+    hosts the live PipelineSidebar step ladder for active runs.
+*@
+
+<PageTitle>Run - Coding Agent</PageTitle>
+
+<div class="cockpit-page" data-testid="run-page" data-initialized="@(!_loading ? "true" : "false")">
+    <a href="runs" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Runs</a>
+
+    @if (_loading)
+    {
+        <div class="cockpit-empty">Loading run…</div>
+    }
+    else if (_run is null)
+    {
+        <div class="cockpit-empty">@(_error ?? "Run not found.")</div>
+    }
+    else
+    {
+        var run = _run;
+        var result = RunOutcomeDisplay.Label(run.FinalStep);
+        var resultClass = RunOutcomeDisplay.BadgeClass(run.FinalStep);
+
+        <div class="cockpit-page-header">
+            <div class="cockpit-page-titles">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    @if (run.RunType == PipelineRunType.Review)
+                    {
+                        <span class="run-type-badge run-type-review"><Icon Name="search" Size="14" /> Review</span>
+                    }
+                    else if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                    {
+                        <span class="run-type-badge run-type-decomp"><Icon Name="puzzle" Size="14" /> Decomp</span>
+                    }
+                    else if (run.RunType == PipelineRunType.Consolidation)
+                    {
+                        <span class="run-type-badge run-type-consolidation"><Icon Name="refresh-cw" Size="14" /> Consolidation</span>
+                        <span class="cockpit-chip" data-testid="consolidation-type-chip">@FormatConsolidationType(run.ConsolidationType)</span>
+                    }
+                    else if (run.RunType == PipelineRunType.Triage)
+                    {
+                        <span class="run-type-badge run-type-triage"><Icon Name="stethoscope" Size="14" /> Triage</span>
+                    }
+                    else
+                    {
+                        <span class="run-type-badge run-type-impl"><Icon Name="hammer" Size="14" /> Impl</span>
+                    }
+                    <span class="step-badge @resultClass">@result</span>
+                    @if (RunOutcomeDisplay.IsActive(run.FinalStep))
+                    {
+                        <span class="cockpit-page-sub">at @((_liveStep ?? run.FinalStep).ToDisplayName())</span>
+                    }
+                </div>
+                @if (TriageConstants.TryParseTriageId(run.IssueIdentifier.Value) is not null)
+                {
+                    @* An operator triage has no issue: its identifier is the triage:{id} sentinel *@
+                    <h1>@run.IssueTitle</h1>
+                }
+                else if (run.RunType == PipelineRunType.Consolidation)
+                {
+                    <h1>@FormatConsolidationTitle(run.ConsolidationType, run.ConsolidationTemplateName, run.ConsolidationTemplateId)</h1>
+                }
+                else
+                {
+                    <h1>@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier @run.IssueTitle</h1>
+                }
+                <span class="cockpit-page-sub mono">run @Truncate(run.RunId, 12)</span>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(run.FailureReason))
+        {
+            <div class="summary-failure-callout" role="alert"><Icon Name="alert-triangle" Size="14" /> @run.FailureReason</div>
+        }
+
+        var implPr = run.RunType != PipelineRunType.Review ? run.PullRequestUrl : null;
+        var reviewPr = run.RunType == PipelineRunType.Review ? run.ReviewPrUrl : null;
+        @if (!string.IsNullOrEmpty(run.IssueUrl) || !string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr) || _triageId is not null || run.RunType == PipelineRunType.Consolidation)
+        {
+            <div class="cockpit-links-rail">
+                @if (_triageId is { } triageId)
+                {
+                    <a href="triage/@triageId" class="cockpit-link-chip" data-testid="run-triage-link"><Icon Name="stethoscope" Size="14" /> Triage ↗</a>
+                }
+                @if (!string.IsNullOrEmpty(run.IssueUrl))
+                {
+                    <a href="@run.IssueUrl" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="clipboard-list" Size="14" /> Issue #@run.IssueIdentifier ↗</a>
+                }
+                @if (!string.IsNullOrEmpty(implPr))
+                {
+                    <a href="@implPr" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="link" Size="14" /> Pull request ↗</a>
+                }
+                @if (!string.IsNullOrEmpty(reviewPr))
+                {
+                    <a href="@reviewPr" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="search" Size="14" /> PR under review ↗</a>
+                }
+                @if (run.RunType == PipelineRunType.Consolidation)
+                {
+                    <a href="consolidation" class="cockpit-link-chip" data-testid="consolidation-page-link"><Icon Name="refresh-cw" Size="14" /> Consolidation page →</a>
+                }
+            </div>
+        }
+
+        <div class="cockpit-card">
+            <div class="cockpit-card-pad cockpit-detail-grid">
+                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
+                <div class="cockpit-detail-item"><div class="k">Agent</div><div class="v mono">@(_resolvedAgentName ?? run.AgentId ?? "—")</div></div>
+                <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</div></div>
+                @if (run.ModelName is not null)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Model</div><div class="v mono">@run.ModelName</div></div>
+                }
+                @if (run.TotalTokens > 0)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Tokens</div><div class="v">@CostFormatter.FormatTokens(run.TotalTokens)</div></div>
+                }
+                @if (run.TotalCost is > 0m)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Cost</div><div class="v">@CostFormatter.FormatCost(run.TotalCost)</div></div>
+                }
+                @if (run.CacheReadTokens > 0 || run.CacheWriteTokens > 0)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Cache tokens</div><div class="v">@CostFormatter.FormatTokens(run.CacheReadTokens) r / @CostFormatter.FormatTokens(run.CacheWriteTokens) w</div></div>
+                }
+                @if (run.RetryCount > 0)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Retries</div><div class="v">@run.RetryCount</div></div>
+                }
+                @if (run.BrainRepoUsed)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Brain</div><div class="v">Used @(run.BrainUpdatesPushed ? "(updates pushed)" : "(read-only)")</div></div>
+                }
+                @if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition && run.DecompositionSubIssuesAttempted > 0)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Sub-issues</div><div class="v">@run.DecompositionSubIssuesCreated / @run.DecompositionSubIssuesAttempted created</div></div>
+                }
+            </div>
+
+            @if (run.RunType == PipelineRunType.Review)
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                    <div class="cockpit-detail-sub-label">Review findings</div>
+                    <div class="cockpit-findings">
+                        <div class="cockpit-finding is-critical"><span class="cockpit-finding-v">@run.CodeReviewCriticalCount</span><span class="cockpit-finding-l">Critical</span></div>
+                        <div class="cockpit-finding is-warning"><span class="cockpit-finding-v">@run.CodeReviewWarningCount</span><span class="cockpit-finding-l">Warning</span></div>
+                        <div class="cockpit-finding is-suggestion"><span class="cockpit-finding-v">@run.CodeReviewSuggestionCount</span><span class="cockpit-finding-l">Suggestion</span></div>
+                    </div>
+                    @if (run.CodeReviewAgentsRun.Count > 0)
+                    {
+                        <div style="margin-top: 12px; font-size: 12.5px; color: var(--text-muted);">
+                            <span style="font-weight: 600;">Reviewers:</span> @string.Join(", ", run.CodeReviewAgentsRun)
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (run.RunType == PipelineRunType.Consolidation && !string.IsNullOrEmpty(run.ConsolidationResultSummary))
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="consolidation-result">
+                    <div class="cockpit-detail-sub-label">Result</div>
+                    <div style="font-size: 13.5px;">@run.ConsolidationResultSummary</div>
+                </div>
+            }
+
+            @if (run.PhaseBreakdown is { Count: > 0 } phases)
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                    <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
+                        <Header><span>Cost &amp; token breakdown (@phases.Count phases)</span></Header>
+                        <ChildContent>
+                            <div class="monitoring-table-wrap">
+                                <table class="monitoring-table" style="margin-top: 6px;">
+                                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var phase in phases.OrderByDescending(p => p.Value.Cost ?? 0m).ThenByDescending(p => p.Value.Tokens))
+                                        {
+                                            <tr>
+                                                <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
+                                                <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
+                                                <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </ChildContent>
+                    </Collapsible>
+                </div>
+            }
+        </div>
+
+        @* Pipeline progress — full step ladder (ported from the old monitoring modal's PipelineSidebar).
+           Shown for live runs (streamed via hub snapshots) and completed runs (seeded from the summary).
+           The sidebar renders its own "Cancel Pipeline" button when IsRunning. *@
+        @if (_model is not null)
+        {
+            <div class="cockpit-card">
+                <div class="cockpit-card-header">
+                    <h2>Pipeline progress</h2>
+                </div>
+                <div class="cockpit-card-pad">
+                    <PipelineSidebar Run="_model" IsRunning="_isLive" MaxRetries="_maxRetries" OnCancel="CancelRunAsync" CanCancel="Access.CanOperate(_run?.ProjectId)" />
+                </div>
+                @if (_cancelling)
+                {
+                    <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                        <span class="monitoring-muted" style="font-size: 13px;">Cancelling…</span>
+                    </div>
+                }
+                @if (_cancelError is not null)
+                {
+                    <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                        <div class="summary-failure-callout" role="alert" data-testid="cancel-error-callout">
+                            <Icon Name="alert-triangle" Size="14" /> Cancel failed: @_cancelError
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_isLive)
+        {
+            <div class="cockpit-card" data-hub-subscribed="@_hubSubscribed.ToString().ToLowerInvariant()">
+                <div class="cockpit-card-header">
+                    <h2>Live output</h2>
+                </div>
+                <div class="cockpit-card-pad">
+                    @if (_liveOutput.Count == 0)
+                    {
+                        <div class="cockpit-empty" style="padding: 16px;">Waiting for output…</div>
+                    }
+                    else
+                    {
+                        <pre class="run-live-log" @ref="_logRef">@string.Join("\n", _liveOutput)</pre>
+                    }
+                </div>
+            </div>
+        }
+        else if (run.OutputTail is { Count: > 0 } outputTail)
+        {
+            <div class="cockpit-card" data-testid="output-tail-card">
+                <div class="cockpit-card-header">
+                    <h2>Agent output <span style="font-size: 12px; font-weight: 400; color: var(--text-muted);">(last @outputTail.Count lines)</span></h2>
+                </div>
+                <div class="cockpit-card-pad">
+                    @* TODO: [WARNING] Rendering via @string.Join produces a single concatenated string expression.
+                       Blazor HTML-encodes plain @string expressions so this is currently safe, but the join pattern
+                       makes it easy to accidentally introduce a MarkupString cast later (stored XSS from agent output).
+                       Consider switching to @foreach over individual lines to make the safe-rendering intent explicit. *@
+                    <pre class="run-live-log">@string.Join("\n", outputTail)</pre>
+                </div>
+            </div>
+        }
+
+        @if (run.PodLogTail is { Count: > 0 } podLogTail)
+        {
+            <div class="cockpit-card" data-testid="pod-log-tail-card">
+                <div class="cockpit-card-header">
+                    <h2>Agent pod log <span style="font-size: 12px; font-weight: 400; color: var(--text-muted);">(last @podLogTail.Count lines)</span></h2>
+                </div>
+                <div class="cockpit-card-pad">
+                    <pre class="run-live-log">@string.Join("\n", podLogTail)</pre>
+                </div>
+            </div>
+        }
+
+        @* Re-dispatch — available for terminal Implementation runs when provider IDs are present. *@
+        @if (CanRedispatch(run) && Access.CanOperate(run.ProjectId))
+        {
+            <div class="cockpit-card" data-testid="redispatch-card">
+                <div class="cockpit-card-pad">
+                    @if (_redispatchSuccess)
+                    {
+                        <div class="agent-detail-confirm" style="background: var(--success-bg); border-color: var(--success);">
+                            <span style="color: var(--success);" data-testid="redispatch-success">@_redispatchMessage</span>
+                            <a href="work" style="margin-left: 8px; font-size: 13px;">View work queue →</a>
+                        </div>
+                    }
+                    else if (_redispatchError is not null)
+                    {
+                        @* TODO: [WARNING] _redispatchError is populated directly from ex.Message and rendered
+                           into the DOM. Blazor HTML-encodes the value so there is no XSS risk, but exception
+                           messages from HttpRequestException can include HTTP response bodies which may contain
+                           PII (e.g. connection strings or credentials from a misconfigured upstream). If this
+                           becomes a concern, consider logging ex.Message and showing a generic error with a
+                           correlation ID instead. *@
+                        <div class="summary-failure-callout" role="alert">
+                            <Icon Name="alert-triangle" Size="14" /> Re-dispatch failed: @_redispatchError
+                        </div>
+                    }
+
+                    @if (!_redispatchSuccess)
+                    {
+                        @if (!_showRedispatchConfirm)
+                        {
+                            <button class="btn-trigger" data-testid="redispatch-btn"
+                                    @onclick="() => _showRedispatchConfirm = true"
+                                    disabled="@_redispatchInProgress">
+                                <Icon Name="refresh-cw" Size="14" /> Re-dispatch
+                            </button>
+                        }
+                        else
+                        {
+                            <div class="agent-detail-confirm">
+                                <p>Re-dispatch issue <strong>#@run.IssueIdentifier</strong> as a new Implementation run?</p>
+                                <p style="font-size: 12.5px; color: var(--text-muted);">
+                                    Note: labels on the issue (e.g. <code>agent:failed</code>) are not cleared automatically.
+                                    Clear them on the issue tracker if needed before re-dispatching.
+                                </p>
+                                <div class="confirm-buttons">
+                                    <button class="btn-save" data-testid="redispatch-confirm-btn"
+                                            @onclick="RedispatchAsync"
+                                            disabled="@_redispatchInProgress">
+                                        @if (_redispatchInProgress) { <span>Queueing…</span> } else { <span>Confirm re-dispatch</span> }
+                                    </button>
+                                    <button class="btn-cancel" @onclick="() => _showRedispatchConfirm = false"
+                                            disabled="@_redispatchInProgress">Cancel</button>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        }
+
+        <FeedbackSection Feedback="run.Feedback" />
+    }
+</div>
+
+@code {
+    [Parameter] public string RunId { get; set; } = "";
+
+    private readonly CancellationTokenSource _cts = new();
+    private PipelineRunSummary? _run;
+    private string? _resolvedAgentName;
+
+    /// <summary>The triage a Triage run belongs to, for the "Triage ↗" link; null for other runs.</summary>
+    private Guid? _triageId;
+    private bool _loading = true;
+    private string? _error;
+
+    // Live trace (active runs only) — reuses the agent hub the monitoring modal streams from.
+    private bool _isLive;
+    private bool _subscribed;
+    private bool _hubSubscribed;  // set to true once SubscribeToRun round-trip completes; surfaced as data-hub-subscribed for E2E tests
+    private PipelineStep? _liveStep;
+    private readonly List<string> _liveOutput = new();
+    private IDisposable? _outputSub, _stepSub, _completedSub, _snapshotSub, _chatEntrySub;
+    // Held so it can be detached from HubConnection.Reconnected in DisposeAsync.
+    private Func<string?, Task>? _reconnectedHandler;
+    private ElementReference _logRef;
+    private bool _scrollOnRender;
+
+    // View model for PipelineSidebar — seeded from the summary (completed runs) or a RunStateSnapshot
+    // (active runs), then kept live via hub step/snapshot events. Ported from the old AgentMonitoring modal.
+    private RunSidebarModel? _model;
+    private int _maxRetries = 3;
+    private PeriodicTimer? _elapsedTimer;
+
+    // Re-dispatch state
+    private bool _showRedispatchConfirm;
+    private bool _redispatchInProgress;
+    private bool _redispatchSuccess;
+    private string? _redispatchError;
+    private string? _redispatchMessage;
+
+    // Cancel state — mirrors the re-dispatch confirm pattern
+    // TODO: [WARNING] No double-submit guard: if the sidebar's confirmation is re-opened and
+    // "Yes, cancel" is clicked a second time before the first PostStatusAsync completes, two
+    // parallel API calls can be issued. Work.razor prevents this with `if (!_cancelling.Add(id)) return`.
+    // Add an early-return guard here: `if (_cancelling) return;` before setting _cancelling = true.
+    private bool _cancelling;
+    // TODO: [WARNING] ex.Message from a caught Exception is rendered directly in the cancel-error-callout.
+    // While Blazor HTML-encodes the value (no XSS risk), HttpRequestException messages can contain
+    // server-supplied content (hostnames, stack traces, etc.). Consider normalising to a generic
+    // user-facing message and logging the full ex.Message server-side only.
+    private string? _cancelError;
+
+    private static bool IsActive(PipelineRunSummary r) => RunOutcomeDisplay.IsActive(r.FinalStep);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = null;
+        _run = null;
+        _resolvedAgentName = null;
+        _triageId = null;
+        _model = null;
+
+        if (!Guid.TryParse(RunId, out var id))
+        {
+            _error = "Invalid run id.";
+            _loading = false;
+            return;
+        }
+
+        try
+        {
+            // Spec 049 Req 8.5: a run of a project the user cannot read looks exactly like a missing one.
+            // The API answers 404 for it (051 D3); the page checks the run's project as well.
+            var detail = await RunHistory.GetRunAsync(id, _cts.Token);
+            if (detail is not null && Access.CanRead(detail.Run.ProjectId))
+            {
+                _run = detail.Run;
+                _resolvedAgentName = detail.AgentProviderName;
+            }
+            if (_run?.RunType == PipelineRunType.Triage)
+            {
+                try { _triageId = await Triages.FindByRunAsync(_run.RunId, _cts.Token); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to look up the triage of run {RunId}", _run.RunId); }
+            }
+            _isLive = _run is not null && IsActive(_run);
+
+            // Seed the sidebar view model from the summary. For active runs the RunStateSnapshot
+            // pushed on SubscribeToRun refines it with live pipeline detail (quality gates, PR, review).
+            if (_run is not null && _model is null)
+                _model = BuildRunModelFromSummary(_run);
+
+            try
+            {
+                var config = await UiConfig.GetPipelineSettingsAsync(_cts.Token);
+                _maxRetries = config.MaxRetries;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to load the pipeline settings for MaxRetries; using default"); }
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load run: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Subscribe to the live run stream once, after the interactive circuit exists (not during prerender).
+        if (_isLive && !_subscribed)
+            await SubscribeLiveAsync();
+
+        if (_scrollOnRender)
+        {
+            _scrollOnRender = false;
+            try { await _logRef.FocusAsync(); } catch (Exception) { /* element may be gone */ }
+        }
+    }
+
+    private async Task SubscribeLiveAsync()
+    {
+        _subscribed = true;   // guard against duplicate subscribes across renders
+        try
+        {
+            _outputSub = HubConnection.On<string, IReadOnlyList<string>>(
+                HubMethodNames.OnOutputLines, (jobId, lines) => OnOutput(jobId, lines));
+            _stepSub = HubConnection.On<string, PipelineStep, DateTimeOffset>(
+                HubMethodNames.OnStepTransition, (jobId, step, _) => OnStep(jobId, step));
+            _snapshotSub = HubConnection.On<string, RunStateSnapshot>(
+                HubMethodNames.OnRunStateSnapshot, (jobId, snap) => OnSnapshot(jobId, snap));
+            _completedSub = HubConnection.On<string, JobCompletionPayload>(
+                HubMethodNames.OnRunCompleted, (jobId, _) => OnCompleted(jobId));
+            _chatEntrySub = HubConnection.On<string, ChatRole, string>(
+                HubMethodNames.OnChatEntry, (jobId, role, content) => OnChatEntry(jobId, role, content));
+
+            if (HubConnection.State == HubConnectionState.Disconnected)
+                await HubConnection.StartAsync(_cts.Token);
+            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToRun, RunId, _cts.Token);
+
+            // Re-join the run group after every hub reconnect so output lines and step
+            // transitions keep arriving. The handler clears _liveOutput first so the
+            // server-pushed backlog (last 500 lines from Redis) replaces rather than
+            // appends to what was already on screen, preventing duplicates.
+            // CancellationToken.None is intentional: _cts may already be cancelled/disposed
+            // by the time this background-thread event fires. DisposeAsync detaches the
+            // handler as its very first step to minimise the window, but CancellationToken.None
+            // provides defence-in-depth consistent with how UnsubscribeFromRun is called in DisposeAsync.
+            // TODO: After _liveOutput.Clear() there is no StateHasChanged() call before the
+            // re-subscribe round-trip. If the run is idle (no new output and the server backlog
+            // push is empty or delayed), the DOM continues to show the pre-reconnect lines until
+            // the next unrelated hub event triggers a re-render. Fix: call StateHasChanged()
+            // after _liveOutput.Clear() so the screen immediately reflects the cleared state.
+            // TODO: The async lambda is invoked fire-and-forget by the SignalR event infrastructure.
+            // Any exception thrown inside InvokeAsync (e.g. ObjectDisposedException if the renderer
+            // is already torn down in the TOCTOU gap before DisposeAsync completes the detach) is
+            // swallowed silently. Wrap the inner lambda body in try/catch(Exception) catching at
+            // minimum ObjectDisposedException and OperationCanceledException to avoid unobserved
+            // task exceptions.
+            _reconnectedHandler = async _ =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    if (!_isLive) return;
+                    _liveOutput.Clear();
+                    await HubConnection.InvokeAsync(HubMethodNames.SubscribeToRun, RunId, CancellationToken.None); // intentional: see comment above
+                });
+            };
+            HubConnection.Reconnected += _reconnectedHandler;
+
+            // Signal that the hub subscription is established — the data-hub-subscribed attribute
+            // on the live output card flips to "true", which E2E tests use as a deterministic
+            // "subscription ready" marker before sending output lines to the agent hub.
+            _hubSubscribed = true;
+            await InvokeAsync(StateHasChanged);
+
+            // 1-second timer to re-render the Elapsed display while the run is live.
+            // WaitForNextTickAsync returns false when the timer is disposed, and throws
+            // OperationCanceledException when _cts is cancelled — both exit the loop cleanly.
+            _elapsedTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            _ = Task.Run(async () =>
+            {
+                // TODO: [WARNING] Add try/catch (OperationCanceledException) { } here — consistent
+                // with AutoRefresh.razor and RefreshBar.razor — so cancellation is a clean exit rather
+                // than an unobserved exception swallowed silently by the runtime.
+                // TODO: [WARNING] The timer is not stopped when _isLive transitions to false (OnCompleted).
+                // After a run finishes it continues firing StateHasChanged every second until disposal.
+                // Add `if (!_isLive) break;` or dispose _elapsedTimer inside OnCompleted to eliminate
+                // spurious re-renders and honour the stated intent ("only while the run is live").
+                while (await _elapsedTimer.WaitForNextTickAsync(_cts.Token))
+                    await InvokeAsync(StateHasChanged);
+            });
+        }
+        catch (Exception ex)
+        {
+            // Live trace is best-effort; the post-hoc summary above still stands.
+            Serilog.Log.Warning(ex, "RunPage: failed to subscribe to live run {RunId}", RunId);
+        }
+    }
+
+    private void OnOutput(string jobId, IReadOnlyList<string> lines)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() =>
+        {
+            _liveOutput.AddRange(lines);
+            if (_liveOutput.Count > 2000)   // cap the buffer
+                _liveOutput.RemoveRange(0, _liveOutput.Count - 2000);
+            _scrollOnRender = true;
+            StateHasChanged();
+        });
+    }
+
+    private void OnStep(string jobId, PipelineStep step)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() =>
+        {
+            _liveStep = step;
+            if (_model is not null)
+            {
+                _model.CurrentStep = step;
+                // HighWaterMark must use logical order (RunningEnvironmentSetup has the highest enum int
+                // but is logically early), so compare via StepOrder rather than the raw enum value.
+                if (StepOrder.GetOrder(step) > StepOrder.GetOrder(_model.HighWaterMark))
+                    _model.HighWaterMark = step;
+            }
+            StateHasChanged();
+        });
+    }
+
+    // OnRunStateSnapshot(jobId, snapshot) — seed/refresh the PipelineSidebar view model with live
+    // pipeline detail (quality gates, PR status, code-review iterations). Ported from AgentMonitoring.
+    private void OnSnapshot(string jobId, RunStateSnapshot snapshot)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() =>
+        {
+            _model ??= new RunSidebarModel
+            {
+                RunId = jobId,
+                IssueIdentifier = snapshot.IssueIdentifier ?? _run?.IssueIdentifier ?? string.Empty,
+                IssueTitle = snapshot.IssueTitle ?? _run?.IssueTitle ?? string.Empty,
+                BrainProviderConfigId = snapshot.BrainProviderConfigId,
+                RunType = snapshot.RunType,
+            };
+            ApplySnapshotToRunModel(_model, snapshot);
+            _liveStep = snapshot.CurrentStep;
+            StateHasChanged();
+        });
+    }
+
+    private void OnCompleted(string jobId)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(async () =>
+        {
+            _isLive = false;
+            // Reload the now-terminal summary for final metadata, and advance the sidebar model's
+            // step to the terminal step — without discarding the live pipeline detail (quality gates,
+            // PR, review) already accumulated from snapshots.
+            await ReloadCompletedRunAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task ReloadCompletedRunAsync()
+    {
+        if (!Guid.TryParse(RunId, out var id)) return;
+        try
+        {
+            _run = (await RunHistory.GetRunAsync(id, _cts.Token))?.Run;
+            if (_run is not null && _model is not null)
+            {
+                _model.CurrentStep = _run.FinalStep;
+                if (StepOrder.GetOrder(_run.FinalStep) > StepOrder.GetOrder(_model.HighWaterMark))
+                    _model.HighWaterMark = _run.FinalStep;
+                // TODO: [WARNING] Unconditionally overwriting HighWaterMark with FinalStep
+                // (Completed/Failed ordinal) for terminal states clobbers the real last-active
+                // step if no live snapshots were received before OnCompleted fired (e.g. reconnect
+                // race). In that case _model has no data fields set and GetLastReachedStep falls
+                // back to Created. Consider using _run.LastActiveStep here for terminal FinalSteps,
+                // mirroring the logic in BuildRunModelFromSummary.
+                // Seed CompletedAtOffset so GetElapsedTime() and Dur() show the real duration
+                // instead of continuing to use DateTimeOffset.UtcNow after the run finishes.
+                _model.CompletedAtOffset = _run.CompletedAtOffset;
+            }
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
+    }
+
+    // Accumulates incremental chat entries pushed by the hub during an active run.
+    // The initial batch of chat history is seeded from RunStateSnapshot on subscribe.
+    private void OnChatEntry(string jobId, ChatRole role, string content)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() =>
+        {
+            _model?.ChatHistory.Add(new ChatEntry { Role = role, Content = content });
+            StateHasChanged();
+        });
+    }
+
+    // Cancels the active run via /api/ui (WorkItem.Id == PipelineRun.RunId), which checks the run's
+    // stored project and drives RunLifecycleManager.CancelRunAsync on the server — the same effect as
+    // the old modal's "Cancel Run". The live OnRunCompleted event will flip the view to its terminal state.
+    private async Task CancelRunAsync()
+    {
+        if (!Guid.TryParse(RunId, out var id)) return;
+        _cancelling = true;
+        _cancelError = null;
+        // TODO: [WARNING] This pre-try StateHasChanged() runs synchronously before the first await
+        // and is unnecessary — Blazor batches re-renders and the trailing call after finally is
+        // sufficient. Removing it eliminates a narrow disposal-race surface: if _cts is cancelled
+        // by a concurrent navigation/disposal, this call executes on a potentially detached component.
+        StateHasChanged();
+        try
+        {
+            await Guard.DemandAsync(AccessRole.Operator, _run?.ProjectId, "CancelRun");
+            await WorkItemActions.CancelAsync(id, _cts.Token);
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (AccessDeniedException)
+        {
+            _cancelError = AccessDeniedException.UserMessage;
+        }
+        catch (Exception ex)
+        {
+            _cancelError = ex.Message;
+            Serilog.Log.Warning(ex, "RunPage: failed to cancel run {RunId}", RunId);
+        }
+        finally
+        {
+            _cancelling = false;
+        }
+        // TODO: [WARNING] This trailing StateHasChanged() executes after an awaited call. If the
+        // component was disposed (user navigated away) while PostStatusAsync was in flight, _cts
+        // is cancelled and the component is detached. Wrap in InvokeAsync with a disposal guard,
+        // consistent with the InvokeAsync pattern used in hub callbacks elsewhere in this file.
+        StateHasChanged();
+    }
+
+    // Returns true when the re-dispatch button should be visible: terminal Implementation run
+    // with provider IDs available (new runs) — old runs without provider IDs get no button.
+    // ConflictRestart is included because it is also a permanent dead-end for the operator.
+    // TODO: [WARNING] Confirm that ConflictRestart is always a permanent terminal state. If the pipeline
+    // can continue from ConflictRestart in some flows, this condition would show the re-dispatch button
+    // for a run that is not actually dead-ended, misleading the operator. See issue #2948 review.
+    private static bool CanRedispatch(PipelineRunSummary run)
+        => run.RunType == PipelineRunType.Implementation
+        && run.FinalStep is PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.ConflictRestart
+        && !string.IsNullOrEmpty(run.IssueProviderConfigId)
+        && !string.IsNullOrEmpty(run.RepoProviderConfigId);
+
+    // Queues a new Implementation work item for the same issue (spec 051 D5): the API prepares it the
+    // way the dispatch drawers do, and it waits in the queue until the dispatch loop starts it.
+    // Note: this does NOT clear provider labels (e.g. agent:error). The confirmation dialog
+    // informs the operator to clear them manually if needed.
+    private async Task RedispatchAsync()
+    {
+        if (_run is null || !CanRedispatch(_run)) return;
+        // TODO: [WARNING] No double-dispatch prevention across page reloads. _redispatchSuccess prevents
+        // a second dispatch within the same page lifetime, but reloading the page resets all state and
+        // re-shows the button even if a dispatch was already submitted for this run. A user who hits F5
+        // after dispatching will see the button again and could submit a duplicate. Consider querying
+        // active work items for the same issue to suppress the button if one is already queued/running.
+        _redispatchInProgress = true;
+        _redispatchError = null;
+        StateHasChanged();
+        try
+        {
+            await Guard.DemandAsync(AccessRole.Operator, _run.ProjectId, "RedispatchRun");
+            _redispatchMessage = await RunHistory.RedispatchAsync(Guid.Parse(_run.RunId), _cts.Token);
+            _redispatchSuccess = true;
+            _showRedispatchConfirm = false;
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (AccessDeniedException)
+        {
+            _redispatchError = AccessDeniedException.UserMessage;
+        }
+        catch (Exception ex)
+        {
+            _redispatchError = ex.Message;
+            Serilog.Log.Warning(ex, "RunPage: failed to re-dispatch run {RunId}", RunId);
+        }
+        finally
+        {
+            _redispatchInProgress = false;
+        }
+        StateHasChanged();
+    }
+
+    // ── Sidebar view-model builders (ported from AgentMonitoring.razor.cs) ──
+
+    // Seeds the sidebar view model from a completed/loaded run summary. For active runs the hub's
+    // RunStateSnapshot refines it; for completed runs the summary is the only source.
+    private static RunSidebarModel BuildRunModelFromSummary(PipelineRunSummary summary)
+    {
+        var model = new RunSidebarModel
+        {
+            RunId = summary.RunId,
+            IssueIdentifier = summary.IssueIdentifier,
+            IssueTitle = summary.IssueTitle,
+            // BrainProviderConfigId is init-only, so it is set at construction; the sidebar hides the brain
+            // steps when it is null.
+            BrainProviderConfigId = summary.BrainRepoUsed ? "placeholder" : null,
+            RunType = summary.RunType,
+        };
+
+        model.CurrentStep = summary.FinalStep;
+        // For terminal runs use the persisted LastActiveStep as HighWaterMark so GetLastReachedStep()
+        // returns the real last step instead of fabricating one from the raw Failed/Cancelled ordinal.
+        // For active runs keep FinalStep (the current executing step) so the sidebar renders correctly
+        // until the first live RunStateSnapshot arrives and ApplySnapshotToRunModel takes over.
+        model.HighWaterMark = summary.FinalStep is PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.Completed
+            ? summary.LastActiveStep ?? PipelineStep.Created
+            : summary.FinalStep;
+        model.RetryCount = summary.RetryCount;
+        model.AnalysisRecommendation = summary.AnalysisRecommendation;
+        model.CodeReviewAgentsRun = summary.CodeReviewAgentsRun;
+        model.ModelName = summary.ModelName;
+        model.PullRequestUrl = summary.PullRequestUrl;
+        model.BranchName = summary.BranchName;
+        model.DecompositionSubIssuesCreated = summary.DecompositionSubIssuesCreated;
+        model.DecompositionSubIssuesAttempted = summary.DecompositionSubIssuesAttempted;
+        model.BrainUpdatesPushed = summary.BrainUpdatesPushed;
+        model.BrainContextLoaded = summary.BrainContextLoaded;
+        model.BrainKnowledgeFileCount = summary.BrainKnowledgeFileCount;
+        model.CompletedAtOffset = summary.CompletedAtOffset;
+        model.StartedAtOffset = summary.StartedAtOffset;
+        model.RunMode = summary.RunMode;
+        model.ConsolidationType = summary.ConsolidationType;
+        model.ConsolidationTemplateId = summary.ConsolidationTemplateId;
+        model.ConsolidationTemplateName = summary.ConsolidationTemplateName;
+
+        return model;
+    }
+
+    // Applies a live RunStateSnapshot to the sidebar view model (both on construct and on update).
+    private static void ApplySnapshotToRunModel(RunSidebarModel model, RunStateSnapshot snapshot)
+    {
+        model.CurrentStep = snapshot.CurrentStep;
+        model.HighWaterMark = snapshot.HighWaterMark;
+        model.RetryCount = snapshot.RetryCount;
+        model.BranchName = snapshot.BranchName;
+        model.BaselineHealthPassed = snapshot.BaselineHealthPassed;
+        model.BrainContextLoaded = snapshot.BrainContextLoaded;
+        model.BrainKnowledgeFileCount = snapshot.BrainKnowledgeFileCount;
+        model.IssueLabels = snapshot.IssueLabels;
+        model.AnalysisSkipped = snapshot.AnalysisSkipped;
+        model.AnalysisRecommendation = snapshot.AnalysisRecommendation;
+        model.FilesChangedCount = snapshot.FilesChangedCount;
+        model.LinesAdded = snapshot.LinesAdded;
+        model.LinesRemoved = snapshot.LinesRemoved;
+        model.CodeReviewIterationsCompleted = snapshot.CodeReviewIterationsCompleted;
+        model.CodeReviewIterationInProgress = snapshot.CodeReviewIterationInProgress;
+        model.CodeReviewIterationsTotal = snapshot.CodeReviewIterationsTotal;
+        model.CodeReviewAgentsRun = snapshot.CodeReviewAgentsRun;
+        model.CodeReviewCriticalCount = snapshot.CodeReviewCriticalCount;
+        model.CodeReviewWarningCount = snapshot.CodeReviewWarningCount;
+        model.CodeReviewSuggestionCount = snapshot.CodeReviewSuggestionCount;
+        model.LatestQualityReport = snapshot.LatestQualityReport;
+        model.PullRequestUrl = snapshot.PullRequestUrl;
+        model.PullRequestNumber = snapshot.PullRequestNumber;
+        model.IsDraftPr = snapshot.IsDraftPr;
+        model.BlacklistedFilesDetected = snapshot.BlacklistedFilesDetected;
+        model.OpenIssuesDownloaded = snapshot.OpenIssuesDownloaded;
+        model.BrainFilesCommitted = snapshot.BrainFilesCommitted;
+        model.BrainUpdatesPushed = snapshot.BrainUpdatesPushed;
+        model.DecompositionSubIssuesCreated = snapshot.DecompositionSubIssuesCreated;
+        model.DecompositionSubIssuesAttempted = snapshot.DecompositionSubIssuesAttempted;
+        model.FailureReason = snapshot.FailureReason;
+        model.ModelName = snapshot.ModelName;
+        model.RepositoryName = snapshot.RepositoryName;
+        // Replace rather than append, so a reconnect's second snapshot does not duplicate entries.
+        model.QualityGateHistory.Clear();
+        model.QualityGateHistory.AddRange(snapshot.QualityGateHistory);
+        model.ChatHistory.Clear();
+        model.ChatHistory.AddRange(snapshot.ChatHistory);
+        if (snapshot.StartedAtOffset != default)
+            model.StartedAtOffset = snapshot.StartedAtOffset;
+    }
+
+    private static string Truncate(string? s, int n)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length > n ? s[..n] + "…" : s;
+    }
+
+    private static string Dur(DateTimeOffset start, DateTimeOffset? end)
+    {
+        var d = (end ?? DateTimeOffset.UtcNow) - start;
+        // For live runs with no CompletedAtOffset, show the live elapsed (same value as the sidebar
+        // GetElapsedTime) so Duration advances in real time and the sidebar elapsed div is redundant.
+        if (d.TotalHours >= 1) return $"{(int)d.TotalHours}h {d.Minutes}m";
+        if (d.TotalMinutes >= 1) return $"{(int)d.TotalMinutes}m {d.Seconds}s";
+        return $"{Math.Max(0, (int)d.TotalSeconds)}s";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // Detach the reconnect handler first — before _cts.CancelAsync() — so a background-thread
+        // Reconnected event cannot fire after the CancellationTokenSource is disposed.
+        if (_reconnectedHandler is not null)
+        {
+            HubConnection.Reconnected -= _reconnectedHandler;
+            _reconnectedHandler = null;
+        }
+
+        if (_subscribed)
+        {
+            try
+            {
+                if (HubConnection.State == HubConnectionState.Connected)
+                    await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromRun, RunId, CancellationToken.None);
+            }
+            catch (Exception) { /* best-effort unsubscribe */ }
+        }
+        _outputSub?.Dispose();
+        _stepSub?.Dispose();
+        _completedSub?.Dispose();
+        _snapshotSub?.Dispose();
+        _chatEntrySub?.Dispose();
+        _elapsedTimer?.Dispose();
+
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

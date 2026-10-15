@@ -1,3 +1,5 @@
+using CodingAgent.Web.Models;
+using CodingAgent.Web.Ui;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -20,7 +22,7 @@ public class TriageSurroundingsComponentTests : BunitContext
     [Fact]
     public void Attention_ListsTriagesThatNeedSomeone()
     {
-        var triages = new Mock<IPipelineApiTriageClient>();
+        var triages = new Mock<CodingAgent.Web.Ui.IUiTriageClient>();
         triages.Setup(t => t.ListAsync(It.Is<TriageListQuery>(q => q.Tab == TriageListTab.NeedYou), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TriageListPage
             {
@@ -63,9 +65,9 @@ public class TriageSurroundingsComponentTests : BunitContext
             CompletedAtOffset = DateTimeOffset.UtcNow,
             ProjectId = ShopProjectId,
         }, null));
-        var triages = new Mock<IPipelineApiTriageClient>();
+        var triages = new Mock<CodingAgent.Web.Ui.IUiTriageClient>();
         triages.Setup(t => t.FindByRunAsync(runId.ToString(), It.IsAny<CancellationToken>())).ReturnsAsync(TriageId);
-        var hub = new Mock<IAgentHubConnection>();
+        var hub = new Mock<IUiHubConnection>();
         hub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
         var config = new Mock<IPipelineApiConfigClient>();
         config.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
@@ -88,14 +90,12 @@ public class TriageSurroundingsComponentTests : BunitContext
         cut.Find("h1").TextContent.Should().Be("Orders stuck in Pending", "an operator triage has no issue number to show");
     }
 
-    private static PipelineRun TriageRun(PipelineStep current, PipelineStep highWaterMark) => new()
+    private static RunSidebarModel TriageRun(PipelineStep current, PipelineStep highWaterMark) => new()
     {
         RunId = Guid.NewGuid().ToString(),
         IssueIdentifier = "431",
         IssueTitle = "Orders stuck",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        StartedAt = DateTime.UtcNow.AddMinutes(-3),
+        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-3),
         RunType = PipelineRunType.Triage,
         CurrentStep = current,
         HighWaterMark = highWaterMark,
@@ -120,7 +120,7 @@ public class TriageSurroundingsComponentTests : BunitContext
     public void Sidebar_TriageRunWithoutReview_HidesTheReviewStep()
     {
         var run = TriageRun(PipelineStep.ReportingRca, PipelineStep.ReportingRca);
-        run.Metrics.PhaseBreakdown["triage"] = new PhaseUsage(1000, null);
+        run.PhaseBreakdown["triage"] = new PhaseUsage(1000, null);
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -130,14 +130,12 @@ public class TriageSurroundingsComponentTests : BunitContext
     [Fact]
     public void Sidebar_OtherRuns_DoNotShowTheTriageSteps()
     {
-        var run = new PipelineRun
+        var run = new RunSidebarModel
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "12",
             IssueTitle = "Epic",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            StartedAt = DateTime.UtcNow.AddMinutes(-3),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-3),
             RunType = PipelineRunType.DecompositionAnalysis,
             CurrentStep = PipelineStep.DownloadingOpenIssues,
             HighWaterMark = PipelineStep.DownloadingOpenIssues,
