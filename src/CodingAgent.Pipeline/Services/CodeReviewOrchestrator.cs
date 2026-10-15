@@ -410,6 +410,7 @@ internal class CodeReviewOrchestrator
 
             if (result.Failed)
             {
+                run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
                 crashCount++;
                 _logger.Warning("Pipeline {RunId} sequential review agent '{AgentName}' failed: {Error}",
                     run.RunId, agent.Name, result.Error);
@@ -475,6 +476,13 @@ internal class CodeReviewOrchestrator
 
             if (result.Failed)
             {
+                // TODO: [WARNING] This AccumulateTokenUsage call is not exercised by any test.
+                // SupportsParallelExecution is hardcoded to false in the test class constructor, so
+                // all three new tests (issue #3649) run through the sequential dispatcher only. A
+                // regression that removes or misplaces this call in the parallel path would go
+                // undetected. Add a parallel-path test with SupportsParallelExecution = true and a
+                // non-zero-exit agent that has a non-null Usage to cover this branch.
+                run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
                 crashCount++;
                 _logger.Warning("Pipeline {RunId} parallel review agent '{AgentName}' failed: {Error}",
                     run.RunId, agent.Name, result.Error);
@@ -640,6 +648,17 @@ internal class CodeReviewOrchestrator
         {
             _logger.Warning("Pipeline {RunId} review agent '{AgentName}' did not write findings file at {FindingsFile}",
                 run.RunId, agent.Name, findingsFilePath);
+            if (reviewResult.ExitCode != 0)
+            {
+                activity?.SetTag("code_review.has_findings_file", false);
+                return new ReviewAgentResult
+                {
+                    AgentResult = reviewResult,
+                    FindingsText = "",
+                    Severity = new SeverityCounts(0, 0, 0),
+                    Error = $"exited with code {reviewResult.ExitCode} without writing a findings file"
+                };
+            }
             findingsText = "";
             findingsLines = Array.Empty<string>();
         }

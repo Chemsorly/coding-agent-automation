@@ -60,7 +60,7 @@ public sealed class RunUsageMetricsTests
         lifecycleManager
             .Setup(m => m.FailRunWithLabelAsync(
                 It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync((PipelineRun?)null);
         var dbFactory = new LocalTestDbContextFactory(opts);
         return new WorkItemStatusTransitionService(
@@ -353,9 +353,17 @@ public sealed class RunUsageMetricsTests
             {
                 ["codegen"] = new()
                 {
-                    Tokens = 23315, Cost = 0.7371m, Provider = "claude", BillingMode = AgentBillingModes.Subscription,
-                    InputTokens = 7771, OutputTokens = 7772, ReasoningTokens = 7773, CacheReadTokens = 7774,
-                    CacheWriteTokens = 7775, Turns = 7731, WebSearchRequests = 7732
+                    Tokens = 23315,
+                    Cost = 0.7371m,
+                    Provider = "claude",
+                    BillingMode = AgentBillingModes.Subscription,
+                    InputTokens = 7771,
+                    OutputTokens = 7772,
+                    ReasoningTokens = 7773,
+                    CacheReadTokens = 7774,
+                    CacheWriteTokens = 7775,
+                    Turns = 7731,
+                    WebSearchRequests = 7732
                 }
             }
         };
@@ -369,7 +377,11 @@ public sealed class RunUsageMetricsTests
             .ToDictionary(m => m.Tags["token_type"]!.ToString()!, m => m.Value);
         tokensByType.Should().BeEquivalentTo(new Dictionary<string, long>
         {
-            ["input"] = 7771, ["output"] = 7772, ["reasoning"] = 7773, ["cache_read"] = 7774, ["cache_write"] = 7775
+            ["input"] = 7771,
+            ["output"] = 7772,
+            ["reasoning"] = 7773,
+            ["cache_read"] = 7774,
+            ["cache_write"] = 7775
         });
         turnsBag.Should().ContainSingle(m => m.Value == 7731).Which.Tags["provider"].Should().Be("claude");
         searchBag.Should().ContainSingle(m => m.Value == 7732);

@@ -109,12 +109,12 @@ internal sealed class OrphanedRunCompletionHandler
         // gets agent:next. The comment above saying this "mirrors" SwapLabelAndPostCommentAsync is
         // incorrect for the Review case. Align the two paths or document the intentional divergence.
         // See review findings (Correctness reviewer, line 346).
-        // TODO: [WARNING] The Failed and Cancelled arms of this switch are unreachable: this method
-        // is only called when workItemStatus == WorkItemStatus.Succeeded (FinalStep == Completed).
-        // The Error and Cancelled labels are carried over verbatim from the original
-        // AgentJobLifecycleService.TrySwapLabelAfterOrphanedRecoveryAsync and can never execute.
-        // Removing them would tighten the method's documented scope; left in place to preserve
-        // the extraction as a faithful refactor without introducing additional behavioural changes.
+        // This method is reached only when workItemStatus == WorkItemStatus.Succeeded.
+        // CompletionOutcomeResolver.Resolve returns Succeeded for exactly three FinalStep values:
+        //   {Completed, ConflictRestart, PrMerged}.
+        // Completed → apply a task-type-dependent label (see switch below).
+        // ConflictRestart and PrMerged → fall through to _ => null (no label applied), mirroring
+        // AgentJobLifecycleService; the warning log below fires to surface the no-op to operators.
         var label = finalLabel ?? payload.FinalStep switch
         {
             PipelineStep.Completed => runRecord.TaskType switch
@@ -124,8 +124,6 @@ internal sealed class OrphanedRunCompletionHandler
                 WorkItemTaskType.Triage => AgentLabels.TriageReview,
                 _ => AgentLabels.Done
             },
-            PipelineStep.Failed => AgentLabels.Error,
-            PipelineStep.Cancelled => AgentLabels.Cancelled,
             _ => null
         };
 

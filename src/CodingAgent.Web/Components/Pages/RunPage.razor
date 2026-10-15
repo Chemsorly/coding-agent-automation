@@ -276,6 +276,18 @@
             </div>
         }
 
+        @if (run.PodLogTail is { Count: > 0 } podLogTail)
+        {
+            <div class="cockpit-card" data-testid="pod-log-tail-card">
+                <div class="cockpit-card-header">
+                    <h2>Agent pod log <span style="font-size: 12px; font-weight: 400; color: var(--text-muted);">(last @podLogTail.Count lines)</span></h2>
+                </div>
+                <div class="cockpit-card-pad">
+                    <pre class="run-live-log">@string.Join("\n", podLogTail)</pre>
+                </div>
+            </div>
+        }
+
         @* Re-dispatch — available for terminal Implementation runs when provider IDs are present. *@
         @if (CanRedispatch(run) && Access.CanOperate(run.ProjectId))
         {

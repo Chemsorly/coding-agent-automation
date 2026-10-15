@@ -877,15 +877,16 @@ public sealed class AgentHubGateKestrelFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("AGENT_API_KEY", ApiWebApplicationFactory.ApiKey);
         Environment.SetEnvironmentVariable("UserToken__SigningKey", ApiWebApplicationFactory.UserTokenSigningKey);
 
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Warning()
-            .CreateBootstrapLogger();
-
         builder.UseEnvironment("Development");
 
         builder.ConfigureServices(services =>
         {
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+            // Override the Serilog.ILogger DI registration to prevent ReloadableLogger.Freeze()
+            // race condition — same fix as ApiWebApplicationFactory.
+            services.RemoveAll<Serilog.ILogger>();
+            services.AddSingleton<Serilog.ILogger>(
+                new Serilog.LoggerConfiguration().MinimumLevel.Warning().CreateLogger());
             services.RemoveAll<IHostedService>();
 
             RemoveDbContextRegistrations(services);

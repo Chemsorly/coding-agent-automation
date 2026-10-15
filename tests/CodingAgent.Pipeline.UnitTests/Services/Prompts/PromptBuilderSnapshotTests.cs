@@ -587,7 +587,7 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
 [
   {
     "title": "Short descriptive title of the refactoring opportunity",
-    "category": "duplication|structural-drift|complexity|over-engineering|todo|dead-code|bug|stale-documentation|naming-inconsistency|primitive-obsession",
+    "category": "duplication|structural-drift|complexity|over-engineering|todo|dead-code|bug|stale-documentation|naming-inconsistency|primitive-obsession|test-gap",
     "affectedFiles": ["src/path/to/File1.cs", "src/path/to/File2.cs"],
     "rationale": "The problem: what goes wrong or what it costs, and why it matters",
     "description": "The change: what to change, as one concrete approach",
@@ -641,6 +641,7 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
   - Prefer negative assertions ("no references remain", "no callers exist") — they catch incomplete implementations.
   - When `scopeQuery` is set, one criterion MUST state that no match of the pattern remains (apart from the exclusions in `description`).
   - For `bug`, one criterion MUST require a test that reproduces the failure scenario and passes after the fix.
+  - For `test-gap`, the criteria MUST name the behaviors the new tests cover, and one criterion MUST state that no production (non-test) file changes.
   - For `duplication` with behavioral differences, one criterion MUST state that each listed difference is kept or removed as `description` says.
   - Do NOT use #N notation — GitHub autolinks to wrong issues.
 
@@ -650,6 +651,7 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
   - extract-class: "Original class no longer contains the extracted methods", "New class is registered in DI"
   - duplication: "Duplicated logic consolidated to single call site", "The guard only the retry copy had is kept on the retry path"
   - bug: "A test that sets X to null before calling Y fails before the fix and passes after it"
+  - test-gap: "Tests cover the null-input and timeout paths of FooService.Parse", "No production (non-test) file changes"
 
 ## Writing for the Implementer
 
@@ -671,7 +673,7 @@ Each proposal MUST be achievable by a single agent in one run:
 ## Also Produce
 
 Write a brief analysis log at `.agent/refactoring-analysis.md` containing:
-- Total findings received from agents A, B, C, and any agent whose findings file was missing or invalid
+- Total findings received from agents A, B, C, D, and any agent whose findings file was missing or invalid
 - How many were dropped (duplicates, convention-filtered, evidence gate, scope-exceeded)
 - The ranking scores for the top candidates
 - Which findings were dropped and why (one line each)
@@ -963,7 +965,7 @@ Make all changes directly to the files. After completion, provide a brief summar
 ## CRITICAL RULES — Read First
 
 1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Use the available tools.** Phase 0 listed them under `availableTools` in `.agent/refactoring-conventions.json` and saved the output of the project's analyzers in `.agent/refactoring-tool-output/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other two agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
+2. **Use the available tools.** Phase 0 listed them under `availableTools` in `.agent/refactoring-conventions.json` and saved the output of the project's analyzers in `.agent/refactoring-tool-output/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other detection agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
 3. **Declare what you did NOT check.** List files/areas you skipped due to context limits in the `notChecked` field of your output.
 4. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
 5. **Do NOT modify source code.** Only produce the findings output file.
@@ -976,7 +978,7 @@ Make all changes directly to the files. After completion, provide a brief summar
    - `hotspot:<file>` — change frequency. This says how often a file changes, not that anything is wrong with it.
 # Agent A: Structural Debt Detection
 
-You are one of three parallel analysis agents. Your focus is **structural debt** —
+You are one of several parallel analysis agents. Your focus is **structural debt** —
 patterns where incremental changes have created global incoherence.
 
 ## Your Categories
@@ -1062,7 +1064,7 @@ Write findings to `.agent/refactoring-structural-findings.json` as a JSON object
 ## CRITICAL RULES — Read First
 
 1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Use the available tools.** Phase 0 listed them under `availableTools` in `.agent/refactoring-conventions.json` and saved the output of the project's analyzers in `.agent/refactoring-tool-output/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other two agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
+2. **Use the available tools.** Phase 0 listed them under `availableTools` in `.agent/refactoring-conventions.json` and saved the output of the project's analyzers in `.agent/refactoring-tool-output/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other detection agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
 3. **Declare what you did NOT check.** List files/areas you skipped due to context limits in the `notChecked` field of your output.
 4. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
 5. **Do NOT modify source code.** Only produce the findings output file.
@@ -1075,7 +1077,7 @@ Write findings to `.agent/refactoring-structural-findings.json` as a JSON object
    - `hotspot:<file>` — change frequency. This says how often a file changes, not that anything is wrong with it.
 # Agent B: Correctness & Hygiene Detection
 
-You are one of three parallel analysis agents. Your focus is **correctness and hygiene** —
+You are one of several parallel analysis agents. Your focus is **correctness and hygiene** —
 concrete issues that are wrong, dead, or misleading.
 
 ## Your Categories
@@ -1179,7 +1181,7 @@ Write findings to `.agent/refactoring-correctness-findings.json` as a JSON objec
 ## CRITICAL RULES — Read First
 
 1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Use the available tools.** Phase 0 listed them under `availableTools` in `.agent/refactoring-conventions.json` and saved the output of the project's analyzers in `.agent/refactoring-tool-output/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other two agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
+2. **Use the available tools.** Phase 0 listed them under `availableTools` in `.agent/refactoring-conventions.json` and saved the output of the project's analyzers in `.agent/refactoring-tool-output/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other detection agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
 3. **Declare what you did NOT check.** List files/areas you skipped due to context limits in the `notChecked` field of your output.
 4. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
 5. **Do NOT modify source code.** Only produce the findings output file.
@@ -1192,7 +1194,7 @@ Write findings to `.agent/refactoring-correctness-findings.json` as a JSON objec
    - `hotspot:<file>` — change frequency. This says how often a file changes, not that anything is wrong with it.
 # Agent C: Design Consistency Detection
 
-You are one of three parallel analysis agents. Your focus is **design consistency** —
+You are one of several parallel analysis agents. Your focus is **design consistency** —
 patterns where naming, typing, or API shape deviates from the project's own conventions.
 
 **This agent depends heavily on `.agent/refactoring-conventions.json`.** Read it first.

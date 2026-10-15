@@ -43,21 +43,33 @@ internal static class AgentEntryFieldApplier
                     : current,
 
         AgentFieldNames.OrphanRestoredAt =>
-            string.IsNullOrEmpty(value)
-                ? current with { OrphanRestoredAt = null }
-                : DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ora)
-                    ? current with { OrphanRestoredAt = ora }
-                    : current,
+            ApplyTimestamp(current, value, ts => current with { OrphanRestoredAt = ts }),
 
         AgentFieldNames.LastJobCompletedAt =>
-            string.IsNullOrEmpty(value)
-                ? current with { LastJobCompletedAt = null }
-                : DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ljc)
-                    ? current with { LastJobCompletedAt = ljc }
-                    : current,
+            ApplyTimestamp(current, value, ts => current with { LastJobCompletedAt = ts }),
 
         _ => current
     };
+
+    /// <summary>
+    /// Returns a new <see cref="AgentEntry"/> with a <see cref="DateTimeOffset?"/> timestamp
+    /// field updated according to <paramref name="value"/>:
+    /// <list type="bullet">
+    ///   <item>Null or empty → calls <paramref name="apply"/> with <c>null</c> (clears the field).</item>
+    ///   <item>Valid ISO-8601 round-trip string → calls <paramref name="apply"/> with the parsed value.</item>
+    ///   <item>Malformed → returns <paramref name="current"/> unchanged.</item>
+    /// </list>
+    /// </summary>
+    private static AgentEntry ApplyTimestamp(
+        AgentEntry current,
+        string? value,
+        Func<DateTimeOffset?, AgentEntry> apply)
+    {
+        if (string.IsNullOrEmpty(value)) return apply(null);
+        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ts)
+            ? apply(ts)
+            : current;
+    }
 
     /// <summary>
     /// Returns <c>true</c> when <paramref name="value"/> is valid for the given
