@@ -107,16 +107,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     // ═══════════════════════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════════════
-    // G4: KubernetesWorkDistributor is the active distributor
+    // G4: the work distributor (in the API host) enqueues as Pending
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task K8sMode_DistributorIsKubernetesType()
+    public async Task K8sMode_DistributorEnqueuesAsPending()
     {
-        // Verify the factory correctly wired KubernetesWorkDistributor
-        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
-        Assert.IsType<KubernetesWorkDistributor>(distributor);
-
+        // The API host's distributor (the web host has none since spec 051 4.1).
         // Verify it enqueues as Pending (Queued=true — item enters the visible UI queue first)
         var result = await DistributeDirectlyAsync("k8s-type-check-500");
         Assert.True(result.Success);
