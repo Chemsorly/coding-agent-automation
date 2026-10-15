@@ -387,4 +387,5 @@ public sealed class WorkItemStatusRequest
     public string? ErrorMessage { get; init; }
     public string? FailureReason { get; init; }
     public string? BranchName { get; init; }
+    public IReadOnlyList<string>? PodLogTail { get; init; }
 }

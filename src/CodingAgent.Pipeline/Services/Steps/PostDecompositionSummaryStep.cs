@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.Services.Steps;
@@ -141,15 +142,9 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
             }
 
             var sanitizedTitle = TextSanitizer.SanitizeMarkdown(result.Title);
-            sb.AppendLine($"| {i + 1} | {EscapeMarkdownPipe(sanitizedTitle)} | {status} | {link} |");
+            sb.AppendLine($"| {i + 1} | {MarkdownTableHelper.SanitizeTableCell(sanitizedTitle)} | {status} | {link} |");
         }
 
         return sb.ToString();
     }
-
-    /// <summary>
-    /// Escapes pipe characters in text to prevent breaking markdown table formatting.
-    /// </summary>
-    private static string EscapeMarkdownPipe(string text)
-        => text.Replace("|", "\\|");
 }

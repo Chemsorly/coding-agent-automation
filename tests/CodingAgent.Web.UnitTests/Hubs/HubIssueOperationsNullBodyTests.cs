@@ -9,18 +9,18 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgent.Web.UnitTests.Hubs;
 
 /// <summary>
-/// Tests for <see cref="AgentIssueOperations"/> — the null-body fallback path in
+/// Tests for <see cref="HubIssueOperations"/> — the null-body fallback path in
 /// <c>AppendFeedbackLinkToPrBodyAsync</c> where <c>GetPullRequestBodyAsync</c> returns
 /// <c>null</c> and the method falls back to <c>run.PullRequestBody ?? ""</c>.
 /// Also verifies that <c>run.PullRequestBody</c> is mutated after a successful append.
 /// </summary>
-public sealed class AgentIssueOperationsNullBodyTests
+public sealed class HubIssueOperationsNullBodyTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<ILabelService> _labelService = new();
     private readonly Mock<ILogger> _logger = new();
 
-    private AgentIssueOperations CreateOps() =>
+    private HubIssueOperations CreateOps() =>
         new(_facade.Object, _labelService.Object, _logger.Object);
 
     private static RunFeedback WithIssueFeedback(string description = "Some feedback") =>

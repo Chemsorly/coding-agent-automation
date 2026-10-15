@@ -877,6 +877,29 @@ public sealed class RunLifecycleManagerTests
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task FailRunWithLabelAsync_SetsFailureCategoryAndPodLogTailOnPersistedRun()
+    {
+        var run = CreateRun("run-category-and-log", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        var podLogTail = new List<string> { "a", "b" };
+
+        var result = await _sut.FailRunWithLabelAsync(
+            "run-category-and-log",
+            "Pod crashed",
+            resolvedFinalLabel: null,
+            CancellationToken.None,
+            failureReasonEnum: FailureReason.Timeout,
+            podLogTail: podLogTail);
+
+        result.Should().NotBeNull();
+        result!.FailureCategory.Should().Be(FailureReason.Timeout,
+            "FailRunWithLabelAsync must persist the failureReasonEnum as FailureCategory");
+        result.PodLogTail.Should().BeEquivalentTo(podLogTail,
+            "FailRunWithLabelAsync must persist the podLogTail");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateRun(string runId, PipelineRunType runType)

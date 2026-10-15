@@ -49,7 +49,7 @@ public sealed class ConsolidationServiceBrainScopeTests
             .ReturnsAsync(() => _liveConfig);
         _selectorResolver
             .Setup(r => r.ResolveAsync(It.IsAny<ProviderConfig?>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)["dotnet"]);
+            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(["dotnet"]), null));
         _distributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .Callback<JobDistributionRequest, CancellationToken>((request, _) => _requests.Add(request))

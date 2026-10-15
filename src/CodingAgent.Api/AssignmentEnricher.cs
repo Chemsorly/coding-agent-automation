@@ -197,18 +197,9 @@ public class AssignmentEnricher
         if (identity.TaskType == WorkItemTaskType.Consolidation)
             return await EnrichConsolidationCoreAsync(identity, project, ct);
 
-        // ── Step 1: Resolve agent profile from AgentSelector ──────────────────────
-        // AgentSelector is the sorted comma-joined MatchLabels from the resolved profile.
-        // Splitting it back gives us the required labels for fresh profile resolution.
-        var selectorLabels = (identity.AgentSelector ?? "")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-
+        // ── Step 1: Resolve agent profile ──────────────────────────────────────────
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-        // NOTE: [WARNING] ProfileResolver.ResolveByRequiredLabels is called as a static method, but
-        // ProfileResolver is registered as a singleton in the DI container. If the instance ever
-        // gains injected state or config, this static call will silently bypass it.
-        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, selectorLabels);
+        var profile = ResolveProfile(identity, profiles, ct);
 
         if (profile is null)
         {
@@ -275,7 +266,7 @@ public class AssignmentEnricher
         // A project epic's other repositories, or the project review's, get clone-only provider configs so the agent
         // can read them.
         var coreRequest = new DispatchCoreRequest(
-            RequiredLabels: selectorLabels,
+            RequiredLabels: profile.MatchLabels,
             IssueIdentifier: identity.IssueIdentifier,
             IssueProviderId: new ProviderConfigId(identity.IssueProviderConfigId),
             RepoProviderId: new ProviderConfigId(identity.RepoProviderConfigId),
@@ -430,6 +421,47 @@ public class AssignmentEnricher
     }
 
     /// <summary>
+    /// Resolves the agent profile for a work item at claim time.
+    /// <para>
+    /// Primary path: finds the enabled profile whose <see cref="AgentProfile.Id"/> equals
+    /// <paramref name="identity"/>'s <see cref="JobDistributionRequest.ResolvedProfileId"/>.
+    /// </para>
+    /// <para>
+    /// Fallback (work item queued before this change, or the profile was deleted/disabled):
+    /// re-resolves via <see cref="ProfileResolver.ResolveByRequiredLabels"/> from the agent
+    /// selector labels and logs an Information message so the operator can diagnose stale items.
+    /// </para>
+    /// </summary>
+    private AgentProfile? ResolveProfile(
+        JobDistributionRequest identity,
+        IReadOnlyList<AgentProfile> profiles,
+        CancellationToken ct)
+    {
+        // TODO: [WARNING] `ct` is never used — this method is entirely synchronous (in-memory LINQ + Split).
+        // The parameter is misleading because callers pass `ct` expecting the call to be cancellable.
+        // Remove it when the caller sites are adjusted (they currently pass `ct` as the third argument).
+        if (!string.IsNullOrEmpty(identity.ResolvedProfileId))
+        {
+            var found = profiles.FirstOrDefault(p => p.Enabled && p.Id == identity.ResolvedProfileId);
+            if (found is not null)
+                return found;
+
+            _logger.Information(
+                "AssignmentEnricher: profile '{ProfileId}' not found or disabled; re-resolving from selector [{Selector}]",
+                identity.ResolvedProfileId, identity.AgentSelector ?? "");
+        }
+
+        // TODO: [WARNING] When ResolvedProfileId is null (work items queued before this change), the
+        // fallback to label resolution happens silently. Requirement 5 says to log at Information for
+        // ALL fallback cases, including null ID. During an upgrade, every in-flight pre-change work item
+        // will fall back without any observable trace. Add a log entry here for the null-ID case.
+        var selectorLabels = (identity.AgentSelector ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+        return ProfileResolver.ResolveByRequiredLabels(profiles, selectorLabels);
+    }
+
+    /// <summary>
     /// Consolidation-specific enrichment path. Delegates to
     /// <see cref="IConsolidationJobPreparationService.PrepareAsync"/> to resolve provider
     /// configs, vend short-lived tokens, and determine the per-template pipeline configuration.
@@ -442,22 +474,9 @@ public class AssignmentEnricher
         PipelineProject project,
         CancellationToken ct)
     {
-        // ── Step 1: Resolve agent labels from AgentSelector ───────────────────────
-        // TODO: [WARNING] agentLabels is a mutable List<string> passed as IReadOnlyList<string> to
-        // PrepareAsync. The callee receives a reference to the concrete list and can cast it back to
-        // List<string> and mutate it. Use agentLabels.AsReadOnly() before passing to guarantee
-        // immutability at the call site (mirrors the intent of the IReadOnlyList<string> parameter type).
-        var agentLabels = (identity.AgentSelector ?? "")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-
-        // ── Step 2: Resolve agent profile ────────────────────────────────────────
-        // Required to populate ResolvedProfileId, AgentProviderConfigId, and McpServers.
-        // Note: ConsolidationJobPreparationService.PrepareAsync also calls LoadAgentProfilesAsync
-        // internally (ResolveAgentProviderConfigAsync). The double-load is accepted; the store
-        // is cached so the performance impact is negligible.
+        // ── Step 1: Resolve agent profile ────────────────────────────────────────
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, agentLabels);
+        var profile = ResolveProfile(identity, profiles, ct);
 
         if (profile is null)
         {
@@ -467,7 +486,7 @@ public class AssignmentEnricher
             return null;
         }
 
-        // ── Step 3: Resolve provider configs and vend tokens via consolidation service ──
+        // ── Step 2: Resolve provider configs and vend tokens via consolidation service ──
         var templateId = string.IsNullOrEmpty(identity.ConsolidationTemplateId)
             ? (TemplateId?)null
             : (TemplateId)identity.ConsolidationTemplateId;
@@ -476,12 +495,12 @@ public class AssignmentEnricher
         var preparation = await _consolidationPreparer.PrepareAsync(
             runType,
             templateId,
-            agentLabels,
+            profile,
             ct);
 
         var (lastSuccessfulRunUtc, feedbackDataJson) = await ReadConsolidationHistoryAsync(identity, runType, ct);
 
-        // ── Step 4: Build enriched JobDistributionRequest ─────────────────────────
+        // ── Step 3: Build enriched JobDistributionRequest ─────────────────────────
         // QualityGateConfigs and ReviewerConfigs are intentionally not set —
         // consolidation agents do not have quality gates.
         // IssueDetail, ParsedIssue, IssueComments are identity-preserved (null in minimal
@@ -650,7 +669,7 @@ public class AssignmentEnricher
         public Task<ConsolidationJobPreparationResult> PrepareAsync(
             ConsolidationRunType type,
             TemplateId? templateId,
-            IReadOnlyList<string> agentLabels,
+            AgentProfile? profile,
             CancellationToken ct)
             => throw new InvalidOperationException(
                 "IConsolidationJobPreparationService is not available in this context. " +

@@ -2202,6 +2202,154 @@ public sealed class ReconciliationLoopTests : IDisposable
             "Reconcile.JobFailed span must remain open while HandleJobCompletedAsync executes");
     }
 
+    // ─── PodLogTail (Issue #3588) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Issue #3588: ExitCodeFailure path reads pod log tail and posts it with the status update.
+    /// </summary>
+    [Fact]
+    public async Task JobFailed_ExitCodeFailure_PostsPodLogTail()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+        var podName = "caa-agent-testpod";
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // Pod with a failed agent container (exit code 137 = OOMKilled)
+        _k8sClient.Setup(c => c.ListPodsAsync("test-ns", $"batch.kubernetes.io/job-name={jobName}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1PodList
+            {
+                Items =
+                [
+                    new V1Pod
+                    {
+                        Metadata = new V1ObjectMeta { Name = podName },
+                        Status = new V1PodStatus
+                        {
+                            ContainerStatuses =
+                            [
+                                new V1ContainerStatus
+                                {
+                                    Name = JobSpecBuilder.AgentContainerName,
+                                    State = new V1ContainerState
+                                    {
+                                        Terminated = new V1ContainerStateTerminated { ExitCode = 137, Reason = "OOMKilled", FinishedAt = DateTime.UtcNow }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            });
+
+        _k8sClient.Setup(c => c.ReadPodLogTailAsync(podName, "test-ns", JobSpecBuilder.AgentContainerName, 100, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("line1\nline2\n");
+
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u =>
+                u.Status == "Failed" &&
+                u.FailureReason == "ExitCodeFailure" &&
+                u.PodLogTail != null &&
+                u.PodLogTail.Count == 2 &&
+                u.PodLogTail[0] == "line1" &&
+                u.PodLogTail[1] == "line2"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Issue #3588: If ReadPodLogTailAsync throws, the status is still posted, but without a pod log.
+    /// </summary>
+    [Fact]
+    public async Task JobFailed_PodLogReadThrows_PostsWithoutPodLogTail()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+        var podName = "caa-agent-testpod";
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        _k8sClient.Setup(c => c.ListPodsAsync("test-ns", $"batch.kubernetes.io/job-name={jobName}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1PodList
+            {
+                Items =
+                [
+                    new V1Pod
+                    {
+                        Metadata = new V1ObjectMeta { Name = podName },
+                        Status = new V1PodStatus
+                        {
+                            ContainerStatuses =
+                            [
+                                new V1ContainerStatus
+                                {
+                                    Name = JobSpecBuilder.AgentContainerName,
+                                    State = new V1ContainerState
+                                    {
+                                        Terminated = new V1ContainerStateTerminated { ExitCode = 1, Reason = "Error", FinishedAt = DateTime.UtcNow }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            });
+
+        _k8sClient.Setup(c => c.ReadPodLogTailAsync(podName, "test-ns", JobSpecBuilder.AgentContainerName, 100, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("k8s unavailable"));
+
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        // PostStatusAsync must still be called without PodLogTail
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u =>
+                u.Status == "Failed" &&
+                u.FailureReason == "ExitCodeFailure" &&
+                u.PodLogTail == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Issue #3588: DeadlineExceeded path does NOT read pod logs (pods may be gone).
+    /// </summary>
+    [Fact]
+    public async Task JobFailed_DeadlineExceeded_DoesNotReadPodLog()
+    {
+        var job = MakeJob(JobNameFor(ItemId), ItemId, failed: true);
+        job.Status!.Conditions![0].Reason = "DeadlineExceeded";
+        job.Status!.Conditions![0].Message = "Job was active longer than specified deadline";
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        // ReadPodLogTailAsync must never be called for Timeout path
+        _k8sClient.Verify(c => c.ReadPodLogTailAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
 }
 
 // ─── Error / exception paths ──────────────────────────────────────────────────

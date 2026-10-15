@@ -274,6 +274,8 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 - **External CI timeout** — treated as gate failure, enters retry loop
 - **Cancellation** — `OperationCanceledException` caught at top level, label set to `agent:cancelled`
 
+When Kubernetes marks an agent Job failed because its pods crashed or ran out of memory, the agent cannot report its outcome. The Job Controller then records the failure category and the last 100 lines of the last failed pod's log on the run, and the run page shows them under "Agent pod log". The log is capped and secrets that look like `token=…` are masked. The Job Controller needs `get` on `pods/log` for this; the Helm chart grants it.
+
 ## Orphaned Label Recovery
 
 The `OrphanedLabelRecoveryService` (in `CodingAgent.Scheduler`) is a background service that detects issues stuck with the `agent:in-progress` label when no corresponding active run exists in the orchestrator. This can happen when:

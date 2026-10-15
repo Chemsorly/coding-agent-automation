@@ -78,7 +78,7 @@ public class PipelineRunTests
     {
         // Raw object-initializer construction (not the factory)
         // verifies the int backing field defaults to 0 == PipelineStep.Created
-        #pragma warning disable CS0618
+#pragma warning disable CS0618
         var run = new PipelineRun
         {
             RunId = "run-1",
@@ -88,7 +88,7 @@ public class PipelineRunTests
             RepoProviderConfigId = "rp-1",
             StartedAt = DateTime.UtcNow
         };
-        #pragma warning restore CS0618
+#pragma warning restore CS0618
 
         run.CurrentStep.Should().Be(PipelineStep.Created);
     }
@@ -174,10 +174,10 @@ public class PipelineRunTests
         issueIdValue.Should().Be("org/repo#42");
         summary.IssueTitle.Should().Be("Fix critical bug");
         summary.FinalStep.Should().Be(PipelineStep.Completed);
-        #pragma warning disable CS0618
+#pragma warning disable CS0618
         summary.StartedAt.Should().Be(startedAt.UtcDateTime);
         summary.CompletedAt.Should().Be(completedAt.UtcDateTime);
-        #pragma warning restore CS0618
+#pragma warning restore CS0618
         summary.StartedAtOffset.Should().Be(startedAt);
         summary.CompletedAtOffset.Should().Be(completedAt);
         summary.RetryCount.Should().Be(2);
@@ -251,6 +251,30 @@ public class PipelineRunTests
         var summary = run.ToSummary();
 
         summary.BrainRepoUsed.Should().Be(hasBrainProvider);
+    }
+
+    [Fact]
+    public void ToSummary_CopiesFailureCategoryAndPodLogTail()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            FailureCategory = FailureReason.ExitCodeFailure,
+            PodLogTail = ["line1", "line2"]
+        };
+        run.MarkCompleted();
+        run.CurrentStep = PipelineStep.Failed;
+
+        var summary = run.ToSummary();
+
+        summary.FailureCategory.Should().Be(FailureReason.ExitCodeFailure,
+            "ToSummary must copy FailureCategory");
+        summary.PodLogTail.Should().BeEquivalentTo(["line1", "line2"],
+            "ToSummary must copy PodLogTail");
     }
 
     #endregion
@@ -365,7 +389,7 @@ public class PipelineRunTests
         var startedAt = new DateTimeOffset(2026, 5, 20, 8, 0, 0, TimeSpan.Zero);
         var completedAt = new DateTimeOffset(2026, 5, 20, 8, 12, 30, TimeSpan.Zero);
 
-        #pragma warning disable CS0618
+#pragma warning disable CS0618
         var original = new PipelineRunSummary
         {
             RunId = "run-serial-1",
@@ -425,7 +449,7 @@ public class PipelineRunTests
                 ["codegen"] = new PhaseUsage(200_000, 4.50m)
             }
         };
-        #pragma warning restore CS0618
+#pragma warning restore CS0618
 
         // Act: serialize → deserialize
         var json = JsonSerializer.Serialize(original, JsonOptions);
@@ -437,10 +461,10 @@ public class PipelineRunTests
         deserialized.IssueIdentifier.Should().Be(original.IssueIdentifier);
         deserialized.IssueTitle.Should().Be(original.IssueTitle);
         deserialized.FinalStep.Should().Be(original.FinalStep);
-        #pragma warning disable CS0618
+#pragma warning disable CS0618
         deserialized.StartedAt.Should().Be(original.StartedAt);
         deserialized.CompletedAt.Should().Be(original.CompletedAt);
-        #pragma warning restore CS0618
+#pragma warning restore CS0618
         deserialized.StartedAtOffset.Should().Be(original.StartedAtOffset);
         deserialized.CompletedAtOffset.Should().Be(original.CompletedAtOffset);
         deserialized.RetryCount.Should().Be(original.RetryCount);
@@ -546,7 +570,7 @@ public class PipelineRunTests
 
     // TODO: These tests verify ProviderConfigIdForLabel in isolation but no test exists to verify
     // that passing a targetKind different from run.LabelTargetKind at the call-site level (e.g.,
-    // AgentIssueOperations.SwapLabelAsync) is either unsupported or produces consistent routing.
+    // HubIssueOperations.SwapLabelAsync) is either unsupported or produces consistent routing.
     // Consider adding a call-site-level characterization test to document this contract.
     #region ProviderConfigIdForLabel — Provider routing by RunType
 

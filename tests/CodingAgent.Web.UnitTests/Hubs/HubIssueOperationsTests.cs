@@ -10,19 +10,19 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgent.Web.UnitTests.Hubs;
 
 /// <summary>
-/// Unit tests for <see cref="AgentIssueOperations"/> covering uncovered branches:
+/// Unit tests for <see cref="HubIssueOperations"/> covering uncovered branches:
 /// - PostCommentViaIssueProviderAsync: null config, exception path
 /// - PostIssueFeedbackCommentAsync: null feedback, null formatted comment, exception path
 /// - AppendFeedbackLinkToPrBodyAsync: idempotency guard, null repo config, unparseable PR number,
 ///   remote body already contains section, exception in append
 /// </summary>
-public sealed class AgentIssueOperationsTests
+public sealed class HubIssueOperationsTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<ILabelService> _labelService = new();
     private readonly Mock<ILogger> _logger = new();
 
-    private AgentIssueOperations CreateOps() =>
+    private HubIssueOperations CreateOps() =>
         new(_facade.Object, _labelService.Object, _logger.Object);
 
     private static PipelineRun MakeRun(

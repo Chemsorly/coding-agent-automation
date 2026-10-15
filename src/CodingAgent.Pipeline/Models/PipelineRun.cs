@@ -102,6 +102,8 @@ public sealed partial class PipelineRun
     /// Set when the failure mode is known (e.g., ExitCodeFailure, Timeout).
     /// </summary>
     public FailureReason? FailureCategory { get; set; }
+    /// <summary>The last lines of the agent pod's own log, captured by the Job Controller when the pod crashed. Null otherwise.</summary>
+    public IReadOnlyList<string>? PodLogTail { get; set; }
     public string? PullRequestUrl { get; set; }
 
     /// <summary>The PR body content as last set. Used by the description generation step to prepend agent summary.</summary>
@@ -458,6 +460,7 @@ public sealed partial class PipelineRun
         AnalysisRecommendation = AnalysisRecommendation,
         RunMode = RunMode,
         FailureReason = FailureReason,
+        FailureCategory = FailureCategory,
         Feedback = Feedback,
         TotalTokens = TotalTokens,
         TotalCost = TotalCost,
@@ -475,6 +478,7 @@ public sealed partial class PipelineRun
         BranchName = BranchName,
         HarnessVersion = HarnessVersion,
         OutputTail = OutputLines.IsEmpty ? null : OutputLines.TakeLast(PipelineConstants.OutputTailCapacity).ToList(),
+        PodLogTail = PodLogTail,
         IssueProviderConfigId = IssueProviderConfigId,
         RepoProviderConfigId = RepoProviderConfigId,
         BrainProviderConfigId = BrainProviderConfigId,

@@ -51,10 +51,9 @@ public interface IRunLifecycleManager
     // avoid this by passing It.IsAny<FailureReason?>() explicitly, but future callers should do the same.
     // Consider converting the optional parameter to a parameter object (e.g., FailRunOptions) in a
     // future cleanup to eliminate the hazard at the interface boundary. See review finding [WARNING] #1.
-    Task<PipelineRun?> FailRunWithLabelAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum = null);
+    Task<PipelineRun?> FailRunWithLabelAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum = null, IReadOnlyList<string>? podLogTail = null);
 
     /// <summary>
-    /// Atomically terminates a run as Completed/Succeeded. Performs in order:
     /// 1. Removes from in-memory active runs
     /// 2. Transitions the DB WorkItem to the given terminal status
     /// 3. Persists to run history

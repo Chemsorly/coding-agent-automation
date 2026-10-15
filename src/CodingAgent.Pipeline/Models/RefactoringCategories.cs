@@ -23,12 +23,16 @@ public static class RefactoringCategories
     public const string NamingInconsistency = "naming-inconsistency";
     public const string PrimitiveObsession = "primitive-obsession";
 
+    // Agent D: test gaps
+    public const string TestGap = "test-gap";
+
     public static readonly IReadOnlyList<string> Structural = [Duplication, StructuralDrift, Complexity, OverEngineering];
     public static readonly IReadOnlyList<string> Correctness = [Todo, DeadCode, Bug, StaleDocumentation];
     public static readonly IReadOnlyList<string> Design = [NamingInconsistency, PrimitiveObsession];
+    public static readonly IReadOnlyList<string> TestGaps = [TestGap];
 
     /// <summary>Every valid category, in agent order.</summary>
-    public static readonly IReadOnlyList<string> All = [.. Structural, .. Correctness, .. Design];
+    public static readonly IReadOnlyList<string> All = [.. Structural, .. Correctness, .. Design, .. TestGaps];
 
     /// <summary>Returns <c>true</c> when <paramref name="category"/> is a known category (case-insensitive).</summary>
     public static bool IsKnown(string? category) =>
