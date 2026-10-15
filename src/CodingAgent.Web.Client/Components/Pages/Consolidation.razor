@@ -263,6 +263,21 @@
             </div>
 
             <div class="form-group">
+                <label for="refactoring-focus">Focus</label>
+                @* Known limitation: @onkeydown:stopPropagation stops ALL keydown events (not just Enter) from reaching
+                   the modal overlay. If focus is on this select and Escape is pressed, the modal will NOT close —
+                   the Escape event is swallowed here. Keyboard-only users must use Cancel or click outside.
+                   This is the same accepted trade-off as the auto-dispatch checkbox above. *@
+                <select id="refactoring-focus" data-testid="refactoring-focus" @bind="_modalFocus" @onkeydown:stopPropagation="true">
+                    <option value="@RefactoringScanFocus.All">All — every category</option>
+                    <option value="@RefactoringScanFocus.Structure">Structure — duplication, structural drift, complexity, over-engineering</option>
+                    <option value="@RefactoringScanFocus.Correctness">Correctness — bugs, dead code, TODOs, stale documentation</option>
+                    <option value="@RefactoringScanFocus.Design">Design — naming, primitive obsession</option>
+                    <option value="@RefactoringScanFocus.Tests">Tests — untested code (runs the tests with coverage)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
                 <label>Run Parameters</label>
                 <div class="refactoring-modal-params">
                     <div class="refactoring-modal-param">
@@ -319,6 +334,7 @@
     private string? _modalTemplateId;
     private string? _modalTemplateName;
     private bool _modalAutoDispatch;
+    private RefactoringScanFocus _modalFocus;
     private int _modalMaxProposals;
     private bool _modalMaxProposalsIsOverride;
     private int _modalHotspotDays;
@@ -442,6 +458,7 @@
         _modalTemplateId = templateId;
         _modalTemplateName = templateName;
         _modalAutoDispatch = false;
+        _modalFocus = RefactoringScanFocus.All;
         _showRefactoringModal = true;
         _modalJustOpened = true;
     }
@@ -449,7 +466,7 @@
     private async Task ConfirmRefactoringModal()
     {
         _showRefactoringModal = false;
-        await TriggerConsolidation(ConsolidationRunType.RefactoringDetection, _modalTemplateId, _modalAutoDispatch);
+        await TriggerConsolidation(ConsolidationRunType.RefactoringDetection, _modalTemplateId, _modalAutoDispatch, _modalFocus);
     }
 
     private void DismissRefactoringModal()
@@ -474,7 +491,7 @@
         }
     }
 
-    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, bool autoDispatch = false)
+    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, bool autoDispatch = false, RefactoringScanFocus focus = RefactoringScanFocus.All)
     {
         _statusMessage = null;
         _statusIsError = false;
@@ -483,7 +500,7 @@
         {
             // The API enqueues the run as Pending (global operator); the Scheduler dispatches it, and
             // the Job turns it Running once the agent starts.
-            _statusMessage = await ConsolidationApi.TriggerAsync(type, templateId, autoDispatch);
+            _statusMessage = await ConsolidationApi.TriggerAsync(type, templateId, autoDispatch, focus: focus);
             await LoadDataAsync();
         }
         catch (InvalidOperationException ex)

@@ -744,6 +744,12 @@ public class ConsolidationPromptBuilderRefactoringTests
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.Tests);
 
+        // TODO [WARNING]: These assertions use substring matching and may pass even if the schema emits
+        // extra categories alongside "test-gap" (e.g. "test-gap|structural-debt"). The NotContain check
+        // only excludes the full All-schema pipe-joined string, not partial multi-value combinations.
+        // A regression where ForFocus(Tests) returns extra categories would not be caught. Consider
+        // replacing with an exact schema-line assertion, or asserting that no other category names from
+        // RefactoringCategories.All appear in the result.
         result.Should().Contain($"\"category\": \"{RefactoringCategories.TestGap}\"");
         result.Should().NotContain($"\"category\": \"{string.Join("|", RefactoringCategories.All)}\"");
     }

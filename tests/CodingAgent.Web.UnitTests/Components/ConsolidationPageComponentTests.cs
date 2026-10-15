@@ -675,6 +675,12 @@ public class ConsolidationPageComponentTests : BunitContext
         var startButton = cut.Find(".modal-card .btn-save");
         startButton.Click();
 
+        // TODO [WARNING]: The Verify below uses It.IsAny<RefactoringScanFocus>() and does not constrain the
+        // focus to RefactoringScanFocus.All. A regression where _modalFocus is initialised to any value
+        // other than All (e.g. Tests) would still pass this test, because the focus is not asserted.
+        // The companion test RefactoringModal_FocusTests_PassesFocusToTrigger only covers the changed-focus
+        // path. Consider adding a separate test (e.g. RefactoringModal_DefaultFocus_SendsAll) that opens
+        // the modal without changing the select and verifies focus == RefactoringScanFocus.All is passed.
         _mockConsolidationClient.Verify(s => s.TriggerAsync(
             ConsolidationRunType.RefactoringDetection, "t1", false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
     }

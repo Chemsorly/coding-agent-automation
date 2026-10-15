@@ -609,6 +609,12 @@ $"""
         sb.AppendLine("and record the failure in the analysis log.");
         sb.AppendLine();
 
+        // TODO [WARNING]: The acceptance criterion for issue #3583 specifies that the focus-constraint
+        // sentence should appear "directly after the inputs list" (i.e. immediately after the numbered
+        // file lines, before the "Each findings file holds…" paragraph). The current placement puts it
+        // after that paragraph instead. For LLM prompts, proximity to the inputs list can affect how
+        // strongly the model applies the category constraint. Consider moving this block to directly
+        // after the numbered inputs list and before "Each findings file holds a `findings` array…".
         // For focused scans: state which categories are in scope so the agent constrains its output.
         if (focus != RefactoringScanFocus.All)
         {
