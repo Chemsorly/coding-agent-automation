@@ -13,7 +13,6 @@ public static class RunDiagnoser
     private const int EvidenceMaxChars = 300;
     private static readonly TimeSpan PlatformIncidentWindow = TimeSpan.FromMinutes(10);
     private const int PlatformIncidentMinOtherRuns = 3;
-    private static readonly TimeSpan RepoGateWindow = TimeSpan.FromHours(24);
     private const int RepoGateMinOtherRuns = 2;
 
     /// <summary>
