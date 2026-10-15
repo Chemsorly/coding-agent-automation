@@ -38,7 +38,11 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
 
         var run = new PipelineRun
         {
-            RunId = "outage", IssueIdentifier = "42", IssueTitle = "t", IssueProviderConfigId = "ip", RepoProviderConfigId = "rp",
+            RunId = "outage",
+            IssueIdentifier = "42",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
             WorkspacePath = _workspacePath
         };
         var context = new AgentPhaseContext
@@ -46,10 +50,16 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
             Run = run,
             Config = new PipelineConfiguration
             {
-                AgentTimeout = TimeSpan.FromMinutes(10), StallPollInterval = TimeSpan.FromMilliseconds(50),
-                StallWarningInterval = TimeSpan.FromHours(1), MaxAnalysisRetries = 2, AnalysisReviewEnabled = false
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1),
+                MaxAnalysisRetries = 2,
+                AnalysisReviewEnabled = false
             },
-            AgentProvider = agent.Object, IssueOps = issueOps.Object, Callbacks = callbacks.Object, OrchestratorCts = null,
+            AgentProvider = agent.Object,
+            IssueOps = issueOps.Object,
+            Callbacks = callbacks.Object,
+            OrchestratorCts = null,
             Issue = new IssueDetail { Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "r", AcceptanceCriteria = ["a"] }
         };
@@ -63,6 +73,58 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
         issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Never);
         agent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once,
             "retrying at once cannot help while the provider is unavailable");
+        callbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProviderMisconfiguredDuringWarmUpWithExistingAnalysis_FailsAsInfrastructure()
+    {
+        var agent = new Mock<IAgentProvider>();
+        var issueOps = new Mock<IAgentIssueOperations>();
+        var callbacks = new Mock<IPipelineCallbacks>();
+        agent.Setup(a => a.GetHealthStatus()).Returns(new AgentHealthStatus { IsExecuting = true, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
+        agent.Setup(a => a.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProviderUnavailableException(AgentErrorCategory.ProviderMisconfigured, "kiro-cli refused its configuration: x"));
+
+        var run = new PipelineRun
+        {
+            RunId = "outage-warmup",
+            IssueIdentifier = "42",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            WorkspacePath = _workspacePath
+        };
+        var context = new AgentPhaseContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1),
+                MaxAnalysisRetries = 2,
+                AnalysisReviewEnabled = false
+            },
+            AgentProvider = agent.Object,
+            IssueOps = issueOps.Object,
+            Callbacks = callbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "r", AcceptanceCriteria = ["a"] }
+        };
+
+        var issueComments = new[]
+        {
+            new IssueComment { Id = "1", Body = $"{CommentMarkers.AnalysisHeader}\nExisting analysis content that is long enough to satisfy checks", Author = "bot", CreatedAt = DateTime.UtcNow }
+        };
+
+        var proceed = await new AgentPhaseExecutor(new Mock<Serilog.ILogger>().Object)
+            .ExecuteAnalysisPhaseAsync(context, issueComments, false, CancellationToken.None);
+
+        proceed.Should().BeFalse();
+        run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Never);
         callbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
     }
 }

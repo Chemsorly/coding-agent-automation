@@ -95,13 +95,13 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// </summary>
     public static KiroCliLib.Configuration.Configuration CreateRunConfiguration(
         string executablePath, string? model, string? agentName, AgentEffortLevel effort = AgentEffortLevel.Auto) => new()
-    {
-        KiroCliPath = executablePath,
-        UseWsl = OperatingSystem.IsWindows(),
-        Model = string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : model.Trim(),
-        AgentName = IsNoAgentChosen(agentName) ? null : agentName!.Trim(),
-        Effort = ToKiroEffort(effort)
-    };
+        {
+            KiroCliPath = executablePath,
+            UseWsl = OperatingSystem.IsWindows(),
+            Model = string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : model.Trim(),
+            AgentName = IsNoAgentChosen(agentName) ? null : agentName!.Trim(),
+            Effort = ToKiroEffort(effort)
+        };
 
     /// <summary>
     /// Whether an agent name setting means "the CLI's own agent". The provider form pre-filled
@@ -130,13 +130,22 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
         try
         {
+            var warmUpLines = new List<string>();
             var exitCode = await TimeoutHelper.ExecuteWithTimeoutAsync(
                 WarmUpTimeout, ct,
-                linkedCt => _orchestrator.ExecutePromptAsync(WarmUpPrompt, workspacePath, useResume: false, linkedCt),
+                linkedCt => _orchestrator.ExecutePromptAsync(WarmUpPrompt, workspacePath, useResume: false, linkedCt,
+                    onOutputLine: line => { warmUpLines.Add(AnsiStripper.Strip(line)); return Task.CompletedTask; }),
                 () => Task.FromResult(ExitCodes.Timeout));
 
             if (exitCode != ExitCodes.Success)
             {
+                if (_orchestrator.LastRunRejectedConfiguration)
+                {
+                    var lastLine = warmUpLines.LastOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim() ?? "no output";
+                    throw new ProviderUnavailableException(AgentErrorCategory.ProviderMisconfigured,
+                        $"kiro-cli refused its configuration: {lastLine}");
+                }
+
                 _logger.Warning("Warm-up prompt exited with code {ExitCode} for workspace {WorkspacePath}; session not established",
                     exitCode, normalizedPath);
                 return;
@@ -147,7 +156,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 await TrackMainSessionAsync(workspacePath, normalizedPath, replace: false, ct);
             _logger.Information("Session established via warm-up prompt for workspace {WorkspacePath}", normalizedPath);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException and not ProviderUnavailableException)
         {
             _logger.Warning(ex, "Warm-up prompt failed for workspace {WorkspacePath}; session not established", normalizedPath);
         }

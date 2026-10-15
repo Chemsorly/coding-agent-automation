@@ -679,19 +679,19 @@ public sealed class ReconciliationLoop
         switch (phase)
         {
             case JobPhaseSucceeded:
-                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, ct))
+                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, null, ct))
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case KubernetesJobConditions.JobPhaseFailed:
                 {
-                    var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
+                    var (failureReason, errorMsg, podLogTail) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
                     // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
                     // Placed here in case KubernetesJobConditions.JobPhaseFailed: rather than inside HandleJobCompletedAsync
                     // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
                     using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
                     jobFailedActivity?.SetTag(WorkItemIdTag, workItemId.Value);
                     jobFailedActivity?.SetTag("failure_reason", failureReason);
-                    if (await HandleJobCompletedAsync(workItemId.Value, job, KubernetesJobConditions.JobPhaseFailed, failureReason, errorMsg, ct))
+                    if (await HandleJobCompletedAsync(workItemId.Value, job, KubernetesJobConditions.JobPhaseFailed, failureReason, errorMsg, podLogTail, ct))
                         _reconciledTerminalIds.Add(workItemId.Value);
                     break;
                 }
@@ -710,7 +710,7 @@ public sealed class ReconciliationLoop
     ///     in the message so the operator can tell an OOM from a crash.</item>
     /// </list>
     /// </summary>
-    private async Task<(string FailureReason, string? ErrorMessage)> ClassifyJobFailureAsync(
+    private async Task<(string FailureReason, string? ErrorMessage, IReadOnlyList<string>? PodLogTail)> ClassifyJobFailureAsync(
         Guid workItemId, V1Job job, CancellationToken ct)
     {
         var condition = job.Status?.Conditions?.FirstOrDefault(c => c.Type == KubernetesJobConditions.JobPhaseFailed && c.Status == KubernetesJobConditions.ConditionTrue);
@@ -718,7 +718,7 @@ public sealed class ReconciliationLoop
         try
         {
             if (await _workItemClient.GetStatusAsync(workItemId, ct) == WorkItemStatus.Dispatched)
-                return (nameof(FailureReason.InfrastructureFailure), condition?.Message);
+                return (nameof(FailureReason.InfrastructureFailure), condition?.Message, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -726,22 +726,53 @@ public sealed class ReconciliationLoop
         }
 
         if (condition?.Reason == JobReasonDeadlineExceeded)
-            return (nameof(FailureReason.Timeout), condition.Message);
+            return (nameof(FailureReason.Timeout), condition.Message, null);
 
-        var lastPod = await DescribeLastFailedPodAsync(job, ct);
-        var message = string.Join(" ", new[] { condition?.Message, lastPod }.Where(s => !string.IsNullOrEmpty(s)));
-        return (nameof(FailureReason.ExitCodeFailure), message.Length > 0 ? message : null);
+        var (lastPodDescription, lastPodName) = await DescribeLastFailedPodAsync(job, ct);
+        var message = string.Join(" ", new[] { condition?.Message, lastPodDescription }.Where(s => !string.IsNullOrEmpty(s)));
+
+        IReadOnlyList<string>? podLogTail = null;
+        if (lastPodName is not null)
+        {
+            try
+            {
+                var raw = await _k8sClient.ReadPodLogTailAsync(lastPodName, _options.Namespace, JobSpecBuilder.AgentContainerName, 100, ct);
+                // TODO: [WARNING] The raw pod log is transmitted to the API unsanitized. Sanitization
+                // (SanitizePodLogTail) only runs server-side after full receipt. If the Job Controller
+                // communicates with the API over plain HTTP (Kubernetes cluster default without a service
+                // mesh), or if request-body logging middleware is enabled on the API, any secrets present
+                // in the pod log (e.g. GITHUB_TOKEN, AWS_ACCESS_KEY_ID) would be visible in plaintext in
+                // the HTTP request body before masking applies. Mitigations: (a) enforce TLS between the
+                // Job Controller and the API (service mesh or explicit cert), or (b) move sanitization to
+                // the Job Controller side before PostStatusAsync. See security review finding [WARNING] #1.
+                var lines = raw.Split('\n')
+                    .Select(l => l.TrimEnd('\r'))
+                    .ToList();
+                // Drop empty trailing lines
+                while (lines.Count > 0 && string.IsNullOrEmpty(lines[^1]))
+                    lines.RemoveAt(lines.Count - 1);
+                if (lines.Count > 0)
+                    podLogTail = lines;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.Warning(ex, "Failed to read the log of pod {PodName}; the failure has no pod log", lastPodName);
+            }
+        }
+
+        return (nameof(FailureReason.ExitCodeFailure), message.Length > 0 ? message : null, podLogTail);
     }
 
     /// <summary>
     /// Describes how the Job's most recent failed agent container ended, e.g.
     /// "Last pod caa-1234abcd-x7k2p: OOMKilled (exit code 137).". Best effort: returns null when the
     /// pods cannot be listed or none has a failed agent container.
+    /// Also returns the pod name so the caller can read its logs without listing pods again.
     /// </summary>
-    private async Task<string?> DescribeLastFailedPodAsync(V1Job job, CancellationToken ct)
+    private async Task<(string? Description, string? PodName)> DescribeLastFailedPodAsync(V1Job job, CancellationToken ct)
     {
         var jobName = job.Metadata?.Name;
-        if (string.IsNullOrEmpty(jobName)) return null;
+        if (string.IsNullOrEmpty(jobName)) return (null, null);
 
         try
         {
@@ -749,15 +780,17 @@ public sealed class ReconciliationLoop
             var lastFailed = (pods?.Items ?? [])
                 .Where(p => AgentTermination(p) is { ExitCode: not 0 })
                 .MaxBy(p => AgentTermination(p)!.FinishedAt);
-            if (lastFailed is null) return null;
+            if (lastFailed is null) return (null, null);
 
             var terminated = AgentTermination(lastFailed)!;
-            return $"Last pod {lastFailed.Metadata?.Name}: {terminated.Reason ?? "Error"} (exit code {terminated.ExitCode}).";
+            var podName = lastFailed.Metadata?.Name;
+            var description = $"Last pod {podName}: {terminated.Reason ?? "Error"} (exit code {terminated.ExitCode}).";
+            return (description, podName);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Warning(ex, "Failed to list the pods of K8s Job {JobName}; the failure message has no pod detail", jobName);
-            return null;
+            return (null, null);
         }
     }
 
@@ -793,6 +826,7 @@ public sealed class ReconciliationLoop
         string status,
         string? failureReason,
         string? errorMessage,
+        IReadOnlyList<string>? podLogTail,
         CancellationToken ct)
     {
         var succeeded = false;
@@ -802,7 +836,8 @@ public sealed class ReconciliationLoop
             {
                 Status = status,
                 FailureReason = failureReason,
-                ErrorMessage = errorMessage
+                ErrorMessage = errorMessage,
+                PodLogTail = podLogTail
             }, ct);
 
             // A real transition (200) and an idempotent no-op on an already-terminal item (204) both

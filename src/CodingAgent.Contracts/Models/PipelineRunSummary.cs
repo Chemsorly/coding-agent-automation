@@ -84,6 +84,9 @@ public sealed class PipelineRunSummary
     /// <summary>Why the run failed, or null if it did not fail.</summary>
     public string? FailureReason { get; init; }
 
+    /// <summary>The typed failure category (timeout, exit code, infrastructure, ...), or null when the run did not fail or the category is unknown.</summary>
+    public FailureReason? FailureCategory { get; init; }
+
     /// <summary>Structured feedback collected from the agent after this run.</summary>
     public RunFeedback? Feedback { get; init; }
 
@@ -146,6 +149,13 @@ public sealed class PipelineRunSummary
     /// N is governed by <see cref="PipelineConstants.OutputTailCapacity"/>.
     /// </summary>
     public IReadOnlyList<string>? OutputTail { get; init; }
+
+    /// <summary>
+    /// The last lines of the agent pod's own log, captured by the Job Controller when Kubernetes marked the Job
+    /// failed and the agent could not report. Null otherwise. Capped and redacted by the API.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public IReadOnlyList<string>? PodLogTail { get; init; }
 
     /// <summary>
     /// Issue provider config ID used for this run.

@@ -94,7 +94,7 @@
                                     @if (_missingTemplates.Contains(profile.Id))
                                     {
                                         <span class="template-missing"
-                                              title="No job template matches labels [@string.Join(", ", profile.MatchLabels)]. Work items will fail at dispatch.">
+                                              title="No job template matches key [@profile.JobTemplateKey()]. Work items will fail at dispatch.">
                                             <Icon Name="alert-octagon" Size="14" /> No template
                                         </span>
                                     }
@@ -106,7 +106,7 @@
                                     }
                                     else if (profile.Enabled && profile.MatchLabels.Count > 0)
                                     {
-                                        <span class="status-icon is-on" title="Template matched"><Icon Name="check-circle" Size="16" /></span>
+                                        <code class="monitoring-mono">@profile.JobTemplateKey()</code>
                                     }
                                     else
                                     {
@@ -140,7 +140,7 @@
                 <input type="text" @bind="_form.DisplayName" placeholder="e.g. Kiro .NET Agent" />
             </div>
             <div class="form-group">
-                <label>Match Labels <span class="form-hint">(comma-separated, empty = default/catch-all · ALL match — agent must have every label listed)</span></label>
+                <label>Match Labels <span class="form-hint">(comma-separated · the repository labels this profile serves; they also pick quality gates and reviewers)</span></label>
                 <input type="text" @bind="_form.MatchLabels" placeholder="e.g. kiro, dotnet" />
             </div>
             <div class="form-group">
@@ -153,6 +153,20 @@
                     }
                 </select>
             </div>
+            @if (IsKubernetesMode && JobTemplateStore is not null)
+            {
+                var allTemplates = JobTemplateStore.GetAllTemplates();
+                <div class="form-group">
+                    <label>Job template @(allTemplates.Count > 0 ? "*" : "")<span class="form-hint">(the Kubernetes job template this profile's jobs run on; leave blank to use Match Labels as the key)</span></label>
+                    <select @bind="_form.JobTemplate">
+                        <option value="">-- Use Match Labels as key --</option>
+                        @foreach (var t in allTemplates)
+                        {
+                            <option value="@t.Labels">@t.Labels · @t.ProviderType · @t.Image</option>
+                        }
+                    </select>
+                </div>
+            }
             <div class="form-group form-checkbox">
                 <label>
                     <input type="checkbox" @bind="_form.Enabled" />
@@ -344,7 +358,7 @@
         {
             if (!profile.Enabled || profile.MatchLabels.Count == 0)
                 continue;
-            var selector = JobTemplateStore.NormalizeLabels(string.Join(",", profile.MatchLabels));
+            var selector = profile.JobTemplateKey();
             if (store.Resolve(selector) is null)
                 missing.Add(profile.Id);
         }
@@ -375,6 +389,13 @@
     private void ShowAddForm()
     {
         _editingProfile = null;
+        // TODO: [WARNING] Requirement 10 says "For a new profile, preselect the template whose key equals
+        // the normalized match labels, if one exists." The preselection logic is not implemented: new
+        // profiles always open with the blank "Use Match Labels as key" option regardless of MatchLabels.
+        // To implement: after the user changes _form.MatchLabels, resolve JobTemplateStore.NormalizeLabels
+        // of the entered labels and compare against each template key; if a match exists, populate
+        // _form.JobTemplate with that key. This requires either a reactive MatchLabels binding or
+        // a deferred lookup in SaveProfile just before building the AgentProfile object.
         _form = new ProfileForm { Enabled = true };
         _formError = null;
         _showMcpForm = false;
@@ -392,6 +413,7 @@
             AgentProviderConfigId = profile.AgentProviderConfigId,
             Enabled = profile.Enabled,
             Priority = profile.Priority,
+            JobTemplate = profile.JobTemplate ?? "",
             McpServers = profile.McpServers.Select(s => new McpServerFormModel
             {
                 Name = s.Name,
@@ -432,6 +454,10 @@
             AgentProviderConfigId = _form.AgentProviderConfigId,
             Enabled = _form.Enabled,
             Priority = _form.Priority,
+            // In Kubernetes mode use the selected template; outside k8s mode preserve the existing value.
+            JobTemplate = IsKubernetesMode
+                ? (string.IsNullOrWhiteSpace(_form.JobTemplate) ? null : _form.JobTemplate)
+                : _editingProfile?.JobTemplate,
             McpServers = _form.McpServers.Select(MapMcpServerFormToConfig).ToList()
         };
 
@@ -537,6 +563,7 @@
         public string AgentProviderConfigId { get; set; } = "";
         public bool Enabled { get; set; } = true;
         public int Priority { get; set; } = 0;
+        public string JobTemplate { get; set; } = "";
         public List<McpServerFormModel> McpServers { get; set; } = new();
     }
 

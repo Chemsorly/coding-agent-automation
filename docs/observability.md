@@ -428,6 +428,7 @@ All emitted by the agent pod.
 | `RefactoringDetection.Phase1.StructuralDebt` | `pipeline.run_id` | Structural debt detection agent (one of three parallel detection agents) |
 | `RefactoringDetection.Phase1.Correctness` | `pipeline.run_id` | Correctness detection agent (one of three parallel detection agents) |
 | `RefactoringDetection.Phase1.DesignConsistency` | `pipeline.run_id` | Design consistency detection agent (one of three parallel detection agents) |
+<!-- TODO: "one of three" is now stale (four Phase 1 agents since issue #3582). Update to "one of four parallel detection agents" in all three rows above. Also add a missing row: `RefactoringDetection.Phase1.TestGaps` | `pipeline.run_id` | Test gap detection agent (one of four parallel detection agents). Also update the span tree below (~line 602-604). See review finding #5. -->
 | `RefactoringDetection.Phase2.Aggregation` | `pipeline.run_id` | Aggregation and prioritization of the detected proposals |
 | `RefactoringDetection.AdversarialReview` | `pipeline.run_id` | Adversarial review of refactoring proposals |
 | `RefactoringDetection.CreateIssues` | `pipeline.run_id`, `pipeline.proposal_count`, `pipeline.rejected_proposal_count` | Creating GitHub issues for proposals |

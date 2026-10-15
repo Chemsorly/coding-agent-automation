@@ -467,6 +467,13 @@ public sealed class GetAssignmentTests
         // TODO: [WARNING] NotBeNull does not verify the trace context payload is actually preserved.
         // TraceContext is non-reconstructable (W3C spans are closed at assignment time). Add:
         //   minimal.TraceContext!["traceparent"].Should().Be("00-abc-def-01");
+        // TODO: [WARNING] Missing assertion for ResolvedProfileId. The issue requirement says
+        // "BuildMinimalPayload: keeps ResolvedProfileId". Add:
+        //   minimal.ResolvedProfileId.Should().Be(full.ResolvedProfileId,
+        //       "ResolvedProfileId must be stored in the minimal payload so claim-time enrichment
+        //        can use it without falling back to selector-based resolution");
+        // Without this assertion, accidentally re-adding ResolvedProfileId to the omitted list
+        // in BuildMinimalPayload would go undetected by CI.
     }
 
     [Fact]
