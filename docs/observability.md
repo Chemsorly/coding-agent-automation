@@ -12,7 +12,7 @@ Custom metrics live on three meters. Agent pods (K8s Jobs) export **no metrics**
 |-------|------------|---------------|
 | `CodingAgent.Pipeline` | `PipelineTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/`) | API, Scheduler, Job Controller, Web |
 | `CodingAgent.WorkDistribution` | `WorkDistributionTelemetry.cs`, `ChatTelemetry.cs` (same folder) | API, Scheduler, Job Controller, Web |
-| `CodingAgent.GitHub` | `GitHubTelemetry.cs` (`src/CodingAgent.Infrastructure.Providers/GitHub/`) | API, Scheduler, Job Controller, Web |
+| `CodingAgent.GitHub` | `GitHubTelemetry.cs` (`src/CodingAgent.Infrastructure.Providers/GitHub/`) | API, Scheduler, Job Controller |
 
 Every host also exports the built-in ASP.NET Core, `HttpClient` and `System.Runtime` (.NET runtime) meters; the API also exports `Npgsql`. All metric readers use cumulative temporality (Grafana Cloud drops delta histograms).
 

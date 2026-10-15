@@ -1,28 +1,8 @@
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Models
-@using CodingAgent.Orchestration.Dispatch
-@using CodingAgent.Kubernetes
 
 <section class="settings-section">
     <h2>Agent Profiles</h2>
     <p class="section-description">Profiles map agents to their capabilities via labels. When a job is dispatched, the agent's labels are matched against profile labels (ALL must match) to determine MCP servers and provider config.</p>
-
-    @if (_missingTemplates.Count > 0 || _typeMismatches.Count > 0)
-    {
-        <div class="agent-detail-error" style="margin-bottom: 12px;">
-            <Icon Name="alert-octagon" Size="16" />
-            <strong>Dispatch will fail:</strong>
-            @if (_missingTemplates.Count > 0)
-            {
-                <text>@_missingTemplates.Count profile(s) have no matching job template in the <code>orchestrator-job-templates</code> ConfigMap. Work items routed to these profiles will fail at dispatch.</text>
-            }
-            @if (_typeMismatches.Count > 0)
-            {
-                <text>@_typeMismatches.Count profile(s) use an agent provider whose type does not match their job template. Their runs fail when the agent starts.</text>
-            }
-            See highlighted rows below.
-        </div>
-    }
 
     @if (_profiles.Count == 0)
     {
@@ -91,20 +71,7 @@
                             @if (IsKubernetesMode)
                             {
                                 <td>
-                                    @if (_missingTemplates.Contains(profile.Id))
-                                    {
-                                        <span class="template-missing"
-                                              title="No job template matches key [@profile.JobTemplateKey()]. Work items will fail at dispatch.">
-                                            <Icon Name="alert-octagon" Size="14" /> No template
-                                        </span>
-                                    }
-                                    else if (_typeMismatches.TryGetValue(profile.Id, out var mismatchMsg))
-                                    {
-                                        <span class="template-missing" title="@mismatchMsg">
-                                            <Icon Name="alert-octagon" Size="14" /> Wrong agent type
-                                        </span>
-                                    }
-                                    else if (profile.Enabled && profile.MatchLabels.Count > 0)
+                                    @if (profile.Enabled && profile.MatchLabels.Count > 0)
                                     {
                                         <code class="monitoring-mono">@profile.JobTemplateKey()</code>
                                     }
@@ -153,20 +120,6 @@
                     }
                 </select>
             </div>
-            @if (IsKubernetesMode && JobTemplateStore is not null)
-            {
-                var allTemplates = JobTemplateStore.GetAllTemplates();
-                <div class="form-group">
-                    <label>Job template @(allTemplates.Count > 0 ? "*" : "")<span class="form-hint">(the Kubernetes job template this profile's jobs run on; leave blank to use Match Labels as the key)</span></label>
-                    <select @bind="_form.JobTemplate">
-                        <option value="">-- Use Match Labels as key --</option>
-                        @foreach (var t in allTemplates)
-                        {
-                            <option value="@t.Labels">@t.Labels · @t.ProviderType · @t.Image</option>
-                        }
-                    </select>
-                </div>
-            }
             <div class="form-group form-checkbox">
                 <label>
                     <input type="checkbox" @bind="_form.Enabled" />
@@ -303,17 +256,10 @@
     [Parameter, EditorRequired] public IUiSettingsClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = [];
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
-    /// <summary>
-    /// Job template store injected in k8s mode only. Null in SignalR/Legacy modes.
-    /// When non-null, profiles whose MatchLabels have no matching template show a warning.
-    /// </summary>
-    [Parameter] public JobTemplateStore? JobTemplateStore { get; set; }
     /// <summary>When true, the Template column and validation are active (k8s mode).</summary>
     [Parameter] public bool IsKubernetesMode { get; set; }
 
     private List<AgentProfile> _profiles = new();
-    private HashSet<string> _missingTemplates = new();
-    private Dictionary<string, string> _typeMismatches = new();
     private bool _showForm;
     private AgentProfile? _editingProfile;
     private ProfileForm _form = new();
@@ -336,54 +282,11 @@
         try
         {
             _profiles = (await ConfigClient.GetAgentProfilesAsync(CancellationToken.None)).ToList();
-            _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore, IsKubernetesMode);
-            _typeMismatches = ComputeTypeMismatches(_profiles, JobTemplateStore, IsKubernetesMode, AgentProviders);
         }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to load profiles: {ex.Message}", true));
         }
-    }
-
-    /// <summary>
-    /// Returns IDs of enabled profiles whose MatchLabels have no matching job template.
-    /// Returns empty set when not in k8s mode.
-    /// </summary>
-    private static HashSet<string> ComputeMissingTemplates(
-        IReadOnlyList<AgentProfile> profiles, JobTemplateStore? store, bool isKubernetesMode = true)
-    {
-        if (!isKubernetesMode || store is null) return [];
-        var missing = new HashSet<string>();
-        foreach (var profile in profiles)
-        {
-            if (!profile.Enabled || profile.MatchLabels.Count == 0)
-                continue;
-            var selector = profile.JobTemplateKey();
-            if (store.Resolve(selector) is null)
-                missing.Add(profile.Id);
-        }
-        return missing;
-    }
-
-    /// <summary>
-    /// Returns a dictionary of profile id → mismatch message for enabled profiles whose
-    /// agent provider type does not match the job template's provider type.
-    /// Returns empty dictionary when not in k8s mode.
-    /// </summary>
-    private static Dictionary<string, string> ComputeTypeMismatches(
-        IReadOnlyList<AgentProfile> profiles, JobTemplateStore? store, bool isKubernetesMode,
-        IReadOnlyList<ProviderConfig> agentProviders)
-    {
-        if (!isKubernetesMode || store is null) return new Dictionary<string, string>();
-        var mismatches = new Dictionary<string, string>();
-        foreach (var profile in profiles)
-        {
-            var provider = agentProviders.FirstOrDefault(p => p.Id == profile.AgentProviderConfigId);
-            var message = store.FindProviderTypeMismatch(profile, provider);
-            if (message is not null)
-                mismatches[profile.Id] = message;
-        }
-        return mismatches;
     }
 
     private void ShowAddForm()

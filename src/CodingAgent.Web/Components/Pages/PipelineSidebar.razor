@@ -3,7 +3,7 @@
 
 <aside class="pipeline-sidebar" id="pipelineSidebar">
     <div class="sidebar-header">
-        <div class="sidebar-issue" title="@Run.WorkspacePath">
+        <div class="sidebar-issue">
             @if (Run.RunType == PipelineRunType.Review)
             {
                 <span class="run-type-badge run-type-review" style="font-size: 0.75rem;"><Icon Name="search" /> Review</span>
@@ -96,22 +96,22 @@
          "Only render the breakdown if PhaseBreakdown.Count > 0 AND any phase has tokens > 0".
          A PhaseUsage with Tokens=0 and Cost=null (e.g. from an empty/failed agent invocation that still
          produced a dictionary entry) would satisfy `.Count > 0` alone and render a zero-token, dash-cost row,
-         which is misleading noise. Change the guard to `Run.Metrics.PhaseBreakdown.Any(p => p.Value.Tokens > 0)`
+         which is misleading noise. Change the guard to `Run.PhaseBreakdown.Any(p => p.Value.Tokens > 0)`
          to enforce the "tokens > 0" requirement and subsume the `.Count > 0` check.
     *@
-    @if (Run.Metrics.PhaseBreakdown.Count > 0)
+    @if (Run.PhaseBreakdown.Count > 0)
     {
         <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body"
                      IsExpanded="_costBreakdownExpanded"
                      IsExpandedChanged="v => _costBreakdownExpanded = v">
             <Header>
-                <span>Cost Breakdown (@Run.Metrics.PhaseBreakdown.Count phases)</span>
+                <span>Cost Breakdown (@Run.PhaseBreakdown.Count phases)</span>
             </Header>
             <ChildContent>
                 <table class="monitoring-table" style="margin-top: 6px;">
                     <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
                     <tbody>
-                    @foreach (var phase in Run.Metrics.PhaseBreakdown
+                    @foreach (var phase in Run.PhaseBreakdown
                         .OrderByDescending(p => p.Value.Cost ?? 0m)
                         .ThenByDescending(p => p.Value.Tokens))
                     {
@@ -154,7 +154,7 @@
 
 @code {
     /// <summary>The active pipeline run to display in the sidebar.</summary>
-    [Parameter, EditorRequired] public PipelineRun Run { get; set; } = default!;
+    [Parameter, EditorRequired] public RunSidebarModel Run { get; set; } = default!;
 
     /// <summary>Whether the pipeline is currently running (controls cancel button visibility).</summary>
     [Parameter] public bool IsRunning { get; set; }
@@ -309,8 +309,8 @@
     /// </summary>
     private bool IsRcaReviewSkipped() =>
         LogicalOrder(Run.HighWaterMark) > LogicalOrder(PipelineStep.ReviewingRca)
-        && Run.Metrics.PhaseBreakdown.ContainsKey(TriageInvestigationPhase)
-        && !Run.Metrics.PhaseBreakdown.ContainsKey(TriageReviewPhase);
+        && Run.PhaseBreakdown.ContainsKey(TriageInvestigationPhase)
+        && !Run.PhaseBreakdown.ContainsKey(TriageReviewPhase);
 
     private const string TriageInvestigationPhase = "triage";
     private const string TriageReviewPhase = "triage_review";
@@ -920,7 +920,7 @@
             }
             else
             {
-                var linkedCount = Run.LinkedIssueContexts?.Count ?? 0;
+                var linkedCount = Run.LinkedIssueCount;
                 @if (linkedCount > 0)
                 {
                     <span><Icon Name="check-circle" /> @linkedCount linked issue(s) found</span>

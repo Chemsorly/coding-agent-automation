@@ -1,13 +1,9 @@
 using CodingAgent.Web;
-using CodingAgent.Api.Client;
-using CodingAgent.AgentGateway;
-using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Common.Auth;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Models;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Web.Services;
@@ -20,8 +16,6 @@ using OpenTelemetry.Trace;
 using Serilog;
 
 // Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
-// TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
-const string AgentApiKeyConfigKey = "AGENT_API_KEY"; // S1192: single source for repeated literal
 Log.Logger = HostBootstrap.CreateBootstrapLogger();
 // TODO: Web host has no startup-identity log; the other three hosts (Api, Scheduler, JobController)
 // all call HostBootstrap.LogStartupIdentity(...) immediately after CreateBootstrapLogger(). Add a
@@ -97,23 +91,9 @@ catch (InvalidOperationException ex)
     return;
 }
 
-var agentApiKey = builder.Configuration.GetValue<string>(AgentApiKeyConfigKey)
-    ?? Environment.GetEnvironmentVariable(AgentApiKeyConfigKey)
-    ?? "";
-
-builder.Services.AddPipelineApiClient(new PipelineApiClientOptions
-{
-    BaseUrl = apiBaseUrl,
-    AgentApiKey = agentApiKey
-});
-
-builder.Services.AddInfrastructureServices();
-builder.Services.AddPipelineServices(Serilog.Log.Logger);
-builder.Services.AddPipelineCoreServices();
-builder.Services.AddOrchestrationServices();
-// The Consolidation page triggers through the API since spec 051 2.4b, so this host registers no
-// consolidation service.
-builder.Services.AddWorkDistribution(builder.Configuration);
+// Spec 051 4.1: the web host holds no agent API key. Everything it shows comes from /api/ui and the UI
+// hub, called as the signed-in user; the drain service keeps /readyz honest during shutdown.
+builder.Services.AddReadinessDrain();
 
 // Frontend observability (Faro) — scoped so each Blazor circuit gets its own instance.
 // FaroService wraps IJSRuntime; NotificationFaroBridge forwards notifications to Faro.
@@ -143,10 +123,9 @@ var app = builder.Build();
 
 // ── Post-Build startup sequence ─────────────────────────────────────────────
 // Each concern is extracted into its own WebApplication extension method.
-// Ordering: ValidateShutdownBudget, ValidateDiWiring, then MapApplicationEndpoints.
+// Ordering: ValidateShutdownBudget, then MapApplicationEndpoints.
 
 app.ValidateShutdownBudget();
-app.ValidateDiWiring();
 app.MapApplicationEndpoints();
 
 await app.RunAsync();

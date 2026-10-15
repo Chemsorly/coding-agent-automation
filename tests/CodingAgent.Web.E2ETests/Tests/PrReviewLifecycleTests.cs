@@ -328,7 +328,7 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         // behaviour (two runs created, second agent:done applied) without exercising the
         // browser drawer for the second dispatch — the first dispatch test already covers the
         // drawer UI path.
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var secondDispatchResult = await distributor.DistributeAsync(new JobDistributionRequest
         {
             IssueIdentifier = "103",

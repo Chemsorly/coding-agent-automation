@@ -1,6 +1,7 @@
 # =============================================================================
 # CodingAgent.Web Dockerfile
-# Runs the Blazor Server UI + SignalR hub for agent coordination.
+# Runs the Blazor Server web UI. It calls the Pipeline API as the signed-in user (/api/ui, /hubs/ui)
+# and references no server project (spec 051), so it holds no agent API key and no provider client.
 # The web service does NOT run Kiro CLI, dotnet build/test, or quality gates.
 # Those responsibilities belong to agent containers (see agent-*.Dockerfile).
 # =============================================================================
@@ -17,19 +18,11 @@ WORKDIR /src
 COPY Directory.Build.props ./
 COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
-COPY src/CodingAgent.Pipeline/CodingAgent.Pipeline.csproj src/CodingAgent.Pipeline/
 COPY src/CodingAgent.Pipeline.CodeReview/CodingAgent.Pipeline.CodeReview.csproj src/CodingAgent.Pipeline.CodeReview/
-COPY src/CodingAgent.Infrastructure.Persistence/CodingAgent.Infrastructure.Persistence.csproj src/CodingAgent.Infrastructure.Persistence/
-COPY src/CodingAgent.Infrastructure.Providers/CodingAgent.Infrastructure.Providers.csproj src/CodingAgent.Infrastructure.Providers/
-COPY src/CodingAgent.Api.Client/CodingAgent.Api.Client.csproj src/CodingAgent.Api.Client/
-COPY src/CodingAgent.Orchestration/CodingAgent.Orchestration.csproj src/CodingAgent.Orchestration/
-COPY src/CodingAgent.Kubernetes/CodingAgent.Kubernetes.csproj src/CodingAgent.Kubernetes/
-COPY src/CodingAgent.AgentGateway/CodingAgent.AgentGateway.csproj src/CodingAgent.AgentGateway/
+COPY src/CodingAgent.Contracts/CodingAgent.Contracts.csproj src/CodingAgent.Contracts/
+COPY src/CodingAgent.Infrastructure.Common/CodingAgent.Infrastructure.Common.csproj src/CodingAgent.Infrastructure.Common/
+COPY src/CodingAgent.Web.Client/CodingAgent.Web.Client.csproj src/CodingAgent.Web.Client/
 COPY src/CodingAgent.Web/CodingAgent.Web.csproj src/CodingAgent.Web/
-COPY src/CodingAgent.Agent/CodingAgent.Agent.csproj src/CodingAgent.Agent/
-COPY src/CodingAgent.Agent.KiroCli/CodingAgent.Agent.KiroCli.csproj src/CodingAgent.Agent.KiroCli/
-COPY src/CodingAgent.Agent.OpenCode/CodingAgent.Agent.OpenCode.csproj src/CodingAgent.Agent.OpenCode/
-COPY src/CodingAgent.Agent.ClaudeCode/CodingAgent.Agent.ClaudeCode.csproj src/CodingAgent.Agent.ClaudeCode/
 RUN dotnet restore src/CodingAgent.Web/CodingAgent.Web.csproj -a $TARGETARCH
 
 # Copy everything else and publish
@@ -38,7 +31,7 @@ RUN dotnet publish src/CodingAgent.Web/CodingAgent.Web.csproj \
     -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (ASP.NET only — no SDK, no Kiro CLI, no Node.js)
-# The web service only serves Blazor UI and SignalR hub.
+# The web service only serves the Blazor UI.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
 # Install curl for docker-compose/Kubernetes healthcheck, and pre-create the app

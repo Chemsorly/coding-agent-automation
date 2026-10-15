@@ -82,6 +82,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
+            // The registrations of Program.cs itself, before the overrides below.
+            ProductionServices = services.ToList();
             // Reduce shutdown timeout to prevent test host hangs
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
 
@@ -176,6 +178,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             RegisteredServices = services.ToList();
         });
     }
+
+    /// <summary>The registrations Program.cs made, before this factory replaced any.</summary>
+    public IReadOnlyList<ServiceDescriptor> ProductionServices { get; private set; } = [];
 
     /// <summary>The host's final service registrations, for the DI resolution test.</summary>
     public IReadOnlyList<ServiceDescriptor> RegisteredServices { get; private set; } = [];

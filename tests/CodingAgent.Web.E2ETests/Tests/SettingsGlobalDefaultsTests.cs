@@ -242,7 +242,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         await Page.WaitForTimeoutAsync(1500);
 
         // Verify persisted in store
-        var configStore = Fixture.Factory.Services.GetRequiredService<IConfigurationStore>();
+        IConfigurationStore configStore = Fixture.Factory.ConfigStore;
         var config = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
         Assert.Equal(7, config.MaxRetries);
     }
@@ -266,7 +266,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         await Page.WaitForTimeoutAsync(1500);
 
         // Verify persisted
-        var configStore = Fixture.Factory.Services.GetRequiredService<IConfigurationStore>();
+        IConfigurationStore configStore = Fixture.Factory.ConfigStore;
         var config = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
         Assert.Equal("kiro,python", config.DefaultRequiredAgentLabels);
     }

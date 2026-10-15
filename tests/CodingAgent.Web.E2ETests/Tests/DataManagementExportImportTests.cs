@@ -55,7 +55,7 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
         // container. If IProviderFactory is registered as Scoped, this creates a captive dependency
         // that lives for the entire test run (scoped-in-singleton anti-pattern). To validate
         // per-request DI wiring, perform this check inside a created scope instead.
-        var factory = _fixture.Factory.Services.GetRequiredService<IProviderFactory>();
+        var factory = _fixture.ApiServices.GetRequiredService<IProviderFactory>();
         if (factory is not FakeProviderFactory)
             throw new InvalidOperationException(
                 $"DI replacement failed: IProviderFactory resolved as {factory.GetType().Name} instead of FakeProviderFactory");

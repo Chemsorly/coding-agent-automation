@@ -2,7 +2,6 @@
 @attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
 @layout CockpitLayout
 @implements IAsyncDisposable
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Pipeline.Services
@@ -377,7 +376,7 @@
 
     // View model for PipelineSidebar — seeded from the summary (completed runs) or a RunStateSnapshot
     // (active runs), then kept live via hub step/snapshot events. Ported from the old AgentMonitoring modal.
-    private PipelineRun? _model;
+    private RunSidebarModel? _model;
     private int _maxRetries = 3;
     private PeriodicTimer? _elapsedTimer;
 
@@ -591,13 +590,11 @@
         if (jobId != RunId) return;
         _ = InvokeAsync(() =>
         {
-            _model ??= new PipelineRun
+            _model ??= new RunSidebarModel
             {
                 RunId = jobId,
                 IssueIdentifier = snapshot.IssueIdentifier ?? _run?.IssueIdentifier ?? string.Empty,
                 IssueTitle = snapshot.IssueTitle ?? _run?.IssueTitle ?? string.Empty,
-                IssueProviderConfigId = string.Empty,
-                RepoProviderConfigId = string.Empty,
                 BrainProviderConfigId = snapshot.BrainProviderConfigId,
                 RunType = snapshot.RunType,
             };
@@ -654,7 +651,7 @@
         if (jobId != RunId) return;
         _ = InvokeAsync(() =>
         {
-            _model?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content });
+            _model?.ChatHistory.Add(new ChatEntry { Role = role, Content = content });
             StateHasChanged();
         });
     }
@@ -753,18 +750,15 @@
 
     // Seeds the sidebar view model from a completed/loaded run summary. For active runs the hub's
     // RunStateSnapshot refines it; for completed runs the summary is the only source.
-    private static PipelineRun BuildRunModelFromSummary(PipelineRunSummary summary)
+    private static RunSidebarModel BuildRunModelFromSummary(PipelineRunSummary summary)
     {
-        var model = new PipelineRun
+        var model = new RunSidebarModel
         {
             RunId = summary.RunId,
             IssueIdentifier = summary.IssueIdentifier,
             IssueTitle = summary.IssueTitle,
-            // IssueProviderConfigId / RepoProviderConfigId are not on the summary and the sidebar
-            // does not read them; use placeholders. BrainProviderConfigId is init-only, so it must
-            // be set at construction — the sidebar hides brain steps when it is null.
-            IssueProviderConfigId = string.Empty,
-            RepoProviderConfigId = string.Empty,
+            // BrainProviderConfigId is init-only, so it is set at construction; the sidebar hides the brain
+            // steps when it is null.
             BrainProviderConfigId = summary.BrainRepoUsed ? "placeholder" : null,
             RunType = summary.RunType,
         };
@@ -789,7 +783,7 @@
         model.BrainContextLoaded = summary.BrainContextLoaded;
         model.BrainKnowledgeFileCount = summary.BrainKnowledgeFileCount;
         model.CompletedAtOffset = summary.CompletedAtOffset;
-        model.ResetStartedAt(summary.StartedAtOffset);
+        model.StartedAtOffset = summary.StartedAtOffset;
         model.RunMode = summary.RunMode;
         model.ConsolidationType = summary.ConsolidationType;
         model.ConsolidationTemplateId = summary.ConsolidationTemplateId;
@@ -799,7 +793,7 @@
     }
 
     // Applies a live RunStateSnapshot to the sidebar view model (both on construct and on update).
-    private static void ApplySnapshotToRunModel(PipelineRun model, RunStateSnapshot snapshot)
+    private static void ApplySnapshotToRunModel(RunSidebarModel model, RunStateSnapshot snapshot)
     {
         model.CurrentStep = snapshot.CurrentStep;
         model.HighWaterMark = snapshot.HighWaterMark;
@@ -818,7 +812,9 @@
         model.CodeReviewIterationInProgress = snapshot.CodeReviewIterationInProgress;
         model.CodeReviewIterationsTotal = snapshot.CodeReviewIterationsTotal;
         model.CodeReviewAgentsRun = snapshot.CodeReviewAgentsRun;
-        model.SetCodeReviewCounts(snapshot.CodeReviewCriticalCount, snapshot.CodeReviewWarningCount, snapshot.CodeReviewSuggestionCount);
+        model.CodeReviewCriticalCount = snapshot.CodeReviewCriticalCount;
+        model.CodeReviewWarningCount = snapshot.CodeReviewWarningCount;
+        model.CodeReviewSuggestionCount = snapshot.CodeReviewSuggestionCount;
         model.LatestQualityReport = snapshot.LatestQualityReport;
         model.PullRequestUrl = snapshot.PullRequestUrl;
         model.PullRequestNumber = snapshot.PullRequestNumber;
@@ -832,16 +828,13 @@
         model.FailureReason = snapshot.FailureReason;
         model.ModelName = snapshot.ModelName;
         model.RepositoryName = snapshot.RepositoryName;
-        // Drain before re-enqueuing so a reconnect's second snapshot does not duplicate entries.
-        while (model.QualityGateHistory.TryDequeue(out _)) { /* Discard. */ }
-        foreach (var report in snapshot.QualityGateHistory)
-            model.QualityGateHistory.Enqueue(report);
-        // Drain before re-seeding from the snapshot — prevents duplicates on reconnect.
-        while (model.ChatHistory.TryDequeue(out _)) { /* Discard. */ }
-        foreach (var entry in snapshot.ChatHistory)
-            model.ChatHistory.Enqueue(entry);
+        // Replace rather than append, so a reconnect's second snapshot does not duplicate entries.
+        model.QualityGateHistory.Clear();
+        model.QualityGateHistory.AddRange(snapshot.QualityGateHistory);
+        model.ChatHistory.Clear();
+        model.ChatHistory.AddRange(snapshot.ChatHistory);
         if (snapshot.StartedAtOffset != default)
-            model.ResetStartedAt(snapshot.StartedAtOffset);
+            model.StartedAtOffset = snapshot.StartedAtOffset;
     }
 
     private static string Truncate(string? s, int n)

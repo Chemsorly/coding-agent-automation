@@ -287,11 +287,10 @@ For full request/response examples, authentication details, and query parameters
 
 > **Air-gapped / firewalled deployments:** When `Faro__CollectorUrl` is set, `faro-init.js` asynchronously loads two bundles from `unpkg.com` (CDN). In environments without outbound internet access, these loads fail silently — the app continues normally, Faro stays as a no-op stub, and there is **no page-load stall** (loading is async, not blocking). If you need Faro in a firewalled environment: download the pinned bundle files locally, copy them to `wwwroot/js/faro/`, and update `SDK_URL` / `TRACING_URL` in `faro-init.js` to relative paths (`js/faro/faro-web-sdk.iife.js`, etc.).
 
-### Orchestrator
+### Web UI
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_API_KEY` | Master key for authenticating agent connections. Each agent Job receives its own key, HMAC(master_key, agent_id), from a per-Job Secret; agents never see the master key. |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** The UI clients call its `/api/ui` surface and the pages connect to its UI hub, `{PipelineApi__BaseUrl}/hubs/ui`, as the signed-in user. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
@@ -314,6 +313,7 @@ Every other `Auth__*` variable overrides the same setting in the file, for examp
 
 | Variable | Description |
 |----------|-------------|
+| `AGENT_API_KEY` | Master key of the service surface. The Scheduler and the Job Controller authenticate with it; each agent Job receives its own key, HMAC(master_key, agent_id), from a per-Job Secret, so agents never see the master key. The web host has none (spec 051). |
 | `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. Only consumed by the Pipeline API process, which owns the database connection. |
 
 ### SignalR Backplane (multi-replica)

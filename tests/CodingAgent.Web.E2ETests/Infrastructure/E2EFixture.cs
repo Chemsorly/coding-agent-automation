@@ -46,6 +46,8 @@ public sealed class E2EFixture : IAsyncLifetime
     private ApiE2EWebApplicationFactory? _apiFactory;
     private SchedulerE2EWebApplicationFactory? _schedulerFactory;
     private FakeJobController? _jobController;
+    // The service clients the Job Controller uses, with the agent API key. The web host has none since spec 051 4.1.
+    private ServiceProvider? _serviceClients;
     private JobControllerE2EWebApplicationFactory? _realJobControllerFactory;
 
     /// <summary>Blazor Server app — UI navigation and page assertions.</summary>
@@ -143,12 +145,13 @@ public sealed class E2EFixture : IAsyncLifetime
         ?? throw new InvalidOperationException("API host not started");
 
     /// <summary>
-    /// The monolith's work-item client, pointed at the API host — the same one the Job Controller
+    /// A work-item client with the agent API key, pointed at the API host: the one the Job Controller
     /// uses. Lets a test read queue state (pending, claimed, status) over the real endpoints
     /// instead of reaching into the database behind them.
     /// </summary>
     public IPipelineApiWorkItemClient WorkItems =>
-        Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>();
+        _serviceClients?.GetRequiredService<IPipelineApiWorkItemClient>()
+        ?? throw new InvalidOperationException("API host not started");
 
     /// <summary>
     /// Stands in for the Job Controller process. Nothing else moves a WorkItem out of
@@ -207,11 +210,12 @@ public sealed class E2EFixture : IAsyncLifetime
 
         using var appClient = Factory.CreateClient();
 
-        // The work-item client is registered in the monolith by AddPipelineApiClient and points at
-        // PipelineApi:BaseUrl — the API host started above — so the controller claims over HTTP
-        // exactly as the real one does.
+        // The controller claims over HTTP with the agent API key, exactly as the real one does.
+        _serviceClients = new ServiceCollection()
+            .AddPipelineApiClient(new PipelineApiClientOptions { BaseUrl = _apiFactory.ServerAddress, AgentApiKey = ApiKey })
+            .BuildServiceProvider();
         _jobController = new FakeJobController(
-            Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>(),
+            WorkItems,
             _apiFactory.AgentRegistry,
             DbContextFactory);
 
@@ -422,6 +426,8 @@ public sealed class E2EFixture : IAsyncLifetime
 
         if (_jobController is not null)
             await _jobController.DisposeAsync();
+        if (_serviceClients is not null)
+            await _serviceClients.DisposeAsync();
 
         // Dispose hosts in dependency order: Blazor → Scheduler → API → JobController. The Scheduler's
         // loop calls the API, so it stops before the API goes away (#3181).

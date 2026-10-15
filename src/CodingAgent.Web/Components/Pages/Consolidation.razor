@@ -1,10 +1,8 @@
 @page "/consolidation"
 @attribute [Authorize(Policy = AccessPolicies.GlobalRead)]
 @layout CockpitLayout
-@using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
-@using CodingAgent.AgentGateway
 @using CodingAgent.Web.Services
 @using Serilog
 @inject IUiConsolidationClient ConsolidationApi

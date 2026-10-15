@@ -265,7 +265,7 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
     {
         var schemes = await _factory.Services.GetRequiredService<IAuthenticationSchemeProvider>().GetAllSchemesAsync();
 
-        schemes.Select(s => s.Name).Should().NotContain(CodingAgent.AgentGateway.AgentApiKeyDefaults.AuthenticationScheme);
+        schemes.Select(s => s.Name).Should().NotContain("AgentApiKey", "the web host references no AgentGateway and accepts no API key");
     }
 
     [Fact]

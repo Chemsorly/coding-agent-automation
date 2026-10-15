@@ -6,14 +6,14 @@ modifying concurrency-related code in these services, read this document first.
 
 ## Overview
 
-After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pipeline API, Job Controller, Scheduler, Agent — the Scheduler was split out as a fifth process in Spec 047), each with its own in-memory state. The locking invariants below apply within a single process — they do not span process boundaries.
+After Spec 045 the system runs as **five distinct processes** (web UI, Pipeline API, Job Controller, Scheduler, Agent — the Scheduler was split out as a fifth process in Spec 047), each with its own in-memory state. The locking invariants below apply within a single process — they do not span process boundaries.
 
 ### Process Map
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  Orchestrator  (CodingAgent.Web)                                           │
-│  ─────────────                                                              │
+│  Web UI  (CodingAgent.Web)                                                  │
+│  ───────                                                                    │
 │  Blazor Server UI                                                           │
 │  Reads loop status and agents from /api/ui with the user's token            │
 │  No leader election, no Kubernetes API access, no SignalR hub of its own   │
@@ -72,7 +72,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 
 ### Where the Locking-Critical Singletons Live
 
-The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The Orchestrator holds no authoritative copy. Its `IAgentRegistryService` is `ApiAgentRegistryService`, a snapshot of `GET /api/agents` that `AgentRegistrySyncService` refreshes in the background, and its `IOrchestratorRunService` is a local in-memory `OrchestratorRunService`. Neither is Redis-backed; the Redis-backed `DistributedAgentRegistryService` and `DistributedRunService` are used only by the Pipeline API.
+The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The web host holds none of them (spec 051): it reads agents and runs from the API's `/api/ui` surface and live updates from its UI hub. The Redis-backed `DistributedAgentRegistryService` and `DistributedRunService` are used only by the Pipeline API.
 
 The Job Controller and Agent pods do **not** hold these singletons. This is important: the guarantee that `AgentEntry.SyncRoot` prevents races on the authoritative dispatch path holds only because all authoritative instances are in the same Pipeline API process.
 
@@ -252,16 +252,16 @@ The five processes communicate strictly via defined interfaces:
 
 | From | To | Mechanism |
 |------|----|-----------|
-| Orchestrator | Pipeline API | REST (HTTP via `IPipelineApiConfigClient`, `IPipelineApiWorkItemClient`, `IPipelineApiRunHistoryClient`) |
-| Orchestrator | Pipeline API | SignalR UI hub `/hubs/ui` (`IUiHubConnection`, one per Blazor circuit, with the user's session-long token) |
+| Web UI | Pipeline API | REST on `/api/ui/**` as the signed-in user (the `IUi*Client`s in `CodingAgent.Web.Client`, with a user token the web host signs) |
+| Web UI | Pipeline API | SignalR UI hub `/hubs/ui` (`IUiHubConnection`, one per Blazor circuit, with the user's session-long token) |
 | Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, `PUT /api/scheduler/loop-status` (leader only), among others |
 | Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |
 | Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, `RequestTokenRefresh` (token vending), etc. |
 | Pipeline API | Agent pod | SignalR hub push — `CancelJob`, `CancelChat`, `AssignChatPrompt`, `ForceDisconnect`, `RequestFetchModels` |
 
-There is no direct process-to-process communication between the Orchestrator and
-Job Controller, or between the Orchestrator and Agent pods.
+There is no direct process-to-process communication between the web UI and the
+Scheduler, the Job Controller or Agent pods.
 
 ## PVC Dispatch Race in Multi-Replica Deployments
 
