@@ -106,15 +106,15 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     }
 
     /// <summary>
-    /// Parses a string issue identifier into a numeric issue number.
+    /// Parses a string issue/PR identifier into a numeric issue number.
     /// </summary>
-    protected static int ParseIssueIdentifier(string identifier)
+    protected static int ParseIdentifier(string identifier, string entityType = "issue")
     {
         if (!int.TryParse(identifier, out var issueNumber))
         {
-            Log.Warning("Invalid issue identifier '{Identifier}' — expected numeric issue number", identifier);
+            Log.Warning("Invalid {EntityType} identifier '{Identifier}' — expected numeric IID", entityType, identifier);
             throw new ArgumentException(
-                $"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.",
+                $"Invalid {entityType} identifier: '{identifier}'. Expected a numeric IID.",
                 nameof(identifier));
         }
         return issueNumber;
