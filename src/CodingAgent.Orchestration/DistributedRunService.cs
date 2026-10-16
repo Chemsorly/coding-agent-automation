@@ -60,6 +60,31 @@ redis.call('EXPIREAT', KEYS[6], ARGV[2])
 return hash
 ";
 
+    // Lua script: atomically check SISMEMBER + write hash fields in one round-trip.
+    // Fixes the TOCTOU race in ReplaceRunAsync: a concurrent RemoveRun (SREM+EXPIREAT) can
+    // remove the RunId from the active set between a SMEMBERS check and the subsequent HMSET,
+    // causing HMSET to write a TTL-less hash for an already-removed run.
+    //
+    // KEYS: [1]=runs:active set, [2]=run:{id}
+    // ARGV: [1]=runId (membership check), [2..N]=alternating field name / field value pairs
+    //       (ARGV[2]=field1, ARGV[3]=value1, ARGV[4]=field2, ARGV[5]=value2, …)
+    //
+    // Note: an iterative HSET loop (one field per call) is used instead of
+    // redis.call('HMSET', …, unpack(fields)) because unpack pushes all values onto the Lua
+    // call stack. With 87 fields (174 stack entries) the margin to LUAI_MAXSTACK=200 (Lua 5.1,
+    // Redis ≤ 6.x) would be ~13%, leaving almost no room for future PipelineRun field additions.
+    // Single-field HSET is supported since Redis 2.0 and has constant stack depth.
+    //
+    // Returns: 0 if the RunId is not in the active set (write skipped), 1 if written.
+    private const string ReplaceRunScript = @"
+local isMember = redis.call('SISMEMBER', KEYS[1], ARGV[1])
+if isMember == 0 then return 0 end
+for i = 2, #ARGV - 1, 2 do
+    redis.call('HSET', KEYS[2], ARGV[i], ARGV[i + 1])
+end
+return 1
+";
+
     public DistributedRunService(IRedisStore store, Func<string, string, CancellationToken, Task<bool>> isIssueDistributedAsync, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(store);
@@ -251,18 +276,31 @@ return hash
 
     private async Task ReplaceRunAsync(PipelineRun run)
     {
-        // TODO: TOCTOU race — SetMembersAsync (O(N) SMEMBERS scan) and the subsequent HashSetAsync
-        // are not atomic. A concurrent RemoveRun (Lua SREM+EXPIREAT) can remove the RunId from the
-        // active set between these two calls, causing HashSetAsync to write a hash for an inactive run
-        // and potentially resurrect it without a TTL. Fixing this properly requires an atomic Lua
-        // check-and-set script. Out of scope per issue #3450; leave for a follow-up.
-        var members = await _store.SetMembersAsync(ActiveSetKey);
-        if (!members.Contains(run.RunId))
+        // Atomically check SISMEMBER and write hash fields in one round-trip.
+        // This eliminates the TOCTOU race where a concurrent RemoveRun (Lua SREM+EXPIREAT)
+        // could remove the RunId between a SMEMBERS check and the subsequent HashSetAsync,
+        // causing HashSetAsync to write a TTL-less hash for an already-removed run.
+        var entries = run.ToHashEntries();
+
+        // ARGV layout: [runId, field₁, value₁, field₂, value₂, … field₈₇, value₈₇]
+        var argv = new RedisValue[1 + entries.Length * 2];
+        argv[0] = run.RunId;
+        for (var i = 0; i < entries.Length; i++)
+        {
+            argv[1 + i * 2]     = entries[i].Name;
+            argv[1 + i * 2 + 1] = entries[i].Value;
+        }
+
+        var result = await _store.ScriptEvaluateAsync(
+            ReplaceRunScript,
+            keys: [(RedisKey)ActiveSetKey, (RedisKey)RunKey(run.RunId)],
+            values: argv);
+
+        if ((long)result == 0)
         {
             _logger.Warning("ReplaceRun: run {RunId} is not in the active set — ignoring (run may have been removed)", run.RunId);
             return;
         }
-        await _store.HashSetAsync(RunKey(run.RunId), run.ToHashEntries());
         _logger.Debug("Active run replaced: {RunId} for issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
     }
 
