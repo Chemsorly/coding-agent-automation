@@ -57,6 +57,9 @@ public static class TestPipelineConfig
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
         MinIssueSlots = 1,
+        AutoBrainConsolidationAfterRuns = 0,
+        AutoHarnessSuggestionsAfterFeedback = 0,
+        AutoRefactoringScanAfterClosedIssues = 0,
     };
 
     /// <summary>
@@ -104,6 +107,9 @@ public static class TestPipelineConfig
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
         MinIssueSlots = 1,
+        AutoBrainConsolidationAfterRuns = 0,
+        AutoHarnessSuggestionsAfterFeedback = 0,
+        AutoRefactoringScanAfterClosedIssues = 0,
     };
 
     /// <summary>

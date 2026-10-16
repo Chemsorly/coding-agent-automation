@@ -604,7 +604,31 @@ public sealed record PipelineConfiguration
     [Range(1, 100)]
     public int FeedbackCommentOutboxMaxAttempts { get; init; } = PipelineConstants.DefaultFeedbackCommentOutboxMaxAttempts;
 
-    // Keys 86–88 are left for the automatic consolidation settings planned in #3591.
+    // ── Automatic consolidation start ─────────────────────────────────────
+
+    /// <summary>
+    /// Brain consolidation starts automatically once this many runs have pushed lessons to a brain since its
+    /// last successful consolidation. 0 turns it off. Default: 0.
+    /// </summary>
+    [Key(86)]
+    [Range(0, 100)]
+    public int AutoBrainConsolidationAfterRuns { get; init; }
+
+    /// <summary>
+    /// Harness suggestions start automatically once this many runs have collected feedback since the last
+    /// successful harness suggestion run. 0 turns it off. Default: 0.
+    /// </summary>
+    [Key(87)]
+    [Range(0, 200)]
+    public int AutoHarnessSuggestionsAfterFeedback { get; init; }
+
+    /// <summary>
+    /// A refactoring scan of a template starts automatically once this many issues of its tracker that the scan
+    /// did not create were closed since its last successful scan. 0 turns it off. Default: 0.
+    /// </summary>
+    [Key(88)]
+    [Range(0, 100)]
+    public int AutoRefactoringScanAfterClosedIssues { get; init; }
 
     // ── Triage ─────────────────────────────────────────────────────────────
     /// <summary>

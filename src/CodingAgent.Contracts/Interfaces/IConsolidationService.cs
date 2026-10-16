@@ -21,6 +21,13 @@ public interface IConsolidationService
     Task<ConsolidationTriggerResult?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false, RefactoringScanFocus focus = RefactoringScanFocus.All);
 
     /// <summary>
+    /// Starts a consolidation run for the automatic trigger: the run records <c>InitiatedByConstants.ConsolidationAuto</c>
+    /// and never adds <c>agent:next</c> to created issues. Returns null when the run was rejected (already running,
+    /// configuration error, template not found).
+    /// </summary>
+    Task<ConsolidationTriggerResult?> TriggerAutomaticAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct);
+
+    /// <summary>
     /// Returns the current harness suggestions from the persisted file
     /// (<c>config/pipeline/harness-suggestions.json</c>).
     /// </summary>

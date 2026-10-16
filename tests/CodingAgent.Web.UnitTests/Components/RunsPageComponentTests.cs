@@ -916,11 +916,11 @@ public class RunsPageComponentTests : BunitContext
             "Consolidation must not be offered as a filter option until consolidation runs appear in history (#2567)");
     }
 
-    // 32. Initiated by filter does not offer consolidation options (excluded until #2567)
+    // 32. Initiated by filter offers consolidation options (added in #3591)
     [Fact]
-    public void RunsTable_InitiatedByFilter_DoesNotOfferConsolidationOptions()
+    public void RunsTable_InitiatedByFilter_OffersConsolidationOptions()
     {
-        // TODO(#2567): remove or invert this test when consolidation runs appear in history.
+        // Issue #3591 added consolidation:manual and consolidation:auto to the filter.
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
@@ -929,10 +929,10 @@ public class RunsPageComponentTests : BunitContext
 
         var initiatedBySelect = cut.Find("select.column-filter[aria-label='Filter by Initiated by']");
         var options = initiatedBySelect.QuerySelectorAll("option");
-        options.Should().NotContain(o => o.GetAttribute("value") == "consolidation:manual",
-            "consolidation:manual must not be offered as an option until consolidation runs appear in history");
-        options.Should().NotContain(o => o.GetAttribute("value") == "consolidation:auto",
-            "consolidation:auto must not be offered as an option until consolidation runs appear in history");
+        options.Should().Contain(o => o.GetAttribute("value") == "consolidation:manual",
+            "consolidation:manual must be offered as a filter option (issue #3591)");
+        options.Should().Contain(o => o.GetAttribute("value") == "consolidation:auto",
+            "consolidation:auto must be offered as a filter option (issue #3591)");
     }
 
     // 33. Active outcome tab exposes aria-selected="true" (lowercase)
