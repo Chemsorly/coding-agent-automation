@@ -51,7 +51,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     private void RegisterInsightsServices(Mock<CodingAgent.Web.Ui.IUiRunClient> mockHistory)
     {
         Services.AddSingleton(mockHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
@@ -107,10 +107,10 @@ public class TokenCostConditionalDisplayTests : BunitContext
         mockWorkItems ??= BuildEmptyWorkItemsMock();
 
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
-        Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());
+        Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());
         Services.AddSingleton(new CockpitState());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
         Services.AddSingleton(Mock.Of<IJSRuntime>());
@@ -170,7 +170,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
 
     private void RegisterRunsServices(Mock<CodingAgent.Web.Ui.IUiRunClient> mockHistory)
     {
-        var mockHub = new Mock<IAgentHubConnection>();
+        var mockHub = new Mock<IUiHubConnection>();
         mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
         mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockHub.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(
@@ -181,7 +181,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
             .Returns(Mock.Of<IDisposable>());
 
         Services.AddSingleton(mockHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton(Mock.Of<IJSRuntime>());

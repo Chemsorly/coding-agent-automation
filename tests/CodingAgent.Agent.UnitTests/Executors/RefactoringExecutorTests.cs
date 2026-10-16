@@ -1825,7 +1825,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("10")],
-                Page = 1, PageSize = 100, HasMore = true
+                Page = 1,
+                PageSize = 100,
+                HasMore = true
             });
         _mockIssueProvider
             .Setup(x => x.ListClosedIssuesAsync(2, 100,
@@ -1834,7 +1836,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("11")],
-                Page = 2, PageSize = 100, HasMore = false
+                Page = 2,
+                PageSize = 100,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -1867,7 +1871,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("20"), MakeNonScanIssue("21")],
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -1948,7 +1954,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [openScanIssue],
-                Page = 1, PageSize = 50, HasMore = false
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
@@ -2104,5 +2112,221 @@ public class RefactoringExecutorTests : IDisposable
         // negative assertion gives a false sense of completeness. Consider replacing or supplementing it with a
         // stricter assertion (e.g. asserting the full intro sentence). See TestQualityReviewer finding at line 1940.
         body.Should().NotContain("written against commit `");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Phase1_RunsTestGapAgent()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — one of the Phase 1 agent calls must carry the Agent D prompt
+        _mockAgentProvider.Verify(
+            x => x.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt != null && r.Prompt.Contains("# Agent D: Test Gap Detection")),
+                It.IsAny<CancellationToken>(),
+                null),
+            Times.Once);
+    }
+
+    // ─── Focus tests ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_FocusAll_RunsAllFourAgents()
+    {
+        // Arrange — default focus (All) must dispatch all four Phase 1 agents
+        var executor = CreateExecutor();
+        var job = CreateJob(); // RefactoringFocus defaults to All
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                var dir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "refactoring-proposals.json"), "[]");
+            })
+            .Returns(Task.CompletedTask);
+
+        var capturedPrompts = new System.Collections.Concurrent.ConcurrentBag<string>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompts.Add(req.Prompt ?? ""))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — all four Phase 1 agent headers must appear in captured prompts
+        capturedPrompts.Should().Contain(p => p.Contains("# Agent A: Structural Debt Detection"),
+            "Phase 1 Agent A must run when focus is All");
+        capturedPrompts.Should().Contain(p => p.Contains("# Agent B: Correctness & Hygiene Detection"),
+            "Phase 1 Agent B must run when focus is All");
+        capturedPrompts.Should().Contain(p => p.Contains("# Agent C: Design Consistency Detection"),
+            "Phase 1 Agent C must run when focus is All");
+        capturedPrompts.Should().Contain(p => p.Contains("# Agent D: Test Gap Detection"),
+            "Phase 1 Agent D must run when focus is All");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FocusTests_RunsOnlyTestGapAgent()
+    {
+        // Arrange — only Agent D (test gaps) should run in Phase 1 when focus is Tests
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
+            RefactoringFocus = RefactoringScanFocus.Tests
+        };
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                var dir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "refactoring-proposals.json"), "[]");
+            })
+            .Returns(Task.CompletedTask);
+
+        var capturedPrompts = new System.Collections.Concurrent.ConcurrentBag<string>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompts.Add(req.Prompt ?? ""))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — Agent D runs, Agents A/B/C do not
+        capturedPrompts.Should().Contain(p => p.Contains("# Agent D: Test Gap Detection"),
+            "Phase 1 Agent D must run when focus is Tests");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent A: Structural Debt Detection"),
+            "Phase 1 Agent A must NOT run when focus is Tests");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent B: Correctness & Hygiene Detection"),
+            "Phase 1 Agent B must NOT run when focus is Tests");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent C: Design Consistency Detection"),
+            "Phase 1 Agent C must NOT run when focus is Tests");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FocusStructure_Phase0OmitsCoverageStep()
+    {
+        // Arrange — Phase 0 must skip the coverage step when focus is Structure (not All or Tests)
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
+            RefactoringFocus = RefactoringScanFocus.Structure
+        };
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                var dir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "refactoring-proposals.json"), "[]");
+            })
+            .Returns(Task.CompletedTask);
+
+        string? phase0Prompt = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                // Capture the Phase 0 prompt (identified by its header)
+                if (req.Prompt?.Contains("# Phase 0: Project Context Extraction") == true)
+                    phase0Prompt = req.Prompt;
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — Phase 0 must not include the coverage step when focus is Structure
+        phase0Prompt.Should().NotBeNull("Phase 0 agent must have been called");
+        phase0Prompt!.Should().NotContain("**Test coverage.**",
+            "Phase 0 must skip the coverage step for non-All/non-Tests focus");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FocusStructure_DropsBugProposal()
+    {
+        // Arrange — a bug proposal must be rejected when focus=Structure (only Structural categories allowed)
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false
+            },
+            RefactoringFocus = RefactoringScanFocus.Structure
+        };
+
+        var bugProposalsJson = """
+            [
+                {
+                    "title": "Null ref in parser",
+                    "category": "bug",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Null dereference at L42.",
+                    "rationale": "Will crash."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                // Write the proposals file (agent will not overwrite it since the mock just returns success)
+                RefactoringTestWorkspace.WriteProposals(path, bugProposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — the bug proposal is rejected (outside scan focus), so no issues are created
+        result.Success.Should().BeTrue("the run itself succeeds even if all proposals are rejected");
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "bug proposals must not be filed when focus=Structure");
     }
 }

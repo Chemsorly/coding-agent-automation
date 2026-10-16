@@ -42,7 +42,7 @@ public abstract class E2ETestBase : IAsyncLifetime
         Page = await _context.NewPageAsync();
 
         // Guard: verify DI replacement worked
-        var factory = Fixture.Factory.Services.GetRequiredService<CodingAgent.Pipeline.Interfaces.IProviderFactory>();
+        var factory = Fixture.ApiServices.GetRequiredService<CodingAgent.Pipeline.Interfaces.IProviderFactory>();
         if (factory is not Fakes.FakeProviderFactory)
             throw new InvalidOperationException(
                 $"DI replacement failed: IProviderFactory resolved as {factory.GetType().Name} instead of FakeProviderFactory");

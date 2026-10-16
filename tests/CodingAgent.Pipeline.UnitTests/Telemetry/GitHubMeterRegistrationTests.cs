@@ -46,12 +46,12 @@ public class GitHubMeterRegistrationTests
     }
 
     [Fact]
-    public void WebOpenTelemetryRegistration_RegistersGitHubMeter()
+    public void WebOpenTelemetryRegistration_DoesNotRegisterGitHubMeter()
     {
         var source = File.ReadAllText(FindSourceFile("src/CodingAgent.Web/OpenTelemetryRegistration.cs"));
 
-        source.Should().Contain("GitHubTelemetry.MeterName",
-            "Web/OpenTelemetryRegistration.cs must register the CodingAgent.GitHub meter");
+        source.Should().NotContain("GitHubTelemetry.MeterName",
+            "the web host makes no GitHub calls since spec 051: the API does them for it");
     }
 
     [Fact]

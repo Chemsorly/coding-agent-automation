@@ -424,7 +424,7 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
 
         // Act: dispatch the special-label issue
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
 
         var request = await orchService.PrepareDistributionRequestAsync(

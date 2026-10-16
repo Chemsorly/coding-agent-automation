@@ -72,7 +72,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
                 It.IsAny<ProviderConfig?>(),
                 It.IsAny<PipelineConfiguration>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)SelectorLabels);
+            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(SelectorLabels), null));
     }
 
     private ConsolidationService CreateSut(PipelineConfiguration? config = null, ILogger? logger = null)
@@ -265,7 +265,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
                 It.IsAny<ProviderConfig?>(),
                 It.IsAny<PipelineConfiguration>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>?)null);
+            .ReturnsAsync((ConsolidationAgentSelection?)null);
 
         var sut = CreateSut();
 

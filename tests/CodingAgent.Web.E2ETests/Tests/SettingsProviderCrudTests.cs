@@ -376,7 +376,7 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         // ── Step 8: Dispatch the issue (UI save happened before this — payload frozen at dispatch time) ──
 
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, ct)
             ?? throw new InvalidOperationException("Default project not found");
 

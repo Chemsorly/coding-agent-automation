@@ -1,0 +1,20 @@
+@using System.Net.Http
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using static Microsoft.AspNetCore.Components.Web.RenderMode
+@using Microsoft.JSInterop
+@using CodingAgent.Web.Components.Layout
+@using CodingAgent.Web.Components.Shared
+@using CodingAgent.Web.Models
+@using static CodingAgent.Web.UiFormatters
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using CodingAgent.Contracts.Auth
+@using CodingAgent.Web.Auth
+@using CodingAgent.Web.Components.Auth
+@using CodingAgent.Web.Ui
+@using CodingAgent.Contracts.Ui
+@* Spec 049: every routable component requires a signed-in user unless it opts out with [AllowAnonymous]. *@
+@attribute [Authorize]

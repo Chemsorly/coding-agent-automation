@@ -455,25 +455,17 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Configuring <c>LoadPipelineConfigAsync</c> to throw after the first call (which passes
-    /// validation) causes <c>SnapshotCycleConfigAsync</c> to propagate the exception out of
+    /// Configuring <c>LoadPipelineConfigAsync</c> to throw causes <c>SnapshotCycleConfigAsync</c> to propagate the exception out of
     /// <c>RunMultiTemplateLoopAsync</c>, hitting the <c>catch (Exception ex) when (!_stopRequested)</c>
     /// branch in <c>ExecuteAsync</c>, which logs it at Error level.
     /// </summary>
     [Fact]
     public async Task WhenUnexpectedExceptionThrown_ShouldLogError()
     {
-        // First call (during StartLoopAsync validation) succeeds; second call (first cycle in
+        // StartLoopAsync does not read the pipeline config, so the first cycle's load (in
         // SnapshotCycleConfigAsync) throws, escaping RunMultiTemplateLoopAsync to ExecuteAsync.
-        var callCount = 0;
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
-            {
-                callCount++;
-                if (callCount > 1)
-                    throw new InvalidOperationException("Simulated unexpected store error");
-                return TestPipelineConfig.Default();
-            });
+            .ThrowsAsync(new InvalidOperationException("Simulated unexpected store error"));
 
         var svc = CreateService(leaderGate: null);
         using var hostCts = new CancellationTokenSource();
@@ -982,20 +974,19 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     [Fact]
     public async Task WhenClosedLoopAutoStartBecomesFalse_LoopExitsWithinOneCycle()
     {
-        // Arrange: a counter-based setup that returns ClosedLoopAutoStart=true for the first
-        // call (StartLoopAsync validation) plus at least one normal cycle, then returns false
+        // Arrange: a counter-based setup that returns ClosedLoopAutoStart=true for at least one
+        // normal cycle, then returns false
         // for every subsequent call — simulating another pod writing ClosedLoopAutoStart=false.
         //
         // This is deliberately timing-insensitive: no matter how many normal cycles the loop
         // completes before the false entry is consumed, the mock never throws MockException.
-        // The first entry is consumed by StartLoopAsync's LoadPipelineConfigAsync call; all
-        // subsequent calls from SnapshotCycleConfigAsync return true until the counter flips,
-        // then return false unconditionally.
+        // Every call comes from SnapshotCycleConfigAsync (StartLoopAsync does not read the pipeline
+        // config): it returns true until the counter flips, then false unconditionally.
         var loadCallCount = 0;
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
                 Interlocked.Increment(ref loadCallCount) <= 2
-                    ? DbStopTestConfig()         // call 1 (StartLoopAsync) + call 2 (≥1 normal cycle)
+                    ? DbStopTestConfig()         // calls 1–2: at least one normal cycle
                     : DbStopTestConfig(false));  // all subsequent calls → DB stop
 
         var svc = CreateService(leaderGate: null);
@@ -1150,7 +1141,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     [Fact]
     public async Task WhenHttpRequestExceptionDuringSnapshot_LoopShouldRetryAndStayAlive()
     {
-        // Arrange: first call (StartLoopAsync validation) succeeds; subsequent calls throw
+        // Arrange: the first cycle loads (StartLoopAsync does not read the pipeline config) throw
         // HttpRequestException (simulating "Connection refused" during rolling restart).
         // After a few failures the mock recovers and returns a valid config.
         var callCount = 0;
@@ -1160,7 +1151,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             .ReturnsAsync(() =>
             {
                 callCount++;
-                if (callCount > 1 && callCount <= failuresBeforeRecovery + 1)
+                if (callCount <= failuresBeforeRecovery)
                     throw new HttpRequestException("Connection refused (api:8080)");
                 return TestPipelineConfig.Default();
             });
@@ -1178,14 +1169,13 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             TimeSpan.FromSeconds(5),
             "loop must be active after StartLoopAsync");
 
-        // Wait for at least 2 calls to LoadPipelineConfigAsync:
-        //   call 1 = StartLoopAsync validation (succeeds)
-        //   call 2 = first cycle tick (throws HttpRequestException → caught → null returned → delay+retry)
+        // Wait for the first call to LoadPipelineConfigAsync:
+        //   call 1 = first cycle tick (throws HttpRequestException → caught → null returned → delay+retry)
         // This confirms the loop ran and encountered the failure.
         await WaitUntilAsync(
-            () => callCount >= 2,
+            () => callCount >= 1,
             BackgroundWait.Timeout,
-            "LoadPipelineConfigAsync must be called at least twice — once for validation, once in the first cycle");
+            "LoadPipelineConfigAsync must be called in the first cycle");
 
         // Assert 1: loop stayed alive — IsLoopActive must still be true after the transient failure.
         // (If the exception escaped to ExecuteAsync the loop would call CleanupAsync(rearm=false)
@@ -1229,14 +1219,14 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             .ReturnsAsync(() =>
             {
                 callCount++;
-                if (callCount == 2)
+                if (callCount == 1)
                 {
                     // Reproduce the exact production exception chain:
                     // HttpRequestException wrapping SocketException (111) Connection refused
                     var socketEx = new System.Net.Sockets.SocketException(111); // ECONNREFUSED
                     throw new HttpRequestException("Connection refused (api.svc:8080)", socketEx);
                 }
-                if (callCount > 2)
+                if (callCount > 1)
                     retried.TrySetResult();
                 return TestPipelineConfig.Default();
             });
@@ -1248,10 +1238,10 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
 
         await svc.StartLoopAsync();
 
-        // Wait until callCount > 2 — means the loop retried past the failing call. The retry
-        // follows a fixed 5s back-off, so the wait is signalled from the third config load.
+        // Wait until callCount > 1 — means the loop retried past the failing call. The retry
+        // follows a fixed 5s back-off, so the wait is signalled from the second config load.
         await BackgroundWait.SignalledAsync(retried.Task,
-            "loop must retry after SocketException(ECONNREFUSED) — callCount must exceed 2");
+            "loop must retry after SocketException(ECONNREFUSED) — callCount must exceed 1");
 
         // Loop must still be alive
         svc.IsLoopActive.Should().BeTrue(
@@ -1278,15 +1268,9 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // InvalidOperationException is NOT a transient connectivity error and must
         // still propagate to ExecuteAsync where it is logged at Error level.
         // (This characterizes existing/expected behavior that must be preserved.)
-        var callCount = 0;
+        // StartLoopAsync does not read the pipeline config, so the first cycle's load is the one that fails.
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
-            {
-                callCount++;
-                if (callCount > 1)
-                    throw new InvalidOperationException("Non-transient store corruption");
-                return TestPipelineConfig.Default();
-            });
+            .ThrowsAsync(new InvalidOperationException("Non-transient store corruption"));
 
         var svc = CreateService(leaderGate: null);
         using var hostCts = new CancellationTokenSource();
@@ -1327,7 +1311,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             .ReturnsAsync(() =>
             {
                 callCount++;
-                if (callCount > 1 && callCount <= failuresBeforeRecovery + 1)
+                if (callCount <= failuresBeforeRecovery)
                     throw new BrokenCircuitException("The circuit is now open and is not allowing calls.");
                 return TestPipelineConfig.Default();
             });
@@ -1345,12 +1329,11 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             "loop must be active after StartLoopAsync");
 
         // Wait until the loop has hit the open circuit at least once:
-        //   call 1 = StartLoopAsync validation (succeeds)
-        //   call 2 = first cycle tick (throws BrokenCircuitException → caught → null → delay+retry)
+        //   call 1 = first cycle tick (throws BrokenCircuitException → caught → null → delay+retry)
         await WaitUntilAsync(
-            () => callCount >= 2,
+            () => callCount >= 1,
             BackgroundWait.Timeout,
-            "LoadPipelineConfigAsync must be called again in the first cycle and hit the open circuit");
+            "LoadPipelineConfigAsync must be called in the first cycle and hit the open circuit");
 
         // The loop must have caught the transient and stayed alive rather than dying via
         // CleanupAsync(rearm=false). Had BrokenCircuitException escaped, IsLoopActive would be false here.
@@ -1379,7 +1362,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             .ReturnsAsync(() =>
             {
                 callCount++;
-                if (callCount > 1 && callCount <= failuresBeforeRecovery + 1)
+                if (callCount <= failuresBeforeRecovery)
                     throw new TimeoutRejectedException("The operation didn't complete within the allowed timeout.");
                 return TestPipelineConfig.Default();
             });
@@ -1395,11 +1378,11 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             TimeSpan.FromSeconds(5),
             "loop must be active after StartLoopAsync");
 
-        // Wait until the loop has hit the timeout at least once (validation call + first failing cycle).
+        // Wait until the loop has hit the timeout at least once (the first cycle's load).
         await WaitUntilAsync(
-            () => callCount >= 2,
+            () => callCount >= 1,
             BackgroundWait.Timeout,
-            "LoadPipelineConfigAsync must be called again in the first cycle and hit the timeout");
+            "LoadPipelineConfigAsync must be called in the first cycle and hit the timeout");
 
         svc.IsLoopActive.Should().BeTrue(
             "loop must remain active after TimeoutRejectedException — it should retry, not die");
@@ -1440,15 +1423,10 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     public async Task WhenTokenCancelledDuringSnapshot_LoopExitsCleanlyWithoutError()
     {
         using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var callCount = 0;
-
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
-                callCount++;
-                if (callCount == 1)
-                    return TestPipelineConfig.Default(); // StartLoopAsync validation succeeds
-                // First real cycle: cancel the loop token, then surface cancellation from the config load.
+                // First cycle (StartLoopAsync does not read the pipeline config): cancel the loop token, then surface cancellation from the config load.
                 // The loop's ct is now cancelled, so SnapshotCycleConfigAsync must re-throw (intentional stop).
                 hostCts.Cancel();
                 throw new OperationCanceledException(hostCts.Token);

@@ -28,6 +28,16 @@ internal static class TestUserTokens
         return UserTokens.Create(new UserTokenSubject(subject, username, identitySource), grant, now, now + UserTokens.HttpLifetime, Key);
     }
 
+    /// <summary>A UI hub connect token (spec 051 D7): marked <c>use=hub</c>, valid for an hour.</summary>
+    public static string Hub(AccessGrant grant)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return UserTokens.Create(new UserTokenSubject("oidc:tester", "tester", "oidc"), grant, now, now.AddHours(1), Key, UserTokenClaimTypes.HubUse);
+    }
+
+    public static string ValidUntil(AccessGrant grant, DateTimeOffset expires, string subject = "oidc:tester", string? username = "tester") =>
+        UserTokens.Create(new UserTokenSubject(subject, username, "oidc"), grant, DateTimeOffset.UtcNow, expires, Key);
+
     public static string LocalAdmin() => For(Global(AccessRole.Admin), "local:admin", "admin", "local");
 
     public static string Expired(AccessGrant grant)

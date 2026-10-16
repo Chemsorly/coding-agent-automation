@@ -29,7 +29,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// 1. Clone code repo + brain into the run's workspace
     /// 2. Hotspot analysis (git log)
     /// 3. Phase 0: Context extraction (project conventions)
-    /// 4. Phase 1: Parallel focused detection (3 sub-agents: structural, correctness, design)
+    /// 4. Phase 1: Parallel focused detection (4 sub-agents: structural, correctness, design, test gaps)
     /// 5. Phase 2: Aggregation + prioritization → produces proposals JSON
     /// 6. If no proposals: return success
     /// 7. Adversarial review (if enabled)
@@ -311,7 +311,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Phased multi-agent refactoring path.
-    /// Phase 0 → Phase 1 (3 parallel) → Phase 2 (aggregation) → finalize.
+    /// Phase 0 → Phase 1 (1–4 parallel agents, depending on focus) → Phase 2 (aggregation) → finalize.
     /// </summary>
     private async Task<ConsolidationJobResult> ExecutePhasedRefactoringAsync(
         ConsolidationJobMessage job,
@@ -332,7 +332,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 agentProvider,
                 new AgentRequest
                 {
-                    Prompt = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt(),
+                    Prompt = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt(
+                        includeCoverage: job.RefactoringFocus is RefactoringScanFocus.All or RefactoringScanFocus.Tests),
                     WorkspacePath = workspacePath,
                     Timeout = job.PipelineConfiguration.AgentTimeout
                 },
@@ -342,51 +343,36 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 
         if (failure is not null) return failure;
 
-        // Phase 1: Parallel Focused Detection (3 sub-agents)
-        Logger.Information("Phase 1: Dispatching 3 parallel analysis agents for run {RunId}", job.JobId);
-
-        var phase1Tasks = new[]
+        // Phase 1: Parallel Focused Detection — run only the agents of the focus.
+        var agents = new (string SpanName, Func<string> BuildPrompt, RefactoringScanFocus Focus)[]
         {
-            RunWithTracingAsync("RefactoringDetection.Phase1.StructuralDebt", job.JobId, async _ =>
-            {
-                return await ExecuteAgentAndCheckAsync(
-                    agentProvider,
-                    new AgentRequest
-                    {
-                        Prompt = ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt(),
-                        WorkspacePath = workspacePath,
-                        Timeout = job.PipelineConfiguration.AgentTimeout
-                    },
-                    job.JobId,
-                    ct);
-            }),
-            RunWithTracingAsync("RefactoringDetection.Phase1.Correctness", job.JobId, async _ =>
-            {
-                return await ExecuteAgentAndCheckAsync(
-                    agentProvider,
-                    new AgentRequest
-                    {
-                        Prompt = ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt(),
-                        WorkspacePath = workspacePath,
-                        Timeout = job.PipelineConfiguration.AgentTimeout
-                    },
-                    job.JobId,
-                    ct);
-            }),
-            RunWithTracingAsync("RefactoringDetection.Phase1.DesignConsistency", job.JobId, async _ =>
-            {
-                return await ExecuteAgentAndCheckAsync(
-                    agentProvider,
-                    new AgentRequest
-                    {
-                        Prompt = ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt(),
-                        WorkspacePath = workspacePath,
-                        Timeout = job.PipelineConfiguration.AgentTimeout
-                    },
-                    job.JobId,
-                    ct);
-            })
+            ("RefactoringDetection.Phase1.StructuralDebt", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt, RefactoringScanFocus.Structure),
+            ("RefactoringDetection.Phase1.Correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt, RefactoringScanFocus.Correctness),
+            ("RefactoringDetection.Phase1.DesignConsistency", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt, RefactoringScanFocus.Design),
+            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests),
         };
+
+        var selected = agents
+            .Where(a => job.RefactoringFocus == RefactoringScanFocus.All || a.Focus == job.RefactoringFocus)
+            .ToArray();
+
+        Logger.Information("Phase 1: Dispatching {AgentCount} parallel analysis agents for run {RunId} (focus {Focus})",
+            selected.Length, job.JobId, job.RefactoringFocus);
+
+        var phase1Tasks = selected.Select(a =>
+            RunWithTracingAsync(a.SpanName, job.JobId, async _ =>
+            {
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = a.BuildPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            })).ToArray();
 
         var phase1Results = await Task.WhenAll(phase1Tasks);
 
@@ -409,7 +395,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         var aggregationPrompt = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(
             job.PipelineConfiguration.MaxRefactoringProposals,
             issueContext,
-            outcomeContext.Length > 0 ? outcomeContext : null);
+            outcomeContext.Length > 0 ? outcomeContext : null,
+            job.RefactoringFocus);
 
         (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase2.Aggregation", job.JobId, async _ =>
         {
@@ -507,7 +494,9 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         // Deterministic checks the prompts cannot guarantee (paths, scope, category, duplicates)
-        var (validProposals, rejectedProposals) = RefactoringProposalValidator.Validate(proposals, workspacePath, baseline.ExistingIssueTitles);
+        var (validProposals, rejectedProposals) = RefactoringProposalValidator.Validate(
+            proposals, workspacePath, baseline.ExistingIssueTitles,
+            RefactoringCategories.ForFocus(job.RefactoringFocus));
         foreach (var rejection in rejectedProposals)
         {
             Logger.Warning("Dropped refactoring proposal '{Title}' in run {RunId}: {Reason}",

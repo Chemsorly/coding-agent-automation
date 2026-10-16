@@ -27,7 +27,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IAgentTokenRefreshService _tokenRefreshService;
     private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
-    private readonly IHubContext<AgentHub> _uiContext;
+    private readonly IHubContext<UiHub> _uiContext;
     private readonly IHubTriageOperations? _triageOps;
 
     /// <summary>
@@ -52,27 +52,17 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     }
 
     /// <summary>
-    /// Validates that the connecting agent provided an <c>agentId</c> query parameter.
-    /// Operator connections (no <c>agentId</c>) are allowed through — they are authenticated
-    /// as "operator" callers for hub group subscriptions (e.g. UI circuits).
+    /// Validates that the connecting agent provided an <c>agentId</c> query parameter. Only agents use this
+    /// hub; the UI connects to <see cref="UiHub"/> (spec 051 D7).
     /// </summary>
     public override Task OnConnectedAsync()
     {
         var agentId = Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(agentId))
         {
-            // Check auth_kind claim — operator connections are valid without agentId
-            var authKind = Context.User?.FindFirst("auth_kind")?.Value;
-            if (!string.Equals(authKind, "operator", StringComparison.Ordinal))
-            {
-                _logger.Warning("Connection {ConnectionId} rejected — missing agentId query parameter and not an operator",
-                    Context.ConnectionId);
-                Context.Abort();
-                return Task.CompletedTask;
-            }
-
-            _logger.Debug("Operator connection established: connectionId={ConnectionId}", Context.ConnectionId);
-            return base.OnConnectedAsync();
+            _logger.Warning("Connection {ConnectionId} rejected — missing agentId query parameter", Context.ConnectionId);
+            Context.Abort();
+            return Task.CompletedTask;
         }
 
         _logger.Information("Agent connection established: agentId={AgentId}, connectionId={ConnectionId}", SanitizeForLog(agentId), Context.ConnectionId);

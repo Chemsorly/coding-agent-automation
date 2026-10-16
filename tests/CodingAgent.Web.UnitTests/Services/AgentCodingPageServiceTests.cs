@@ -3,6 +3,7 @@ using Moq;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.UnitTests.Auth;
 using CodingAgent.Api.Client;
+using CodingAgent.Web.UnitTests.TestUtilities;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Orchestration.Registry;
@@ -20,15 +21,17 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// and EpicDrawerServiceTests.
 /// <para>
 /// Spec 045: IConfigurationStore and IProjectStore replaced by IPipelineApiConfigClient.
+/// Spec 051: template writes go through IUiSettingsClient.
 /// </para>
 /// </summary>
 public class AgentCodingPageServiceTests
 {
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
+    private readonly Mock<CodingAgent.Web.Ui.IUiSettingsClient> _mockSettings = new();
     private readonly Mock<IIssueDrawerService> _mockIssueDrawerService;
     private readonly Mock<IPrReviewDrawerService> _mockPrReviewDrawerService;
     private readonly Mock<IEpicDrawerService> _mockEpicDrawerService;
-    private readonly Mock<ISchedulerApiClient> _mockSchedulerClient;
+    private readonly Mock<CodingAgent.Web.Ui.IUiLoopClient> _mockLoopClient = new();
     private readonly AgentCodingPageService _service;
 
     // Real drawer state services so property forwarding works in tests that check DrawerState
@@ -37,7 +40,7 @@ public class AgentCodingPageServiceTests
     private readonly DrawerStateService<IssueSummary> _epicDrawerState;
 
     // Spec 047: _mockLoopConfigStore and _mockLoopProjectStore removed — AgentCodingPageService
-    // no longer holds a PipelineLoopService; loop controls go through ISchedulerApiClient.
+    // no longer holds a PipelineLoopService; loop controls go through IUiLoopClient (spec 051 D11).
 
     public AgentCodingPageServiceTests()
     {
@@ -66,10 +69,6 @@ public class AgentCodingPageServiceTests
         _mockPrReviewDrawerService.Setup(s => s.DrawerState).Returns(_prDrawerState);
         _mockEpicDrawerService.Setup(s => s.DrawerState).Returns(_epicDrawerState);
 
-        // Spec 047: AgentCodingPageService now takes ISchedulerApiClient instead of PipelineLoopService.
-        _mockSchedulerClient = new Mock<ISchedulerApiClient>();
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(true, null));
 
         _service = CreateService();
     }
@@ -79,11 +78,10 @@ public class AgentCodingPageServiceTests
     {
         var (access, guard) = TestAccess.Create(grant);
         return new AgentCodingPageService(
-            _mockSchedulerClient.Object,
-            _mockConfigClient.Object,
-            _mockIssueDrawerService.Object,
-            _mockPrReviewDrawerService.Object,
-            _mockEpicDrawerService.Object,
+            _mockLoopClient.Object,
+            ConfigBackedPipelinesClients.UiConfig(_mockConfigClient).Object,
+            _mockSettings.Object,
+            new DispatchDrawers(_mockIssueDrawerService.Object, _mockPrReviewDrawerService.Object, _mockEpicDrawerService.Object),
             access,
             guard);
     }
@@ -154,7 +152,7 @@ public class AgentCodingPageServiceTests
     {
         var template = MakeTemplate();
         _service.Templates.Add(template);
-        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockSettings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var (success, error) = await _service.ToggleTemplateEnabledAsync(template, false);
@@ -169,7 +167,7 @@ public class AgentCodingPageServiceTests
     {
         var template = MakeTemplate();
         _service.Templates.Add(template);
-        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockSettings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("disk full"));
 
         var (success, error) = await _service.ToggleTemplateEnabledAsync(template, false);
@@ -228,7 +226,7 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task AddTemplateAsync_AddsTemplateAndReloadsProjects()
     {
-        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockSettings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
@@ -248,8 +246,8 @@ public class AgentCodingPageServiceTests
         var template = MakeTemplate() with { HousekeepingEnabled = false };
         _service.Templates.Add(template);
         PipelineJobTemplate? saved = null;
-        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
-            .Callback<string, PipelineJobTemplate, CancellationToken>((_, t, _) => saved = t)
+        _mockSettings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Callback<ProjectId, PipelineJobTemplate, CancellationToken>((_, t, _) => saved = t)
             .Returns(Task.CompletedTask);
         var form = TemplateTableSection.TemplateFormModel.ForEdit(template, WellKnownIds.DefaultProjectId);
         form.Name = "Renamed";
@@ -297,8 +295,8 @@ public class AgentCodingPageServiceTests
     {
         // EnsureAcceptedAsync throws InvalidOperationException for 404/400 responses —
         // use that type specifically to confirm the catch block handles the production exception path.
-        _mockConfigClient
-            .Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockSettings
+            .Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Project xyz does not exist."));
         var form = new TemplateTableSection.TemplateFormModel { Name = "Missing Project Template", IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
 
@@ -320,7 +318,7 @@ public class AgentCodingPageServiceTests
     {
         var template = MakeTemplate("t-1", "Removable");
         _service.Templates.Add(template);
-        _mockConfigClient.Setup(s => s.DeleteTemplateAsync(It.IsAny<string>(), "t-1", It.IsAny<CancellationToken>()))
+        _mockSettings.Setup(s => s.DeleteTemplateAsync(It.IsAny<ProjectId>(), new TemplateId("t-1"), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
@@ -343,7 +341,7 @@ public class AgentCodingPageServiceTests
             templates: new List<PipelineJobTemplate> { MakeTemplate("t-1", "My Template"), MakeTemplate("t-2", "Other") });
         await _service.InitializeAsync();
 
-        _mockConfigClient.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockSettings.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject> { sourceProject, targetProject });
@@ -356,7 +354,7 @@ public class AgentCodingPageServiceTests
         Assert.Contains("Target", msg);
 
         // The template's own project is the only membership record: one move, no project saves (#3143).
-        _mockConfigClient.Verify(s => s.MoveTemplateAsync(
+        _mockSettings.Verify(s => s.MoveTemplateAsync(
             It.Is<ProjectId>(p => p.Value == "proj-src"), It.Is<ProjectId>(p => p.Value == "proj-tgt"), "t-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -370,7 +368,7 @@ public class AgentCodingPageServiceTests
             projects: new List<PipelineProject> { sourceProject, targetProject },
             templates: new List<PipelineJobTemplate> { MakeTemplate("t-1", "My Template") });
         await _service.InitializeAsync();
-        _mockConfigClient.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockSettings.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("The project already has an enabled template named \"My Template\"."));
 
         var (success, error, _) = await _service.MoveTemplateToProjectAsync("t-1", "proj-src", "proj-tgt");
@@ -387,58 +385,49 @@ public class AgentCodingPageServiceTests
         Assert.True(success);
         Assert.Null(error);
         Assert.Null(msg);
-        _mockConfigClient.Verify(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockSettings.Verify(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Loop Controls ──
+    // Spec 051 D11: each command only records the request through /api/ui/loop.
 
     [Fact]
-    public async Task StopLoopAsync_CallsSchedulerClient()
+    public async Task StopLoopAsync_SendsStop()
     {
-        _mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        var (success, error) = await _service.StopLoopAsync();
 
-        await _service.StopLoopAsync();
-
-        _mockSchedulerClient.Verify(c => c.StopLoopAsync(It.IsAny<CancellationToken>()), Times.Once,
-            "StopLoopAsync must delegate to ISchedulerApiClient.StopLoopAsync");
+        Assert.True(success);
+        Assert.Null(error);
+        _mockLoopClient.Verify(c => c.StopAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task StartLoopAsync_WhenSchedulerClientThrows_ReturnsErrorTuple()
+    public async Task StartLoopAsync_SendsStart()
     {
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+        var (success, error) = await _service.StartLoopAsync();
+
+        Assert.True(success);
+        Assert.Null(error);
+        _mockLoopClient.Verify(c => c.StartAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResumeLoopAsync_SendsResume()
+    {
+        (await _service.ResumeLoopAsync()).Should().Be((true, (string?)null));
+        _mockLoopClient.Verify(c => c.ResumeAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartLoopAsync_WhenTheApiFails_ReturnsTheReason()
+    {
+        _mockLoopClient.Setup(c => c.StartAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
         var (success, error) = await _service.StartLoopAsync();
 
         Assert.False(success);
-        Assert.NotNull(error);
-        Assert.Contains("connection refused", error);
-    }
-
-    [Fact]
-    public async Task StartLoopAsync_WhenSchedulerReturnsStarted_ReturnsSuccess()
-    {
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(true, null));
-
-        var (success, error) = await _service.StartLoopAsync();
-
-        Assert.True(success);
-        Assert.Null(error);
-    }
-
-    [Fact]
-    public async Task StartLoopAsync_WhenSchedulerReturnsNotStarted_ReturnsFailure()
-    {
-        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LoopStartResultDto(false, "Loop is already active."));
-
-        var (success, error) = await _service.StartLoopAsync();
-
-        Assert.False(success);
-        Assert.Equal("Loop is already active.", error);
+        Assert.Equal("Failed to start loop: connection refused", error);
     }
 
     // ── Cross-drawer coordination via coordinator ──
@@ -689,18 +678,6 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
-    public async Task Access_ScopedUser_SeesOnlyItsProjectsAndTemplates()
-    {
-        SetupTwoProjects();
-        var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.ReadOnly)));
-
-        await service.InitializeAsync();
-
-        service.Projects.Select(p => p.Id).Should().Equal(AccessProjectP);
-        service.Templates.Select(t => t.Id).Should().Equal("t-p");
-    }
-
-    [Fact]
     public async Task Access_GlobalReadOnly_SeesEverything()
     {
         SetupTwoProjects();
@@ -778,8 +755,8 @@ public class AgentCodingPageServiceTests
         toggle.Should().Be((false, AccessDeniedException.UserMessage));
         remove.Error.Should().Be(AccessDeniedException.UserMessage);
         move.Error.Should().Be(AccessDeniedException.UserMessage);
-        _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockConfigClient.Verify(c => c.DeleteTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockSettings.Verify(c => c.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockSettings.Verify(c => c.DeleteTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -802,6 +779,6 @@ public class AgentCodingPageServiceTests
         var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));
 
         (await service.StopLoopAsync()).Should().Be((false, AccessDeniedException.UserMessage));
-        _mockSchedulerClient.Verify(c => c.StopLoopAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _mockLoopClient.Verify(c => c.StopAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

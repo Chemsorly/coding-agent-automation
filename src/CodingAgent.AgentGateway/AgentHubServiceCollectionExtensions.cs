@@ -32,7 +32,7 @@ public static class AgentHubServiceCollectionExtensions
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
             sp.GetRequiredService<AgentHubFacadeDependencies>()));
 
-        services.AddSingleton<IHubIssueOperations>(sp => new AgentIssueOperations(
+        services.AddSingleton<IHubIssueOperations>(sp => new HubIssueOperations(
             sp.GetRequiredService<IAgentHubFacade>(),
             sp.GetRequiredService<ILabelService>(),
             Log.Logger));
@@ -84,7 +84,7 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IAgentTokenRefreshService>(),
             Log.Logger,
             sp.GetRequiredService<IAgentOrphanRecoveryService>(),
-            sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub>>(),
+            sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<UiHub>>(),
             sp.GetService<IHubTriageOperations>()));
 
         return services;

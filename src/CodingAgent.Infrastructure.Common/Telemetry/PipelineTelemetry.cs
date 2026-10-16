@@ -485,11 +485,11 @@ public static class PipelineTelemetry
     /// <summary>
     /// Hub-auth rejection counter tagged by <c>reason</c> (closed set).
     /// Reason values: <c>reconnect_race</c>, <c>not_registered</c>,
-    /// <c>job_mismatch</c>, <c>operator_forbidden</c>.
+    /// <c>job_mismatch</c>.
     /// </summary>
     public static readonly Counter<long> HubAuthRejections = Meter.CreateCounter<long>(
         "agent.hub.auth_rejections", "{rejection}",
-        "Hub-auth rejections by reason (reconnect_race | not_registered | job_mismatch | operator_forbidden)");
+        "Hub-auth rejections by reason (reconnect_race | not_registered | job_mismatch)");
 
     internal static class LoopDecisions
     {
@@ -512,8 +512,6 @@ public static class PipelineTelemetry
         public const string NotRegistered = "not_registered";
         /// <summary>Agent is registered but the jobId does not match its active job.</summary>
         public const string JobMismatch = "job_mismatch";
-        /// <summary>Operator connection tried to call an agent-only method.</summary>
-        public const string OperatorForbidden = "operator_forbidden";
     }
 
     /// <summary>

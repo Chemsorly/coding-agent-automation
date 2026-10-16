@@ -1,3 +1,5 @@
+using CodingAgent.Pipeline.Models;
+
 namespace CodingAgent.Contracts.Ui;
 
 /// <summary>
@@ -20,3 +22,24 @@ public sealed record UiMoveTemplateRequest(string SourceProjectId, string Target
 
 /// <summary>What the first-run banner needs (<c>GET /api/ui/settings/first-run</c>, admin).</summary>
 public sealed record UiFirstRunState(bool HasEnabledTemplates, bool BannerDismissed);
+
+/// <summary>
+/// What the Pipelines page shows (<c>GET /api/ui/pipelines</c>, spec 051 2.7): the templates of the projects
+/// the user can read, grouped by those projects, and the configuration the template table names and matches
+/// labels against. Projects carry only their id, name, enabled flag and templates; providers and agent profiles
+/// come with their secrets masked. A project-scoped user gets only the providers their templates use, and no
+/// quality gates, reviewers or agent profiles (global configuration).
+/// </summary>
+/// <param name="RepoProviders">Repository providers of every role, brain repositories included.</param>
+/// <param name="DefaultRequiredAgentLabels">The global setting a repository without labels of its own falls back to.</param>
+public sealed record UiPipelinesPage(
+    IReadOnlyList<PipelineProject> Projects,
+    IReadOnlyList<PipelineJobTemplate> Templates,
+    IReadOnlyList<ProviderConfig> IssueProviders,
+    IReadOnlyList<ProviderConfig> RepoProviders,
+    IReadOnlyList<ProviderConfig> PipelineProviders,
+    IReadOnlyList<QualityGateConfiguration> QualityGateConfigs,
+    IReadOnlyList<ReviewerConfiguration> ReviewerConfigs,
+    IReadOnlyList<AgentProfile> AgentProfiles,
+    string? DefaultRequiredAgentLabels,
+    int MaxRetries);

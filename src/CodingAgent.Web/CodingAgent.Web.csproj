@@ -32,10 +32,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CodingAgent.AgentGateway\CodingAgent.AgentGateway.csproj" />
-    <ProjectReference Include="..\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
-    <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
-    <ProjectReference Include="..\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
+    <!-- Spec 051 D9, 4.2: the web host calls the API as its signed-in users and references no server project. -->
+    <ProjectReference Include="..\CodingAgent.Contracts\CodingAgent.Contracts.csproj" />
+    <ProjectReference Include="..\CodingAgent.Infrastructure.Common\CodingAgent.Infrastructure.Common.csproj" />
     <ProjectReference Include="..\CodingAgent.Web.Client\CodingAgent.Web.Client.csproj" />
   </ItemGroup>
 

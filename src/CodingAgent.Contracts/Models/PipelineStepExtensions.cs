@@ -1,0 +1,79 @@
+namespace CodingAgent.Pipeline.Models;
+
+public static class PipelineStepExtensions
+{
+    /// <summary>
+    /// Returns true if the step represents a terminal state (Completed, Failed, Cancelled, ConflictRestart,
+    /// PrMerged, or PrClosed).
+    /// Terminal steps are the only valid values for <see cref="PipelineRunSummary.FinalStep"/>
+    /// when persisting to history.
+    /// </summary>
+    public static bool IsTerminal(this PipelineStep step)
+        => step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
+               or PipelineStep.ConflictRestart or PipelineStep.PrMerged or PipelineStep.PrClosed;
+
+    /// <summary>
+    /// Returns true if the step is a quality-gate exit state that requires the retry loop to
+    /// stop immediately: <see cref="PipelineStep.Failed"/>, <see cref="PipelineStep.ConflictRestart"/>,
+    /// <see cref="PipelineStep.PrMerged"/>, or <see cref="PipelineStep.PrClosed"/>.
+    /// <para>
+    /// Distinct from <see cref="IsTerminal"/>, which also matches <see cref="PipelineStep.Completed"/>
+    /// and <see cref="PipelineStep.Cancelled"/> — those are valid non-error exits not reachable from
+    /// within <c>QualityGateExecutor</c>'s retry loop.
+    /// </para>
+    /// </summary>
+    public static bool IsQualityGateExitState(this PipelineStep step)
+        => step is PipelineStep.Failed or PipelineStep.ConflictRestart
+               or PipelineStep.PrMerged or PipelineStep.PrClosed;
+
+    public static string ToDisplayName(this PipelineStep step) => step switch
+    {
+        PipelineStep.Created => "Pipeline Created",
+        PipelineStep.CloningRepository => "Cloning Repository",
+        PipelineStep.RunningEnvironmentSetup => "Environment Setup",
+        PipelineStep.SyncingBrainRepoPreRun => "Loading Brain Context",
+        PipelineStep.CreatingBranch => "Creating Branch",
+        PipelineStep.VerifyingBaseline => "Verifying Baseline",
+        PipelineStep.AnalyzingCode => "Analyzing Code",
+        PipelineStep.ReviewingAnalysis => "Reviewing Analysis",
+        PipelineStep.PostingAnalysis => "Posting Analysis",
+        PipelineStep.GeneratingCode => "Generating Code",
+        PipelineStep.ReviewingCode => "Reviewing Code",
+        PipelineStep.RunningQualityGates => "Running Quality Gates",
+        PipelineStep.ExtractingLinkedIssues => "Extracting Linked Issues",
+        PipelineStep.PostingFindings => "Posting Review Findings",
+        PipelineStep.PreparingForPullRequest => "Preparing for Pull Request",
+        PipelineStep.FinalizingPullRequest => "Finalizing Pull Request",
+        PipelineStep.ReflectingOnRun => "Reflecting on Run",
+        PipelineStep.SyncingBrainRepoPostRun => "Saving Brain Knowledge",
+        PipelineStep.DownloadingOpenIssues => "Downloading Issues",
+        PipelineStep.ExploringCodebase => "Exploring Codebase",
+        PipelineStep.GeneratingPlan => "Generating Plan",
+        PipelineStep.ReviewingPlan => "Reviewing Plan",
+        PipelineStep.PostingPlan => "Posting Plan",
+        PipelineStep.GeneratingSubIssues => "Generating Sub-Issues",
+        PipelineStep.CreatingIssues => "Creating Issues",
+        PipelineStep.PostingSummary => "Posting Summary",
+        PipelineStep.Completed => "Completed",
+        PipelineStep.Failed => "Failed",
+        PipelineStep.Cancelled => "Cancelled",
+        PipelineStep.ConflictRestart => "Conflict Restart",
+        PipelineStep.PrMerged => "PR Merged",
+        PipelineStep.PrClosed => "PR Closed",
+        PipelineStep.CheckingDroppedIdentifiers => "Checking Dropped Identifiers",
+        PipelineStep.AnalyzingHotspots => "Analyzing Hotspots",
+        PipelineStep.ReadingIssueContext => "Reading Issue Context",
+        PipelineStep.ExtractingConventions => "Extracting Conventions",
+        PipelineStep.DetectingFindings => "Detecting Findings",
+        PipelineStep.AggregatingProposals => "Aggregating Proposals",
+        PipelineStep.ReviewingProposals => "Reviewing Proposals",
+        PipelineStep.CreatingRefactoringIssues => "Creating Issues",
+        PipelineStep.ConsolidatingKnowledge => "Consolidating Knowledge",
+        PipelineStep.ReviewingBrainChanges => "Reviewing Changes",
+        PipelineStep.PushingBrainChanges => "Pushing to Brain",
+        PipelineStep.Investigating => "Investigating",
+        PipelineStep.ReviewingRca => "Reviewing RCA",
+        PipelineStep.ReportingRca => "Reporting RCA",
+        _ => step.ToString()
+    };
+}

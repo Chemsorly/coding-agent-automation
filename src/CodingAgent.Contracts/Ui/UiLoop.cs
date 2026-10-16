@@ -28,4 +28,13 @@ public sealed record UiLoopStatus(
     int CurrentCycleTemplateCount,
     IReadOnlyList<string> ValidationErrors,
     IReadOnlyDictionary<string, ConfigStatusSnapshot> TemplateStatuses,
-    DateTimeOffset? ReportedAt);
+    DateTimeOffset? ReportedAt)
+{
+    /// <summary>Before the first read: the loop stopped, nothing reported, no message.</summary>
+    public static UiLoopStatus Unknown { get; } = NotReported(false, "");
+
+    /// <summary>The status while the Scheduler has not reported recently.</summary>
+    public static UiLoopStatus NotReported(bool runRequested, string message) => new(
+        false, runRequested, message, null, 0, 0, 0, false, null, 0, 0,
+        [], new Dictionary<string, ConfigStatusSnapshot>(), null);
+}

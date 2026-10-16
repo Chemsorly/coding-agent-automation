@@ -43,6 +43,8 @@ internal static class UiSettingsEndpoints
 
         group.MapGet("/templates", ConfigEndpoints.GetAllTemplates);
         group.MapPost("/templates/move", ConfigEndpoints.MoveTemplateFlat);
+        group.MapPut("/projects/{projectId}/templates", ConfigEndpoints.SaveTemplate);
+        group.MapDelete("/projects/{projectId}/templates/{templateId}", ConfigEndpoints.DeleteTemplate);
 
         group.MapGet("/export", ConfigEndpoints.ExportConfigAsync);
         group.MapPost("/import", ConfigEndpoints.ImportConfigAsync).DisableAntiforgery();

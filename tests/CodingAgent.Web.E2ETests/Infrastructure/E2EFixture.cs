@@ -26,7 +26,7 @@ namespace CodingAgent.Web.E2ETests.Infrastructure;
 ///
 /// Start order matters: the API must be listening before the Scheduler builds (it uses
 /// <c>PipelineApi:BaseUrl</c>), and both must be listening before the Blazor host builds, because
-/// the monolith reads <c>PipelineApi:BaseUrl</c> and <c>SchedulerApi:BaseUrl</c> during
+/// the monolith reads <c>PipelineApi:BaseUrl</c> during
 /// configuration and fast-fails without them.
 ///
 /// Playwright is started lazily by <see cref="GetBrowserAsync"/>. Tests that assert on state
@@ -46,6 +46,8 @@ public sealed class E2EFixture : IAsyncLifetime
     private ApiE2EWebApplicationFactory? _apiFactory;
     private SchedulerE2EWebApplicationFactory? _schedulerFactory;
     private FakeJobController? _jobController;
+    // The service clients the Job Controller uses, with the agent API key. The web host has none since spec 051 4.1.
+    private ServiceProvider? _serviceClients;
     private JobControllerE2EWebApplicationFactory? _realJobControllerFactory;
 
     /// <summary>Blazor Server app — UI navigation and page assertions.</summary>
@@ -105,19 +107,43 @@ public sealed class E2EFixture : IAsyncLifetime
         ?? throw new InvalidOperationException("Scheduler host not started");
 
     /// <summary>
+    /// Starts the closed loop the way Start does since spec 051 D11: it records the request
+    /// (<c>ClosedLoopAutoStart</c>), which the Scheduler's watchdog would otherwise undo, and starts
+    /// the loop at once rather than waiting for the watchdog's tick. True when the loop runs.
+    /// </summary>
+    public async Task<bool> StartLoopAsync()
+    {
+        await Factory.ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
+        // The watchdog may start it first, in which case this call finds it running.
+        var loop = SchedulerFactory.LoopService;
+        return await loop.StartLoopAsync() || loop.IsLoopActive;
+    }
+
+    /// <summary>
+    /// Stops the closed loop the way Stop does since spec 051 D11: it withdraws the request, so the
+    /// Scheduler's watchdog does not start the loop again, and asks the loop to stop after its cycle.
+    /// </summary>
+    public async Task StopLoopAsync()
+    {
+        await Factory.ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
+        var loop = SchedulerFactory.LoopService;
+        loop.StopLoop();
+
+        // Wait for the loop to actually finish its current cycle, the same way ResetAllAsync() does.
+        // Without this wait, StopLoopAsync() returns while IsLoopActive may still be true, and the
+        // next test's page load shows "Stop Loop" instead of "Start Loop" — causing
+        // LoopControlTests.Loop_StartStop_UIReflectsState to time out on the missing button.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (loop.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(25);
+    }
+
+    /// <summary>
     /// Chat job dispatcher. Moved to the API host (Spec 044/045) so it polls the registry
     /// that the hub actually writes to. Tests must use this rather than Factory.ChatDispatcher.
     /// </summary>
     public ChatJobDispatcher ChatDispatcher => _apiFactory?.ChatDispatcher
         ?? throw new InvalidOperationException("API host not started");
-
-    /// <summary>
-    /// Refreshes the Blazor host's <see cref="ApiAgentRegistryService"/> snapshot immediately.
-    /// Call this after connecting agents (which register on the API hub) and before navigating to a
-    /// Blazor page that renders agent status, so the page does not race the 2s background poll.
-    /// </summary>
-    public Task ForceAgentRegistryRefreshAsync(CancellationToken ct = default)
-        => Factory.ForceAgentRegistryRefreshAsync(ct);
 
     /// <summary>
     /// Run lifecycle manager. Spec 045 removed it from the monolith's DI and re-homed it in the
@@ -128,12 +154,13 @@ public sealed class E2EFixture : IAsyncLifetime
         ?? throw new InvalidOperationException("API host not started");
 
     /// <summary>
-    /// The monolith's work-item client, pointed at the API host — the same one the Job Controller
+    /// A work-item client with the agent API key, pointed at the API host: the one the Job Controller
     /// uses. Lets a test read queue state (pending, claimed, status) over the real endpoints
     /// instead of reaching into the database behind them.
     /// </summary>
     public IPipelineApiWorkItemClient WorkItems =>
-        Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>();
+        _serviceClients?.GetRequiredService<IPipelineApiWorkItemClient>()
+        ?? throw new InvalidOperationException("API host not started");
 
     /// <summary>
     /// Stands in for the Job Controller process. Nothing else moves a WorkItem out of
@@ -176,8 +203,7 @@ public sealed class E2EFixture : IAsyncLifetime
         Factory.ApiBaseUrl = _apiFactory.ServerAddress;
 
         // Build the Scheduler host after the API is listening, so PipelineApi__BaseUrl is
-        // resolvable. Must be built before the Blazor host because the Web app reads
-        // SchedulerApi__BaseUrl during configuration and fast-fails without it.
+        // resolvable.
         _schedulerFactory = new SchedulerE2EWebApplicationFactory(
             Factory.DbName,
             Factory.ConfigStore,
@@ -190,15 +216,15 @@ public sealed class E2EFixture : IAsyncLifetime
         // Force the Scheduler host to build and bind its Kestrel port.
         using (var schedulerClient = _schedulerFactory.CreateClient()) { }
 
-        Factory.SchedulerBaseUrl = _schedulerFactory.ServerAddress;
 
         using var appClient = Factory.CreateClient();
 
-        // The work-item client is registered in the monolith by AddPipelineApiClient and points at
-        // PipelineApi:BaseUrl — the API host started above — so the controller claims over HTTP
-        // exactly as the real one does.
+        // The controller claims over HTTP with the agent API key, exactly as the real one does.
+        _serviceClients = new ServiceCollection()
+            .AddPipelineApiClient(new PipelineApiClientOptions { BaseUrl = _apiFactory.ServerAddress, AgentApiKey = ApiKey })
+            .BuildServiceProvider();
         _jobController = new FakeJobController(
-            Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>(),
+            WorkItems,
             _apiFactory.AgentRegistry,
             DbContextFactory);
 
@@ -252,6 +278,10 @@ public sealed class E2EFixture : IAsyncLifetime
     /// </summary>
     public async Task ResetAllAsync()
     {
+        // Withdraw a Start first: the Scheduler's watchdog would otherwise restart the loop between
+        // the stop below and ResetAll (spec 051 D11).
+        await Factory.ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
+
         // PipelineLoopService lives in the Scheduler host; stop it there.
         if (_schedulerFactory is not null)
         {
@@ -302,6 +332,25 @@ public sealed class E2EFixture : IAsyncLifetime
         if (authenticated)
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ApiKey);
+        return client;
+    }
+
+    /// <summary>
+    /// A client for the API's UI surface (<c>/api/ui/**</c>, spec 051 D1), which takes only user tokens: it
+    /// carries one for "tester" with <paramref name="grant"/> (global admin by default), signed with the
+    /// harness key the way the web host signs them.
+    /// </summary>
+    public HttpClient CreateUiApiClient(CodingAgent.Contracts.Auth.AccessGrant? grant = null)
+    {
+        var client = (_apiFactory ?? throw new InvalidOperationException("API host not started")).CreateClient();
+        var now = DateTimeOffset.UtcNow;
+        var token = CodingAgent.Infrastructure.Common.Auth.UserTokens.Create(
+            new CodingAgent.Infrastructure.Common.Auth.UserTokenSubject("e2e:tester", "tester", "e2e"),
+            grant ?? new CodingAgent.Contracts.Auth.AccessGrant(CodingAgent.Contracts.Auth.AccessRole.Admin, new Dictionary<string, CodingAgent.Contracts.Auth.AccessRole>(), []),
+            now,
+            now.AddMinutes(30),
+            CodingAgent.Infrastructure.Common.Auth.UserTokens.CreateSigningKey(E2ETestDefaults.UserTokenSigningKey));
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         return client;
     }
 
@@ -386,6 +435,8 @@ public sealed class E2EFixture : IAsyncLifetime
 
         if (_jobController is not null)
             await _jobController.DisposeAsync();
+        if (_serviceClients is not null)
+            await _serviceClients.DisposeAsync();
 
         // Dispose hosts in dependency order: Blazor → Scheduler → API → JobController. The Scheduler's
         // loop calls the API, so it stops before the API goes away (#3181).

@@ -383,96 +383,7 @@ public sealed class ApiBackedConfigStoresTests
         client.Verify(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── ApiConfigurationStore project mutations ───────────────────────────────
-
-    [Fact]
-    public async Task ApiConfigurationStore_SaveTemplate_DelegatesToProjectStore()
-    {
-        var client = EmptyClient();
-        var store = MakeConfigStore(client.Object);
-        var template = new PipelineJobTemplate
-        {
-            Id = "tmpl-1",
-            Name = "Test Template",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1"
-        };
-
-        await store.SaveTemplateAsync("proj-1", template, CancellationToken.None);
-
-        client.Verify(c => c.SaveTemplateAsync("proj-1", template, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ApiConfigurationStore_DeleteTemplate_DelegatesToProjectStore()
-    {
-        var client = EmptyClient();
-        var store = MakeConfigStore(client.Object);
-
-        await store.DeleteTemplateAsync("proj-1", new TemplateId("tmpl-1"), CancellationToken.None);
-
-        client.Verify(c => c.DeleteTemplateAsync("proj-1", "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ApiConfigurationStore_MoveTemplate_DelegatesToProjectStore()
-    {
-        var client = EmptyClient();
-        var store = MakeConfigStore(client.Object);
-
-        await store.MoveTemplateAsync("src", "dst", new TemplateId("tmpl-1"), CancellationToken.None);
-
-        client.Verify(c => c.MoveTemplateAsync(new ProjectId("src"), new ProjectId("dst"), "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── ApiProjectStore mutations ─────────────────────────────────────────────
-
-    [Fact]
-    public async Task ApiProjectStore_SaveTemplate_CallsClientAndInvalidatesTemplateCache()
-    {
-        var client = EmptyClient();
-        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
-        var template = new PipelineJobTemplate
-        {
-            Id = "tmpl-1",
-            Name = "Test Template",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1"
-        };
-
-        await store.SaveTemplateAsync("proj-1", template, CancellationToken.None);
-
-        client.Verify(c => c.SaveTemplateAsync("proj-1", template, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ApiProjectStore_DeleteTemplate_CallsClient()
-    {
-        var client = EmptyClient();
-        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
-
-        await store.DeleteTemplateAsync("proj-1", new TemplateId("tmpl-1"), CancellationToken.None);
-
-        client.Verify(c => c.DeleteTemplateAsync("proj-1", "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ApiProjectStore_MoveTemplate_CallsClientAndInvalidatesBothCaches()
-    {
-        var client = EmptyClient();
-        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
-
-        await store.MoveTemplateAsync("src", "dst", new TemplateId("tmpl-1"), CancellationToken.None);
-
-        client.Verify(c => c.MoveTemplateAsync(new ProjectId("src"), new ProjectId("dst"), "tmpl-1",
-            It.IsAny<CancellationToken>()), Times.Once);
-        // TODO: [WARNING] This test only verifies the client is called once — it does NOT assert that the
-        // cache is invalidated for both source and target projects, despite the test name claiming it does.
-        // If the cache-invalidation branch in ApiProjectStore.MoveTemplateAsync were deleted, this test
-        // would still pass. Add assertions that load the cached projects before the move, call MoveTemplateAsync,
-        // then call GetProjectsAsync again and verify the client was called a second time (cache miss) for
-        // both source and target project IDs.
-    }
+    // ── ApiProjectStore ───────────────────────────────────────────────────────
 
     [Fact]
     public async Task ApiProjectStore_LoadProjects_CachesResult()
@@ -642,12 +553,6 @@ public sealed class ApiBackedConfigStoresTests
     /// hits the API exactly once. The migration could silently break cache-hit behaviour (e.g. if
     /// LoadCachedAsync was wired to the wrong TtlCache field) and no existing test would catch it.
     /// Add: ApiProjectStore_CachesProjectsWithinTtl and ApiProjectStore_CachesTemplatesWithinTtl.
-    /// NOTE: ApiProjectStore is missing invalidate-on-write characterization tests. The issue
-    /// prerequisites explicitly require "invalidate-on-write" tests before migrating. There are no
-    /// tests asserting that SaveProjectAsync, DeleteProjectAsync, SaveTemplateAsync,
-    /// DeleteTemplateAsync, or MoveTemplateAsync clears the relevant TtlCache. A regression in any
-    /// of those lock (_cacheLock) { _projectsCache.Clear(); } lines would go undetected.
-    /// Add: ApiProjectStore_SaveProject_InvalidatesProjectsCache, etc.
     /// </summary>
     private static ApiConfigurationStore CreateCompositeStore(IPipelineApiConfigClient client, int ttlSeconds)
         => new(
@@ -675,6 +580,9 @@ public sealed class ApiBackedConfigStoresTests
             () => store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None),
             () => store.SaveProjectAsync(new PipelineProject { Id = "p", Name = "P" }, CancellationToken.None),
             () => store.DeleteProjectAsync("p", CancellationToken.None),
+            () => store.SaveTemplateAsync("p", new PipelineJobTemplate { Id = "t", Name = "T", IssueProviderId = "i", RepoProviderId = "r" }, CancellationToken.None),
+            () => store.DeleteTemplateAsync("p", new TemplateId("t"), CancellationToken.None),
+            () => store.MoveTemplateAsync("p", "q", new TemplateId("t"), CancellationToken.None),
             () => store.HasEnabledTemplatesAsync(CancellationToken.None),
             () => store.SaveProviderConfigAsync(Provider("i", ProviderKind.Issue), CancellationToken.None),
             () => store.DeleteProviderConfigAsync("i", ProviderKind.Issue, CancellationToken.None),

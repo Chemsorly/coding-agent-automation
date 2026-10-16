@@ -23,16 +23,31 @@ public static class RefactoringCategories
     public const string NamingInconsistency = "naming-inconsistency";
     public const string PrimitiveObsession = "primitive-obsession";
 
+    // Agent D: test gaps
+    public const string TestGap = "test-gap";
+
     public static readonly IReadOnlyList<string> Structural = [Duplication, StructuralDrift, Complexity, OverEngineering];
     public static readonly IReadOnlyList<string> Correctness = [Todo, DeadCode, Bug, StaleDocumentation];
     public static readonly IReadOnlyList<string> Design = [NamingInconsistency, PrimitiveObsession];
+    public static readonly IReadOnlyList<string> TestGaps = [TestGap];
 
     /// <summary>Every valid category, in agent order.</summary>
-    public static readonly IReadOnlyList<string> All = [.. Structural, .. Correctness, .. Design];
+    public static readonly IReadOnlyList<string> All = [.. Structural, .. Correctness, .. Design, .. TestGaps];
 
     /// <summary>Returns <c>true</c> when <paramref name="category"/> is a known category (case-insensitive).</summary>
     public static bool IsKnown(string? category) =>
         category is not null && All.Contains(category.Trim(), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The categories a scan with <paramref name="focus"/> may propose.</summary>
+    public static IReadOnlyList<string> ForFocus(RefactoringScanFocus focus) => focus switch
+    {
+        RefactoringScanFocus.All => All,
+        RefactoringScanFocus.Structure => Structural,
+        RefactoringScanFocus.Correctness => Correctness,
+        RefactoringScanFocus.Design => Design,
+        RefactoringScanFocus.Tests => TestGaps,
+        _ => throw new ArgumentOutOfRangeException(nameof(focus), focus, "Unknown refactoring scan focus")
+    };
 
     /// <summary>Formats a category list for a JSON schema example, e.g. <c>"a|b|c"</c>.</summary>
     public static string ToSchemaList(IEnumerable<string> categories) => string.Join("|", categories);

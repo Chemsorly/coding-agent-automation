@@ -8,7 +8,7 @@ namespace CodingAgent.Orchestration.Dispatch;
 
 /// <summary>
 /// Shared DI registration for the dispatch resolution stack:
-/// <see cref="ProfileResolver"/>, <see cref="QualityGateResolver"/>,
+/// <see cref="QualityGateResolver"/>,
 /// <see cref="ReviewerResolver"/>, <see cref="DispatchResolutionService"/>,
 /// and <see cref="DispatchInfrastructure"/>.
 /// Used by both the Scheduler and the WebUI monolith to avoid duplicating
@@ -33,7 +33,6 @@ public static class DispatchResolutionServiceCollectionExtensions
         this IServiceCollection services,
         bool includeWorkItemClient = false)
     {
-        services.AddSingleton<ProfileResolver>();
         services.AddSingleton<QualityGateResolver>();
         services.AddSingleton<ReviewerResolver>();
 

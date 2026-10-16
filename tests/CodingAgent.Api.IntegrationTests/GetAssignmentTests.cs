@@ -467,6 +467,13 @@ public sealed class GetAssignmentTests
         // TODO: [WARNING] NotBeNull does not verify the trace context payload is actually preserved.
         // TraceContext is non-reconstructable (W3C spans are closed at assignment time). Add:
         //   minimal.TraceContext!["traceparent"].Should().Be("00-abc-def-01");
+        // TODO: [WARNING] Missing assertion for ResolvedProfileId. The issue requirement says
+        // "BuildMinimalPayload: keeps ResolvedProfileId". Add:
+        //   minimal.ResolvedProfileId.Should().Be(full.ResolvedProfileId,
+        //       "ResolvedProfileId must be stored in the minimal payload so claim-time enrichment
+        //        can use it without falling back to selector-based resolution");
+        // Without this assertion, accidentally re-adding ResolvedProfileId to the omitted list
+        // in BuildMinimalPayload would go undetected by CI.
     }
 
     [Fact]
@@ -540,6 +547,30 @@ public sealed class GetAssignmentTests
         minimal.ProviderConfigs.Should().BeNull("ProviderConfigs must be null in minimal payload");
         minimal.PipelineConfiguration.Should().BeNull("PipelineConfiguration must be null in minimal payload");
         minimal.QualityGateConfigs.Should().BeNull("QualityGateConfigs must be null in minimal payload");
+    }
+
+    [Fact]
+    public void BuildMinimalPayload_PreservesRefactoringFocus()
+    {
+        // RefactoringFocus must survive BuildMinimalPayload so the agent executor can filter phases.
+        var full = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/refactoring-focus"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            ConsolidationRunType = CodingAgent.Pipeline.Models.ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateId = "tmpl-focus",
+            RefactoringFocus = RefactoringScanFocus.Correctness,
+        };
+
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+
+        minimal.RefactoringFocus.Should().Be(RefactoringScanFocus.Correctness,
+            "RefactoringFocus must be preserved in the minimal payload so it reaches the executor");
     }
 
     [Fact]

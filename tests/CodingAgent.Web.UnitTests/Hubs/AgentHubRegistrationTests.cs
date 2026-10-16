@@ -325,10 +325,10 @@ public sealed class AgentHubRegistrationTests
         aborted.Should().BeTrue("connection without agentId and no operator claim must be aborted");
     }
 
-    // ── OnConnectedAsync — no agentId, operator claim → allowed ──────────
-
+    // Spec 051 D7: the web's operator connection moved to the UI hub, so the master key without an
+    // agentId no longer connects here.
     [Fact]
-    public async Task OnConnectedAsync_NoAgentId_OperatorClaim_AllowsConnection()
+    public async Task OnConnectedAsync_NoAgentId_OperatorClaim_AbortsConnection()
     {
         var httpContext = new DefaultHttpContext();
         var features = new FeatureCollection();
@@ -349,7 +349,7 @@ public sealed class AgentHubRegistrationTests
         var hub = CreateHub(mockCtx.Object);
         await hub.OnConnectedAsync();
 
-        aborted.Should().BeFalse("operator connections must not be aborted");
+        aborted.Should().BeTrue("/hubs/agent is for agents only; the UI connects to /hubs/ui");
     }
 
     // ── OnConnectedAsync — null HttpContext (non-HTTP transport) ─────────

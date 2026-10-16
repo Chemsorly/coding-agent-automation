@@ -5,7 +5,7 @@ namespace CodingAgent.Api.Client;
 /// <summary>
 /// Typed HTTP client for the /api/config endpoint group.
 /// Method names are consumed verbatim by Specs 043 and 045.
-/// Spec 051: Settings writes (agent profiles, quality gates, reviewers, projects, import and export,
+/// Spec 051: Settings writes (agent profiles, quality gates, reviewers, projects, templates, import and export,
 /// key-value) are not here; the web host makes them as the signed-in admin through /api/ui/settings.
 /// </summary>
 public interface IPipelineApiConfigClient
@@ -58,7 +58,4 @@ public interface IPipelineApiConfigClient
     // Templates
     Task<IReadOnlyList<PipelineJobTemplate>> GetAllTemplatesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<PipelineJobTemplate>> GetTemplatesForProjectAsync(string projectId, CancellationToken ct = default);
-    Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct = default);
-    Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default);
-    Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default);
 }

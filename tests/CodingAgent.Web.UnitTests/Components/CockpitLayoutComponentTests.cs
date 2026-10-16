@@ -50,7 +50,7 @@ public class CockpitLayoutComponentTests : BunitContext
                 HasMore = false
             });
         Services.AddSingleton(_mockRunHistory.Object);
-        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
+        Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
 
         Services.AddSingleton(_state);
 
@@ -65,7 +65,7 @@ public class CockpitLayoutComponentTests : BunitContext
         Services.AddSingleton<CodingAgent.Web.Ui.IUiHealthClient>(new FakeUiHealthClient());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiSettingsClient>(s =>
             s.GetFirstRunStateAsync(It.IsAny<CancellationToken>()) == Task.FromResult(new CodingAgent.Contracts.Ui.UiFirstRunState(true, false))));
-        Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With().Object);
 
         // JS runtime — shared mock; configure per-test for specific return values.
         Services.AddSingleton<IJSRuntime>(_mockJs.Object);

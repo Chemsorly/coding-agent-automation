@@ -29,13 +29,13 @@ public class RefactoringProposalValidatorTests : IDisposable
 
     private static RefactoringProposal Proposal(
         string title = "Extract shared validation", IReadOnlyList<string>? files = null, string? category = null) => new()
-    {
-        Title = title,
-        AffectedFiles = files ?? ["src/A.cs"],
-        Description = "desc",
-        Rationale = "why",
-        Category = category
-    };
+        {
+            Title = title,
+            AffectedFiles = files ?? ["src/A.cs"],
+            Description = "desc",
+            Rationale = "why",
+            Category = category
+        };
 
     private (IReadOnlyList<RefactoringProposal> Valid, IReadOnlyList<RefactoringProposalValidator.Rejection> Rejected) Validate(
         IReadOnlyList<RefactoringProposal> proposals, params string[] existingTitles) =>
@@ -189,4 +189,38 @@ public class RefactoringProposalValidatorTests : IDisposable
     {
         RefactoringProposalValidator.NormalizeTitle(title).Should().Be(expected);
     }
+
+    [Fact]
+    public void Validate_TestGapCategory_IsAccepted()
+    {
+        // test-gap is in RefactoringCategories.All; the validator must accept it
+        var proposal = Proposal(category: RefactoringCategories.TestGap);
+        var (valid, rejected) = Validate([proposal]);
+
+        valid.Should().ContainSingle();
+        rejected.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_CategoryOutsideAllowedCategories_IsRejected()
+    {
+        // When allowedCategories is supplied, proposals with a category outside it must be rejected
+        var proposal = Proposal(category: RefactoringCategories.Bug);
+        var allowedCategories = RefactoringCategories.Structural;
+
+        var (valid, rejected) = RefactoringProposalValidator.Validate(
+            [proposal], _workspace, [], allowedCategories);
+
+        valid.Should().BeEmpty();
+        rejected.Should().ContainSingle()
+            .Which.Reason.Should().Be("category 'bug' is outside the scan focus");
+    }
+
+    // TODO [WARNING]: Add a test verifying that a proposal with a null Category still passes when
+    // allowedCategories is non-null. The production guard is `if (proposal.Category is not null &&
+    // allowedCategories is not null && ...)`, so removing the null check would cause a NullReferenceException
+    // on the .Trim() call — but no test currently catches this regression path.
+    // Test name: Validate_NullCategory_PassesEvenWhenAllowedCategoriesIsSet
+    // Arrange: Proposal(category: null), allowedCategories = RefactoringCategories.Structural
+    // Assert: valid.ContainSingle(), rejected.BeEmpty()
 }

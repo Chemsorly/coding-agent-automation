@@ -147,12 +147,16 @@ app.UseAuthorization();
 // SignalR hub — agents connect here.
 app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization(ApiAuthPolicies.Agent);
 
+// The UI hub (spec 051 D7): the signed-in user's live run output and chat replies. Its connect token lasts the
+// session, so the connection closes when the session ends.
+app.MapHub<UiHub>(HubRoutes.Ui, options => options.CloseOnAuthenticationExpiration = true)
+    .RequireAuthorization(CodingAgent.Api.Ui.UiPolicies.Hub);
+
 app.MapWorkItemEndpoints();
 app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();
 app.MapHarnessSuggestionEndpoints();
 app.MapFeedbackCommentOutboxEndpoints();
-app.MapTriageEndpoints();
 app.MapAgentEndpoints();
 app.MapApiSchedulerEndpoints();
 app.MapUiEndpoints();

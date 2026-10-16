@@ -107,6 +107,36 @@ public class UserTokenProviderTests
         Lifetime(token!).Should().BeCloseTo(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(1));
     }
 
+    /// <summary>
+    /// Spec 051 D7: the UI hub's token lasts the session, so a connection older than the HTTP lifetime keeps
+    /// receiving; the hub closes it when the session ends. It is the same user and grant as the HTTP token.
+    /// </summary>
+    [Fact]
+    public async Task HubToken_LastsTheSession_AndIsKeptApartFromTheHttpToken()
+    {
+        SignIn(session: TimeSpan.FromHours(8));
+        var provider = Provider();
+
+        var hubToken = await provider.GetHubTokenAsync();
+        var httpToken = await provider.GetTokenAsync();
+
+        Lifetime(hubToken!).Should().BeCloseTo(TimeSpan.FromHours(8), TimeSpan.FromSeconds(1));
+        Lifetime(httpToken!).Should().Be(UserTokens.HttpLifetime);
+        (await ValidateAsync(hubToken!)).FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-alice");
+        (await ValidateAsync(hubToken!)).FindFirst(UserTokenClaimTypes.Use)?.Value.Should().Be(UserTokenClaimTypes.HubUse, "the API accepts it only on the hub");
+        (await ValidateAsync(httpToken!)).FindFirst(UserTokenClaimTypes.Use).Should().BeNull("HTTP tokens carry no use restriction");
+        (await provider.GetHubTokenAsync()).Should().Be(hubToken, "a hub token is reused while it is the same user's");
+    }
+
+    [Fact]
+    public async Task HubToken_EndedSession_GetsNone()
+    {
+        SignIn(session: TimeSpan.FromMinutes(1));
+        _time.Advance(TimeSpan.FromMinutes(2));
+
+        (await Provider().GetHubTokenAsync()).Should().BeNull();
+    }
+
     [Fact]
     public async Task EndedSession_GetsNoToken()
     {

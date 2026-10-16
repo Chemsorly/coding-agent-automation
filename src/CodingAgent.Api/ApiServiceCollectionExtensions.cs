@@ -464,9 +464,18 @@ public static class ApiServiceCollectionExtensions
         // that could not trigger. A trigger enqueues through ApiWorkDistributor (AddDispatch) and reads
         // the saved settings from IPipelineConfigStore; the empty configuration is only the fallback for
         // a host without that store.
+        // TODO [WARNING]: When the job-templates file is absent, the API registers JobTemplateStore.CreateEmpty()
+        // (a non-null store with zero templates). ConsolidationSelectorResolver treats any non-null store as
+        // "Kubernetes mode" and builds an empty dispatchableSelectors set, causing every enabled profile to fail
+        // the Contains check and returning null for global consolidation triggers in non-Kubernetes deployments
+        // (e.g. local development). The null-means-no-filtering guard in Resolve() is effectively unreachable
+        // from the API. A clean fix is to treat an empty store the same as no store (pass null when
+        // GetAllTemplates().Count == 0), or to distinguish "no file" from "file with zero templates" in
+        // CreateEmpty() vs LoadFromFile(), so the resolver can skip filtering only when no file is configured.
         services.AddSingleton<IConsolidationSelectorResolver>(sp => new ConsolidationSelectorResolver(
             sp.GetRequiredService<IAgentProfileStore>(),
-            sp.GetRequiredService<IPipelineConfigStore>()));
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<JobTemplateStore>()));
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new ConsolidationServiceDependencies(
                 Log.Logger,
@@ -556,7 +565,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IProjectStore>(),
                 sp.GetRequiredService<ITokenVendingService>(),
                 Log.Logger,
-                sp.GetRequiredService<IAgentProfileStore>(),
                 sp.GetRequiredService<IPipelineConfigStore>()));
     }
 

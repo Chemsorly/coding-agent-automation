@@ -74,6 +74,13 @@ public static class SchedulerServiceCollectionExtensions
                 new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
+        services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(c =>
+        {
+            c.BaseAddress = new Uri(pipelineApiBaseUrl);
+            c.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
+        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
@@ -147,6 +154,17 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
+
+        // ── Consolidation services ────────────────────────────────────────────
+        services.AddSingleton<IHarnessSuggestionStore>(sp =>
+            new ApiBackedHarnessSuggestionStore(sp.GetRequiredService<IPipelineApiHarnessSuggestionClient>()));
+        services.AddSingleton<IConsolidationSelectorResolver>(sp =>
+            new ConsolidationSelectorResolver(
+                sp.GetRequiredService<IAgentProfileStore>(),
+                sp.GetRequiredService<IPipelineConfigStore>(),
+                sp.GetService<JobTemplateStore>()));
+        services.AddSingleton<IConsolidationService>(sp =>
+            new ConsolidationService(BuildConsolidationServiceDeps(sp)));
 
         // ── Dispatch orchestration service ────────────────────────────────────
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
@@ -224,51 +242,11 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
         services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
-        // Cache singleton for the /loop/status handler — scoped to this DI container rather than
-        // a static field, so integration tests with multiple WebApplication instances don't share state.
-        // Inject IRedisStore (null when Redis is not configured) so the leader pod publishes each
-        // LoopStatusDto snapshot to Redis and non-leader pods can read it on GetLoopStatus.
-        // Inject ILeaderElectionService so non-leader pods skip the stale local fast-path in ReadAsync.
-        services.AddSingleton<LoopStatusCache>(sp =>
-            new LoopStatusCache(sp.GetService<IRedisStore>(), sp.GetService<ILeaderElectionService>(), Log.Logger));
-
-        // ── Loop command relay infrastructure ─────────────────────────────────
-        // ILoopCommandExecutor: shared implementation of start/stop/resume, used by both the local
-        // path (leader or no-Redis) and the leader-side LoopCommandHandlerService.
-        services.AddSingleton<ILoopCommandExecutor, LoopCommandExecutor>();
-
-        // ILoopCommandRelay + LoopCommandHandlerService are only useful when Redis is configured
-        // (multi-replica mode). When Redis is absent, register a null-object relay that throws if
-        // called (the endpoint guard (store is null → local path) prevents it from ever being called).
-        if (!string.IsNullOrEmpty(redisCs))
-        {
-            services.AddSingleton<ILoopCommandRelay>(sp =>
-                new LoopCommandRelay(
-                    sp.GetRequiredService<IRedisStore>(),
-                    sp.GetService<ILeaderElectionService>()));
-
-            // Registered as a named singleton so integration tests can resolve it by concrete type.
-            services.AddSingleton<LoopCommandHandlerService>(sp =>
-                new LoopCommandHandlerService(
-                    sp.GetRequiredService<ILoopCommandExecutor>(),
-                    sp.GetRequiredService<IPipelineLoopService>(),
-                    sp.GetRequiredService<IPipelineApiConfigClient>(),
-                    sp.GetRequiredService<IRedisStore>(),
-                    sp.GetService<ILeaderElectionService>(),
-                    Log.Logger));
-            services.AddHostedService(sp => sp.GetRequiredService<LoopCommandHandlerService>());
-        }
-        else
-        {
-            // No Redis — NullLoopCommandRelay ensures ILoopCommandRelay is always resolvable from DI.
-            // The endpoint local-path guard (store is null) ensures SendAsync is never reached.
-            services.AddSingleton<ILoopCommandRelay, NullLoopCommandRelay>();
-        }
-
         // ── LoopWatchdogService — reconciles the loop with the desired state (spec 051 D11) ──
         // Every 5 seconds on the leader: starts, stops or resumes the loop to match the pipeline
         // config that Start, Stop and Resume write, and pushes the loop status to the API. Starting
-        // also self-heals a loop an exception or hang stopped. A null leader gate (dev/single-replica
+        // also self-heals a loop an exception or hang stopped, and is how the loop starts after a pod
+        // start or a leadership change. A null leader gate (dev/single-replica
         // mode) causes the watchdog to treat this instance as the leader — matching WorkItemCountsService.
         // TODO: DI lifetime skew — IPipelineApiConfigClient is registered as transient (AddHttpClient),
         //   but LoopWatchdogService is a singleton, so the transient instance is captured for the
@@ -432,6 +410,23 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
     }
+
+    /// <summary>
+    /// Builds a <see cref="ConsolidationServiceDependencies"/> record from the service container.
+    /// Extracted to a helper so the <see cref="IConsolidationService"/> factory stays short and
+    /// does not create a Sonar CPD clone block against the equivalent inline construction in the
+    /// API host (<c>ApiServiceCollectionExtensions.AddLifecycleAndConsolidation</c>).
+    /// </summary>
+    private static ConsolidationServiceDependencies BuildConsolidationServiceDeps(IServiceProvider sp) =>
+        new(
+            Log.Logger,
+            new PipelineConfiguration(),
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<IHarnessSuggestionStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
+            WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
+            SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
+            PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>());
 
     private static k8s.Kubernetes CreateKubernetesClient()
     {

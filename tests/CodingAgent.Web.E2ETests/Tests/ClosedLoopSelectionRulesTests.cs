@@ -118,7 +118,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started, "StartLoopAsync should succeed with valid template");
 
             // Wait for the one clean dispatch
@@ -129,7 +129,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             // Budget=1 ensures the loop can only attempt one dispatch per cycle, so Assert.Single
             // is always deterministic: if the wrong issue were selected it would still be a single
             // claim, caught by the identifier assertion above.
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             // TODO [WARNING]: Assert.Single(ClaimedWorkItemIds) reads the count from the
@@ -150,7 +150,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -202,7 +202,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -225,7 +225,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -317,7 +317,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // Wait for both budget-2 dispatches using ClaimedWorkItemIds count.
@@ -337,7 +337,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             await WaitUntilAsync(
                 () => Fixture.JobController.ClaimedWorkItemIds.Count >= 2,
                 timeout: TimeSpan.FromSeconds(30));
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             // Snapshot after loop is stopped (no more adds possible from new cycles)
@@ -373,7 +373,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             // Wait for the loop to actually stop so ResetAllAsync (called in the next test's
             // InitializeAsync) finds a clean state. Without this wait, a timed-out test leaves
             // the loop mid-cycle, which causes ObjectDisposedException in subsequent tests when
@@ -455,7 +455,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // Wait for all 3 dispatches using ClaimedWorkItemIds count.
@@ -473,7 +473,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             await WaitUntilAsync(
                 () => Fixture.JobController.ClaimedWorkItemIds.Count >= 3,
                 timeout: TimeSpan.FromSeconds(30));
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             // Snapshot after loop is stopped
@@ -500,7 +500,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -545,7 +545,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // Wait for at least one full poll cycle to complete before asserting emptiness.
@@ -555,14 +555,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             // (previously Task.Delay(2s)), the assertion could pass vacuously if the loop
             // never completed a cycle under CI load.
             await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -597,21 +597,21 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // Wait for at least one full poll cycle to complete before asserting emptiness.
             // CycleCount is incremented after each successful ExecuteCycleAsync call, so this
             // wait proves the loop ran and exercised the ImplementationEnabled=false path.
             await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -646,21 +646,21 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // Wait for at least one full poll cycle to complete before asserting emptiness.
             // CycleCount is incremented after each successful ExecuteCycleAsync call, so this
             // wait proves the loop ran and exercised the DecompositionEnabled=false path.
             await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -692,7 +692,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
         // With Enabled=false, StartLoopAsync returns false because no enabled templates exist.
         // This is the correct and expected behaviour for a disabled template — the loop must not start.
-        var started = await loopService.StartLoopAsync();
+        var started = await Fixture.StartLoopAsync();
         Assert.False(started, "StartLoopAsync must return false when the only configured template is disabled");
         // TODO [WARNING]: Assert.Empty here is trivially non-vacuous — the loop never started, so
         // the assertion passes regardless of whether FlattenTemplates correctly skips disabled
@@ -797,7 +797,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
 
         // The loop must start because the default project has an enabled template.
-        var started = await loopService.StartLoopAsync();
+        var started = await Fixture.StartLoopAsync();
         Assert.True(started, "StartLoopAsync must succeed — the default project has an enabled template");
 
         try
@@ -811,7 +811,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             // Wait for CycleCount >= 1 to confirm the cycle completed (not just that a dispatch
             // happened mid-cycle) before asserting DB state.
             await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             // DB assertion: no work item for issue "61" must ever have been created.
@@ -828,7 +828,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -948,7 +948,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
-            var started = await loopService.StartLoopAsync();
+            var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
             // With budget=1, the first template polled (A-Project — alphabetically first) dispatches
@@ -961,7 +961,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
         }
     }
 
@@ -994,7 +994,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
 
         // Part A: blocker open — issue 60 must NOT be dispatched
-        var startedA = await loopService.StartLoopAsync();
+        var startedA = await Fixture.StartLoopAsync();
         Assert.True(startedA, "StartLoopAsync should succeed");
 
         try
@@ -1005,7 +1005,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             // (previously Task.Delay(2.5s)), the assertion could pass vacuously if the loop
             // never completed a cycle under CI load.
             await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             // Use 30s (matching other dispatch-wait timeouts) so CI under load has time for the
             // current cycle to finish before CleanupAsync sets IsLoopActive=false.
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(30));
@@ -1014,7 +1014,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         {
             // Ensure the loop is stopped even if WaitUntilAsync times out, so the test fixture
             // isn't left in a broken state for subsequent tests in the collection.
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             throw;
         }
 
@@ -1046,7 +1046,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // selects the longest-idle agent, which is fakeAgent (connected earlier in Part A).
         fakeAgent.ResetJobAssigned();
 
-        var startedB = await loopService.StartLoopAsync();
+        var startedB = await Fixture.StartLoopAsync();
         // TODO [WARNING]: StartLoopAsync is called immediately after WaitUntilAsync confirms
         // IsLoopActive==false. PipelineLoopService creates a new CancellationTokenSource and
         // restarts the hosted loop, but if residual async continuations from the Part-A cycle
@@ -1064,7 +1064,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }
         finally
         {
-            loopService.StopLoop();
+            await Fixture.StopLoopAsync();
             // Wait for the loop to actually stop so ResetAllAsync finds a clean state.
             // Same pattern as TypePriority_Budget2: a bare StopLoop() in the finally block
             // without awaiting IsLoopActive==false leaves the loop mid-cycle, causing

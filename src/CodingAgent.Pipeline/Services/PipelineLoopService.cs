@@ -190,14 +190,12 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         // Load config outside the lock to avoid sync-over-async deadlocks
         // (Blazor Server's RendererSynchronizationContext would deadlock on .GetAwaiter().GetResult())
-        PipelineConfiguration config;
         IReadOnlyList<ProviderConfig> issueProviders;
         IReadOnlyList<ProviderConfig> repoProviders;
         IReadOnlyList<PipelineJobTemplate> templates;
 
         try
         {
-            config = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
             issueProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
             repoProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
             templates = await _projectStore.LoadAllTemplatesAsync(CancellationToken.None).ConfigureAwait(false);
@@ -224,23 +222,9 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             return false;
         }
 
-        // Persist ClosedLoopAutoStart=true so that RunMultiTemplateLoopAsync reads it back on
-        // every subsequent cycle and does not self-stop. This also ensures that if the pod
-        // restarts while the loop is running, it auto-starts again (the original intent of the
-        // flag). Best-effort: a failure here is non-fatal — the loop still starts, but the next
-        // cycle will self-stop via the guard in RunMultiTemplateLoopAsync.
-        if (!config.ClosedLoopAutoStart)
-        {
-            try
-            {
-                await _pipelineConfigStore.UpdatePipelineConfigAsync(
-                    c => c with { ClosedLoopAutoStart = true }, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "StartLoopAsync could not persist ClosedLoopAutoStart=true; loop will self-stop on first cycle");
-            }
-        }
+        // ClosedLoopAutoStart is the user's command (spec 051 D11): Start sets it through the API, and
+        // the Scheduler's LoopWatchdogService starts the loop to match. The loop never writes it, so a
+        // Stop that arrives while the loop starts is not undone; the next cycle reads it and stops.
 
         lock (_lock)
         {

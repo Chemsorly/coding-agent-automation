@@ -4,7 +4,6 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.Services;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
@@ -135,7 +134,7 @@ public sealed class PostgresHarnessSuggestionStoreContractTests : HarnessSuggest
 // ── API-backed implementation ────────────────────────────────────────────────
 
 /// <summary>
-/// Runs the contract tests against <see cref="CodingAgent.Web.Services.ApiBackedHarnessSuggestionStore"/>.
+/// Runs the contract tests against <see cref="CodingAgent.Api.Client.Stores.ApiBackedHarnessSuggestionStore"/>.
 /// The mock <see cref="IPipelineApiHarnessSuggestionClient"/> simulates real store semantics in-memory
 /// so every contract assertion (null when empty, round-trip, overwrite) exercises the adapter's
 /// delegation logic.
@@ -167,6 +166,6 @@ public sealed class ApiBackedHarnessSuggestionStoreContractTests : HarnessSugges
     {
         // Reset in-memory state so each test starts from an empty store
         _stored = null;
-        return new CodingAgent.Web.Services.ApiBackedHarnessSuggestionStore(_client.Object);
+        return new CodingAgent.Api.Client.Stores.ApiBackedHarnessSuggestionStore(_client.Object);
     }
 }

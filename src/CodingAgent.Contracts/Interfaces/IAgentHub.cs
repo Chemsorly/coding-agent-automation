@@ -12,12 +12,6 @@ public interface IAgentHub
     Task RegisterAgent(AgentRegistrationMessage message);
     Task DeregisterAgent(AgentId agentId);
 
-    // UI group subscriptions (called by UI circuits, not agents)
-    Task SubscribeToRun(string jobId);
-    Task UnsubscribeFromRun(string jobId);
-    Task SubscribeToChatSession(string sessionId);
-    Task UnsubscribeFromChatSession(string sessionId);
-
     // Job lifecycle
     Task JobAccepted(JobId jobId);
     Task JobRejected(JobId jobId, string reason);
@@ -72,11 +66,9 @@ public interface IAgentHub
 }
 
 /// <summary>
-/// Server-to-UI push events broadcast to subscribed UI circuits via hub groups.
-/// Placed in CodingAgent.Pipeline so Api.Client can reference these event names.
-/// NOT added to <see cref="IAgentHubClient"/> — that interface pushes to agent connections only.
+/// The events the UI hub (<see cref="IUiHub"/>) pushes to the connections that joined a run or chat group.
 /// </summary>
-public interface IAgentHubUiClient
+public interface IUiHubClient
 {
     Task OnOutputLines(string jobId, IReadOnlyList<string> lines);
     Task OnStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp);
@@ -88,7 +80,7 @@ public interface IAgentHubUiClient
     Task OnChatCompleted(string sessionId, int exitCode, string? error);
 
     /// <summary>
-    /// Sent to the connecting UI client (not the whole group) immediately after SubscribeToRun,
+    /// Sent to the subscribing connection (not the whole group) immediately after <see cref="IUiHub.SubscribeToRun"/>,
     /// carrying the full live run state needed to seed the PipelineSidebar view model.
     /// Includes CurrentStep, HighWaterMark, IssueLabels, and all sidebar detail fields.
     /// </summary>

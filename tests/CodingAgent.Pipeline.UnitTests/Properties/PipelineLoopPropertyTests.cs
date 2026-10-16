@@ -31,7 +31,8 @@ public class PipelineLoopPropertyTests
         var originalConfig = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true
         };
 
         var configCallCount = 0;
@@ -65,7 +66,7 @@ public class PipelineLoopPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await BackgroundWait.PollUntilAsync(() => configCallCount >= 2, "the loop should load the config again for its first cycle");
+        await BackgroundWait.PollUntilAsync(() => configCallCount >= 2, "the loop should load the config again for its next cycle");
         svc.StopLoop();
         await Task.Delay(100);
         cts.Cancel();

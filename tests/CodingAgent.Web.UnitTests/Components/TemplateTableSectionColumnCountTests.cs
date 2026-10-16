@@ -55,8 +55,7 @@ public class TemplateTableSectionColumnCountTests : BunitContext
     public TemplateTableSectionColumnCountTests()
     {
         var mockLogger = new Mock<ILogger>();
-        var registry = new AgentRegistryService(mockLogger.Object);
-        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.UiAgentClientStub.With().Object);
     }
 
     private IRenderedComponent<TemplateTableSection> RenderSection(bool isLoopActive, bool canEdit = true) =>

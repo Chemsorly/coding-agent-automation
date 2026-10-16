@@ -45,6 +45,9 @@ public interface IAgentProvider : IAsyncDisposable
     /// (normalized) workspace path are no-ops. Exceptions from the underlying agent
     /// execution are caught, logged as warnings, and not rethrown; the session is not
     /// marked as established on failure so the next call will retry.
+    /// A provider whose CLI refuses its own configuration throws <c>ProviderUnavailableException</c>
+    /// with <c>AgentErrorCategory.ProviderMisconfigured</c> instead, since every later call would
+    /// fail the same way.
     /// </summary>
     Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct);
 
