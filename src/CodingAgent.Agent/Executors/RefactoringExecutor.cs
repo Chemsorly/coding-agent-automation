@@ -20,7 +20,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 {
     protected override string ExecutorName => "Refactoring detection";
 
-    public RefactoringExecutor(Serilog.ILogger logger) : base(logger)
+    public RefactoringExecutor(Serilog.ILogger logger, ConsolidationProgress? progress = null) : base(logger, progress)
     {
     }
 
@@ -58,6 +58,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         return await WrapWithCancellationHandlingAsync(job.JobId, async () =>
         {
             // 1. Clone code repo (optionally + brain repo)
+            TransitionTo(PipelineStep.CloningRepository);
             Directory.CreateDirectory(workspacePath);
             Logger.Information("Cloning code repo for refactoring detection run {RunId} into {Workspace}", job.JobId, workspacePath);
 
@@ -76,12 +77,14 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 issueProvider, openIssues, job.PipelineConfiguration.HotspotAnalysisLookback, job.JobId, ct);
 
             // 2. Hotspot analysis (now knows scan issue refs to exclude)
+            TransitionTo(PipelineStep.AnalyzingHotspots);
             await RunWithTracingAsync("RefactoringDetection.HotspotAnalysis", job.JobId, async _ =>
             {
                 await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, scanIssueRefs, ct);
             });
 
             // 2c. Query past proposal outcomes for feedback context
+            TransitionTo(PipelineStep.ReadingIssueContext);
             var (outcomeContext, closedIssueTitles) = await TryBuildOutcomeContextAsync(issueProvider, job.PipelineConfiguration, job.JobId, ct);
 
             // 2d. Write both for the review step, which checks overlap too
@@ -90,7 +93,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             var commitSha = await TryGetHeadCommitAsync(workspacePath, ct);
 
             // ── Phased Refactoring Detection ──
-            var phasedResult = await ExecutePhasedRefactoringAsync(job, agentProvider, workspacePath, issueContext, outcomeContext, ct);
+            var phasedResult = await ExecutePhasedRefactoringAsync(job, agentProvider, workspacePath, issueContext, outcomeContext, onOutputLine, ct);
             if (!phasedResult.Success) return phasedResult;
 
             return await FinalizeProposalsAsync(
@@ -318,11 +321,13 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         string workspacePath,
         string? issueContext,
         string outcomeContext,
+        Action<string>? onOutputLine,
         CancellationToken ct)
     {
         ConsolidationJobResult? failure;
 
         // Phase 0: Context Extraction
+        TransitionTo(PipelineStep.ExtractingConventions);
         Logger.Information("Phase 0: Extracting project conventions for run {RunId}", job.JobId); // NOSONAR S6664 — one progress log per scan phase
 
         (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase0.ContextExtraction", job.JobId, async _ =>
@@ -337,18 +342,20 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                     Timeout = job.PipelineConfiguration.AgentTimeout
                 },
                 job.JobId,
-                ct);
+                ct,
+                onOutputLine);
         });
 
         if (failure is not null) return failure;
 
         // Phase 1: Parallel Focused Detection — run only the agents of the focus.
-        var agents = new (string SpanName, Func<string> BuildPrompt, RefactoringScanFocus Focus)[]
+        TransitionTo(PipelineStep.DetectingFindings);
+        var agents = new (string SpanName, Func<string> BuildPrompt, RefactoringScanFocus Focus, string? OutputPrefix)[]
         {
-            ("RefactoringDetection.Phase1.StructuralDebt", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt, RefactoringScanFocus.Structure),
-            ("RefactoringDetection.Phase1.Correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt, RefactoringScanFocus.Correctness),
-            ("RefactoringDetection.Phase1.DesignConsistency", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt, RefactoringScanFocus.Design),
-            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests),
+            ("RefactoringDetection.Phase1.StructuralDebt", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt, RefactoringScanFocus.Structure, "[A] "),
+            ("RefactoringDetection.Phase1.Correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt, RefactoringScanFocus.Correctness, "[B] "),
+            ("RefactoringDetection.Phase1.DesignConsistency", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt, RefactoringScanFocus.Design, "[C] "),
+            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests, null),
         };
 
         var selected = agents
@@ -361,6 +368,9 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         var phase1Tasks = selected.Select(a =>
             RunWithTracingAsync(a.SpanName, job.JobId, async _ =>
             {
+                var agentOnOutputLine = a.OutputPrefix is null
+                    ? onOutputLine
+                    : (onOutputLine is null ? null : line => onOutputLine($"{a.OutputPrefix}{line}"));
                 return await ExecuteAgentAndCheckAsync(
                     agentProvider,
                     new AgentRequest
@@ -370,7 +380,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                         Timeout = job.PipelineConfiguration.AgentTimeout
                     },
                     job.JobId,
-                    ct);
+                    ct,
+                    agentOnOutputLine);
             })).ToArray();
 
         var phase1Results = await Task.WhenAll(phase1Tasks);
@@ -389,6 +400,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         // Phase 2: Aggregation & Prioritization
+        TransitionTo(PipelineStep.AggregatingProposals);
         Logger.Information("Phase 2: Aggregating and prioritizing findings for run {RunId}", job.JobId);
 
         var aggregationPrompt = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(
@@ -408,7 +420,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                     Timeout = job.PipelineConfiguration.AgentTimeout
                 },
                 job.JobId,
-                ct);
+                ct,
+                onOutputLine);
         });
 
         if (failure is not null) return failure;
@@ -457,6 +470,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         // Adversarial review (if enabled and proposals non-empty)
+        TransitionTo(PipelineStep.ReviewingProposals);
         AdversarialReviewResult reviewResult;
         reviewResult = await RunWithTracingAsync("RefactoringDetection.AdversarialReview", job.JobId, async _ =>
         {
@@ -493,6 +507,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         // Deterministic checks the prompts cannot guarantee (paths, scope, category, duplicates)
+        TransitionTo(PipelineStep.CreatingRefactoringIssues);
         var (validProposals, rejectedProposals) = RefactoringProposalValidator.Validate(
             proposals, workspacePath, baseline.ExistingIssueTitles,
             RefactoringCategories.ForFocus(job.RefactoringFocus));

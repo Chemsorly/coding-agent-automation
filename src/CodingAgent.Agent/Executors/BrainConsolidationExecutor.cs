@@ -19,7 +19,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
     protected override string ExecutorName => "Brain consolidation";
 
-    public BrainConsolidationExecutor(Serilog.ILogger logger, IBrainUpdateService brainUpdateService) : base(logger)
+    public BrainConsolidationExecutor(Serilog.ILogger logger, IBrainUpdateService brainUpdateService, ConsolidationProgress? progress = null) : base(logger, progress)
     {
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         _brainUpdateService = brainUpdateService;
@@ -69,6 +69,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
         return await WrapWithCancellationHandlingAsync(job.JobId, async () =>
         {
             // 1. Clone brain repo
+            TransitionTo(PipelineStep.CloningRepository);
             Directory.CreateDirectory(workspacePath);
             Logger.Information("Cloning brain repo for consolidation run {RunId} into {Workspace}", // NOSONAR S6664 — one progress log per consolidation phase
                 job.JobId, workspacePath);
@@ -79,6 +80,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             });
 
             // 2. Build prompt
+            TransitionTo(PipelineStep.ConsolidatingKnowledge);
             var prompt = ConsolidationPromptBuilder.BuildBrainConsolidationPrompt(job.LastSuccessfulRunUtc);
 
             // 3. Execute agent
@@ -96,7 +98,8 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                         Timeout = job.PipelineConfiguration.AgentTimeout
                     },
                     job.JobId,
-                    ct);
+                    ct,
+                    onOutputLine);
             });
 
             if (failure is not null) return failure;
@@ -105,6 +108,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             AdversarialReviewResult? reviewResult = null;
 
             // 4a. Diff summary (wrapped for error isolation)
+            TransitionTo(PipelineStep.ReviewingBrainChanges);
             var (skipReview, diffSummaryTokenUsage) = await TryGenerateDiffSummaryAsync(
                 job, agentProvider, workspacePath, onOutputLine, ct);
 
@@ -136,6 +140,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             var refinementTokenUsage = reviewResult?.RefinementTokenUsage;
 
             // 6. Commit all changes (AFTER review/refinement completes)
+            TransitionTo(PipelineStep.PushingBrainChanges);
             Logger.Information("Committing brain consolidation changes for run {RunId}", job.JobId);
             var commitMessage = $"Brain consolidation run {job.JobId}";
             using (var commitActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Commit"))
@@ -235,7 +240,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                     WorkspacePath = workspacePath,
                     Timeout = job.PipelineConfiguration.AgentTimeout,
                     UseResume = true
-                }, ct);
+                }, ct, onOutputLine);
 
             if (!File.Exists(diffFilePath))
             {

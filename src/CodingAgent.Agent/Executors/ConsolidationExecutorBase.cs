@@ -14,12 +14,16 @@ public abstract class ConsolidationExecutorBase
 {
     protected Serilog.ILogger Logger { get; }
     protected abstract string ExecutorName { get; }
+    protected ConsolidationProgress? Progress { get; }
 
-    protected ConsolidationExecutorBase(Serilog.ILogger logger)
+    protected ConsolidationExecutorBase(Serilog.ILogger logger, ConsolidationProgress? progress = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         Logger = logger;
+        Progress = progress;
     }
+
+    protected void TransitionTo(PipelineStep step) => Progress?.TransitionTo(step);
 
     protected ConsolidationJobResult? ValidateJobId(ConsolidationJobMessage job)
     {

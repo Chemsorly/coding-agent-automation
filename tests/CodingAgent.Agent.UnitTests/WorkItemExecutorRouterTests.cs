@@ -132,8 +132,8 @@ public class WorkItemExecutorRouterTests
         ConsolidationJobMessage? captured = null;
         var consolidationExecutor = new Mock<IConsolidationExecutor>();
         consolidationExecutor
-            .Setup(x => x.ExecuteAsync(It.IsAny<ConsolidationJobMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(), It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationJobMessage, Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken>((job, _, _) => captured = job)
+            .Setup(x => x.ExecuteAsync(It.IsAny<ConsolidationJobMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(), It.IsAny<OutputBatcher?>(), It.IsAny<Action<PipelineStep?>?>(), It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationJobMessage, Microsoft.AspNetCore.SignalR.Client.HubConnection, OutputBatcher?, Action<PipelineStep?>?, CancellationToken>((job, _, _, _, _) => captured = job)
             .ReturnsAsync(new ConsolidationJobResult { JobId = "test-job-1", Success = true });
         var router = new WorkItemExecutorRouter(
             Mock.Of<IPipelineExecutor>(), consolidationExecutor.Object, Mock.Of<Serilog.ILogger>());
@@ -154,8 +154,8 @@ public class WorkItemExecutorRouterTests
         ConsolidationJobMessage? captured = null;
         var consolidationExecutor = new Mock<IConsolidationExecutor>();
         consolidationExecutor
-            .Setup(x => x.ExecuteAsync(It.IsAny<ConsolidationJobMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(), It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationJobMessage, Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken>((job, _, _) => captured = job)
+            .Setup(x => x.ExecuteAsync(It.IsAny<ConsolidationJobMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(), It.IsAny<OutputBatcher?>(), It.IsAny<Action<PipelineStep?>?>(), It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationJobMessage, Microsoft.AspNetCore.SignalR.Client.HubConnection, OutputBatcher?, Action<PipelineStep?>?, CancellationToken>((job, _, _, _, _) => captured = job)
             .ReturnsAsync(new ConsolidationJobResult { JobId = "test-job-1", Success = true });
         var router = new WorkItemExecutorRouter(
             Mock.Of<IPipelineExecutor>(), consolidationExecutor.Object, Mock.Of<Serilog.ILogger>());
@@ -272,5 +272,71 @@ public class WorkItemExecutorRouterTests
             ConsolidationRunType = taskType == WorkItemTaskType.Consolidation
                 ? ConsolidationRunType.BrainConsolidation : null
         };
+    }
+}
+
+public class WorkItemExecutorRouterNewTests
+{
+    [Fact]
+    public async Task ExecuteAsync_ConsolidationTask_PassesOutputBatcherAndStepCallbackOn()
+    {
+        // The router must forward the exact OutputBatcher and step callback to the consolidation executor
+        OutputBatcher? capturedBatcher = null;
+        Action<PipelineStep?>? capturedStepCallback = null;
+        var consolidationExecutor = new Mock<IConsolidationExecutor>();
+        consolidationExecutor
+            .Setup(x => x.ExecuteAsync(
+                It.IsAny<ConsolidationJobMessage>(),
+                It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+                It.IsAny<OutputBatcher?>(),
+                It.IsAny<Action<PipelineStep?>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationJobMessage, Microsoft.AspNetCore.SignalR.Client.HubConnection, OutputBatcher?, Action<PipelineStep?>?, CancellationToken>(
+                (_, _, batcher, stepCb, _) =>
+                {
+                    capturedBatcher = batcher;
+                    capturedStepCallback = stepCb;
+                })
+            .ReturnsAsync(new ConsolidationJobResult { JobId = "test-job-1", Success = true });
+
+        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        var mockHttpFactory = new Mock<IHttpClientFactory>();
+        var mockQgValidator = new Mock<CodingAgent.Pipeline.Interfaces.IQualityGateValidator>();
+        var pipelineExecutor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            mockOrchestrator.Object, mockHttpFactory.Object,
+            new PipelineConfiguration(), mockQgValidator.Object,
+            Mock.Of<Serilog.ILogger>(),
+            AgentIdentity: new AgentId("test-agent")));
+
+        var router = new WorkItemExecutorRouter(
+            pipelineExecutor, consolidationExecutor.Object, Mock.Of<Serilog.ILogger>());
+
+        var expectedBatcher = new OutputBatcher();
+        Action<PipelineStep?> expectedCallback = _ => { };
+        var assignment = new JobAssignmentMessage
+        {
+            JobId = "test-job-1",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            IssueComments = [],
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+            InitiatedBy = "test",
+            QualityGateConfigs = [],
+            TaskType = WorkItemTaskType.Consolidation,
+            ConsolidationRunType = ConsolidationRunType.BrainConsolidation
+        };
+
+        var hubManager = new HubConnectionManager(
+            "http://localhost:9999", "test-agent", "test-key",
+            Mock.Of<Serilog.ILogger>());
+
+        await router.ExecuteAsync(assignment, hubManager.Connection, expectedBatcher, expectedCallback, CancellationToken.None);
+
+        capturedBatcher.Should().BeSameAs(expectedBatcher);
+        capturedStepCallback.Should().BeSameAs(expectedCallback);
     }
 }
