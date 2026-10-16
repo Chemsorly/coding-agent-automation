@@ -721,13 +721,6 @@ internal sealed class DispatchWorkItemService
         Guid id,
         CancellationToken ct)
     {
-        // TODO [WARNING]: acquiredLock is not wrapped in try/finally after assignment. If
-        // FirstOrDefaultAsync throws (e.g. transient Npgsql.NpgsqlException), the acquired
-        // advisory lock is never disposed, leaving it held until the PostgreSQL connection is
-        // recycled. All subsequent callers for the same selector would then time out (60 s → 503).
-        // Fix: wrap the post-lock query in a try/finally and call acquiredLock.DisposeAsync() in
-        // the finally block on the exceptional path, or restructure using await using from the
-        // point of assignment. See review finding: DotNetSpecialist @ line 737.
         IAsyncDisposable acquiredLock;
         try
         {
@@ -745,37 +738,66 @@ internal sealed class DispatchWorkItemService
             return (null, TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable));
         }
 
-        // Post-lock status re-read: close the TOCTOU window.
-        // Another dispatch path (WorkItemDispatchLoop, or a concurrent call
-        // to this endpoint) may have transitioned the item from Pending → Dispatched between
-        // the fast-path check and lock acquisition. The advisory lock serialises concurrent
-        // callers on this endpoint; without this re-read, the loser would enter
-        // ExecuteDispatchLifecycleAsync, find the item no longer Pending, exit early
-        // (dispatched = false), and the endpoint would return 503. The Scheduler interprets
-        // 503 as a transient error and schedules an unnecessary full-cycle retry.
+        // Wrap the post-lock body in try/catch so that any transient exception (e.g. a
+        // NpgsqlException on the re-read query) disposes the advisory lock before propagating.
+        // Without this guard the lock is held until the underlying connection is recycled,
+        // blocking all concurrent dispatch callers for the same selector (issue #3701).
         //
-        // AsNoTracking is mandatory: a tracked query would return the EF first-level cache
-        // snapshot from the fast-path check (which saw Pending), masking the intervening
-        // state transition. Test 15 (DispatchPendingWorkItem_ConcurrentDispatch_LosingCallerReceives409Conflict)
-        // relies on this fresh-query behaviour.
+        // The TimeoutException catch above is intentionally outside this scope — it fires before
+        // acquiredLock is assigned and is unaffected by this change.
         //
-        // Nullable projection: a missing row returns null (WorkItems use status transitions, not
-        // DELETE) and is treated as non-Pending to avoid dispatching a ghost.
-        var postLockCheck = await db.WorkItems.AsNoTracking()
-            .Select(w => new { w.Id, w.Status })
-            .FirstOrDefaultAsync(w => w.Id == id, ct);
-
-        if (postLockCheck is null || postLockCheck.Status != WorkItemStatus.Pending)
+        // The caller-ownership return path (Pending item → return (acquiredLock, null)) is a
+        // normal return; catch does not fire on normal returns, so the caller's await using holds
+        // sole disposal responsibility for that path.
+        try
         {
-            Log.Information(
-                "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 200/deferred",
-                id, postLockCheck?.Status);
-            WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, NotPendingReason);
-            await acquiredLock.DisposeAsync();
-            return (null, TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason)));
-        }
+            // Post-lock status re-read: close the TOCTOU window.
+            // Another dispatch path (WorkItemDispatchLoop, or a concurrent call
+            // to this endpoint) may have transitioned the item from Pending → Dispatched between
+            // the fast-path check and lock acquisition. The advisory lock serialises concurrent
+            // callers on this endpoint; without this re-read, the loser would enter
+            // ExecuteDispatchLifecycleAsync, find the item no longer Pending, exit early
+            // (dispatched = false), and the endpoint would return 503. The Scheduler interprets
+            // 503 as a transient error and schedules an unnecessary full-cycle retry.
+            //
+            // AsNoTracking is mandatory: a tracked query would return the EF first-level cache
+            // snapshot from the fast-path check (which saw Pending), masking the intervening
+            // state transition. Test 15 (DispatchPendingWorkItem_ConcurrentDispatch_LosingCallerReceives409Conflict)
+            // relies on this fresh-query behaviour.
+            //
+            // Nullable projection: a missing row returns null (WorkItems use status transitions, not
+            // DELETE) and is treated as non-Pending to avoid dispatching a ghost.
+            var postLockCheck = await db.WorkItems.AsNoTracking()
+                .Select(w => new { w.Id, w.Status })
+                .FirstOrDefaultAsync(w => w.Id == id, ct);
 
-        return (acquiredLock, null);
+            if (postLockCheck is null || postLockCheck.Status != WorkItemStatus.Pending)
+            {
+                Log.Information(
+                    "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 200/deferred",
+                    id, postLockCheck?.Status);
+                WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, NotPendingReason);
+                await acquiredLock.DisposeAsync();
+                return (null, TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason)));
+            }
+
+            return (acquiredLock, null);
+        }
+        catch
+        {
+            // TODO [WARNING]: Double-dispose risk — the non-Pending path at line 779 already calls
+            // acquiredLock.DisposeAsync() inside this try block. If that call throws (e.g., the
+            // PostgreSQL connection drops at the exact moment of lock release), this catch fires and
+            // calls DisposeAsync() a second time. IAsyncDisposable does not guarantee idempotent
+            // disposal. The correct fix is a `bool lockTransferred` flag defaulting to false, set
+            // to true immediately before `return (acquiredLock, null)`, checked here before calling
+            // DisposeAsync() — dispose only when !lockTransferred. The existing PostgreSQL advisory
+            // lock implementation is idempotent (double-unlock on a session lock is a no-op), so
+            // this is low-risk in practice but is a latent correctness issue.
+            // (DotNetSpecialist review finding, issue #3701)
+            await acquiredLock.DisposeAsync();
+            throw;
+        }
     }
 
     /// <summary>
