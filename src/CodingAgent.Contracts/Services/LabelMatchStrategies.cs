@@ -17,19 +17,9 @@ public static class LabelMatchStrategies
         => matchLabels.Count == 0 || matchLabels.Any(l => targetSet.Contains(l));
 
     /// <summary>
-    /// ALL match-labels must exist in target (subset). Empty match-labels = catch-all (always matches).
-    /// Used by ProfileResolver.
-    /// </summary>
-    /// <param name="matchLabels">The configuration's match labels.</param>
-    /// <param name="targetSet">The target label set (agent labels).</param>
-    /// <returns><c>true</c> if matchLabels is empty or all labels exist in targetSet.</returns>
-    public static bool Subset(IReadOnlyList<string> matchLabels, HashSet<string> targetSet)
-        => matchLabels.Count == 0 || matchLabels.All(l => targetSet.Contains(l));
-
-    /// <summary>
     /// ALL target labels must exist in match-labels (superset / coverage).
     /// Used for "find profiles whose MatchLabels cover all required labels" resolution.
-    /// Inverse of <see cref="Subset"/>: checks targetSet ⊆ matchLabels.
+    /// Checks targetSet ⊆ matchLabels.
     /// </summary>
     /// <param name="matchLabels">The configuration's match labels (must cover all target labels).</param>
     /// <param name="targetSet">The target label set (required labels that must be covered).</param>
