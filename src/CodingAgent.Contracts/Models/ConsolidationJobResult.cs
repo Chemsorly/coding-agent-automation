@@ -47,6 +47,22 @@ public sealed class ConsolidationJobResult
     /// </summary>
     [Key(9)]
     public FailureReason? FailureCategory { get; init; }
+
+    /// <summary>Tokens of all agent calls of the run (input, output and reasoning). 0 from agents older than this field.</summary>
+    [Key(10)]
+    public long TotalTokens { get; set; }
+
+    /// <summary>Cost in USD of the run's agent calls, or null when the provider reports no cost.</summary>
+    [Key(11)]
+    public decimal? TotalCost { get; set; }
+
+    /// <summary>Tokens read from the prompt cache.</summary>
+    [Key(12)]
+    public long CacheReadTokens { get; set; }
+
+    /// <summary>Tokens written to the prompt cache.</summary>
+    [Key(13)]
+    public long CacheWriteTokens { get; set; }
 }
 
 /// <summary>

@@ -848,4 +848,131 @@ public sealed class HubConsolidationOperationsTests
             "ConsolidationResultSummary must be written back to the store via ReplaceRun BEFORE " +
             "CompleteRunAsync/FailRunAsync calls RemoveRun, otherwise the persisted history row shows '—'");
     }
+
+    // ── HandleConsolidationCompleteAsync — token totals propagation ─────────
+
+    /// <summary>
+    /// Verifies that <see cref="HubConsolidationOperations.HandleConsolidationCompleteAsync"/>
+    /// writes TotalTokens, TotalCost and CacheReadTokens from the result onto the in-memory run
+    /// via <c>ReplaceRun</c>, so the values are present on the run that
+    /// <c>RemoveRun</c> returns inside <c>CompleteRunAsync</c>/<c>FailRunAsync</c>.
+    /// Uses a real <see cref="DistributedRunService"/> backed by <see cref="CodingAgent.Web.TestUtilities.FakeRedisStore"/>
+    /// to exercise Redis copy semantics.
+    /// </summary>
+    [Fact]
+    public async Task HandleConsolidationComplete_RedisRunService_TokenTotalsReachTheRun()
+    {
+        // Arrange
+        PipelineRun? removed = null;
+
+        var runService = new DistributedRunService(
+            new CodingAgent.Web.TestUtilities.FakeRedisStore(),
+            (_, _, _) => Task.FromResult(false),
+            Mock.Of<ILogger>());
+
+        var jobId = Guid.NewGuid().ToString();
+        runService.AddRun(new PipelineRun
+        {
+            RunId = jobId,
+            IssueIdentifier = new IssueIdentifier("RefactoringDetection:tpl-1"),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-1"
+        });
+
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync(new RunId(jobId), WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Callback(() => removed = runService.RemoveRun(new RunId(jobId)))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var sut = new HubConsolidationOperations(
+            CreateModelFetchService(),
+            _mockConsolidation.Object,
+            _badgeService,
+            _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
+            runService,
+            _mockLogger.Object);
+
+        var result = new ConsolidationJobResult
+        {
+            JobId = jobId,
+            Success = true,
+            Summary = "Done",
+            TotalTokens = 1234,
+            TotalCost = 1.5m,
+            CacheReadTokens = 10
+        };
+
+        // Act
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        // Assert
+        removed.Should().NotBeNull("RemoveRun must have been called by the lifecycle manager mock callback");
+        removed!.TotalTokens.Should().Be(1234,
+            "TotalTokens from the result must be written to the run via ReplaceRun before CompleteRunAsync");
+        removed.TotalCost.Should().Be(1.5m);
+        removed.CacheReadTokens.Should().Be(10);
+    }
+
+    /// <summary>
+    /// Verifies that a result with TotalTokens = 0 does not overwrite existing token values
+    /// on the stored run. This guards the <c>if (result.TotalTokens &gt; 0)</c> guard that
+    /// preserves values written by live step reports when an older agent sends no totals.
+    /// </summary>
+    [Fact]
+    public async Task HandleConsolidationComplete_ZeroTokens_KeepsTheRunsTokens()
+    {
+        // Arrange
+        PipelineRun? removed = null;
+
+        var runService = new DistributedRunService(
+            new CodingAgent.Web.TestUtilities.FakeRedisStore(),
+            (_, _, _) => Task.FromResult(false),
+            Mock.Of<ILogger>());
+
+        var jobId = Guid.NewGuid().ToString();
+        var storedRun = new PipelineRun
+        {
+            RunId = jobId,
+            IssueIdentifier = new IssueIdentifier("RefactoringDetection:tpl-1"),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-1"
+        };
+        storedRun.TotalTokens = 999;
+        runService.AddRun(storedRun);
+
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync(new RunId(jobId), WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Callback(() => removed = runService.RemoveRun(new RunId(jobId)))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var sut = new HubConsolidationOperations(
+            CreateModelFetchService(),
+            _mockConsolidation.Object,
+            _badgeService,
+            _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
+            runService,
+            _mockLogger.Object);
+
+        var result = new ConsolidationJobResult
+        {
+            JobId = jobId,
+            Success = true,
+            Summary = "Done",
+            TotalTokens = 0   // older agent sends 0
+        };
+
+        // Act
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        // Assert
+        removed.Should().NotBeNull();
+        removed!.TotalTokens.Should().Be(999,
+            "when result.TotalTokens == 0, the stored run's existing TotalTokens must not be overwritten");
+    }
 }
