@@ -12,8 +12,8 @@ Each setting has one home:
 |-------|---------------|------------------|
 | Global settings | Every setting in the [reference](#settings-reference) below: the pipeline's policy defaults, and the loop, retention and delivery settings | Settings → Global Defaults (the model-fetch timeout is under Settings → Providers → Agent) |
 | Project | Overrides of the settings marked **Project** in the reference, plus secrets, steering and MCP servers | Settings → Projects → (project) |
-| Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly` and the housekeeping limit | Pipelines page |
-| Repository provider | Labels (which pick the agent profile, quality gates and reviewers), commit blacklist, secrets, setup steps, steering | Settings → Providers → Repository |
+| Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly`, the housekeeping limit, and the repository's agent labels, secrets, setup steps, steering and commit blacklist | Pipelines page |
+| Repository provider | The connection: type, owner and repository, base branch, credentials | Settings → Providers → Repository |
 | Label catalogs | Agent profiles, quality gate configs and reviewer configs, each chosen by the repository's labels | Settings → Label Routing |
 | Deployment | Images, concurrency per label set, chat pod lifetimes, age-based retention | Helm `values.yaml` and environment variables |
 
@@ -21,9 +21,9 @@ How the layers combine:
 
 - A project override replaces the global value; an empty override inherits it. `codeReview` is merged field by field.
 - A template can turn `BrainReadOnly` on, never off.
-- Secrets merge by name, and the repository's win over the project's. MCP servers merge by name, and the project's win over the agent profile's. Project and repository steering are both written.
-- A repository's blacklist replaces the global or project blacklist. `.agent` and `.brain` are always excluded.
-- A repository's labels replace `defaultRequiredAgentLabels`. Every quality gate config and reviewer config whose labels match applies.
+- Secrets merge by name, and the repository's win over the project's. MCP servers merge by name, and the project's win over the agent profile's. Project and repository steering are both written. The repository's labels, secrets, setup steps and steering are read from the pipeline job template.
+- A repository's blacklist (set on the pipeline job template) replaces the global or project blacklist. `.agent` and `.brain` are always excluded.
+- A repository's labels (set on the pipeline job template) replace `defaultRequiredAgentLabels`. Every quality gate config and reviewer config whose labels match applies.
 
 A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by repository labels (see [Label Routing](label-routing.md)); a project can add its own reviewer, the [project review](pr-review.md#project-review).
 
@@ -52,7 +52,7 @@ Settings are listed by their page under Settings → Global Defaults. The **Proj
 | `stallPollInterval` | 00:00:30 | 5 s–2 min | | How often to check for agent silence |
 | `feedbackTimeoutSeconds` | 60 | 10–600 | ✓ | Limit for the agent call that collects feedback after the PR is opened or after the retries are used up |
 | `baselineHealthCheckEnabled` | true | | ✓ | Run a baseline health check (build + tests) after branch creation and before analysis; catches broken base branches early |
-| `blacklistedPaths` | .agent, .brain | | ✓ | Paths excluded from agent commits; a repository provider's list replaces it |
+| `blacklistedPaths` | .agent, .brain | | ✓ | Paths excluded from agent commits; the pipeline job template's list replaces it |
 
 ### Pipeline Loop
 
@@ -370,7 +370,7 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 
 Repository providers can define shell commands that run in the agent workspace after clone but before the agent starts. This is useful for package restore, private feed authentication, or tool installation.
 
-Setup steps are configured on the **Repository Provider** in Settings → Providers → Repository → (select provider):
+Setup steps are configured on the **Pipeline Job Template** in the Pipelines page → (select template) → Repository Settings:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -410,9 +410,9 @@ Setup steps are configured on the **Repository Provider** in Settings → Provid
 
 ## Agent Steering Content
 
-Repository providers can include custom markdown steering content that is written to the agent workspace before each run. This provides project-specific conventions, coding guidelines, or architectural context to the agent.
+Repository-level steering content is written to the agent workspace before each run. This provides repository-specific conventions, coding guidelines, or architectural context to the agent.
 
-Configure via Settings → Providers → Repository → Steering Content field. The content is written to:
+Configure via the Pipelines page → (select template) → Repository Settings → Steering Instructions. The content is written to:
 - `.kiro/steering/pipeline-repo.md` for Kiro agents (repository-level steering)
 - `~/.opencode/pipeline-repo.md` for OpenCode agents — listed under `instructions` in `~/.opencode/opencode.json`, outside the workspace, so the repository's own `AGENTS.md` is never touched
 - `~/.claude/rules/pipeline-repo.md` for Claude Code agents — a user-level rule the CLI loads in every session, outside the workspace, so it is never committed and does not touch the repository's own `CLAUDE.md` or `.claude/rules/`

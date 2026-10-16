@@ -138,6 +138,180 @@ public sealed class ConfigEndpointTests
             "Secrets key names must be preserved");
     }
 
+    [Fact]
+    public async Task SaveRepositoryProvider_WithSecrets_Returns400()
+    {
+        // A repository provider must not carry the five repository-settings fields;
+        // they live on the pipeline job template now (issue #3575).
+        // TODO: [WARNING] This test exercises only the Secrets field. The validation in
+        // ConfigEndpoints.SaveProviderConfig checks all five fields (RequiredLabels, Secrets,
+        // SetupSteps, SteeringContent, BlacklistedPaths) in a single OR condition. If any one of
+        // the other four branches were accidentally removed, this test would still pass. Add separate
+        // tests (or parametrize) for each of the remaining four fields to satisfy the acceptance
+        // criterion "Saving a repository provider with any of the five fields is refused."
+        var config = new ProviderConfig
+        {
+            Id = Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Repository,
+            DisplayName = "Repo with secrets",
+            ProviderType = "github",
+            Settings = new Dictionary<string, string>
+            {
+                ["owner"] = "myorg",
+                ["repo"] = "myrepo",
+                ["baseBranch"] = "main",
+            },
+            Secrets = new Dictionary<string, string>
+            {
+                ["MY_SECRET"] = "should-be-refused"
+            }
+        };
+
+        var put = await _admin.PutAsJsonAsync("/api/ui/settings/provider-configs", config, PipelineJsonOptions.Default);
+
+        put.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "saving a repository provider with Secrets set must be refused (settings moved to the template)");
+        var body = await put.Content.ReadAsStringAsync();
+        body.Should().Contain("pipeline job template",
+            "the error message must tell the user where to set the fields");
+    }
+
+    [Fact]
+    public async Task SaveTemplate_WithInvalidSecretName_Returns400()
+    {
+        // TODO: [WARNING] The setup-step validation in SaveTemplate (each step must have a non-empty
+        // name and a non-empty command) has no integration test. A test for
+        // PipelineJobTemplate { SetupSteps = [new SetupStep { Name = "", Command = "dotnet restore" }] }
+        // PUT to the template endpoint should return 400. Without that test, a regression in the
+        // blank-name guard would go undetected.
+
+        // Template saves go through /api/ui/settings/projects/{projectId}/templates (admin, spec 051 2.1b).
+        // Create a fresh project so the template won't collide with templates from other tests.
+        var projectGuid = Guid.NewGuid();
+        var projectId = projectGuid.ToString();
+        var project = new PipelineProject { Id = projectId, Name = $"TestProject-{projectGuid:N}" };
+        await _admin.PutAsJsonAsync("/api/ui/settings/projects", project, PipelineJsonOptions.Default);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = $"Template-{Guid.NewGuid()}",
+            IssueProviderId = Guid.NewGuid().ToString(),
+            RepoProviderId = Guid.NewGuid().ToString(),
+            Enabled = true,
+            Secrets = new Dictionary<string, string>
+            {
+                ["123invalid"] = "value"  // starts with digit — invalid
+            }
+        };
+
+        var put = await _admin.PutAsJsonAsync($"/api/ui/settings/projects/{projectId}/templates", template, PipelineJsonOptions.Default);
+
+        put.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "a secret name starting with a digit must be refused");
+        var body = await put.Content.ReadAsStringAsync();
+        body.Should().Contain("123invalid", "the error message must name the invalid key");
+    }
+
+    [Fact]
+    public async Task ImportBundle_WithProviderCarryingLabelsAndSecrets_MovesThemOntoTemplate()
+    {
+        // Build a bundle that simulates an older export where the repository provider still
+        // carries the five repository-settings fields. After import the migration helper
+        // MigrateRepositorySettingsFromProvidersAsync should copy them onto the template
+        // and clear them from the provider.
+        var projectGuid = Guid.NewGuid();
+        var providerGuid = Guid.NewGuid();
+        const string providerId = "rp-import-migrate-1";
+        var templateGuid = Guid.NewGuid();
+
+        var providerConfig = new ProviderConfig
+        {
+            Id = providerId,
+            Kind = ProviderKind.Repository,
+            ProviderType = "github",
+            DisplayName = "Bundle Provider",
+            Settings = new Dictionary<string, string> { ["owner"] = "org", ["repo"] = "repo" },
+            RequiredLabels = ["kiro", "dotnet"],
+            Secrets = new Dictionary<string, string> { ["API_KEY"] = "bundle-secret" },
+        };
+        var template = new PipelineJobTemplate
+        {
+            Id = templateGuid.ToString(),
+            Name = "Bundle Template",
+            IssueProviderId = "ip-bundle-1",
+            RepoProviderId = providerId,
+            Enabled = true,
+            // No RequiredLabels or Secrets — they should come from the provider during migration
+        };
+        var issueProvider = new ProviderConfig
+        {
+            Id = "ip-bundle-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "github",
+            DisplayName = "Bundle Issue",
+            Settings = new Dictionary<string, string>(),
+        };
+
+        var bundleOptions = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+        };
+
+        var bundle = new
+        {
+            providerConfigs = new[]
+            {
+                new { id = providerGuid, kind = ProviderKind.Repository, displayName = "Bundle Provider", providerType = "github", enabled = true,
+                      configuration = System.Text.Json.JsonSerializer.Serialize(providerConfig, PipelineJsonOptions.Default) },
+                new { id = Guid.NewGuid(), kind = ProviderKind.Issue, displayName = "Bundle Issue", providerType = "github", enabled = true,
+                      configuration = System.Text.Json.JsonSerializer.Serialize(issueProvider, PipelineJsonOptions.Default) },
+            },
+            projects = new[]
+            {
+                new { id = projectGuid, name = "Bundle Project", enabled = true, description = (string?)null, settings = (string?)null }
+            },
+            jobTemplates = new[]
+            {
+                new { id = templateGuid, projectId = projectGuid, name = "Bundle Template",
+                      configuration = System.Text.Json.JsonSerializer.Serialize(template, PipelineJsonOptions.Default) }
+            }
+        };
+
+        var bundleJson = System.Text.Json.JsonSerializer.Serialize(bundle, bundleOptions);
+        using var content = new MultipartFormDataContent();
+        content.Add(new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(bundleJson))
+        {
+            Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") }
+        }, "file", "bundle.json");
+
+        var importResponse = await _client.PostAsync("/api/config/import", content);
+        importResponse.StatusCode.Should().Be(HttpStatusCode.OK, "import must succeed");
+
+        // Verify: template must now carry RequiredLabels and Secrets (migrated from provider)
+        var templatesResponse = await _client.GetAsync($"/api/config/projects/{projectGuid}/templates");
+        templatesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var templates = await templatesResponse.Content.ReadFromJsonAsync<List<PipelineJobTemplate>>(PipelineJsonOptions.Default);
+        var importedTemplate = templates!.FirstOrDefault(t => t.Id == templateGuid.ToString());
+        importedTemplate.Should().NotBeNull("imported template must be retrievable");
+        importedTemplate!.RequiredLabels.Should().BeEquivalentTo(["kiro", "dotnet"],
+            "RequiredLabels must be migrated from provider to template");
+        importedTemplate.Secrets.Should().ContainKey("API_KEY").WhoseValue.Should().Be("bundle-secret",
+            "Secrets must be migrated to template (the template GET endpoint does not redact secret values — only the provider config GET does)");
+
+        // Verify: provider must no longer carry the five fields
+        var providersResponse = await _client.GetAsync($"/api/config/provider-configs?kind=Repository");
+        providersResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var providers = await providersResponse.Content.ReadFromJsonAsync<List<ProviderConfig>>(PipelineJsonOptions.Default);
+        var importedProvider = providers!.FirstOrDefault(p => p.Id == providerId);
+        importedProvider.Should().NotBeNull("imported provider must be retrievable");
+        importedProvider!.RequiredLabels.Should().BeNullOrEmpty(
+            "RequiredLabels must be cleared from provider after migration");
+        importedProvider.Secrets.Should().BeNullOrEmpty(
+            "Secrets must be cleared from provider after migration");
+    }
+
     // ── Auth: operator vs agent key ────────────────────────────────────────────────
 
     [Fact]

@@ -203,6 +203,14 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Any(c => c.Kind == ProviderKind.Issue).Should().BeTrue();
+        // TODO: [WARNING] No test verifies that the five repository-settings fields from the template
+        // (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths) are present on
+        // the repository ProviderConfig passed to PrepareAgentConfigsAsync. Existing tests only check
+        // that a config with the repo's Kind is included, not that RepositorySettings.WithTemplateSettings
+        // was called or that any template field appears in the result. A regression removing the
+        // WithTemplateSettings call in ConsolidationJobPreparationService would not be detected.
+        // Add a test asserting a template-sourced field (e.g. RequiredLabels) on the captured repo config
+        // (TestQualityReviewer finding — "Consolidation: a refactoring scan's repository config carries the template's fields").
     }
 
     [Fact]

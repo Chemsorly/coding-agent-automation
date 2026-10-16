@@ -76,8 +76,10 @@ public class ProviderSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void RepoSection_ShowsRequiredLabels_ForWorkProviders()
+    public void RepoSection_DoesNotShowRequiredLabels_InProviderList_TheyLiveOnTemplate()
     {
+        // Labels (RequiredLabels) now live on the pipeline job template, not the repository connection.
+        // The provider list must not show label chips for Work providers.
         var providers = new List<ProviderConfig>
         {
             new()
@@ -101,8 +103,9 @@ public class ProviderSectionComponentTests : BunitContext
             .Add(s => s.Providers, providers)
             .Add(s => s.ProviderClient, _mockStore.Object));
 
-        Assert.Contains("kiro", cut.Markup);
-        Assert.Contains("dotnet", cut.Markup);
+        // Label chips are removed from the provider list; the note directs users to the template.
+        Assert.DoesNotContain("provider-label", cut.Markup);
+        Assert.Contains("pipeline job template", cut.Markup);
     }
 
     [Fact]
@@ -704,11 +707,13 @@ public class ProviderSectionComponentTests : BunitContext
         Assert.Contains("DB error", statusResult.Value.Message);
     }
 
-    // ═══ RepoProviderSection — Steering ═══
+    // ═══ RepoProviderSection — Steering (now on the template, not the provider form) ═══
 
     [Fact]
-    public void RepoSection_SteeringTextarea_RendersInEditForm()
+    public void RepoSection_EditForm_DoesNotShowSteeringTextarea_TheyLiveOnTemplate()
     {
+        // Steering instructions live on the pipeline job template now (issue #3575).
+        // The repo provider edit form must NOT show the steering textarea; it must show the note.
         var providers = new List<ProviderConfig>
         {
             new()
@@ -736,13 +741,17 @@ public class ProviderSectionComponentTests : BunitContext
 
         cut.Find(".btn-edit").Click();
 
-        Assert.Contains("Steering Instructions", cut.Markup);
-        Assert.Contains("These instructions are provided to agents working on this repository", cut.Markup);
+        // Steering textarea is not rendered in the provider form
+        Assert.DoesNotContain("Steering Instructions", cut.Markup);
+        // The note directs users to the pipeline job template
+        Assert.Contains("pipeline job template", cut.Markup);
     }
 
     [Fact]
-    public void RepoSection_SteeringTextarea_ShowsExistingContent()
+    public void RepoSection_EditForm_DoesNotShowExistingSteeringContent_TheyLiveOnTemplate()
     {
+        // SteeringContent on the ProviderConfig record is ignored by the edit form after issue #3575.
+        // Steering content is not displayed in the provider form.
         var providers = new List<ProviderConfig>
         {
             new()
@@ -771,19 +780,25 @@ public class ProviderSectionComponentTests : BunitContext
 
         cut.Find(".btn-edit").Click();
 
-        Assert.Contains("Always use Gradle", cut.Markup);
+        // The steering content from the provider record is not shown in the edit form
+        Assert.DoesNotContain("Always use Gradle", cut.Markup);
+        Assert.Contains("pipeline job template", cut.Markup);
     }
 
     [Fact]
-    public void RepoSection_SteeringTextarea_ShowsHelperText()
+    public void RepoSection_AddForm_ShowsTemplateNote_NotSteeringTextarea()
     {
+        // The add form no longer contains a steering textarea; it shows a note to the user.
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
             .Add(s => s.ProviderClient, _mockStore.Object));
 
         cut.Find(".btn-add").Click();
 
-        Assert.Contains("These instructions are provided to agents working on this repository", cut.Markup);
+        // Steering textarea is not rendered
+        Assert.DoesNotContain("These instructions are provided to agents working on this repository", cut.Markup);
+        // The note is shown
+        Assert.Contains("pipeline job template", cut.Markup);
     }
 
     // ═══ Provider checks through the API (spec 051 2.1c) ═══
@@ -945,11 +960,8 @@ public class ProviderSectionComponentTests : BunitContext
     public async Task RepoSection_SaveEdited_ChecksTheMaskedDraftInTheApi_ThenSaves()
     {
         var stored = StoredGitHubProvider(ProviderKind.Repository, "rp-1");
-        stored = new ProviderConfig
-        {
-            Id = stored.Id, Kind = stored.Kind, ProviderType = stored.ProviderType, DisplayName = stored.DisplayName,
-            Settings = stored.Settings, Secrets = new Dictionary<string, string> { ["NPM_TOKEN"] = "****" }
-        };
+        // Secrets are no longer part of the repository provider form (moved to template, issue #3575);
+        // use a config without secrets so the save path doesn't try to mask them.
         _mockStore.Setup(c => c.CheckAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiProviderCheck(true, "Connected to acme/webapp"));
         var cut = Render<RepoProviderSection>(p => p
@@ -960,7 +972,7 @@ public class ProviderSectionComponentTests : BunitContext
         await cut.Find(".btn-save").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         _mockStore.Verify(c => c.SaveProviderConfigAsync(
-            It.Is<ProviderConfig>(d => IsMaskedDraft(d, "rp-1") && d.Secrets!["NPM_TOKEN"] == "****"),
+            It.Is<ProviderConfig>(d => IsMaskedDraft(d, "rp-1")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

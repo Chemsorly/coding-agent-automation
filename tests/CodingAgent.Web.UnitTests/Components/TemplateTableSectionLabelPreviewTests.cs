@@ -96,7 +96,7 @@ public class TemplateTableSectionLabelPreviewTests : BunitContext
             qualityGateConfigs: [dotnetQgc, pythonQgc]);
 
         // ACT
-        var result = cut.Instance.GetLabelPreview(RepoProviderId);
+        var result = cut.Instance.GetLabelPreview(repoProvider.RequiredLabels);
 
         // ASSERT: exactly one profile shown — the .NET profile (3 labels, not the 5-label polyglot)
         result.Profiles.Should().HaveCount(1, "only the closest-fit profile should be shown");
@@ -145,7 +145,7 @@ public class TemplateTableSectionLabelPreviewTests : BunitContext
             qualityGateConfigs: [dotnetQgc, pythonQgc]);
 
         // ACT
-        var result = cut.Instance.GetLabelPreview(RepoProviderId);
+        var result = cut.Instance.GetLabelPreview(repoProvider.RequiredLabels);
 
         // ASSERT: no profile matched
         result.Profiles.Should().BeEmpty("the Java profile does not cover the .NET repo labels");
