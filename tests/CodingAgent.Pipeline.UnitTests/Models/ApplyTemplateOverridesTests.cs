@@ -116,7 +116,7 @@ public class ApplyTemplateOverridesTests
     }
 
     [Fact]
-    public void MatchingTemplate_AppliesBlacklistFromRepoProvider()
+    public void MatchingTemplate_AppliesBlacklistFromTemplate()
     {
         var config = TestPipelineConfig.Default();
         var templates = new List<PipelineJobTemplate>
@@ -129,6 +129,7 @@ public class ApplyTemplateOverridesTests
                 RepoProviderId = "repo-1",
                 BrainProviderId = "brain-1",
                 BrainReadOnly = false,
+                BlacklistedPaths = new List<string> { "vendor", "dist" },
             }
         };
         var providerConfigs = new List<ProviderConfig>
@@ -139,7 +140,8 @@ public class ApplyTemplateOverridesTests
                 DisplayName = "Repo",
                 Kind = ProviderKind.Repository,
                 ProviderType = "GitHub",
-                BlacklistedPaths = new List<string> { "vendor", "dist" },
+                // BlacklistedPaths intentionally absent from the connection record —
+                // it now lives on the template (issue #3575).
             }
         };
 
@@ -275,13 +277,21 @@ public class ApplyTemplateOverridesTests
         var config = TestPipelineConfig.Default();
         var disabled = new PipelineJobTemplate
         {
-            Id = "tmpl-old", Name = "Old", IssueProviderId = "issue-old", RepoProviderId = "repo-1",
-            Enabled = false, BrainReadOnly = true,
+            Id = "tmpl-old",
+            Name = "Old",
+            IssueProviderId = "issue-old",
+            RepoProviderId = "repo-1",
+            Enabled = false,
+            BrainReadOnly = true,
         };
         var enabled = new PipelineJobTemplate
         {
-            Id = "tmpl-new", Name = "New", IssueProviderId = "issue-new", RepoProviderId = "repo-1",
-            Enabled = true, BrainReadOnly = false,
+            Id = "tmpl-new",
+            Name = "New",
+            IssueProviderId = "issue-new",
+            RepoProviderId = "repo-1",
+            Enabled = true,
+            BrainReadOnly = false,
         };
         var templates = disabledFirst ? new[] { disabled, enabled } : new[] { enabled, disabled };
 

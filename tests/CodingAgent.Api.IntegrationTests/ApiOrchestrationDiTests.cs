@@ -135,7 +135,6 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         sp.GetRequiredService<DatabaseMaintenanceService>().Should().NotBeNull();
 
         // Dispatch subsystem
-        sp.GetRequiredService<ProfileResolver>().Should().NotBeNull();
         sp.GetRequiredService<QualityGateResolver>().Should().NotBeNull();
         sp.GetRequiredService<ReviewerResolver>().Should().NotBeNull();
         sp.GetRequiredService<DispatchResolutionService>().Should().NotBeNull();

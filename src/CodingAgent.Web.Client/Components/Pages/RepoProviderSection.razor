@@ -1,11 +1,10 @@
-@using System.Text.RegularExpressions
 @using CodingAgent.Pipeline
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
 
 <section class="settings-section">
     <h2>Repository Providers</h2>
-    <p class="section-description">Configure target repositories where agents clone, branch, and push code. The <code>requiredLabels</code> field determines which agents can work on issues from each repo.</p>
+    <p class="section-description">Configure target repositories where agents clone, branch, and push code. Agent labels, secrets, setup steps, steering and the commit blacklist are set on the repository's pipeline job template (Pipelines page).</p>
     <div class="provider-list">
         @foreach (var p in Providers)
         {
@@ -15,13 +14,6 @@
                     <span class="provider-type">@p.ProviderType</span>
                     <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "")/@p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") → @p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch)</span>
                     <span class="provider-type">@p.RepositoryRole</span>
-                    @if (p.RepositoryRole == RepositoryRole.Work && p.RequiredLabels is { Count: > 0 })
-                    {
-                        @foreach (var label in p.RequiredLabels)
-                        {
-                            <span class="provider-label">@label</span>
-                        }
-                    }
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
@@ -70,92 +62,7 @@
                             <option value="Brain">Brain</option>
                         </select>
                     </div>
-                    @if (_form.RepositoryRole != "Brain")
-                    {
-                        <div class="form-group">
-                            <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
-                            <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
-                        </div>
-                        <div class="form-group">
-                            <div class="label-with-hint">
-                                <label>Blacklisted Paths</label>
-                                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
-                            </div>
-                            <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
-                        </div>
-                        <Collapsible CssClass="secrets-section" HeaderClass="secrets-section-header" BodyClass="secrets-section-body"
-                                     IsExpanded="_secretsExpanded" IsExpandedChanged="v => _secretsExpanded = v">
-                            <Header>🔑 Secrets (@_form.Secrets.Count)</Header>
-                            <ChildContent>
-                                @for (var i = 0; i < _form.Secrets.Count; i++)
-                                {
-                                    var index = i;
-                                    var secret = _form.Secrets[index];
-                                    var isRevealed = _revealedSecrets.Contains(index);
-                                    <div class="secret-row">
-                                        <input type="text"
-                                               class="secret-key-input"
-                                               value="@secret.Key"
-                                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
-                                               placeholder="ENV_VAR_NAME" />
-                                        <input type="@(isRevealed ? "text" : "password")"
-                                               class="secret-value-input"
-                                               value="@secret.Value"
-                                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
-                                               placeholder="secret value" />
-                                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
-                                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(secret.ValidationError))
-                                    {
-                                        <div class="secret-validation-error">@secret.ValidationError</div>
-                                    }
-                                }
-                                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
-                            </ChildContent>
-                        </Collapsible>
-                        <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
-                                     IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
-                            <Header><Icon Name="settings" /> Setup Steps (@_form.SetupSteps.Count)</Header>
-                            <ChildContent>
-                                <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
-                                @for (var i = 0; i < _form.SetupSteps.Count; i++)
-                                {
-                                    var index = i;
-                                    var step = _form.SetupSteps[index];
-                                    <div class="setup-step-row">
-                                        <div class="setup-step-header">
-                                            <span class="setup-step-number">@(index + 1).</span>
-                                            <input type="text"
-                                                   class="setup-step-name-input"
-                                                   value="@step.Name"
-                                                   @onchange="e => UpdateSetupStepName(index, e.Value?.ToString() ?? string.Empty)"
-                                                   placeholder="Label (e.g. Restore dependencies)" />
-                                            <div class="setup-step-actions">
-                                                <button type="button" class="btn-icon" title="Move up" disabled="@(index == 0)" @onclick="() => MoveSetupStepUp(index)">↑</button>
-                                                <button type="button" class="btn-icon" title="Move down" disabled="@(index == _form.SetupSteps.Count - 1)" @onclick="() => MoveSetupStepDown(index)">↓</button>
-                                                <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSetupStep(index)">🗑</button>
-                                            </div>
-                                        </div>
-                                        <textarea class="setup-step-command-input"
-                                                  rows="2"
-                                                  @onchange="e => UpdateSetupStepCommand(index, e.Value?.ToString() ?? string.Empty)"
-                                                  placeholder="Full shell command (e.g. dotnet restore, npm install)">@step.Command</textarea>
-                                        @if (!string.IsNullOrEmpty(step.ValidationError))
-                                        {
-                                            <div class="setup-step-validation-error">@step.ValidationError</div>
-                                        }
-                                    </div>
-                                }
-                                <button type="button" class="btn-add-inline" @onclick="AddSetupStep">+ Add Step</button>
-                            </ChildContent>
-                        </Collapsible>
-                    }
-                    <div class="form-group">
-                        <label>Steering Instructions</label>
-                        <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
-                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="@SteeringPlaceholder"></textarea>
-                    </div>
+                    <p class="form-hint">Agent labels, secrets, setup steps, steering and the commit blacklist are set on the repository's pipeline job template (Pipelines page).</p>
                 </AdditionalFields>
             </GitLabProviderForm>
         }
@@ -194,92 +101,7 @@
                             <option value="Brain">Brain</option>
                         </select>
                     </div>
-                    @if (_form.RepositoryRole != "Brain")
-                    {
-                        <div class="form-group">
-                            <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
-                            <input type="text" @bind="_form.RequiredLabels" placeholder="e.g. kiro, dotnet, dotnet10" />
-                        </div>
-                        <div class="form-group">
-                            <div class="label-with-hint">
-                                <label>Blacklisted Paths</label>
-                                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated path prefixes excluded from agent commits (e.g. .kiro, .github). Leave empty to use global defaults.">?</span>
-                            </div>
-                            <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
-                        </div>
-                        <Collapsible CssClass="secrets-section" HeaderClass="secrets-section-header" BodyClass="secrets-section-body"
-                                     IsExpanded="_secretsExpanded" IsExpandedChanged="v => _secretsExpanded = v">
-                            <Header>🔑 Secrets (@_form.Secrets.Count)</Header>
-                            <ChildContent>
-                                @for (var i = 0; i < _form.Secrets.Count; i++)
-                                {
-                                    var index = i;
-                                    var secret = _form.Secrets[index];
-                                    var isRevealed = _revealedSecrets.Contains(index);
-                                    <div class="secret-row">
-                                        <input type="text"
-                                               class="secret-key-input"
-                                               value="@secret.Key"
-                                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
-                                               placeholder="ENV_VAR_NAME" />
-                                        <input type="@(isRevealed ? "text" : "password")"
-                                               class="secret-value-input"
-                                               value="@secret.Value"
-                                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
-                                               placeholder="secret value" />
-                                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
-                                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(secret.ValidationError))
-                                    {
-                                        <div class="secret-validation-error">@secret.ValidationError</div>
-                                    }
-                                }
-                                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
-                            </ChildContent>
-                        </Collapsible>
-                        <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
-                                     IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
-                            <Header><Icon Name="settings" /> Setup Steps (@_form.SetupSteps.Count)</Header>
-                            <ChildContent>
-                                <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
-                                @for (var i = 0; i < _form.SetupSteps.Count; i++)
-                                {
-                                    var index = i;
-                                    var step = _form.SetupSteps[index];
-                                    <div class="setup-step-row">
-                                        <div class="setup-step-header">
-                                            <span class="setup-step-number">@(index + 1).</span>
-                                            <input type="text"
-                                                   class="setup-step-name-input"
-                                                   value="@step.Name"
-                                                   @onchange="e => UpdateSetupStepName(index, e.Value?.ToString() ?? string.Empty)"
-                                                   placeholder="Label (e.g. Restore dependencies)" />
-                                            <div class="setup-step-actions">
-                                                <button type="button" class="btn-icon" title="Move up" disabled="@(index == 0)" @onclick="() => MoveSetupStepUp(index)">↑</button>
-                                                <button type="button" class="btn-icon" title="Move down" disabled="@(index == _form.SetupSteps.Count - 1)" @onclick="() => MoveSetupStepDown(index)">↓</button>
-                                                <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSetupStep(index)">🗑</button>
-                                            </div>
-                                        </div>
-                                        <textarea class="setup-step-command-input"
-                                                  rows="2"
-                                                  @onchange="e => UpdateSetupStepCommand(index, e.Value?.ToString() ?? string.Empty)"
-                                                  placeholder="Full shell command (e.g. dotnet restore, npm install)">@step.Command</textarea>
-                                        @if (!string.IsNullOrEmpty(step.ValidationError))
-                                        {
-                                            <div class="setup-step-validation-error">@step.ValidationError</div>
-                                        }
-                                    </div>
-                                }
-                                <button type="button" class="btn-add-inline" @onclick="AddSetupStep">+ Add Step</button>
-                            </ChildContent>
-                        </Collapsible>
-                    }
-                    <div class="form-group">
-                        <label>Steering Instructions</label>
-                        <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
-                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="@SteeringPlaceholder"></textarea>
-                    </div>
+                    <p class="form-hint">Agent labels, secrets, setup steps, steering and the commit blacklist are set on the repository's pipeline job template (Pipelines page).</p>
                 </AdditionalFields>
                 <HelpContent>
                     <h4>🔐 GitHub App Setup</h4>
@@ -310,12 +132,6 @@
 </section>
 
 @code {
-    // A multi-line placeholder is a C# string: in an attribute of a rendered element, "&#10;" would show up as text.
-    private const string SteeringPlaceholder =
-        "## Architecture\n- This is a Spring Boot application using Gradle\n- All REST endpoints require OpenAPI annotations\n" +
-        "- Database migrations live in src/main/resources/db/migration/\n\n" +
-        "## Build Commands\n- Build: ./gradlew build\n- Test: ./gradlew test\n- Lint: ./gradlew spotlessCheck";
-
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
     // Spec 051 2.1c: the API checks and saves providers with the stored credentials; this section only holds them masked.
     [Parameter, EditorRequired] public IUiProviderClient ProviderClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
@@ -332,13 +148,8 @@
     private string? _validationMessage;
     private bool _validationSuccess;
     private bool _saving;
-    private HashSet<int> _revealedSecrets = new();
-    private bool _secretsExpanded;
-    private bool _setupStepsExpanded;
     private bool _showDeleteConfirm;
     private string? _deletingProviderId;
-
-    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
 
     private async Task ConfirmDeleteAsync()
     {
@@ -363,7 +174,6 @@
         _availableRepos.Clear();
         _selectedRepo = "";
         _validationMessage = null;
-        _revealedSecrets.Clear();
         _showForm = true;
     }
 
@@ -382,16 +192,10 @@
             Repo = p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, ""),
             BaseBranch = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch),
             RepositoryRole = p.RepositoryRole.ToString(),
-            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : "",
-            BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
             GitLabApiUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl),
             GitLabAccessToken = p.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken, ""),
             GitLabProjectId = p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, ""),
-            Secrets = p.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new(),
-            SetupSteps = p.SetupSteps?.Select(s => new SetupStepEntry { Name = s.Name, Command = s.Command }).ToList() ?? new(),
-            SteeringContent = p.SteeringContent
         };
-        _revealedSecrets.Clear();
         _showForm = true;
     }
 
@@ -434,19 +238,6 @@
             return;
         }
 
-        // Local checks first: building the config needs unique secret keys and valid setup steps.
-        if (!ValidateSecrets())
-        {
-            _saving = false;
-            return;
-        }
-
-        if (!ValidateSetupSteps())
-        {
-            _saving = false;
-            return;
-        }
-
         var config = new ProviderConfig
         {
             Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
@@ -454,11 +245,6 @@
             ProviderType = _form.ProviderType,
             DisplayName = _form.DisplayName,
             RepositoryRole = Enum.TryParse<RepositoryRole>(_form.RepositoryRole, out var role) ? role : RepositoryRole.Work,
-            RequiredLabels = ParseLabels(_form.RequiredLabels),
-            BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
-            Secrets = BuildSecretsDictionary(),
-            SetupSteps = BuildSetupStepsList(),
-            SteeringContent = string.IsNullOrWhiteSpace(_form.SteeringContent) ? null : _form.SteeringContent.Trim(),
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.ApiUrl] = _form.ApiUrl,
@@ -503,7 +289,6 @@
         _showForm = false;
         _availableRepos.Clear();
         _validationMessage = null;
-        _revealedSecrets.Clear();
     }
 
     private async Task FetchRepos()
@@ -574,29 +359,10 @@
         public string Repo { get; set; } = "";
         public string BaseBranch { get; set; } = ProviderSettingKeys.DefaultBaseBranch;
         public string RepositoryRole { get; set; } = "Work";
-        public string RequiredLabels { get; set; } = "";
-        public string BlacklistedPaths { get; set; } = "";
-        public List<SecretEntry> Secrets { get; set; } = new();
-        public List<SetupStepEntry> SetupSteps { get; set; } = new();
-        public string? SteeringContent { get; set; }
         // GitLab-specific fields
         public string GitLabApiUrl { get; set; } = ProviderSettingKeys.DefaultGitLabApiUrl;
         public string GitLabAccessToken { get; set; } = "";
         public string GitLabProjectId { get; set; } = "";
-    }
-
-    private sealed class SecretEntry
-    {
-        public string Key { get; set; } = "";
-        public string Value { get; set; } = "";
-        public string? ValidationError { get; set; }
-    }
-
-    private sealed class SetupStepEntry
-    {
-        public string Name { get; set; } = "";
-        public string Command { get; set; } = "";
-        public string? ValidationError { get; set; }
     }
 
     private void OnProviderTypeChanged(string newType)
@@ -644,18 +410,6 @@
                 ? ProviderSettingKeys.DefaultBaseBranch
                 : _form.BaseBranch;
 
-            if (!ValidateSecrets())
-            {
-                _saving = false;
-                return;
-            }
-
-            if (!ValidateSetupSteps())
-            {
-                _saving = false;
-                return;
-            }
-
             var config = new ProviderConfig
             {
                 Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
@@ -663,11 +417,6 @@
                 ProviderType = "GitLab",
                 DisplayName = _form.DisplayName,
                 RepositoryRole = Enum.TryParse<RepositoryRole>(_form.RepositoryRole, out var role) ? role : RepositoryRole.Work,
-                RequiredLabels = ParseLabels(_form.RequiredLabels),
-                BlacklistedPaths = ParseBlacklistedPaths(_form.BlacklistedPaths),
-                Secrets = BuildSecretsDictionary(),
-                SetupSteps = BuildSetupStepsList(),
-                SteeringContent = string.IsNullOrWhiteSpace(_form.SteeringContent) ? null : _form.SteeringContent.Trim(),
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ApiUrl] = apiUrl,
@@ -706,212 +455,4 @@
         }
     }
 
-    private static IReadOnlyList<string>? ParseLabels(string? input)
-    {
-        if (string.IsNullOrWhiteSpace(input)) return null;
-        var labels = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(l => !string.IsNullOrWhiteSpace(l))
-            .ToList();
-        return labels.Count > 0 ? labels : null;
-    }
-
-    private static IReadOnlyList<string>? ParseBlacklistedPaths(string? input)
-    {
-        if (string.IsNullOrWhiteSpace(input)) return null;
-        var paths = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .ToList();
-        return paths.Count > 0 ? paths : null;
-    }
-
-    // --- Secrets management ---
-
-    private void AddSecret()
-    {
-        _form.Secrets.Add(new SecretEntry());
-    }
-
-    private void RemoveSecret(int index)
-    {
-        if (index >= 0 && index < _form.Secrets.Count)
-        {
-            _form.Secrets.RemoveAt(index);
-            // Rebuild revealed set since indices shifted
-            var newRevealed = new HashSet<int>();
-            foreach (var i in _revealedSecrets)
-            {
-                if (i < index) newRevealed.Add(i);
-                else if (i > index) newRevealed.Add(i - 1);
-            }
-            _revealedSecrets = newRevealed;
-        }
-    }
-
-    private void UpdateSecretKey(int index, string value)
-    {
-        if (index >= 0 && index < _form.Secrets.Count)
-        {
-            _form.Secrets[index].Key = value;
-            _form.Secrets[index].ValidationError = null;
-        }
-    }
-
-    private void UpdateSecretValue(int index, string value)
-    {
-        if (index >= 0 && index < _form.Secrets.Count)
-        {
-            _form.Secrets[index].Value = value;
-        }
-    }
-
-    private void ToggleSecretVisibility(int index)
-    {
-        if (!_revealedSecrets.Remove(index))
-            _revealedSecrets.Add(index);
-    }
-
-    private bool ValidateSecrets()
-    {
-        if (_form.Secrets.Count == 0) return true;
-
-        var isValid = true;
-        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var secret in _form.Secrets)
-        {
-            secret.ValidationError = null;
-
-            if (string.IsNullOrWhiteSpace(secret.Key))
-            {
-                secret.ValidationError = "Key is required.";
-                isValid = false;
-                continue;
-            }
-
-            if (!SecretKeyPattern.IsMatch(secret.Key))
-            {
-                secret.ValidationError = "Key must match POSIX env var pattern (letters, digits, underscores; cannot start with digit).";
-                isValid = false;
-                continue;
-            }
-
-            if (!seenKeys.Add(secret.Key))
-            {
-                secret.ValidationError = "Duplicate key.";
-                isValid = false;
-            }
-        }
-
-        if (!isValid)
-        {
-            _validationMessage = "Fix secret key errors before saving.";
-            _validationSuccess = false;
-        }
-
-        return isValid;
-    }
-
-    private Dictionary<string, string>? BuildSecretsDictionary()
-    {
-        if (_form.Secrets.Count == 0) return null;
-        var dict = new Dictionary<string, string>();
-        foreach (var secret in _form.Secrets.Where(s => !string.IsNullOrWhiteSpace(s.Key)))
-            dict[secret.Key] = secret.Value;
-        return dict.Count > 0 ? dict : null;
-    }
-
-    // --- Setup Steps management ---
-
-    private void AddSetupStep()
-    {
-        _form.SetupSteps.Add(new SetupStepEntry());
-    }
-
-    private void RemoveSetupStep(int index)
-    {
-        if (index >= 0 && index < _form.SetupSteps.Count)
-        {
-            _form.SetupSteps.RemoveAt(index);
-        }
-    }
-
-    private void MoveSetupStepUp(int index)
-    {
-        if (index > 0 && index < _form.SetupSteps.Count)
-        {
-            (_form.SetupSteps[index - 1], _form.SetupSteps[index]) = (_form.SetupSteps[index], _form.SetupSteps[index - 1]);
-        }
-    }
-
-    private void MoveSetupStepDown(int index)
-    {
-        if (index >= 0 && index < _form.SetupSteps.Count - 1)
-        {
-            (_form.SetupSteps[index], _form.SetupSteps[index + 1]) = (_form.SetupSteps[index + 1], _form.SetupSteps[index]);
-        }
-    }
-
-    private void UpdateSetupStepName(int index, string value)
-    {
-        if (index >= 0 && index < _form.SetupSteps.Count)
-        {
-            _form.SetupSteps[index].Name = value;
-            _form.SetupSteps[index].ValidationError = null;
-        }
-    }
-
-    private void UpdateSetupStepCommand(int index, string value)
-    {
-        if (index >= 0 && index < _form.SetupSteps.Count)
-        {
-            _form.SetupSteps[index].Command = value;
-            _form.SetupSteps[index].ValidationError = null;
-        }
-    }
-
-    private bool ValidateSetupSteps()
-    {
-        if (_form.SetupSteps.Count == 0) return true;
-
-        var isValid = true;
-
-        foreach (var step in _form.SetupSteps)
-        {
-            step.ValidationError = null;
-
-            if (string.IsNullOrWhiteSpace(step.Name) && string.IsNullOrWhiteSpace(step.Command))
-            {
-                step.ValidationError = "Name and command are required.";
-                isValid = false;
-            }
-            else if (string.IsNullOrWhiteSpace(step.Name))
-            {
-                step.ValidationError = "Step name is required.";
-                isValid = false;
-            }
-            else if (string.IsNullOrWhiteSpace(step.Command))
-            {
-                step.ValidationError = "Command is required.";
-                isValid = false;
-            }
-        }
-
-        if (!isValid)
-        {
-            _validationMessage = "Fix setup step errors before saving.";
-            _validationSuccess = false;
-        }
-
-        return isValid;
-    }
-
-    private IReadOnlyList<SetupStep>? BuildSetupStepsList()
-    {
-        if (_form.SetupSteps.Count == 0) return null;
-        var steps = _form.SetupSteps
-            .Where(s => !string.IsNullOrWhiteSpace(s.Name) && !string.IsNullOrWhiteSpace(s.Command))
-            .Select(s => new SetupStep { Name = s.Name.Trim(), Command = s.Command.Trim() })
-            .ToList();
-        return steps.Count > 0 ? steps : null;
-    }
 }

@@ -1,12 +1,16 @@
 using System.Text.Json;
+using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
+using Serilog;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace CodingAgent.Api;
 
@@ -18,6 +22,9 @@ namespace CodingAgent.Api;
 /// </summary>
 public static class ConfigEndpoints
 {
+    /// <summary>Valid secret key names: must start with a letter or underscore, followed by letters, digits, underscores.</summary>
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+
     private static readonly JsonSerializerOptions ExportOptions = new()
     {
         WriteIndented = true,
@@ -139,6 +146,19 @@ public static class ConfigEndpoints
         IAgentProfileStore profileStore,
         CancellationToken ct)
     {
+        if (config.Kind == ProviderKind.Repository)
+        {
+            // Repository settings live on the pipeline job template, not the connection.
+            var hasRepoSettings = config.RequiredLabels is { Count: > 0 }
+                || config.Secrets is { Count: > 0 }
+                || config.SetupSteps is { Count: > 0 }
+                || !string.IsNullOrEmpty(config.SteeringContent)
+                || config.BlacklistedPaths is { Count: > 0 };
+            if (hasRepoSettings)
+                return TypedResults.BadRequest(
+                    "Agent labels, secrets, setup steps, steering and the commit blacklist are set on the pipeline job template.");
+        }
+
         if (config.Kind == ProviderKind.Agent)
         {
             // TODO: TOCTOU race — a concurrent SaveAgentProfile call may insert a new profile that
@@ -374,6 +394,33 @@ public static class ConfigEndpoints
         if (conflict is not null)
             return TypedResults.BadRequest(conflict);
 
+        // Validate secret key names: must match ^[A-Za-z_][A-Za-z0-9_]*$ (same rule as project secrets).
+        if (template.Secrets is { Count: > 0 })
+        {
+            // TODO: [WARNING] No server-side check for duplicate secret keys. Because Secrets is a
+            // Dictionary<string,string>, duplicate keys in the JSON payload are silently resolved by the
+            // serializer (last value wins) rather than reported as a validation error. The prior UI guard
+            // in RepoProviderSection.razor ("Duplicate key.") was removed and not reintroduced on the
+            // template path. If the client-side guard in RepositorySettingsEditor.razor is bypassed,
+            // users get no feedback about duplicates. Consider adding a duplicate-key check here.
+            foreach (var key in template.Secrets.Keys)
+            {
+                if (!SecretKeyPattern.IsMatch(key))
+                    return TypedResults.BadRequest(
+                        $"Secret name '{key}' is invalid; names must start with a letter or underscore and contain only letters, digits and underscores.");
+            }
+        }
+
+        // Validate setup steps: each step must have both a name and a command.
+        if (template.SetupSteps is { Count: > 0 })
+        {
+            foreach (var step in template.SetupSteps)
+            {
+                if (string.IsNullOrWhiteSpace(step.Name) || string.IsNullOrWhiteSpace(step.Command))
+                    return TypedResults.BadRequest("Each setup step must have a name and a command.");
+            }
+        }
+
         return await SaveAsync(() => store.SaveTemplateAsync(projectId, template, ct));
     }
 
@@ -545,6 +592,10 @@ public static class ConfigEndpoints
         // not inside the retry lambda where it could fire on a failed attempt before rollback.
         configStore.InvalidateCaches();
 
+        // Move repository settings from any provider configs that still carry them (older bundles)
+        // onto the templates that reference those providers. Idempotent.
+        await MigrateRepositorySettingsFromProvidersAsync(dbFactory, ct);
+
         return TypedResults.Ok(new ImportExportResult
         {
             Success = true,
@@ -555,6 +606,20 @@ public static class ConfigEndpoints
                       $"{bundle.Projects?.Count ?? 0} projects, " +
                       $"{bundle.JobTemplates?.Count ?? 0} templates"
         });
+    }
+
+    /// <summary>
+    /// Moves repository settings (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths)
+    /// from repository <see cref="ProviderConfig"/> records onto the templates that reference them.
+    /// Delegates to <see cref="DatabaseStartupService.ApplyRepositorySettingsMigrationAsync"/> to avoid
+    /// duplicating the migration logic. Idempotent.
+    /// </summary>
+    private static async Task MigrateRepositorySettingsFromProvidersAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await DatabaseStartupService.ApplyRepositorySettingsMigrationAsync(db, Log.Logger, ct);
     }
 
     /// <summary>

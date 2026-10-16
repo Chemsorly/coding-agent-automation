@@ -187,7 +187,6 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Frontend Repo",
-            RequiredLabels = new[] { "frontend" }
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
@@ -196,7 +195,6 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Backend Repo",
-            RequiredLabels = new[] { "backend" }
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -205,7 +203,8 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             Name = "Frontend Template",
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-frontend",
-            Enabled = true
+            Enabled = true,
+            RequiredLabels = new[] { "frontend" }  // issue #3575: labels live on the template
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -214,7 +213,8 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             Name = "Backend Template",
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-backend",
-            Enabled = true
+            Enabled = true,
+            RequiredLabels = new[] { "backend" }   // issue #3575: labels live on the template
         }, CancellationToken.None);
 
         await SeedIssueAsync("3010", "Frontend issue");

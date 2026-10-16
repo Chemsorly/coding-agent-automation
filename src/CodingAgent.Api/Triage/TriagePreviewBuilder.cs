@@ -56,7 +56,10 @@ public static class TriagePreviewBuilder
             .Count();
 
         var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == executor.RepoProviderId);
-        var labels = LabelResolver.ResolveRequiredLabels(repoConfig, globalConfig);
+        var enrichedRepoConfig = repoConfig is not null
+            ? RepositorySettings.WithTemplateSettings(repoConfig, executor)
+            : null;
+        var labels = LabelResolver.ResolveRequiredLabels(enrichedRepoConfig, globalConfig);
         var profile = ProfileResolver.ResolveByRequiredLabels(profiles, labels);
 
         return new TriagePreview

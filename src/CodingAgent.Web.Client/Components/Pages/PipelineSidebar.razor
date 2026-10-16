@@ -36,7 +36,7 @@
     </div>
 
     <div class="sidebar-steps" id="sidebarSteps">
-        @foreach (var phase in _phases)
+        @foreach (var phase in PhasesForRun)
         {
             var visibleSteps = GetVisibleSteps(phase.Steps);
             if (visibleSteps.Count == 0) continue;
@@ -229,6 +229,54 @@
         })
     };
 
+    private static readonly PhaseDefinition[] _refactoringScanPhases =
+    {
+        new("Preparation", "preparation", new[] {
+            PipelineStep.Created,
+            PipelineStep.CloningRepository,
+            PipelineStep.AnalyzingHotspots,
+            PipelineStep.ReadingIssueContext
+        }),
+        new("Analysis", "analysis", new[] {
+            PipelineStep.ExtractingConventions,
+            PipelineStep.DetectingFindings,
+            PipelineStep.AggregatingProposals
+        }),
+        new("Review", "review", new[] {
+            PipelineStep.ReviewingProposals
+        }),
+        new("Finalization", "finalization", new[] {
+            PipelineStep.CreatingRefactoringIssues
+        })
+    };
+
+    private static readonly PhaseDefinition[] _brainConsolidationPhases =
+    {
+        new("Preparation", "preparation", new[] {
+            PipelineStep.Created,
+            PipelineStep.CloningRepository
+        }),
+        new("Consolidation", "consolidation", new[] {
+            PipelineStep.ConsolidatingKnowledge
+        }),
+        new("Review", "review", new[] {
+            PipelineStep.ReviewingBrainChanges
+        }),
+        new("Finalization", "finalization", new[] {
+            PipelineStep.PushingBrainChanges
+        })
+    };
+
+    /// <summary>The phases of this run's type; consolidation runs have one set per kind.</summary>
+    private PhaseDefinition[] PhasesForRun => Run.RunType != PipelineRunType.Consolidation
+        ? _phases
+        : Run.ConsolidationType switch
+        {
+            ConsolidationRunType.BrainConsolidation => _brainConsolidationPhases,
+            ConsolidationRunType.RefactoringDetection => _refactoringScanPhases,
+            _ => []
+        };
+
     private enum StepState { Completed, Active, Pending, Failed, Cancelled, Revisited, Restarted }
     private enum PhaseState { Completed, Active, Pending, Failed, Cancelled, Retry, Restarted }
 
@@ -255,6 +303,9 @@
 
     private bool IsStepHidden(PipelineStep step, PipelineStep[] allSteps)
     {
+        // Consolidation phases list only the steps the run has; brain-sync and decomposition rules don't apply.
+        if (Run.RunType == PipelineRunType.Consolidation) return false;
+
         // Hide ReviewingAnalysis when skipped
         if (step == PipelineStep.ReviewingAnalysis
             && GetStepState(step) == StepState.Pending
@@ -541,6 +592,18 @@
         [PipelineStep.ConflictRestart] = 103,
         [PipelineStep.PrMerged] = 104,
         [PipelineStep.PrClosed] = 105,
+        // Refactoring scan (Created=0, CloningRepository=1 shared)
+        [PipelineStep.AnalyzingHotspots] = 40,
+        [PipelineStep.ReadingIssueContext] = 41,
+        [PipelineStep.ExtractingConventions] = 42,
+        [PipelineStep.DetectingFindings] = 43,
+        [PipelineStep.AggregatingProposals] = 44,
+        [PipelineStep.ReviewingProposals] = 45,
+        [PipelineStep.CreatingRefactoringIssues] = 46,
+        // Brain consolidation (Created=0, CloningRepository=1 shared)
+        [PipelineStep.ConsolidatingKnowledge] = 50,
+        [PipelineStep.ReviewingBrainChanges] = 51,
+        [PipelineStep.PushingBrainChanges] = 52,
     };
 
     private static int LogicalOrder(PipelineStep step) =>

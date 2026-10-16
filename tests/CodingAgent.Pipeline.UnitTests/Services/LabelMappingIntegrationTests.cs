@@ -9,31 +9,11 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// End-to-end integration tests verifying the full label mapping procedure:
-/// agent selection, profile resolution, and QGC resolution work correctly together.
+/// QGC resolution and required-label resolution work correctly together.
 /// </summary>
 public class LabelMappingIntegrationTests
 {
-    private readonly ProfileResolver _profileResolver = new();
     private readonly QualityGateResolver _qgcResolver = new();
-
-    [Fact]
-    public void BasicDotNetRepo_ProfileWithMatchingLabels_Resolves()
-    {
-        // Arrange: Agent has labels ["kiro", "dotnet", "dotnet10"]
-        var agentLabels = new List<string> { "kiro", "dotnet", "dotnet10" };
-        var profiles = new List<AgentProfile>
-        {
-            CreateProfile("profile-dotnet", "DotNet Profile", ["kiro", "dotnet", "dotnet10"]),
-            CreateProfile("profile-python", "Python Profile", ["kiro", "python", "python312"])
-        };
-
-        // Act
-        var resolved = _profileResolver.Resolve(profiles, agentLabels);
-
-        // Assert
-        resolved.Should().NotBeNull();
-        resolved!.Id.Should().Be("profile-dotnet");
-    }
 
     [Fact]
     public void BasicDotNetRepo_QgcWithMatchingLabel_IsIncluded()
@@ -136,94 +116,6 @@ public class LabelMappingIntegrationTests
         resolved.Should().HaveCount(2);
         resolved.Select(q => q.Id).Should().Contain("qgc-global");
         resolved.Select(q => q.Id).Should().Contain("qgc-dotnet");
-    }
-
-    #endregion
-
-    #region Scenario 4: Profile specificity
-
-    [Fact]
-    public void ProfileSpecificity_MostSpecificProfileWins()
-    {
-        // Arrange: Three profiles with increasing specificity
-        var agentLabels = new List<string> { "kiro", "dotnet", "dotnet10" };
-        var profiles = new List<AgentProfile>
-        {
-            CreateProfile("profile-a", "Profile A", ["kiro"]),                       // specificity 1
-            CreateProfile("profile-b", "Profile B", ["kiro", "dotnet"]),             // specificity 2
-            CreateProfile("profile-c", "Profile C", ["kiro", "dotnet", "dotnet10"]) // specificity 3
-        };
-
-        // Act
-        var resolved = _profileResolver.Resolve(profiles, agentLabels);
-
-        // Assert: Profile C wins (most specific — all 3 labels match)
-        resolved.Should().NotBeNull();
-        resolved!.Id.Should().Be("profile-c");
-    }
-
-    [Fact]
-    public void ProfileSpecificity_LessSpecificProfilesAlsoMatch_ButMostSpecificWins()
-    {
-        // Arrange: Agent has many labels, multiple profiles match
-        var agentLabels = new List<string> { "kiro", "dotnet", "dotnet10", "linux" };
-        var profiles = new List<AgentProfile>
-        {
-            CreateProfile("profile-generic", "Generic", ["kiro"]),
-            CreateProfile("profile-dotnet", "DotNet", ["kiro", "dotnet"]),
-            CreateProfile("profile-dotnet10", "DotNet 10", ["kiro", "dotnet", "dotnet10"])
-        };
-
-        // Act
-        var resolved = _profileResolver.Resolve(profiles, agentLabels);
-
-        // Assert: Most specific (3 labels) wins
-        resolved.Should().NotBeNull();
-        resolved!.Id.Should().Be("profile-dotnet10");
-    }
-
-    #endregion
-
-    #region Scenario 5: Disabled agent skipped
-    [Fact]
-    public void NoProfileMatches_ReturnsNull()
-    {
-        // Arrange: Agent has labels ["kiro", "dotnet10"], only profile requires ["kiro", "python"]
-        var agentLabels = new List<string> { "kiro", "dotnet10" };
-        var profiles = new List<AgentProfile>
-        {
-            CreateProfile("profile-python", "Python Profile", ["kiro", "python"])
-        };
-
-        // Act
-        var resolved = _profileResolver.Resolve(profiles, agentLabels);
-
-        // Assert: No profile matches (["kiro", "python"] is NOT a subset of ["kiro", "dotnet10"])
-        resolved.Should().BeNull();
-    }
-
-    [Fact]
-    public void NoProfileMatches_DisabledProfileAlsoExcluded()
-    {
-        // Arrange: Matching profile exists but is disabled
-        var agentLabels = new List<string> { "kiro", "dotnet", "dotnet10" };
-        var profiles = new List<AgentProfile>
-        {
-            new()
-            {
-                Id = "profile-disabled",
-                DisplayName = "Disabled Profile",
-                MatchLabels = ["kiro", "dotnet", "dotnet10"],
-                AgentProviderConfigId = "ap-1",
-                Enabled = false
-            }
-        };
-
-        // Act
-        var resolved = _profileResolver.Resolve(profiles, agentLabels);
-
-        // Assert
-        resolved.Should().BeNull();
     }
 
     #endregion
@@ -351,24 +243,6 @@ public class LabelMappingIntegrationTests
     #endregion
 
     [Fact]
-    public void CaseInsensitivity_ProfileResolution_MatchesRegardlessOfCase()
-    {
-        // Arrange: Profile matchLabels in UPPERCASE, agent labels in lowercase
-        var agentLabels = new List<string> { "kiro", "dotnet", "dotnet10" };
-        var profiles = new List<AgentProfile>
-        {
-            CreateProfile("profile-upper", "Upper Profile", ["KIRO", "DOTNET", "DOTNET10"])
-        };
-
-        // Act
-        var resolved = _profileResolver.Resolve(profiles, agentLabels);
-
-        // Assert: Case-insensitive match
-        resolved.Should().NotBeNull();
-        resolved!.Id.Should().Be("profile-upper");
-    }
-
-    [Fact]
     public void CaseInsensitivity_QgcResolution_MatchesRegardlessOfCase()
     {
         // Arrange: QGC matchLabels lowercase, job labels mixed case
@@ -388,23 +262,14 @@ public class LabelMappingIntegrationTests
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private static AgentProfile CreateProfile(string id, string name, string[] labels) => new()
-    {
-        Id = id,
-        DisplayName = name,
-        AgentProviderConfigId = "ap",
-        MatchLabels = labels,
-        Enabled = true
-    };
-
     private static QualityGateConfiguration CreateQgc(
         string id, string displayName, string[] matchLabels, int executionOrder = 0) => new()
-    {
-        Id = id,
-        DisplayName = displayName,
-        MatchLabels = matchLabels.ToList(),
-        TestArguments = ["test"],
-        Enabled = true,
-        ExecutionOrder = executionOrder
-    };
+        {
+            Id = id,
+            DisplayName = displayName,
+            MatchLabels = matchLabels.ToList(),
+            TestArguments = ["test"],
+            Enabled = true,
+            ExecutionOrder = executionOrder
+        };
 }

@@ -119,4 +119,68 @@ public class StepOrderTests
         Assert.True(StepOrder.GetOrder(PipelineStep.GeneratingPlan) > StepOrder.GetOrder(PipelineStep.ExploringCodebase));
         Assert.True(StepOrder.GetOrder(PipelineStep.CreatingIssues) > StepOrder.GetOrder(PipelineStep.GeneratingSubIssues));
     }
+
+    [Theory]
+    [InlineData(PipelineStep.AnalyzingHotspots, 2)]
+    [InlineData(PipelineStep.ReadingIssueContext, 3)]
+    [InlineData(PipelineStep.ExtractingConventions, 4)]
+    [InlineData(PipelineStep.DetectingFindings, 5)]
+    [InlineData(PipelineStep.AggregatingProposals, 6)]
+    [InlineData(PipelineStep.ReviewingProposals, 7)]
+    [InlineData(PipelineStep.CreatingRefactoringIssues, 8)]
+    [InlineData(PipelineStep.ConsolidatingKnowledge, 2)]
+    [InlineData(PipelineStep.ReviewingBrainChanges, 3)]
+    [InlineData(PipelineStep.PushingBrainChanges, 4)]
+    public void GetOrder_ConsolidationPipelineSteps_ReturnsCorrectOrder(PipelineStep step, int expectedOrder)
+    {
+        Assert.Equal(expectedOrder, StepOrder.GetOrder(step));
+    }
+
+    [Fact]
+    public void GetOrder_RefactoringScanSteps_AreMonotonicallyIncreasing()
+    {
+        var scanSteps = new[]
+        {
+            PipelineStep.Created,
+            PipelineStep.CloningRepository,
+            PipelineStep.AnalyzingHotspots,
+            PipelineStep.ReadingIssueContext,
+            PipelineStep.ExtractingConventions,
+            PipelineStep.DetectingFindings,
+            PipelineStep.AggregatingProposals,
+            PipelineStep.ReviewingProposals,
+            PipelineStep.CreatingRefactoringIssues,
+            PipelineStep.Completed
+        };
+
+        for (var i = 1; i < scanSteps.Length; i++)
+        {
+            var prev = StepOrder.GetOrder(scanSteps[i - 1]);
+            var curr = StepOrder.GetOrder(scanSteps[i]);
+            Assert.True(curr > prev,
+                $"Expected {scanSteps[i]} (order={curr}) > {scanSteps[i - 1]} (order={prev})");
+        }
+    }
+
+    [Fact]
+    public void GetOrder_BrainConsolidationSteps_AreMonotonicallyIncreasing()
+    {
+        var brainSteps = new[]
+        {
+            PipelineStep.Created,
+            PipelineStep.CloningRepository,
+            PipelineStep.ConsolidatingKnowledge,
+            PipelineStep.ReviewingBrainChanges,
+            PipelineStep.PushingBrainChanges,
+            PipelineStep.Completed
+        };
+
+        for (var i = 1; i < brainSteps.Length; i++)
+        {
+            var prev = StepOrder.GetOrder(brainSteps[i - 1]);
+            var curr = StepOrder.GetOrder(brainSteps[i]);
+            Assert.True(curr > prev,
+                $"Expected {brainSteps[i]} (order={curr}) > {brainSteps[i - 1]} (order={prev})");
+        }
+    }
 }

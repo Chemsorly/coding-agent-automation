@@ -53,7 +53,42 @@ internal static class UiProviderEndpoints
             stored = await store.GetProviderConfigByIdAsync(copyFrom, sourceKind, ct);
 
         var (config, error) = UiSecretMask.Restore(draft, stored);
-        return config is null ? TypedResults.BadRequest(error) : await ConfigEndpoints.SaveProviderConfig(config, store, templates, profileStore, ct);
+        if (config is null) return TypedResults.BadRequest(error);
+
+        // Repository providers no longer store the five repository-settings fields (issue #3575):
+        // they live on the pipeline job template. The UI form does not expose these fields, but they
+        // can appear in `config` because UiSecretMask.Restore fills them from the stored copy of a
+        // pre-migration provider. Strip them only when the stored record already carried them
+        // (migration case); for new providers the draft's values come from the caller and
+        // ConfigEndpoints.SaveProviderConfig will reject them as required by the acceptance criterion.
+        if (config.Kind == ProviderKind.Repository && stored is not null)
+        {
+            var storedHasSettings = stored.RequiredLabels is { Count: > 0 }
+                || stored.Secrets is { Count: > 0 }
+                || stored.SetupSteps is { Count: > 0 }
+                || !string.IsNullOrEmpty(stored.SteeringContent)
+                || stored.BlacklistedPaths is { Count: > 0 };
+
+            if (storedHasSettings)
+            {
+                config = new ProviderConfig
+                {
+                    BlacklistedPaths = null,
+                    DisplayName = config.DisplayName,
+                    Id = config.Id,
+                    Kind = config.Kind,
+                    ProviderType = config.ProviderType,
+                    RepositoryRole = config.RepositoryRole,
+                    RequiredLabels = null,
+                    Secrets = null,
+                    Settings = config.Settings,
+                    SetupSteps = null,
+                    SteeringContent = null,
+                };
+            }
+        }
+
+        return await ConfigEndpoints.SaveProviderConfig(config, store, templates, profileStore, ct);
     }
 
     /// <summary>POST …/check — the credentials (and, when given, the repository or project) work.</summary>

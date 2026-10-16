@@ -218,7 +218,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Agent label routing: layered resolution from provider to global default
 <!-- 2026-07-04 -->
-**Rule:** The repository provider's required labels choose which agent runs a job; without them, the global default labels apply.
+**Rule:** The required labels of the repository's pipeline job template choose which agent runs a job; without them, the global default labels apply.
 **Why:** Repos can target different agent stacks (dotnet, python) without per-repo config when the default fits.
 **Not:** template-only selectors; per-issue routing.
 **Revisit when:** a third layer (per issue or per template) is needed.
@@ -575,15 +575,15 @@ The rules a plausible change could break. Details are in the linked entries.
 ## Configuration
 
 ### Settings are read, offered and range-checked — one record, four scopes
-<!-- 2026-09-29 -->
+<!-- 2026-10-15 -->
 **Rule:** Four rules for pipeline settings:
 1. Every setting is read by code. A setting nothing reads is removed, not wired up, and its MessagePack key is retired.
 2. Every setting has a field on a settings page and a row in `docs/configuration.md`, except four internal fields that are not settings. Tests enforce both.
 3. A value outside its range is refused when global settings, a project or an import is saved. A stored project override outside its range is skipped with a warning, so it affects only its own setting.
-4. The scopes stay as they are: global settings, project overrides, the pipeline job template (bindings, workflow switches, `BrainReadOnly`, housekeeping limit), the repository provider (labels, secrets, setup, steering, blacklist) and the label catalogs. The record is not split, and system settings are not moved to Helm.
+4. The scopes stay as they are: global settings, project overrides, the pipeline job template (bindings, workflow switches, `BrainReadOnly`, housekeeping limit, and the repository's labels, secrets, setup steps, steering and blacklist), the repository connection (credentials only) and the label catalogs. The record is not split, and system settings are not moved to Helm.
 
 A setting's limits are standard `[Range]` attributes, the one source for the API check, the resolver and the settings pages' input limits.
-**Why:** A 2026-09-27 review found settings that did nothing, working settings without a field, limits that differed between pages, and one bad project override discarding all of the project's overrides. Code review settings now live on one Code Review page.
+**Why:** A 2026-09-27 review found settings that did nothing, working settings without a field, limits that differed between pages, and one bad project override discarding all of the project's overrides. Code review settings now live on one Code Review page. A repository connection belongs to no project and can be shared, so repository settings live on the template, which belongs to one project (2026-10-10).
 **Not:** a settings registry that generates the pages and the docs table (a large UI rewrite that loses the hand-tuned layouts); system settings in Helm (more restarts, no problem solved); project-level label routing (labels also select the agent profile, so it would need project context everywhere labels are resolved).
 **Revisit when:** the guard tests or the hand-written pages become the main cost of adding a setting; then generate the pages from the attributes.
 

@@ -18,9 +18,8 @@ A project overrides global settings for all its templates. The settings it can o
 ```mermaid
 flowchart LR
     A[Global settings] -->|empty = inherit| B[Project overrides]
-    B -->|set = replace| C[Template: BrainReadOnly]
-    C -->|blacklist only| D[Repository provider]
-    D --> E[Final config sent to agent]
+    B -->|set = replace| C[Template: BrainReadOnly, labels, secrets, setup, steering, blacklist]
+    C --> E[Final config sent to agent]
 ```
 
 **Rules:**
@@ -33,8 +32,8 @@ flowchart LR
 
 1. **Global settings** — Settings → Global Defaults
 2. **Project overrides** — the project's set values replace the global ones
-3. **Template** — `BrainReadOnly` on the pipeline job template can turn brain writes off, never on; the template also holds its workflow switches and housekeeping limit
-4. **Repository provider** — its `BlacklistedPaths` replace the global or project list (if set)
+3. **Template** — `BrainReadOnly` on the pipeline job template can turn brain writes off, never on; the template also holds its workflow switches, housekeeping limit, and the repository's labels, secrets, setup steps, steering and commit blacklist
+4. **Repository provider** — credentials only; the repository settings (labels, secrets, setup steps, steering, blacklist) are on the template
 
 ## Project Storage
 
