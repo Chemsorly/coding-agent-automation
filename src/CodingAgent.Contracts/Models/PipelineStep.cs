@@ -70,7 +70,37 @@ public enum PipelineStep
     /// </summary>
     CheckingDroppedIdentifiers = 33,
 
-    // 34–46 are reserved for the consolidation progress steps of #3566; gaps are fine.
+    /// <summary>Refactoring scan: git hotspot analysis.</summary>
+    AnalyzingHotspots = 34,
+
+    /// <summary>Refactoring scan: open issues and past scan issues.</summary>
+    ReadingIssueContext = 35,
+
+    /// <summary>Refactoring scan: phase 0 convention extraction.</summary>
+    ExtractingConventions = 36,
+
+    /// <summary>Refactoring scan: phase 1, three detectors in parallel.</summary>
+    DetectingFindings = 37,
+
+    /// <summary>Refactoring scan: phase 2 proposal aggregation.</summary>
+    AggregatingProposals = 38,
+
+    /// <summary>Refactoring scan: adversarial review and refinement.</summary>
+    ReviewingProposals = 39,
+
+    /// <summary>Refactoring scan: validation and issue creation.</summary>
+    CreatingRefactoringIssues = 40,
+
+    /// <summary>Brain consolidation: the consolidation agent.</summary>
+    ConsolidatingKnowledge = 41,
+
+    /// <summary>Brain consolidation: diff summary, adversarial review, refinement.</summary>
+    ReviewingBrainChanges = 42,
+
+    /// <summary>Brain consolidation: commit and push to the brain's base branch.</summary>
+    PushingBrainChanges = 43,
+
+    // 44–46 remain vacant within the consolidation reservation range.
 
     /// <summary>Triage: the agent investigates the reported problem and writes its result.</summary>
     Investigating = 47,
