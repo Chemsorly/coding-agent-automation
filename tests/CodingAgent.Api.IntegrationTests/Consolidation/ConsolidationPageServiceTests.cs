@@ -1,7 +1,10 @@
 using AwesomeAssertions;
 using CodingAgent.Api.Consolidation;
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Orchestration;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Moq;
 using Xunit;
 
 namespace CodingAgent.Api.IntegrationTests.Consolidation;
@@ -105,5 +108,212 @@ public sealed class ConsolidationPageServiceTests
 
         ConsolidationPageService.BuildRefactoringScanSettings(config, overriding)
             .Should().Be(new UiRefactoringScanSettings(7, true, 90, true, false));
+    }
+
+    // ── GetAutoCountersAsync ──────────────────────────────────────────────────────
+
+    private static ConsolidationPageService BuildService(
+        Mock<ConsolidationStalenessService> mockStaleness,
+        PipelineConfiguration config,
+        PipelineProject[] projects,
+        PipelineJobTemplate[] templates)
+    {
+        var mockConfigStore = new Mock<IPipelineConfigStore>();
+        mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore
+            .Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>(projects));
+        mockProjectStore
+            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>(templates));
+
+        return new ConsolidationPageService(
+            mockProjectStore.Object,
+            mockConfigStore.Object,
+            new Mock<IConsolidationService>().Object,
+            mockStaleness.Object);
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_AllThresholdsZero_ReturnsEmptyCounters()
+    {
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        var service = BuildService(mockStaleness, new PipelineConfiguration(),
+            [Project("p", templateIds: ["t1"])],
+            [Template("t1")]);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.BrainCounters.Should().BeEmpty();
+        result.RefactoringCounters.Should().BeEmpty();
+        result.HarnessCounter.Should().BeNull();
+        mockStaleness.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_BrainThresholdSet_ReturnsBrainCounter()
+    {
+        var config = new PipelineConfiguration { AutoBrainConsolidationAfterRuns = 20 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness
+            .Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("brain-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(14);
+        mockStaleness
+            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var service = BuildService(mockStaleness, config,
+            [Project("p", templateIds: ["t1"])],
+            [Template("t1", brain: "brain-1")]);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.BrainCounters.Should().ContainKey("t1")
+            .WhoseValue.Should().Be(new UiAutoCounter(14, 20, null));
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_RefactoringThresholdSet_NotPaused_NotBackpressured_ReturnsCounter()
+    {
+        var config = new PipelineConfiguration { AutoRefactoringScanAfterClosedIssues = 10, MaxRefactoringProposals = 3 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness
+            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        mockStaleness
+            .Setup(s => s.CountOpenScanIssuesAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);  // below limit — not backpressured
+        mockStaleness
+            .Setup(s => s.CountClosedIssuesSinceLastScanAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(7);
+
+        var service = BuildService(mockStaleness, config,
+            [Project("p", templateIds: ["t1"])],
+            [Template("t1", brain: null)]);  // no brain, has repo + issues
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.RefactoringCounters.Should().ContainKey("t1")
+            .WhoseValue.Should().Be(new UiAutoCounter(7, 10, null));
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_RefactoringPaused_ReturnsPausedBlockedText()
+    {
+        var config = new PipelineConfiguration { AutoRefactoringScanAfterClosedIssues = 10, MaxRefactoringProposals = 3 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness
+            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        mockStaleness
+            .Setup(s => s.CountClosedIssuesSinceLastScanAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);
+
+        var service = BuildService(mockStaleness, config,
+            [Project("p", templateIds: ["t1"])],
+            [Template("t1", brain: null)]);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.RefactoringCounters.Should().ContainKey("t1")
+            .WhoseValue.Blocked.Should().Be("auto paused: the last run failed");
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_RefactoringBackpressure_ReturnsWaitingBlockedText()
+    {
+        var config = new PipelineConfiguration { AutoRefactoringScanAfterClosedIssues = 10, MaxRefactoringProposals = 3 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness
+            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        mockStaleness
+            .Setup(s => s.CountOpenScanIssuesAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);  // >= MaxRefactoringProposals (3)
+        mockStaleness
+            .Setup(s => s.CountClosedIssuesSinceLastScanAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(5);
+
+        var service = BuildService(mockStaleness, config,
+            [Project("p", templateIds: ["t1"])],
+            [Template("t1", brain: null)]);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.RefactoringCounters.Should().ContainKey("t1")
+            .WhoseValue.Blocked.Should().Be("auto waiting: 3 scan issues still open");
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_HarnessThresholdSet_ReturnsHarnessCounter()
+    {
+        var config = new PipelineConfiguration { AutoHarnessSuggestionsAfterFeedback = 50 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness
+            .Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(41);
+        mockStaleness
+            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var service = BuildService(mockStaleness, config, [], []);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.HarnessCounter.Should().Be(new UiAutoCounter(41, 50, null));
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_HarnessPaused_ReturnsPausedBlockedText()
+    {
+        var config = new PipelineConfiguration { AutoHarnessSuggestionsAfterFeedback = 50 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness
+            .Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(30);
+        mockStaleness
+            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = BuildService(mockStaleness, config, [], []);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.HarnessCounter!.Blocked.Should().Be("auto paused: the last run failed");
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_StalenessThrows_OmitsThatCounterAndContinues()
+    {
+        var config = new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 20,
+            AutoHarnessSuggestionsAfterFeedback = 50
+        };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        // Brain throws
+        mockStaleness
+            .Setup(s => s.CountBrainRunsSinceLastConsolidationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("staleness failure"));
+        // Harness succeeds
+        mockStaleness
+            .Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(20);
+        mockStaleness
+            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var service = BuildService(mockStaleness, config,
+            [Project("p", templateIds: ["t1"])],
+            [Template("t1", brain: "brain-1", repo: null, issues: null)]);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.BrainCounters.Should().BeEmpty("brain counter failed");
+        result.HarnessCounter.Should().Be(new UiAutoCounter(20, 50, null));
     }
 }

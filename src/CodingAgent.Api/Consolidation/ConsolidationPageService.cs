@@ -124,7 +124,7 @@ internal sealed class ConsolidationPageService(
             // which contradicts the "share a brain → share the count" invariant. Fix: compute IsPaused
             // once per brain id alongside the count, or accept that per-template errors are independent.
             var seenBrainCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var (project, template) in enabledPairs.Where(x =>
+            foreach (var (_, template) in enabledPairs.Where(x =>
                 ConsolidationTemplateFilter.SupportsBrainConsolidation(x.Template) &&
                 !ConsolidationTemplateFilter.IsBrainReadOnly(x.Template, x.Project, config)))
             {
