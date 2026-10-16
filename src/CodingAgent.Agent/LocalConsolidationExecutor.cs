@@ -121,7 +121,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
                 {
                     ConsolidationRunType.BrainConsolidation => await ExecuteBrainConsolidationAsync(job, orchestratorProxy, progress, emitOutputLine, linkedCt),
                     ConsolidationRunType.RefactoringDetection => await ExecuteRefactoringDetectionAsync(job, orchestratorProxy, progress, emitOutputLine, linkedCt),
-                    ConsolidationRunType.HarnessSuggestions => await ExecuteHarnessSuggestionsAsync(job, orchestratorProxy, linkedCt),
+                    ConsolidationRunType.HarnessSuggestions => await ExecuteHarnessSuggestionsAsync(job, orchestratorProxy, progress, emitOutputLine, linkedCt),
                     _ => new ConsolidationJobResult
                     {
                         JobId = job.JobId,
@@ -173,6 +173,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         }
 
         // Report result back to orchestrator (after reporter is disposed, so all step transitions are drained first)
+        if (progress is not null) progress.CopyUsageTo(result);
         try
         {
             await connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, result, ct);
@@ -242,7 +243,8 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     }
 
     private async Task<ConsolidationJobResult> ExecuteHarnessSuggestionsAsync(
-        ConsolidationJobMessage job, OrchestratorProxy orchestratorProxy, CancellationToken ct)
+        ConsolidationJobMessage job, OrchestratorProxy orchestratorProxy,
+        ConsolidationProgress? progress, Action<string> emitOutputLine, CancellationToken ct)
     {
         var resolution = await _resolver.ResolveHarnessProvidersAsync(job, orchestratorProxy, ct);
         if (!resolution.IsSuccess)
@@ -251,8 +253,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         await using var providers = resolution.Providers!;
         WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger, providers.AgentProvider.ProviderType);
 
-        var executor = new HarnessSuggestionExecutor(_logger);
-        return await executor.ExecuteAsync(job, providers.AgentProvider, ct,
-            line => _logger.Information("Consolidation output: {Line}", line));
+        var executor = new HarnessSuggestionExecutor(_logger, progress);
+        return await executor.ExecuteAsync(job, providers.AgentProvider, ct, emitOutputLine);
     }
 }
