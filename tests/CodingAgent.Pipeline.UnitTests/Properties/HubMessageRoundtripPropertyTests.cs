@@ -307,6 +307,7 @@ public class HubMessageRoundtripPropertyTests
             from feedbackJson in Gen.Elements("[{\"type\":\"positive\"}]", "[]")
             from hasTrace in Gen.Elements(true, false)
             from autoDispatch in Gen.Elements(true, false)
+            from refactoringFocus in Gen.Elements(RefactoringScanFocus.All, RefactoringScanFocus.Structure, RefactoringScanFocus.Correctness, RefactoringScanFocus.Design, RefactoringScanFocus.Tests)
             select new ConsolidationJobMessage
             {
                 JobId = jobId,
@@ -320,7 +321,8 @@ public class HubMessageRoundtripPropertyTests
                 TraceContext = hasTrace
                     ? new Dictionary<string, string> { ["traceparent"] = "00-abc123-def456-01" }
                     : null,
-                AutoDispatch = autoDispatch
+                AutoDispatch = autoDispatch,
+                RefactoringFocus = refactoringFocus
             };
 
         return Prop.ForAll(gen.ToArbitrary(), original =>
@@ -354,6 +356,8 @@ public class HubMessageRoundtripPropertyTests
             deserialized.FeedbackDataJson.Should().Be(original.FeedbackDataJson);
             deserialized.AutoDispatch.Should().Be(original.AutoDispatch,
                 because: "Key(10) AutoDispatch bool must survive MessagePack roundtrip");
+            deserialized.RefactoringFocus.Should().Be(original.RefactoringFocus,
+                because: "Key(12) RefactoringFocus enum must survive MessagePack roundtrip");
 
             // TraceContext dictionary preserved (null or populated)
             if (original.TraceContext is null)
@@ -385,9 +389,86 @@ public class HubMessageRoundtripPropertyTests
         deserialized.FeedbackDataJson.Should().BeNull();
         deserialized.TraceContext.Should().BeNull();
         deserialized.AutoDispatch.Should().BeFalse();
+        // TODO [WARNING]: This assertion verifies that a C# default value (0 = All) survives a roundtrip,
+        // but it does NOT test the actual backward-compatibility scenario — deserializing bytes produced
+        // by old code that has no Key(12) bytes at all. A genuine forward-compat test would serialize a
+        // ConsolidationJobMessage without this property (using the pre-feature serializer) and verify the
+        // new deserializer yields All. MessagePack does default missing keys to 0, so the production
+        // behavior is correct, but only the roundtrip of an already-set-to-zero field is exercised here.
+        deserialized.RefactoringFocus.Should().Be(RefactoringScanFocus.All,
+            because: "Key(12) RefactoringFocus must default to All for backward compatibility");
     }
 
     // ─── AgentRegistrationMessage with ActiveJobState ───────────────────────────
+
+    /// <summary>
+    /// JobAssignmentMessage RefactoringFocus roundtrip — verifies Key(44) survives serialization.
+    /// </summary>
+    [Theory]
+    [InlineData(RefactoringScanFocus.All)]
+    [InlineData(RefactoringScanFocus.Structure)]
+    [InlineData(RefactoringScanFocus.Correctness)]
+    [InlineData(RefactoringScanFocus.Design)]
+    [InlineData(RefactoringScanFocus.Tests)]
+    public void JobAssignmentMessage_RefactoringFocus_SurvivesRoundTrip(RefactoringScanFocus focus)
+    {
+        var original = new JobAssignmentMessage
+        {
+            JobId = "job-focus-test",
+            IssueIdentifier = new IssueIdentifier("test/repo#1"),
+            IssueDetail = new IssueDetail { Identifier = new IssueIdentifier("test/repo#1"), Title = "t", Description = "d", Labels = [] },
+            ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = string.Empty },
+            IssueComments = [],
+            RepoProviderConfigId = "rp-1",
+            AgentProviderConfigId = "ap-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+            InitiatedBy = "test",
+            QualityGateConfigs = [],
+            McpServers = [],
+            ReviewerConfigs = [],
+            ProjectReviewers = [],
+            RefactoringFocus = focus
+        };
+
+        var deserialized = RoundTrip(original);
+
+        deserialized.RefactoringFocus.Should().Be(focus,
+            because: "Key(44) RefactoringFocus must survive MessagePack roundtrip");
+    }
+
+    [Fact]
+    public void JobAssignmentMessage_RefactoringFocus_DefaultsToAll()
+    {
+        var original = new JobAssignmentMessage
+        {
+            JobId = "job-default-focus",
+            IssueIdentifier = new IssueIdentifier("test/repo#2"),
+            IssueDetail = new IssueDetail { Identifier = new IssueIdentifier("test/repo#2"), Title = "t", Description = "d", Labels = [] },
+            ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = string.Empty },
+            IssueComments = [],
+            RepoProviderConfigId = "rp-1",
+            AgentProviderConfigId = "ap-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+            InitiatedBy = "test",
+            QualityGateConfigs = [],
+            McpServers = [],
+            ReviewerConfigs = [],
+            ProjectReviewers = []
+            // RefactoringFocus deliberately not set — must default to All
+        };
+
+        var deserialized = RoundTrip(original);
+
+        // TODO [WARNING]: As with the ConsolidationJobMessage minimal test, this only verifies that
+        // the C# default value (0 = All) survives serialization. It does NOT verify the forward-compat
+        // scenario of deserializing bytes written by old code with no Key(44) field present. A proper
+        // forward-compat test would use raw pre-feature bytes. MessagePack does default missing keys to
+        // 0, so the production behavior is correct, but this test alone does not prove it.
+        deserialized.RefactoringFocus.Should().Be(RefactoringScanFocus.All,
+            because: "Key(44) RefactoringFocus must default to All for backward compatibility");
+    }
 
     /// <summary>
     /// AgentRegistrationMessage with nested ActiveJobState round-trip.

@@ -16,8 +16,9 @@ public interface IConsolidationService
     /// <param name="templateId">The Pipeline Job Template ID (null for harness suggestions which are global).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
+    /// <param name="focus">Which detection agent a refactoring scan runs; ignored by the other consolidation types.</param>
     /// <returns>A <see cref="ConsolidationTriggerResult"/> describing the dispatched run, or <c>null</c> if the trigger was rejected.</returns>
-    Task<ConsolidationTriggerResult?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
+    Task<ConsolidationTriggerResult?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false, RefactoringScanFocus focus = RefactoringScanFocus.All);
 
     /// <summary>
     /// Returns the current harness suggestions from the persisted file

@@ -692,4 +692,94 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain("primary evidence");
         result.Should().Contain("tool:coverage:");
     }
+
+    // ─── Focus: Phase 0 coverage step ────────────────────────────────────
+
+    [Fact]
+    public void BuildRefactoringContextExtractionPrompt_WithoutCoverage_OmitsCoverageStep()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt(includeCoverage: false);
+
+        result.Should().NotContain("**Test coverage.**");
+    }
+
+    [Fact]
+    public void BuildRefactoringContextExtractionPrompt_WithoutCoverage_RenumbersNextItem()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt(includeCoverage: false);
+
+        // Item 3 must now be "List all of them under availableTools"
+        result.Should().Contain("3. List all of them under `availableTools`");
+    }
+
+    [Fact]
+    public void BuildRefactoringContextExtractionPrompt_WithCoverage_Unchanged()
+    {
+        var withCoverage = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt(includeCoverage: true);
+        var defaultCall = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt();
+
+        withCoverage.Should().Be(defaultCall, "default and explicit includeCoverage=true must produce identical output");
+        withCoverage.Should().Contain("**Test coverage.**");
+        withCoverage.Should().Contain("4. List all of them under `availableTools`");
+    }
+
+    // ─── Focus: Phase 2 aggregation ──────────────────────────────────────
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_FocusTests_ListsOnlyTestGapInput()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.Tests);
+
+        // Only Agent D's findings file should appear
+        result.Should().Contain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
+
+        // Agent A, B, C findings files must NOT appear
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringDesignFindingsFilePath);
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_FocusTests_CategorySchemaContainsOnlyTestGap()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.Tests);
+
+        // TODO [WARNING]: These assertions use substring matching and may pass even if the schema emits
+        // extra categories alongside "test-gap" (e.g. "test-gap|structural-debt"). The NotContain check
+        // only excludes the full All-schema pipe-joined string, not partial multi-value combinations.
+        // A regression where ForFocus(Tests) returns extra categories would not be caught. Consider
+        // replacing with an exact schema-line assertion, or asserting that no other category names from
+        // RefactoringCategories.All appear in the result.
+        result.Should().Contain($"\"category\": \"{RefactoringCategories.TestGap}\"");
+        result.Should().NotContain($"\"category\": \"{string.Join("|", RefactoringCategories.All)}\"");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_FocusAll_IsUnchangedFromDefault()
+    {
+        var focusAll = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.All);
+        var defaultCall = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        focusAll.Should().Be(defaultCall, "focus=All must produce byte-for-byte identical output to the default call");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_FocusTests_AddsFocusConstraintSentence()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.Tests);
+
+        result.Should().Contain("This scan is focused on Tests:");
+        result.Should().Contain("`test-gap`");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_FocusStructure_ListsOnlyStructuralInput()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.Structure);
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringDesignFindingsFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
+    }
 }

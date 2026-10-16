@@ -186,6 +186,12 @@ public record JobDistributionRequest
     public bool AutoDispatch { get; init; }
 
     /// <summary>
+    /// Which detection agent a refactoring scan runs. Propagated like <see cref="AutoDispatch"/>.
+    /// Defaults to <see cref="RefactoringScanFocus.All"/>, so payloads written before this field existed run every agent.
+    /// </summary>
+    public RefactoringScanFocus RefactoringFocus { get; init; }
+
+    /// <summary>
     /// Pre-assigned run/job ID from orchestration. When set, the work distributor
     /// should use this as the WorkItem ID instead of generating a new one.
     /// This ensures the agent's jobId matches the in-memory PipelineRun.RunId

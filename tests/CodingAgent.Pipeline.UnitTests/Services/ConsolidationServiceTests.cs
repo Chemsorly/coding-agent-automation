@@ -518,4 +518,31 @@ public sealed class ConsolidationServiceTests
     }
 
     #endregion
+
+    #region RefactoringFocus propagation
+
+    [Fact]
+    public async Task TriggerAsync_RefactoringFocus_IsCopiedToDistributionRequest()
+    {
+        // Validates: RefactoringFocus must be preserved in the JobDistributionRequest
+        // so the agent executor can filter Phase 1 agents.
+        JobDistributionRequest? capturedRequest = null;
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-focus-test", ErrorMessage: null));
+
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None,
+            autoDispatch: false, focus: RefactoringScanFocus.Structure);
+
+        run.Should().NotBeNull();
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.RefactoringFocus.Should().Be(RefactoringScanFocus.Structure,
+            "RefactoringFocus must be copied into JobDistributionRequest");
+    }
+
+    #endregion
 }

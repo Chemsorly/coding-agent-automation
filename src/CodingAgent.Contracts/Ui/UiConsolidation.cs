@@ -41,6 +41,6 @@ public sealed record UiRefactoringScanSettings(
 /// <summary>
 /// Body of <c>POST /api/ui/consolidation/runs</c>. <paramref name="TemplateId"/> is null for harness
 /// suggestions, which are global; <paramref name="AutoDispatch"/> labels a refactoring scan's issues
-/// <c>agent:next</c>.
+/// <c>agent:next</c>; <paramref name="RefactoringFocus"/> selects which detection agent runs.
 /// </summary>
-public sealed record UiConsolidationTriggerRequest(ConsolidationRunType Type, string? TemplateId, bool AutoDispatch);
+public sealed record UiConsolidationTriggerRequest(ConsolidationRunType Type, string? TemplateId, bool AutoDispatch, RefactoringScanFocus RefactoringFocus = RefactoringScanFocus.All);

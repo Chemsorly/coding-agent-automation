@@ -82,7 +82,7 @@ The finding categories are one list from detection to issue (`RefactoringCategor
 4. Query closed refactoring issues (within `RefactoringOutcomeLookback`, default 90 days) for outcome feedback — categorizes past proposals as implemented (`agent:done`) or rejected (`agent:wont-do`/`agent:cancelled`). The query uses `agent:generated`; the footer keeps decomposition sub-issues, which carry the same label, out. `agent:done` only means an agent completed the issue, so implemented items are not re-proposed rather than encouraged. For each of these issues, the latest issue-quality feedback comment (`<!-- agent:issue-feedback -->`) that the implementing agent posted is added as "Implementer Feedback", e.g. "partial scope: the outer catch was missed". Both contexts are also written to `.agent/refactoring-issue-context.md` for the review step.
 5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells. Inline TODO comments are not known debt: Agent B checks each of them. Phase 0 also prepares the tool evidence: it checks its available MCP tools for additional data sources, runs the project's own build, lint and analysis commands once (saving the output in `.agent/refactoring-tool-output/`), runs the tests once with code coverage when the project has tests (stopped after 20 minutes), and lists both under `availableTools`. Consolidation runs get the MCP servers of their agent profile and project, like pipeline runs; no particular tool or service is required.
 <!-- TODO: "both" is now inaccurate — Phase 0 collects three evidence sources (MCP tools, analyzers, coverage), not two. Change "lists both under `availableTools`" to "lists all of them under `availableTools`". See review finding #1 from issue #3582. -->
-6. **Phase 1: Parallel Focused Detection** — Four sub-agents run concurrently. They use the tool output and MCP tools Phase 0 found, and do not run builds themselves, since they share the workspace. Each writes its `findings` and the areas it did not check (`notChecked`):
+6. **Phase 1: Parallel Focused Detection** — Four sub-agents run concurrently. They use the tool output and MCP tools Phase 0 found, and do not run builds themselves, since they share the workspace. Each writes its `findings` and the areas it did not check (`notChecked`). A focused scan runs only the agent of its focus.
    - **Agent A (Structural Debt)** — Duplicated logic, structural drift, complexity, over-engineering
    - **Agent B (Correctness & Hygiene)** — TODOs/FIXMEs, dead code, obvious bugs, stale documentation
    - **Agent C (Design Consistency)** — Naming inconsistencies, primitive obsession
@@ -132,7 +132,7 @@ The page is reached through the "Consolidation" item in the sidebar navigation. 
 - Global harness suggestions section
 - Run history table across all consolidation types
 
-A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review) and the auto-dispatch option before it starts.
+A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review), the auto-dispatch option and the focus before it starts. A focused scan (Structure, Correctness, Design or Tests) runs only that detection agent and proposes only its categories; Phase 0 runs the test coverage only for the All and Tests focus.
 
 ### Retention
 
