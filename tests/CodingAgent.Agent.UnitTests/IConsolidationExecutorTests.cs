@@ -69,6 +69,8 @@ public class IConsolidationExecutorTests
             .Setup(x => x.ExecuteAsync(
                 It.IsAny<ConsolidationJobMessage>(),
                 It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+                It.IsAny<OutputBatcher?>(),
+                It.IsAny<Action<PipelineStep?>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationJobResult
             {
@@ -94,6 +96,8 @@ public class IConsolidationExecutorTests
         mockConsolidation.Verify(x => x.ExecuteAsync(
             It.IsAny<ConsolidationJobMessage>(),
             It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+            It.IsAny<OutputBatcher?>(),
+            It.IsAny<Action<PipelineStep?>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify the result was adapted correctly
@@ -108,6 +112,8 @@ public class IConsolidationExecutorTests
             .Setup(x => x.ExecuteAsync(
                 It.IsAny<ConsolidationJobMessage>(),
                 It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+                It.IsAny<OutputBatcher?>(),
+                It.IsAny<Action<PipelineStep?>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationJobResult
             {

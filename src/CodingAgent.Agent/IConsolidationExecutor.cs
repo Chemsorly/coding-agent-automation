@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
 
@@ -24,5 +25,17 @@ public interface IConsolidationExecutor
     Task<ConsolidationJobResult> ExecuteAsync(
         ConsolidationJobMessage job,
         HubConnection connection,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Executes a consolidation job, reports its steps and streams its agent output while it runs, and
+    /// reports the result back to the orchestrator. Without an <paramref name="outputBatcher"/> nothing is
+    /// reported while the job runs.
+    /// </summary>
+    Task<ConsolidationJobResult> ExecuteAsync(
+        ConsolidationJobMessage job,
+        HubConnection connection,
+        OutputBatcher? outputBatcher,
+        Action<PipelineStep?>? onStepChanged,
         CancellationToken ct);
 }

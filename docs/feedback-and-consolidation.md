@@ -31,7 +31,7 @@ The feedback prompt includes previously-used category labels from the last 50 ru
 
 ## Consolidation Loops
 
-Three maintenance loops that review accumulated state and produce improvements. All are manually triggered from the **Consolidation** page in the sidebar.
+Three maintenance loops that review accumulated state and produce improvements. Each is triggered from the **Consolidation** page, or automatically (see Automatic Start).
 
 ### Brain Consolidation (per brain)
 
@@ -124,6 +124,26 @@ Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which 
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
 - **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Scheduler's dispatch loop fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
 
+### Automatic Start
+
+The Scheduler checks every 15 minutes whether any consolidation type has crossed its threshold. Three counters drive automatic triggers:
+
+| Type | Counter (since last successful run of the same scope) | Scope | Setting (0 = off) |
+|---|---|---|---|
+| Brain consolidation | Runs that pushed lessons to the brain (`BrainUpdatesPushed` and `BrainProviderConfigId` = the brain) | Per brain | `AutoBrainConsolidationAfterRuns` |
+| Harness suggestions | Runs with feedback (`Feedback != null`) | Global | `AutoHarnessSuggestionsAfterFeedback` |
+| Refactoring scan | Closed issues of the template's tracker that the scan did not create | Per template | `AutoRefactoringScanAfterClosedIssues` |
+
+**Anti-churn rules for the refactoring scan:**
+
+1. **Only work the scan did not create counts toward its trigger.** The counter excludes issues the scan itself filed (identified by the footer they carry), so the scan's own issues never trigger another scan.
+2. **Automatic runs never add `agent:next`.** `TriggerAutomaticAsync` always passes `autoDispatch: false`; a human decides what gets implemented.
+3. **Backpressure:** No automatic scan runs while the template still has at least `MaxRefactoringProposals` open scan issues.
+
+**Pause-after-failure:** When a consolidation run ends in failure, that scope's automatic start is paused until a later run of the same scope succeeds. This prevents retry storms without a cooldown setting.
+
+Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initiated by column of the Runs page and filterable there.
+
 ### Consolidation Page
 
 The page is reached through the "Consolidation" item in the sidebar navigation. It displays:
@@ -133,6 +153,32 @@ The page is reached through the "Consolidation" item in the sidebar navigation. 
 - Run history table across all consolidation types
 
 A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review), the auto-dispatch option and the focus before it starts. A focused scan (Structure, Correctness, Design or Tests) runs only that detection agent and proposes only its categories; Phase 0 runs the test coverage only for the All and Tests focus.
+
+### Progress on the run page
+
+Consolidation runs report their steps and stream their agent output the same way implementation runs do: each step the run enters is sent to the orchestrator (`HubMethodNames.ReportStepTransition`) and agent output lines are batched through `OutputBatcher`. The run page's step ladder therefore follows the run in real time.
+
+**Brain consolidation steps** (in order):
+
+1. `CloningRepository` — brain repo cloned into the run workspace
+2. `ConsolidatingKnowledge` — agent executes the 4-phase consolidation prompt
+3. `ReviewingBrainChanges` — diff summary generated; adversarial review executed (if enabled)
+4. `PushingBrainChanges` — changes committed and pushed to the brain repo
+
+**Refactoring detection steps** (in order):
+
+1. `CloningRepository` — code repo (and optionally brain repo) cloned
+2. `AnalyzingHotspots` — git log analysed for frequently-changed files
+3. `ReadingIssueContext` — open and past-outcome issues queried for deduplication context
+4. `ExtractingConventions` — Phase 0 agent extracts project conventions and coverage data
+5. `DetectingFindings` — Phase 1 agents run in parallel (1–4 agents depending on focus)
+6. `AggregatingProposals` — Phase 2 agent aggregates and prioritises findings
+7. `ReviewingProposals` — adversarial review validates proposals (if enabled and proposals non-empty)
+8. `CreatingRefactoringIssues` — validated proposals are created as GitHub issues
+
+The three Phase 1 detection agents (structural debt, correctness, design consistency) produce output prefixed `[A] `, `[B] ` and `[C] ` respectively. The test-gaps agent (when focus is `All` or `Tests`) produces output without a prefix. When a run has no proposals after Phase 2, steps 7 and 8 are skipped.
+
+Harness suggestion runs report no steps and keep their output in the pod log; that workflow is handled by a separate issue.
 
 ### Retention
 

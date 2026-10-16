@@ -462,12 +462,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** self-termination after a set time.
 **Revisit when:** chat pod cost during long outages becomes measurable; then cap reconnection for chat pods.
 
-### Consolidation scheduling: manual-only for now, automated scheduling is future roadmap
-<!-- 2026-07-04 -->
-**Rule:** Brain consolidation and refactoring detection start only from the Consolidation page; no timer or event triggers them.
-**Why:** It is enough for now, and it avoids spending agent budget at peak times. It is a work-in-progress state, not a permanent choice.
-**Not:** a daily timer; a run after every success.
-**Revisit when:** brain staleness becomes a measurable quality problem, or people forget to run consolidation. The first step would be a trigger after every N implementation runs.
+### Consolidation scheduling: automatic start after N, without autonomous churn
+<!-- 2026-10-10 -->
+**Rule:** The three consolidation counters and thresholds (0 = off): `AutoBrainConsolidationAfterRuns`, `AutoHarnessSuggestionsAfterFeedback`, `AutoRefactoringScanAfterClosedIssues`. All default to 0 — nothing starts automatically until an operator sets a threshold.
+**Why:** People forget to run consolidation; the owner wants all three to start automatically, but without self-feeding code churn. The refactoring scan never auto-dispatches issues (no `agent:next`), counts only issues it did not create, and is suppressed by backpressure when open proposals are at the limit.
+**Accepting:** The refactoring counter counts closed issues updated since the last scan (the tracker filters by update date, not close date).
+**Not:** A fixed timer; counting the scan's own issues; auto-dispatch from automatic scans.
+**Revisit when:** Automatic scans pile up unreviewed issues despite the backpressure.
 
 ## Agents and context
 

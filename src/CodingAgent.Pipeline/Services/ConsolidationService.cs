@@ -44,12 +44,29 @@ public sealed class ConsolidationService : IConsolidationService
     }
 
     /// <inheritdoc />
-    public async Task<ConsolidationTriggerResult?> TriggerAsync(
+    public Task<ConsolidationTriggerResult?> TriggerAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
         CancellationToken ct,
         bool autoDispatch = false,
-        RefactoringScanFocus focus = RefactoringScanFocus.All)
+        RefactoringScanFocus focus = RefactoringScanFocus.All) =>
+        TriggerCoreAsync(type, templateId, autoDispatch, focus, ConsolidationConstants.InitiatedBy, ct);
+
+    /// <inheritdoc />
+    public Task<ConsolidationTriggerResult?> TriggerAutomaticAsync(
+        ConsolidationRunType type,
+        TemplateId? templateId,
+        CancellationToken ct) =>
+        TriggerCoreAsync(type, templateId, autoDispatch: false, RefactoringScanFocus.All,
+            InitiatedByConstants.ConsolidationAuto, ct);
+
+    private async Task<ConsolidationTriggerResult?> TriggerCoreAsync(
+        ConsolidationRunType type,
+        TemplateId? templateId,
+        bool autoDispatch,
+        RefactoringScanFocus focus,
+        string initiatedBy,
+        CancellationToken ct)
     {
         var scope = await ResolveConsolidationScopeAsync(type, templateId, ct);
         if (scope is null)
@@ -77,7 +94,8 @@ public sealed class ConsolidationService : IConsolidationService
         var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
 
-        var request = BuildConsolidationDistributionRequest(traceContext, type, selection, scope, autoDispatch, focus);
+        var request = BuildConsolidationDistributionRequest(traceContext, type, selection, scope, autoDispatch, focus,
+            initiatedBy);
 
         var result = await TryDistributeAsync(_workDistributor, request, type, scope.TemplateIdValue, ct);
         if (result is null)
@@ -195,7 +213,8 @@ public sealed class ConsolidationService : IConsolidationService
         ConsolidationAgentSelection selection,
         ConsolidationScope scope,
         bool autoDispatch,
-        RefactoringScanFocus focus)
+        RefactoringScanFocus focus,
+        string initiatedBy)
     {
         // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
         // the brain for brain consolidation, the template (and so its repository) for a refactoring scan,
@@ -204,8 +223,7 @@ public sealed class ConsolidationService : IConsolidationService
         // This deterministic format feeds the partial unique index on
         // (IssueIdentifier, IssueProviderConfigId) for non-terminal statuses in
         // PipelineDbContext.OnModelCreating, providing cross-replica dedup.
-        var runScope = ResolveRunScope(type, scope.BrainProviderId, scope.TemplateIdValue);
-        var issueIdentifier = $"{type}:{runScope}";
+        var issueIdentifier = ScopeKey(type, scope.BrainProviderId, scope.TemplateIdValue);
 
         return new JobDistributionRequest
         {
@@ -213,7 +231,7 @@ public sealed class ConsolidationService : IConsolidationService
             IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
             RepoProviderConfigId = scope.RepoProviderId,
             BrainProviderConfigId = scope.BrainProviderId,
-            InitiatedBy = ConsolidationConstants.InitiatedBy,
+            InitiatedBy = initiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
             AgentSelector = selection.AgentSelector,
             ResolvedProfileId = selection.ResolvedProfileId,
@@ -276,6 +294,14 @@ public sealed class ConsolidationService : IConsolidationService
             ? brainProviderId
             : templateIdValue ?? "global";
     }
+
+    /// <summary>
+    /// Returns the <c>IssueIdentifier</c> key for a consolidation run: <c>"{type}:{scope}"</c>.
+    /// Accessible statically so callers outside <see cref="TriggerAsync"/> (e.g. staleness counters)
+    /// can build the same key without triggering a dispatch.
+    /// </summary>
+    public static string ScopeKey(ConsolidationRunType type, string? brainProviderId, string? templateId) =>
+        $"{type}:{ResolveRunScope(type, brainProviderId, templateId)}";
 
     /// <summary>
     /// Submits <paramref name="request"/> to the work distributor. Returns null (after logging) when
