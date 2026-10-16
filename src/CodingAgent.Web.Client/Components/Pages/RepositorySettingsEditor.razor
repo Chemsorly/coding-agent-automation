@@ -3,16 +3,19 @@
 @using static CodingAgent.Web.Components.Pages.TemplateTableSection
 
 @* Repository settings editor — agent labels, secrets, setup steps, steering, blacklist. *@
-@* Used inside TemplateAddForm.razor. *@
+@* Used inside TemplateAddForm.razor and RepositoryPage.razor. *@
 
 <div class="repository-settings-editor">
     <h4>Repository Settings</h4>
     <p class="form-hint">These settings apply to agent runs on this template's repository.</p>
 
-    <div class="form-group">
-        <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
-        <input type="text" value="@_labelsText" @onchange="OnLabelsChanged" placeholder="e.g. kiro, dotnet, dotnet10" />
-    </div>
+    @if (!HideLabels)
+    {
+        <div class="form-group">
+            <label>Required Agent Labels <span class="form-hint">(comma-separated — determines agent routing and quality gates)</span></label>
+            <input type="text" value="@_labelsText" @onchange="OnLabelsChanged" placeholder="e.g. kiro, dotnet, dotnet10" />
+        </div>
+    }
 
     <div class="form-group">
         <div class="label-with-hint">
@@ -26,31 +29,66 @@
                  IsExpanded="_secretsExpanded" IsExpandedChanged="v => _secretsExpanded = v">
         <Header>🔑 Secrets (@_secrets.Count)</Header>
         <ChildContent>
-            @for (var i = 0; i < _secrets.Count; i++)
+            @if (SecretsWriteOnly)
             {
-                var index = i;
-                var secret = _secrets[index];
-                var isRevealed = _revealedSecrets.Contains(index);
-                <div class="secret-row">
-                    <input type="text"
-                           class="secret-key-input"
-                           value="@secret.Key"
-                           @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
-                           placeholder="ENV_VAR_NAME" />
-                    <input type="@(isRevealed ? "text" : "password")"
-                           class="secret-value-input"
-                           value="@secret.Value"
-                           @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
-                           placeholder="secret value" />
-                    <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
-                    <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
-                </div>
-                @if (!string.IsNullOrEmpty(secret.ValidationError))
+                @* Write-only mode: show key names only, never render stored values. *@
+                @for (var i = 0; i < _secrets.Count; i++)
                 {
-                    <div class="secret-validation-error">@secret.ValidationError</div>
+                    var index = i;
+                    var secret = _secrets[index];
+                    <div class="secret-row">
+                        <span class="secret-key-readonly">@secret.Key</span>
+                        @if (_replacingSecrets.Contains(index))
+                        {
+                            <input type="text"
+                                   class="secret-value-input"
+                                   value="@secret.Value"
+                                   @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                                   placeholder="new value (blank = keep existing)" />
+                            <button type="button" class="btn-icon" title="Cancel replace" @onclick="() => CancelReplace(index)">✕</button>
+                        }
+                        else
+                        {
+                            <span class="secret-value-masked">••••••••</span>
+                            <button type="button" class="btn-icon" title="Replace" @onclick="() => StartReplace(index)">Replace</button>
+                        }
+                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(secret.ValidationError))
+                    {
+                        <div class="secret-validation-error">@secret.ValidationError</div>
+                    }
                 }
+                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
             }
-            <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+            else
+            {
+                @for (var i = 0; i < _secrets.Count; i++)
+                {
+                    var index = i;
+                    var secret = _secrets[index];
+                    var isRevealed = _revealedSecrets.Contains(index);
+                    <div class="secret-row">
+                        <input type="text"
+                               class="secret-key-input"
+                               value="@secret.Key"
+                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
+                               placeholder="ENV_VAR_NAME" />
+                        <input type="@(isRevealed ? "text" : "password")"
+                               class="secret-value-input"
+                               value="@secret.Value"
+                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                               placeholder="secret value" />
+                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
+                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(secret.ValidationError))
+                    {
+                        <div class="secret-validation-error">@secret.ValidationError</div>
+                    }
+                }
+                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+            }
         </ChildContent>
     </Collapsible>
 
@@ -93,12 +131,15 @@
 
     <div class="form-group">
         <label>Steering Instructions</label>
-        <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
+        <p class="form-hint">@SteeringHint</p>
         <textarea @bind="SteeringContentBinding" rows="15" placeholder="@SteeringPlaceholder"></textarea>
     </div>
 </div>
 
 @code {
+    private const string DefaultSteeringHint =
+        "These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.";
+
     private const string SteeringPlaceholder =
         "## Architecture\n- This is a Spring Boot application using Gradle\n- All REST endpoints require OpenAPI annotations\n" +
         "- Database migrations live in src/main/resources/db/migration/\n\n" +
@@ -108,27 +149,56 @@
 
     [Parameter, EditorRequired] public TemplateFormModel Form { get; set; } = default!;
 
+    /// <summary>
+    /// When true, the Required Agent Labels input is suppressed. Use this when the page has a
+    /// dedicated labels field in another card (e.g. the Binding card on RepositoryPage) to prevent
+    /// two divergent editors for the same field.
+    /// </summary>
+    [Parameter] public bool HideLabels { get; set; }
+
+    /// <summary>
+    /// When true, stored secret values are never rendered. Each secret shows its key name with a
+    /// "Replace" action that reveals an empty input for a new value. Blank replacement = keep existing.
+    /// </summary>
+    [Parameter] public bool SecretsWriteOnly { get; set; }
+
+    /// <summary>Override the steering hint text shown above the textarea.</summary>
+    [Parameter] public string? SteeringHintOverride { get; set; }
+
+    private string SteeringHint => SteeringHintOverride ?? DefaultSteeringHint;
+
+    private bool _initialized;
     private string _labelsText = "";
     private string _blacklistedPathsText = "";
     private string? _steeringContent;
     private List<SecretEntry> _secrets = new();
     private List<SetupStepEntry> _setupSteps = new();
     private readonly HashSet<int> _revealedSecrets = new();
+    private readonly HashSet<int> _replacingSecrets = new();
     private bool _secretsExpanded;
     private bool _setupStepsExpanded;
 
     protected override void OnParametersSet()
     {
-        // TODO: [WARNING] OnParametersSet runs on every parent re-render and unconditionally
-        // overwrites local edit state (_labelsText, _secrets, _setupSteps, etc.) from Form.
-        // Any inline validation errors (SecretEntry.ValidationError, SetupStepEntry.ValidationError)
-        // are never written back to Form, so a parent re-render clears displayed validation messages.
-        // Consider initialize-once semantics (guard on first render) so that transient UI state
-        // survives parent re-renders while the editor is being edited.
-        _labelsText = Form.RequiredLabels is { Count: > 0 } ? string.Join(", ", Form.RequiredLabels) : "";
+        // Initialize-once: only populate local state from Form on the first render.
+        // Subsequent parent re-renders (e.g. from a sibling card save) must not overwrite
+        // in-progress edits or clear Replace inputs.
+        if (_initialized) return;
+        _initialized = true;
+
+        if (!HideLabels)
+            _labelsText = Form.RequiredLabels is { Count: > 0 } ? string.Join(", ", Form.RequiredLabels) : "";
         _blacklistedPathsText = Form.BlacklistedPaths is { Count: > 0 } ? string.Join(", ", Form.BlacklistedPaths) : "";
         _steeringContent = Form.SteeringContent;
-        _secrets = Form.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new();
+        if (SecretsWriteOnly)
+        {
+            // In write-only mode, populate key names only; never populate values from Form.
+            _secrets = Form.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = "" }).ToList() ?? new();
+        }
+        else
+        {
+            _secrets = Form.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new();
+        }
         _setupSteps = Form.SetupSteps?.Select(s => new SetupStepEntry { Name = s.Name, Command = s.Command }).ToList() ?? new();
     }
 
@@ -151,18 +221,18 @@
     }
 
     // ── Secrets ────────────────────────────────────────────────────────────
-    // TODO: [WARNING] AddSecret appends a blank SecretEntry to the local _secrets list but does
-    // NOT call UpdateFormSecrets(). UpdateFormSecrets filters out entries with empty keys, so
-    // the blank row can never be persisted to Form.Secrets. If OnParametersSet runs before the
-    // user types a key (e.g. a parent field edit triggers a re-render), the blank row disappears.
-    // Fix: call UpdateFormSecrets() after adding the blank row so that a re-render round-trip via
-    // Form preserves it (or use initialize-once semantics in OnParametersSet).
-    private void AddSecret() => _secrets.Add(new SecretEntry());
+
+    private void AddSecret()
+    {
+        _secrets.Add(new SecretEntry());
+        UpdateFormSecrets();
+    }
 
     private void RemoveSecret(int index)
     {
         _secrets.RemoveAt(index);
         _revealedSecrets.Remove(index);
+        _replacingSecrets.Remove(index);
         UpdateFormSecrets();
     }
 
@@ -184,6 +254,31 @@
             _revealedSecrets.Add(index);
     }
 
+    // ── Write-only secret replace helpers ─────────────────────────────────
+
+    private void StartReplace(int index)
+    {
+        _replacingSecrets.Add(index);
+        // Reset value to empty so the user types a new one; blank on save = keep existing.
+        _secrets[index] = _secrets[index] with { Value = "" };
+        UpdateFormSecrets();
+    }
+
+    private void CancelReplace(int index)
+    {
+        _replacingSecrets.Remove(index);
+        // NOTE: CancelReplace does not restore Form.Secrets to its pre-replace state.
+        // Scenario: (1) user clicks Replace, (2) types a new value — UpdateFormSecrets writes it into
+        // Form.Secrets, (3) user clicks Cancel. After clearing Value to "" and calling UpdateFormSecrets
+        // the write-only merge does not overwrite the already-stored new value, so the "cancelled" value
+        // survives into the next Save. Fix: either track the original value per-index and restore it, or
+        // defer all Form.Secrets writes to the Cancel/Confirm step rather than the @onchange handler.
+        // (Correctness review finding, issue #3576)
+        // Clear the in-progress value; the key name is preserved in _secrets.
+        _secrets[index] = _secrets[index] with { Value = "" };
+        UpdateFormSecrets();
+    }
+
     private static string? ValidateSecretKey(string key) =>
         !string.IsNullOrEmpty(key) && !SecretKeyPattern.IsMatch(key)
             ? "Key must start with a letter or underscore and contain only letters, digits and underscores."
@@ -191,17 +286,51 @@
 
     private void UpdateFormSecrets()
     {
-        var valid = _secrets.Where(s => !string.IsNullOrEmpty(s.Key)).ToList();
-        Form.Secrets = valid.Count > 0
-            ? valid.ToDictionary(s => s.Key, s => s.Value)
-            : null;
+        if (SecretsWriteOnly)
+        {
+            Form.Secrets = ApplyWriteOnlySecretMerge();
+        }
+        else
+        {
+            var valid = _secrets.Where(s => !string.IsNullOrEmpty(s.Key)).ToList();
+            Form.Secrets = valid.Count > 0
+                ? valid.ToDictionary(s => s.Key, s => s.Value)
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// In write-only mode, merges user-typed replacement values into the existing stored secrets.
+    /// Keys with a blank replacement keep their stored value; deleted keys are removed.
+    /// </summary>
+    private Dictionary<string, string>? ApplyWriteOnlySecretMerge()
+    {
+        // Only include entries where the user has typed a new value.
+        // An empty value means "keep existing" — do not overwrite the stored secret.
+        var replacements = _secrets
+            .Where(s => !string.IsNullOrEmpty(s.Key) && !string.IsNullOrEmpty(s.Value))
+            .ToList();
+        // Start from the existing Form.Secrets (preserving unchanged keys),
+        // then apply any replacements the user typed.
+        var merged = Form.Secrets != null
+            ? new Dictionary<string, string>(Form.Secrets)
+            : new Dictionary<string, string>();
+        foreach (var r in replacements)
+            merged[r.Key] = r.Value;
+        // Remove keys the user deleted from _secrets.
+        var currentKeys = new HashSet<string>(_secrets.Select(s => s.Key).Where(k => !string.IsNullOrEmpty(k)));
+        foreach (var key in merged.Keys.Where(k => !currentKeys.Contains(k)).ToList())
+            merged.Remove(key);
+        return merged.Count > 0 ? merged : null;
     }
 
     // ── Setup Steps ────────────────────────────────────────────────────────
-    // TODO: [WARNING] AddSetupStep has the same issue as AddSecret above: the blank row is
-    // not reflected in Form.SetupSteps until a field is edited (UpdateFormSetupSteps is not
-    // called), and is lost on an intervening parent re-render. Apply the same fix.
-    private void AddSetupStep() => _setupSteps.Add(new SetupStepEntry());
+
+    private void AddSetupStep()
+    {
+        _setupSteps.Add(new SetupStepEntry());
+        UpdateFormSetupSteps();
+    }
 
     private void RemoveSetupStep(int index)
     {

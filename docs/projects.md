@@ -135,7 +135,7 @@ A template binds one repository to one implementation tracker. Among **enabled**
 
 Saving or moving an enabled template that breaks a rule is refused with the reason. Disabled templates are not checked, so one of two conflicting templates can always be switched off. A project's epic tracker may also be the tracker of one of its templates.
 
-A saved template keeps its repository and issue tracker. **Edit** on the Pipelines page changes everything else in place: name, brain provider and `BrainReadOnly`, CI provider, workflow switches and housekeeping. The template keeps its id, and with it its run and consolidation history. To bind another repository or tracker, add a new template.
+A saved template keeps its repository and issue tracker. **Edit** on the Pipelines page — or clicking the template name or the "Edit" link — navigates to the template's **repository page** (`/pipelines/{templateId}`), which holds everything about one repository split into two cards: the **Binding card** (what the operator decides: providers, brain, labels, enabled) and the **Behaviour card** (how the pipeline works: name, workflow switches, steering, setup steps, secrets, blacklist). Changes made on the repository page take effect from the next poll cycle. The template keeps its id and therefore its run and consolidation history. To bind another repository or tracker, add a new template.
 
 Templates saved before these rules were enforced keep working. The **Pipelines** page lists any conflicts above the template table, and an enabled template that is part of one cannot be saved until the conflict is fixed, for example by disabling, moving or removing the other template.
 
@@ -297,4 +297,23 @@ Projects are managed in the **Settings** page under the "Projects" group in the 
 | **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |
 | **Project Review** | The project review switch and the project reviewer's instructions, prefilled with the default ones; "Reset to default" restores them. Instructions equal to the default are stored empty, so the project follows later changes to the default |
 
-The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. Projects with `EpicIssueProviderId` set show a 🧩 indicator.
+The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. The template name and the "Edit" link in each row navigate to the template's **repository page** (`/pipelines/{templateId}`). Projects with `EpicIssueProviderId` set show a 🧩 indicator.
+
+### Repository Page
+
+Each pipeline job template has its own repository page at `/pipelines/{templateId}`, reachable by clicking the template name or the "Edit" link on the Pipelines page. The page is split into two cards:
+
+**Binding card** — what the operator decides. Editable only by global admins; others see the values read-only with "Managed by the operator". Contains:
+- Repository and issue tracker (display-only once saved)
+- Brain provider and brain read-only toggle
+- Pipeline/CI provider
+- Required agent labels (determines agent routing and quality gates), with a label preview
+- Enabled toggle
+
+**Behaviour card** — how the pipeline works on the repository. Editable only by global admins. Contains:
+- Template name (must be unique within its project)
+- Workflow switches: Implementation, PR Review, Decomposition, Housekeeping
+- Housekeeping concurrency limit and stale-branch cleanup (shown only when Housekeeping is on)
+- Steering instructions, setup steps, secrets (write-only — stored values are never displayed), and commit blacklist
+
+Both cards have a Save button. Changes apply from the next poll cycle. The page header also exposes the dispatch buttons (Browse issues, Browse pull requests, Browse epics) and the "Scan for refactorings" button (requires global operator), matching the Pipelines page dispatch controls but scoped to the single template.

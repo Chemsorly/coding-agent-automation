@@ -190,16 +190,16 @@ public static class WorkItemAgentEndpoints
                 {
                     await writeDb.SaveChangesAsync(ct);
                     // Successfully wrote FirstAssignmentAt — this is the first assignment fetch.
-                    // TODO [WARNING]: podStartSeconds uses item.DispatchedAt from the initial
-                    // AsNoTracking read (snapshot before the CAS write) while 'now' is captured after
-                    // FindAsync. If clock skew between API replicas causes item.DispatchedAt to be in
-                    // the future relative to 'now', podStartSeconds will be negative. Negative histogram
-                    // observations corrupt p-quantile statistics. Consider clamping the value to a minimum of 0.
                     // TODO [WARNING]: FirstAssignmentAt is never cleared on re-dispatch (retry/re-queue).
                     // If a WorkItem fails and is re-queued, FirstAssignmentAt from the prior dispatch
                     // lifecycle remains set, and pod_start_seconds is never recorded for subsequent
                     // dispatches — a silent data gap for retry scenarios.
-                    var podStartSeconds = (now - item.DispatchedAt.Value).TotalSeconds;
+                    //
+                    // Clamp to 0: clock skew between API replicas can cause item.DispatchedAt (set by
+                    // the dispatching replica) to be ahead of now (captured on the accepting replica),
+                    // producing a negative elapsed time. A negative histogram value violates the metric's
+                    // semantic and corrupts p-quantile computation (issue #3704).
+                    var podStartSeconds = Math.Max(0.0, (now - item.DispatchedAt.Value).TotalSeconds);
                     CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.PodStartSeconds.Record(podStartSeconds);
                 }
                 catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)

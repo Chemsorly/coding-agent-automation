@@ -1,0 +1,751 @@
+@page "/pipelines/{TemplateId}"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
+@layout CockpitLayout
+@implements IDisposable
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Pipeline
+@using CodingAgent.Web.Services
+@inject RepositoryPageService PageService
+@inject CurrentAccess Access
+@inject IUiAgentClient AgentClient
+
+<PageTitle>@(_template?.Name ?? "Repository") - Coding Agent</PageTitle>
+
+@if (_isLoading)
+{
+    <div class="cockpit-page">
+        <div class="monitoring-empty">Loading…</div>
+    </div>
+}
+else if (!string.IsNullOrEmpty(_loadError))
+{
+    <div class="cockpit-page">
+        <div class="settings-status status-error">@_loadError</div>
+    </div>
+}
+else if (!PageService.CanView())
+{
+    <div class="cockpit-page">
+        <div class="monitoring-empty">Template not found.</div>
+    </div>
+}
+else
+{
+    var template = PageService.Template!;
+    var project = PageService.Project;
+    var repoProvider = PageService.RepoProviders.FirstOrDefault(p => p.Id == template.RepoProviderId)
+                       ?? PageService.BrainProviders.FirstOrDefault(p => p.Id == template.RepoProviderId);
+    var repoWebUrl = repoProvider is not null ? RepositoryPageService.GetRepositoryWebUrl(repoProvider) : null;
+
+    <div class="cockpit-page">
+
+        @* ═══ Toast stack ═══ *@
+        <div class="agent-toast-stack">
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <div class="settings-status settings-status-toast status-error">
+                    <span class="toast-message">@_errorMessage</span>
+                    <button class="agent-summary-dismiss" @onclick="DismissError" title="Dismiss">✕</button>
+                </div>
+            }
+        </div>
+
+        @* ═══ Header ═══ *@
+        <div class="cockpit-page-header">
+            <div class="cockpit-page-titles">
+                <div class="cockpit-breadcrumb">
+                    <a href="/pipelines">Pipelines</a>
+                    @if (project is not null)
+                    {
+                        <span class="cockpit-breadcrumb-sep">›</span>
+                        <span>@project.Name</span>
+                    }
+                    <span class="cockpit-breadcrumb-sep">›</span>
+                    <span>@template.Name</span>
+                </div>
+                <h1>@template.Name</h1>
+                <div class="cockpit-page-chips">
+                    <span class="feature-badge @(template.Enabled ? "feature-on" : "feature-off")">
+                        @(template.Enabled ? "Enabled" : "Disabled")
+                    </span>
+                    @if (project is not null)
+                    {
+                        <span class="badge-project">@project.Name</span>
+                    }
+                </div>
+            </div>
+            <div class="cockpit-page-actions">
+                @if (repoWebUrl is not null)
+                {
+                    <a href="@repoWebUrl" target="_blank" rel="noopener noreferrer" class="btn-cancel">
+                        Open repository ↗
+                    </a>
+                }
+                @if (Access.HasGlobalOperate && template.RepoProviderId is not null)
+                {
+                    <button class="btn-save" @onclick="() => OpenRefactoringModal(template.Id, template.Name)"
+                            title="Trigger refactoring scan for this repository">
+                        <Icon Name="search" Size="14" /> Scan for refactorings
+                    </button>
+                }
+                <button class="btn-save" @onclick="OpenIssueDrawer"
+                        disabled="@(!PageService.CanDispatch())"
+                        title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
+                        data-testid="browse-issues-btn">
+                    Browse issues
+                </button>
+                @if (template.ReviewEnabled)
+                {
+                    <button class="btn-save" @onclick="OpenPrDrawer"
+                            disabled="@(!PageService.CanDispatch())"
+                            title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
+                            data-testid="browse-prs-btn">
+                        Browse pull requests
+                    </button>
+                }
+                @if (template.DecompositionEnabled)
+                {
+                    <button class="btn-save" @onclick="OpenEpicDrawer"
+                            disabled="@(!PageService.CanDispatch())"
+                            title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
+                            data-testid="browse-epics-btn">
+                        Browse epics
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="agent-content-layout">
+            <div class="agent-main">
+
+                @* ═══ Binding card ═══ *@
+                <section class="settings-section" data-testid="binding-card">
+                    <div class="cockpit-card-header">
+                        <h2><Icon Name="link" Size="16" /> Binding</h2>
+                        @if (!Access.IsAdmin)
+                        {
+                            <span class="monitoring-muted" style="font-size:0.8rem;">Managed by the operator</span>
+                        }
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(_bindingError))
+                    {
+                        <div class="settings-status status-error">@_bindingError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(_bindingSuccess))
+                    {
+                        <div class="settings-status status-success">@_bindingSuccess</div>
+                    }
+
+                    <div class="form-group">
+                        <label>Repository</label>
+                        <div class="settings-readonly-row">
+                            <span class="monitoring-mono">@(GetProviderDisplay(template.RepoProviderId, PageService.RepoProviders, PageService.BrainProviders))</span>
+                            @if (Access.IsAdmin)
+                            {
+                                <a href="/settings?section=repo-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Issue Tracker</label>
+                        <div class="settings-readonly-row">
+                            <span class="monitoring-mono">@(GetProviderDisplay(template.IssueProviderId, PageService.IssueProviders))</span>
+                            @if (Access.IsAdmin)
+                            {
+                                <a href="/settings?section=issue-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                            }
+                        </div>
+                    </div>
+
+                    @if (Access.IsAdmin)
+                    {
+                        <div class="form-group">
+                            <label>Brain Provider (optional)</label>
+                            <div class="settings-readonly-row">
+                                <select @bind="_bindingForm.BrainProviderId">
+                                    <option value="">— None —</option>
+                                    @foreach (var p in PageService.BrainProviders)
+                                    {
+                                        <option value="@p.Id">@p.DisplayName</option>
+                                    }
+                                </select>
+                                @if (!string.IsNullOrEmpty(_bindingForm.BrainProviderId))
+                                {
+                                    <a href="/settings?section=repo-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                                }
+                            </div>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_bindingForm.BrainProviderId))
+                        {
+                            <div class="form-group form-checkbox">
+                                <label>
+                                    <input type="checkbox" @bind="_bindingForm.BrainReadOnly" />
+                                    Brain Repository Read-Only
+                                    <span class="form-hint-icon" aria-hidden="true" title="When enabled, the brain repo is cloned and read by the agent but no changes are written back.">?</span>
+                                </label>
+                            </div>
+                        }
+                        <div class="form-group">
+                            <label>Pipeline/CI Provider (optional)</label>
+                            <div class="settings-readonly-row">
+                                <select @bind="_bindingForm.PipelineProviderId">
+                                    <option value="">— None —</option>
+                                    @foreach (var p in PageService.PipelineProviders)
+                                    {
+                                        <option value="@p.Id">@p.DisplayName</option>
+                                    }
+                                </select>
+                                @if (!string.IsNullOrEmpty(_bindingForm.PipelineProviderId))
+                                {
+                                    <a href="/settings?section=pipeline-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                                }
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Required Agent Labels <span class="form-hint">(comma-separated)</span></label>
+                            <input type="text" value="@_bindingLabelsText" @onchange="OnBindingLabelsChanged"
+                                   placeholder="e.g. kiro, dotnet, dotnet10" />
+                        </div>
+                        @if (_labelPreview is { Labels.Count: > 0 })
+                        {
+                            <LabelPreviewInline Preview="_labelPreview" />
+                        }
+                        <div class="form-group form-checkbox">
+                            <label>
+                                <input type="checkbox" @bind="_bindingForm.Enabled" aria-label="@($"Enable {template.Name}")" />
+                                Enabled
+                            </label>
+                        </div>
+                        <div class="form-buttons">
+                            <button class="btn-save" @onclick="SaveBinding" disabled="@_bindingSaving">Save</button>
+                            <span class="monitoring-muted" style="font-size:0.8rem;">Changes apply from the next poll cycle.</span>
+                        </div>
+                    }
+                    else
+                    {
+                        @* Read-only view for non-admins *@
+                        <div class="form-group">
+                            <label>Brain Provider</label>
+                            <span class="monitoring-mono">@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplay(template.BrainProviderId, PageService.BrainProviders))</span>
+                        </div>
+                        @if (template.BrainReadOnly)
+                        {
+                            <div class="form-group">
+                                <label>Brain Read-Only</label>
+                                <span class="feature-badge feature-on">Yes</span>
+                            </div>
+                        }
+                        <div class="form-group">
+                            <label>Pipeline/CI Provider</label>
+                            <span class="monitoring-mono">@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplay(template.PipelineProviderId, PageService.PipelineProviders))</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Agent Labels</label>
+                            <span>@(template.RequiredLabels is { Count: > 0 } ? string.Join(", ", template.RequiredLabels) : "(global default)")</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Status</label>
+                            <span class="feature-badge @(template.Enabled ? "feature-on" : "feature-off")">@(template.Enabled ? "Enabled" : "Disabled")</span>
+                        </div>
+                    }
+                </section>
+
+                @* ═══ Behaviour card ═══ *@
+                <section class="settings-section" data-testid="behaviour-card">
+                    <div class="cockpit-card-header">
+                        <h2><Icon Name="settings" Size="16" /> Behaviour</h2>
+                    </div>
+                    <p class="form-hint">These run in the agent pod next to the agent's credentials, like the repository's own hooks.</p>
+
+                    @if (!string.IsNullOrEmpty(_behaviourError))
+                    {
+                        <div class="settings-status status-error">@_behaviourError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(_behaviourSuccess))
+                    {
+                        <div class="settings-status status-success">@_behaviourSuccess</div>
+                    }
+
+                    @if (Access.IsAdmin)
+                    {
+                        <div class="form-group">
+                            <label>Name *</label>
+                            <input type="text" @bind="_behaviourForm.Name" placeholder="e.g. DotNet Main Repo" />
+                        </div>
+
+                        <div class="form-group">
+                            <label>Workflow Switches</label>
+                            <div class="feature-config-toggles">
+                                <label class="feature-config-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" @bind="_behaviourForm.ImplementationEnabled"
+                                               aria-label="@($"Enable Implementation for {template.Name}")" />
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span title="Dispatches implementation jobs from issues">Implementation</span>
+                                </label>
+                                <label class="feature-config-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" @bind="_behaviourForm.ReviewEnabled"
+                                               aria-label="@($"Enable PR Review for {template.Name}")" />
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span title="Dispatches PR review jobs">PR Review</span>
+                                </label>
+                                <label class="feature-config-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" @bind="_behaviourForm.DecompositionEnabled"
+                                               aria-label="@($"Enable Decomposition for {template.Name}")" />
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span title="Dispatches epic decomposition jobs">Decomposition</span>
+                                </label>
+                                <label class="feature-config-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" @bind="_behaviourForm.HousekeepingEnabled"
+                                               aria-label="@($"Enable Housekeeping for {template.Name}")" />
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span title="Automatically keeps agent-created PR branches up-to-date with the base branch">Housekeeping</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        @if (_behaviourForm.HousekeepingEnabled)
+                        {
+                            <div class="form-group" data-testid="housekeeping-limit">
+                                <div class="label-with-hint">
+                                    <label>Housekeeping Concurrency Limit</label>
+                                    <span class="form-hint-icon" aria-hidden="true" title="Max PRs in 'update triggered' state per repository at once. Leave blank to inherit global setting.">?</span>
+                                </div>
+                                <input type="number" @bind="_behaviourForm.HousekeepingConcurrencyLimit"
+                                       min="@SettingLimits.Min(nameof(PipelineConfiguration.HousekeepingConcurrencyLimit))"
+                                       max="@SettingLimits.Max(nameof(PipelineConfiguration.HousekeepingConcurrencyLimit))"
+                                       placeholder="Inherited from global" />
+                                <span class="form-hint">Leave blank to inherit the global setting.</span>
+                            </div>
+                            <div class="form-group form-checkbox" data-testid="housekeeping-cleanup">
+                                <label>
+                                    <input type="checkbox" @bind="_behaviourForm.HousekeepingBranchCleanupEnabled"
+                                           aria-label="@($"Enable Branch Cleanup for {template.Name}")" />
+                                    Branch Cleanup
+                                    <span class="form-hint-icon" title="Periodically deletes stale agent branches with no open PR and an inactive issue label.">?</span>
+                                </label>
+                            </div>
+                        }
+
+                        <RepositorySettingsEditor Form="_behaviourSettingsForm" HideLabels="true" SecretsWriteOnly="true"
+                                                  SteeringHintOverride="Written next to the project's steering for every run of this repository." />
+
+                        <div class="form-buttons">
+                            <button class="btn-save" @onclick="SaveBehaviour" disabled="@_behaviourSaving">Save</button>
+                            <span class="monitoring-muted" style="font-size:0.8rem;">Changes apply from the next poll cycle.</span>
+                        </div>
+                    }
+                    else
+                    {
+                        @* Read-only view for non-admins *@
+                        <div class="form-group">
+                            <label>Name</label>
+                            <span>@template.Name</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Implementation</label>
+                            <span class="feature-badge @(template.ImplementationEnabled ? "feature-on" : "feature-off")">@(template.ImplementationEnabled ? "On" : "Off")</span>
+                        </div>
+                        <div class="form-group">
+                            <label>PR Review</label>
+                            <span class="feature-badge @(template.ReviewEnabled ? "feature-on" : "feature-off")">@(template.ReviewEnabled ? "On" : "Off")</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Decomposition</label>
+                            <span class="feature-badge @(template.DecompositionEnabled ? "feature-on" : "feature-off")">@(template.DecompositionEnabled ? "On" : "Off")</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Housekeeping</label>
+                            <span class="feature-badge @(template.HousekeepingEnabled ? "feature-on" : "feature-off")">@(template.HousekeepingEnabled ? "On" : "Off")</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Secrets</label>
+                            <span>@(template.Secrets is { Count: > 0 } ? $"{template.Secrets.Count} configured" : "None")</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Setup Steps</label>
+                            <span>@(template.SetupSteps is { Count: > 0 } ? $"{template.SetupSteps.Count} step(s)" : "None")</span>
+                        </div>
+                    }
+                </section>
+
+            </div>
+        </div>
+    </div>
+
+    @* ═══ Dispatch drawers ═══ *@
+    <IssueDispatchDrawer IsOpen="PageService.IsIssueDrawerOpen"
+        Template="PageService.IssueDrawerTemplate"
+        CanDispatch="PageService.CanDispatch()"
+        Issues="PageService.DrawerIssues"
+        IsLoading="PageService.DrawerLoading"
+        HasMore="PageService.DrawerHasMore"
+        Page="PageService.DrawerPage"
+        IsDispatching="PageService.IssueDrawerDispatching"
+        GetProcessingStatus="@(_ => null)"
+        Readiness="PageService.DrawerReadiness"
+        AvailableLabels="PageService.DrawerLabels"
+        SelectedLabels="PageService.DrawerSelectedLabels"
+        OnToggleLabel="l => { PageService.DrawerToggleLabel(l); StateHasChanged(); }"
+        OnClearLabels="() => { PageService.DrawerClearLabels(); StateHasChanged(); }"
+        OnClose="CloseIssueDrawer"
+        OnNextPage="DrawerNextPage"
+        OnPrevPage="DrawerPrevPage"
+        OnDispatch="DispatchFromIssueDrawer" />
+
+    <PrDispatchDrawer IsOpen="PageService.IsPrDrawerOpen"
+        Template="PageService.PrDrawerTemplate"
+        CanDispatch="PageService.CanDispatch()"
+        PullRequests="PageService.PrDrawerPrs"
+        IsLoading="PageService.PrDrawerLoading"
+        HasMore="PageService.PrDrawerHasMore"
+        Page="PageService.PrDrawerPage"
+        IsDispatching="PageService.PrDrawerDispatching"
+        GetProcessingStatus="@(_ => null)"
+        AvailableLabels="PageService.PrDrawerLabels"
+        SelectedLabels="PageService.PrDrawerSelectedLabels"
+        OnToggleLabel="l => { PageService.PrDrawerToggleLabel(l); StateHasChanged(); }"
+        OnClearLabels="() => { PageService.PrDrawerClearLabels(); StateHasChanged(); }"
+        OnClose="ClosePrDrawer"
+        OnNextPage="PrDrawerNextPage"
+        OnPrevPage="PrDrawerPrevPage"
+        OnDispatch="DispatchFromPrDrawer" />
+
+    <EpicDispatchDrawer IsOpen="PageService.IsEpicDrawerOpen"
+        Template="PageService.EpicDrawerTemplate"
+        CanDispatch="PageService.CanDispatch()"
+        Issues="PageService.EpicDrawerIssues"
+        IsLoading="PageService.EpicDrawerLoading"
+        HasMore="PageService.EpicDrawerHasMore"
+        Page="PageService.EpicDrawerPage"
+        IsDispatching="PageService.EpicDrawerDispatching"
+        GetProcessingStatus="@(_ => null)"
+        AvailableLabels="PageService.EpicDrawerLabels"
+        SelectedLabels="PageService.EpicDrawerSelectedLabels"
+        OnToggleLabel="l => { PageService.EpicDrawerToggleLabel(l); StateHasChanged(); }"
+        OnClearLabels="() => { PageService.EpicDrawerClearLabels(); StateHasChanged(); }"
+        OnClose="CloseEpicDrawer"
+        OnNextPage="EpicDrawerNextPage"
+        OnPrevPage="EpicDrawerPrevPage"
+        OnDispatch="DispatchFromEpicDrawer" />
+
+    @* ═══ Refactoring scan pre-flight modal ═══ *@
+    @if (_showRefactoringModal)
+    {
+        <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef"
+             @onclick="DismissRefactoringModal"
+             @onkeydown="HandleRefactoringModalKeyDown">
+            <div class="modal-card" @onclick:stopPropagation="true"
+                 role="dialog" aria-modal="true" aria-labelledby="refactoring-modal-title">
+                <h3 id="refactoring-modal-title">Trigger Refactoring Scan</h3>
+                <p class="modal-description">Template: <strong>@_modalTemplateName</strong></p>
+
+                <div class="form-group">
+                    <label>Issue Labels</label>
+                    <div class="refactoring-modal-labels">
+                        <span class="label-badge label-badge-static">agent:generated</span>
+                        <div class="form-checkbox">
+                            <label>
+                                <input type="checkbox" @bind="_modalAutoDispatch" @onkeydown:stopPropagation="true" />
+                                <span class="label-badge label-badge-optional">agent:next</span>
+                                — auto-dispatch created issues for agent execution
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="repo-refactoring-focus">Focus</label>
+                    <select id="repo-refactoring-focus" data-testid="refactoring-focus"
+                            @bind="_modalFocus" @onkeydown:stopPropagation="true">
+                        <option value="@RefactoringScanFocus.All">All — every category</option>
+                        <option value="@RefactoringScanFocus.Structure">Structure — duplication, structural drift, complexity, over-engineering</option>
+                        <option value="@RefactoringScanFocus.Correctness">Correctness — bugs, dead code, TODOs, stale documentation</option>
+                        <option value="@RefactoringScanFocus.Design">Design — naming, primitive obsession</option>
+                        <option value="@RefactoringScanFocus.Tests">Tests — untested code (runs the tests with coverage)</option>
+                    </select>
+                </div>
+
+                <div class="form-buttons">
+                    <button class="btn-save" @onclick="ConfirmRefactoringModal">Start Scan</button>
+                    <button class="btn-cancel" @onclick="DismissRefactoringModal">Cancel</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public string TemplateId { get; set; } = "";
+
+    private bool _isLoading = true;
+    private string? _loadError;
+    private string? _errorMessage;
+    private string? _bindingError;
+    private string? _bindingSuccess;
+    private string? _behaviourError;
+    private string? _behaviourSuccess;
+    private bool _bindingSaving;
+    private bool _behaviourSaving;
+
+    // Cached template reference for rendering
+    private PipelineJobTemplate? _template;
+
+    // Binding form state
+    private RepositoryPageService.BindingFormModel _bindingForm = new();
+    private string _bindingLabelsText = "";
+    private TemplateTableSection.LabelPreviewResult? _labelPreview;
+    private IReadOnlyList<AgentEntryDto> _agents = [];
+
+    // Behaviour form state — uses TemplateTableSection.TemplateFormModel for RepositorySettingsEditor compatibility
+    private RepositoryPageService.BehaviourFormModel _behaviourForm = new();
+
+    // The TemplateFormModel wrapping the BehaviourForm for RepositorySettingsEditor
+    private TemplateTableSection.TemplateFormModel _behaviourSettingsForm = new();
+
+    // Refactoring modal state
+    private bool _showRefactoringModal;
+    private bool _modalJustOpened;
+    private string? _modalTemplateId;
+    private string? _modalTemplateName;
+    private bool _modalAutoDispatch;
+    private RefactoringScanFocus _modalFocus;
+    private ElementReference _modalOverlayRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loadError = await PageService.InitializeAsync(TemplateId);
+        _isLoading = false;
+
+        if (!string.IsNullOrEmpty(_loadError) || !PageService.CanView()) return;
+
+        InitForms();
+        await RefreshAgentsAsync();
+        RefreshLabelPreview();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_showRefactoringModal && _modalJustOpened)
+        {
+            _modalJustOpened = false;
+            try { await _modalOverlayRef.FocusAsync(); }
+            catch (Exception) { /* Element may not be rendered yet */ }
+        }
+    }
+
+    private void InitForms()
+    {
+        var template = PageService.Template;
+        if (template is null) return;
+
+        _template = template;
+        _bindingForm = RepositoryPageService.BindingFormModel.FromTemplate(template);
+        _bindingLabelsText = template.RequiredLabels is { Count: > 0 }
+            ? string.Join(", ", template.RequiredLabels)
+            : "";
+
+        _behaviourForm = RepositoryPageService.BehaviourFormModel.FromTemplate(template);
+        // Wire up the TemplateFormModel for RepositorySettingsEditor
+        _behaviourSettingsForm = new TemplateTableSection.TemplateFormModel
+        {
+            Name = template.Name,
+            Secrets = template.Secrets != null ? new Dictionary<string, string>(template.Secrets) : null,
+            SetupSteps = template.SetupSteps,
+            SteeringContent = template.SteeringContent,
+            BlacklistedPaths = template.BlacklistedPaths,
+        };
+    }
+
+    private async Task RefreshAgentsAsync()
+    {
+        try { _agents = await AgentClient.GetAgentsAsync(); }
+        catch (Exception) { /* Keep the last list */ }
+    }
+
+    private void RefreshLabelPreview()
+    {
+        _labelPreview = PageService.GetLabelPreview(_bindingForm.RequiredLabels, _agents);
+    }
+
+    private void OnBindingLabelsChanged(ChangeEventArgs e)
+    {
+        _bindingLabelsText = e.Value?.ToString() ?? "";
+        var labels = _bindingLabelsText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        _bindingForm.RequiredLabels = labels.Length > 0 ? labels : null;
+        RefreshLabelPreview();
+    }
+
+    private async Task SaveBinding()
+    {
+        _bindingError = null;
+        _bindingSuccess = null;
+        _bindingSaving = true;
+        try
+        {
+            var (success, error, message) = await PageService.SaveBindingAsync(_bindingForm);
+            if (!success) { _bindingError = error; }
+            else
+            {
+                _bindingSuccess = message;
+                _template = PageService.Template;
+                _ = ClearBindingSuccessAfterDelay();
+            }
+        }
+        finally { _bindingSaving = false; }
+    }
+
+    private async Task SaveBehaviour()
+    {
+        _behaviourError = null;
+        _behaviourSuccess = null;
+        _behaviourSaving = true;
+
+        // Sync the RepositorySettingsEditor form values back to _behaviourForm
+        _behaviourForm.Secrets = _behaviourSettingsForm.Secrets;
+        _behaviourForm.SetupSteps = _behaviourSettingsForm.SetupSteps;
+        _behaviourForm.SteeringContent = _behaviourSettingsForm.SteeringContent;
+        _behaviourForm.BlacklistedPaths = _behaviourSettingsForm.BlacklistedPaths;
+
+        try
+        {
+            var (success, error, message) = await PageService.SaveBehaviourAsync(_behaviourForm);
+            if (!success) { _behaviourError = error; }
+            else
+            {
+                _behaviourSuccess = message;
+                _template = PageService.Template;
+                _ = ClearBehaviourSuccessAfterDelay();
+            }
+        }
+        finally { _behaviourSaving = false; }
+    }
+
+    private void DismissError() => _errorMessage = null;
+
+    private async Task ClearBindingSuccessAfterDelay()
+    {
+        await Task.Delay(4000);
+        _bindingSuccess = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ClearBehaviourSuccessAfterDelay()
+    {
+        await Task.Delay(4000);
+        _behaviourSuccess = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ── Drawer handlers ──
+
+    private async Task OpenIssueDrawer()
+    {
+        var error = await PageService.OpenIssueDrawerAsync(() => InvokeAsync(StateHasChanged));
+        if (error is not null) _errorMessage = error;
+    }
+
+    private async Task OpenPrDrawer()
+    {
+        var error = await PageService.OpenPrDrawerAsync(() => InvokeAsync(StateHasChanged));
+        if (error is not null) _errorMessage = error;
+    }
+
+    private async Task OpenEpicDrawer()
+    {
+        var error = await PageService.OpenEpicDrawerAsync(() => InvokeAsync(StateHasChanged));
+        if (error is not null) _errorMessage = error;
+    }
+
+    private async Task CloseIssueDrawer() { PageService.CloseIssueDrawer(); await InvokeAsync(StateHasChanged); }
+    private async Task ClosePrDrawer() { PageService.ClosePrDrawer(); await InvokeAsync(StateHasChanged); }
+    private async Task CloseEpicDrawer() { PageService.CloseEpicDrawer(); await InvokeAsync(StateHasChanged); }
+
+    private async Task DrawerNextPage() { await PageService.DrawerNextPageAsync(); await InvokeAsync(StateHasChanged); }
+    private async Task DrawerPrevPage() { await PageService.DrawerPrevPageAsync(); await InvokeAsync(StateHasChanged); }
+
+    private async Task DispatchFromIssueDrawer(IssueSummary issue)
+    {
+        var (_, error, _) = await PageService.DispatchFromIssueDrawerAsync(issue);
+        if (error is not null) _errorMessage = error;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task PrDrawerNextPage() { await PageService.PrDrawerNextPageAsync(); await InvokeAsync(StateHasChanged); }
+    private async Task PrDrawerPrevPage() { await PageService.PrDrawerPrevPageAsync(); await InvokeAsync(StateHasChanged); }
+
+    private async Task DispatchFromPrDrawer(PullRequestSummary pr)
+    {
+        var (_, error, _) = await PageService.DispatchFromPrDrawerAsync(pr);
+        if (error is not null) _errorMessage = error;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task EpicDrawerNextPage() { await PageService.EpicDrawerNextPageAsync(); await InvokeAsync(StateHasChanged); }
+    private async Task EpicDrawerPrevPage() { await PageService.EpicDrawerPrevPageAsync(); await InvokeAsync(StateHasChanged); }
+
+    private async Task DispatchFromEpicDrawer(IssueSummary issue)
+    {
+        var (_, error, _) = await PageService.DispatchFromEpicDrawerAsync(issue);
+        if (error is not null) _errorMessage = error;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ── Refactoring modal ──
+
+    private async Task OpenRefactoringModal(string templateId, string templateName)
+    {
+        _modalTemplateId = templateId;
+        _modalTemplateName = templateName;
+        _modalAutoDispatch = false;
+        _modalFocus = RefactoringScanFocus.All;
+        _showRefactoringModal = true;
+        _modalJustOpened = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ConfirmRefactoringModal()
+    {
+        _showRefactoringModal = false;
+        if (_modalTemplateId is not null)
+        {
+            var error = await PageService.TriggerRefactoringScanAsync(_modalTemplateId, _modalAutoDispatch, _modalFocus);
+            if (error is not null)
+            {
+                _errorMessage = error;
+            }
+        }
+    }
+
+    private void DismissRefactoringModal() => _showRefactoringModal = false;
+
+    private async Task HandleRefactoringModalKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") DismissRefactoringModal();
+        else if (e.Key == "Enter") await ConfirmRefactoringModal();
+    }
+
+    // ── Helpers ──
+
+    private static string GetProviderDisplay(string? providerId, params IEnumerable<ProviderConfig>[] providerLists)
+    {
+        if (string.IsNullOrEmpty(providerId)) return "—";
+        foreach (var list in providerLists)
+        {
+            var p = list.FirstOrDefault(x => x.Id == providerId);
+            if (p is not null) return p.DisplayName;
+        }
+        return UiFormatters.Truncate(providerId, 12);
+    }
+
+    public void Dispose() { /* Drawers are scoped and disposed by DI */ }
+}
