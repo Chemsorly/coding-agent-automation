@@ -194,6 +194,80 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_ValidProposals_AccumulatesUsageOfEveryAgentCall()
+    {
+        // Arrange — same proposals setup as ExecuteAsync_ValidProposals_CreatesIssues,
+        // but with RefactoringReviewEnabled = false (removes adversarial review calls)
+        // and Usage set on every agent response.
+        //
+        // With RefactoringFocus = All (default) and RefactoringReviewEnabled = false:
+        //   Phase 0 (refactoring_conventions), Phase 1 ×4 (structural/correctness/design get names,
+        //   test-gaps gets null), Phase 2 (refactoring_aggregation) → 6 agent calls total.
+        //   Only the 5 named-phase calls accumulate tokens; test-gaps passes usagePhase = null.
+        //   5 × 100 InputTokens = TotalTokens 500.
+        var job = CreateJob();
+        job = new ConsolidationJobMessage
+        {
+            JobId = job.JobId,
+            Type = job.Type,
+            TemplateId = job.TemplateId,
+            TemplateName = job.TemplateName,
+            ProviderConfigs = job.ProviderConfigs,
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false
+            }
+        };
+
+        var run = ConsolidationProgress.CreateRun(job);
+        var progress = new ConsolidationProgress(run, _ => { });
+        var executor = new RefactoringExecutor(_mockLogger.Object, progress);
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "affectedFiles": ["src/Service.cs", "src/Handler.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Analysis complete."],
+                Usage = new TokenUsage { InputTokens = 100 }
+            });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        progress.Run.TotalTokens.Should().Be(500,
+            "Phase 0 + 3 named Phase 1 (structural/correctness/design) + Phase 2 = 5 calls × 100 tokens; " +
+            "test-gaps Phase 1 agent passes usagePhase=null so its tokens are not accumulated");
+    }
+
+    [Fact]
     public void FormatRefactoringSummary_NoIssues_ReturnsNoOpportunities()
     {
         // Act
