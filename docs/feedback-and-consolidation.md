@@ -31,7 +31,7 @@ The feedback prompt includes previously-used category labels from the last 50 ru
 
 ## Consolidation Loops
 
-Three maintenance loops that review accumulated state and produce improvements. All are manually triggered from the **Consolidation** page in the sidebar.
+Three maintenance loops that review accumulated state and produce improvements. Each is triggered from the **Consolidation** page, or automatically (see Automatic Start).
 
 ### Brain Consolidation (per brain)
 
@@ -123,6 +123,26 @@ Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which 
 - **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
 - **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Scheduler's dispatch loop fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
+
+### Automatic Start
+
+The Scheduler checks every 15 minutes whether any consolidation type has crossed its threshold. Three counters drive automatic triggers:
+
+| Type | Counter (since last successful run of the same scope) | Scope | Setting (0 = off) |
+|---|---|---|---|
+| Brain consolidation | Runs that pushed lessons to the brain (`BrainUpdatesPushed` and `BrainProviderConfigId` = the brain) | Per brain | `AutoBrainConsolidationAfterRuns` |
+| Harness suggestions | Runs with feedback (`Feedback != null`) | Global | `AutoHarnessSuggestionsAfterFeedback` |
+| Refactoring scan | Closed issues of the template's tracker that the scan did not create | Per template | `AutoRefactoringScanAfterClosedIssues` |
+
+**Anti-churn rules for the refactoring scan:**
+
+1. **Only work the scan did not create counts toward its trigger.** The counter excludes issues the scan itself filed (identified by the footer they carry), so the scan's own issues never trigger another scan.
+2. **Automatic runs never add `agent:next`.** `TriggerAutomaticAsync` always passes `autoDispatch: false`; a human decides what gets implemented.
+3. **Backpressure:** No automatic scan runs while the template still has at least `MaxRefactoringProposals` open scan issues.
+
+**Pause-after-failure:** When a consolidation run ends in failure, that scope's automatic start is paused until a later run of the same scope succeeds. This prevents retry storms without a cooldown setting.
+
+Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initiated by column of the Runs page and filterable there.
 
 ### Consolidation Page
 

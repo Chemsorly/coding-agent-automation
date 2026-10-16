@@ -127,6 +127,9 @@ Implementation runs review their changes before the pull request is opened. PR r
 | `harnessSuggestionsReviewEnabled` | true | | | Discriminator review of harness suggestions before they are stored; global, because harness suggestions belong to no project |
 | `hotspotAnalysisLookback` | 90.00:00:00 | 7–365 days | | Window of commits counted by the hotspot analysis of refactoring scans |
 | `refactoringOutcomeLookback` | 90.00:00:00 | 7–365 days | | Window of closed refactoring issues used as feedback |
+| `autoBrainConsolidationAfterRuns` | 0 | 0–100 | | Start brain consolidation once this many runs have pushed lessons to the brain since its last consolidation. 0 = off |
+| `autoHarnessSuggestionsAfterFeedback` | 0 | 0–200 | | Start harness suggestions once this many runs have collected feedback since the last successful run. 0 = off |
+| `autoRefactoringScanAfterClosedIssues` | 0 | 0–100 | | Start a refactoring scan of a template once this many issues it did not create were closed since its last scan. Automatic scans never add agent:next. 0 = off |
 
 ### Triage
 
