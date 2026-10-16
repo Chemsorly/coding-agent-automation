@@ -16,10 +16,11 @@ namespace CodingAgent.Web.Services;
 /// </summary>
 public class RepositoryPageService
 {
+    private const string TemplateNotFoundMessage = "Template not found.";
+
     private readonly IUiConfigClient _uiConfig;
     private readonly IUiSettingsClient _settings;
     private readonly IUiConsolidationClient _consolidation;
-    private readonly IUiAgentClient _agentClient;
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
     private readonly IEpicDrawerService _epicDrawerService;
@@ -30,7 +31,6 @@ public class RepositoryPageService
         IUiConfigClient uiConfig,
         IUiSettingsClient settings,
         IUiConsolidationClient consolidation,
-        IUiAgentClient agentClient,
         DispatchDrawers drawers,
         CurrentAccess access,
         IAccessGuard guard)
@@ -38,7 +38,6 @@ public class RepositoryPageService
         _uiConfig = uiConfig;
         _settings = settings;
         _consolidation = consolidation;
-        _agentClient = agentClient;
         _issueDrawerService = drawers.Issue;
         _prReviewDrawerService = drawers.PrReview;
         _epicDrawerService = drawers.Epic;
@@ -270,7 +269,7 @@ public class RepositoryPageService
         BindingFormModel form)
     {
         if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
-        if (Template is null || Project is null) return (false, "Template not found.", null);
+        if (Template is null || Project is null) return (false, TemplateNotFoundMessage, null);
 
         var updated = ApplyBindingEdit(Template, form);
         var conflict = TemplateBindingRules.Validate(updated, Project.Id, AllTemplates.ToList(), AllProjects.ToList());
@@ -287,7 +286,7 @@ public class RepositoryPageService
         BehaviourFormModel form)
     {
         if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
-        if (Template is null || Project is null) return (false, "Template not found.", null);
+        if (Template is null || Project is null) return (false, TemplateNotFoundMessage, null);
 
         if (string.IsNullOrWhiteSpace(form.Name)) return (false, "Name is required.", null);
 
@@ -366,21 +365,21 @@ public class RepositoryPageService
 
     public Task<string?> OpenIssueDrawerAsync(Func<Task> notifyStateChanged)
     {
-        if (Template is null) return Task.FromResult<string?>("Template not found.");
+        if (Template is null) return Task.FromResult<string?>(TemplateNotFoundMessage);
         return _issueDrawerService.OpenIssueDrawerAsync(
             new TemplateId(Template.Id), AllTemplates, notifyStateChanged);
     }
 
     public Task<string?> OpenPrDrawerAsync(Func<Task> notifyStateChanged)
     {
-        if (Template is null) return Task.FromResult<string?>("Template not found.");
+        if (Template is null) return Task.FromResult<string?>(TemplateNotFoundMessage);
         return _prReviewDrawerService.OpenPrDrawerAsync(
             new TemplateId(Template.Id), AllTemplates, notifyStateChanged);
     }
 
     public Task<string?> OpenEpicDrawerAsync(Func<Task> notifyStateChanged)
     {
-        if (Template is null) return Task.FromResult<string?>("Template not found.");
+        if (Template is null) return Task.FromResult<string?>(TemplateNotFoundMessage);
         return _epicDrawerService.OpenEpicDrawerAsync(
             new TemplateId(Template.Id), AllTemplates, notifyStateChanged);
     }

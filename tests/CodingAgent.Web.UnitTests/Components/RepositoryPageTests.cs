@@ -55,14 +55,14 @@ public class RepositoryPageTests : BunitContext
             DefaultRequiredAgentLabels: null,
             MaxRetries: 3);
 
-    private Mock<IUiConfigClient> SetupConfigClient(UiPipelinesPage page)
+    private static Mock<IUiConfigClient> SetupConfigClient(UiPipelinesPage page)
     {
         var client = new Mock<IUiConfigClient>();
         client.Setup(c => c.GetPipelinesPageAsync(It.IsAny<CancellationToken>())).ReturnsAsync(page);
         return client;
     }
 
-    private Mock<IUiSettingsClient> SetupSettingsClient()
+    private static Mock<IUiSettingsClient> SetupSettingsClient()
     {
         var settings = new Mock<IUiSettingsClient>();
         settings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
@@ -70,7 +70,7 @@ public class RepositoryPageTests : BunitContext
         return settings;
     }
 
-    private Mock<IUiConsolidationClient> SetupConsolidationClient()
+    private static Mock<IUiConsolidationClient> SetupConsolidationClient()
     {
         var client = new Mock<IUiConsolidationClient>();
         return client;

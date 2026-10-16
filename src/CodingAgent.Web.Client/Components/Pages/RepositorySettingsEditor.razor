@@ -288,26 +288,7 @@
     {
         if (SecretsWriteOnly)
         {
-            // In write-only mode: only include entries where the user has typed a new value.
-            // An empty value means "keep existing" — do not overwrite the stored secret.
-            var replacements = _secrets
-                .Where(s => !string.IsNullOrEmpty(s.Key) && !string.IsNullOrEmpty(s.Value))
-                .ToList();
-            // Merge: start from the existing Form.Secrets (preserving unchanged keys),
-            // then apply any replacements the user typed.
-            var merged = Form.Secrets != null
-                ? new Dictionary<string, string>(Form.Secrets)
-                : new Dictionary<string, string>();
-            foreach (var r in replacements)
-                merged[r.Key] = r.Value;
-            // Remove keys the user deleted from _secrets.
-            var currentKeys = new HashSet<string>(_secrets.Select(s => s.Key).Where(k => !string.IsNullOrEmpty(k)));
-            foreach (var key in merged.Keys.ToList())
-            {
-                if (!currentKeys.Contains(key))
-                    merged.Remove(key);
-            }
-            Form.Secrets = merged.Count > 0 ? merged : null;
+            Form.Secrets = ApplyWriteOnlySecretMerge();
         }
         else
         {
@@ -316,6 +297,31 @@
                 ? valid.ToDictionary(s => s.Key, s => s.Value)
                 : null;
         }
+    }
+
+    /// <summary>
+    /// In write-only mode, merges user-typed replacement values into the existing stored secrets.
+    /// Keys with a blank replacement keep their stored value; deleted keys are removed.
+    /// </summary>
+    private Dictionary<string, string>? ApplyWriteOnlySecretMerge()
+    {
+        // Only include entries where the user has typed a new value.
+        // An empty value means "keep existing" — do not overwrite the stored secret.
+        var replacements = _secrets
+            .Where(s => !string.IsNullOrEmpty(s.Key) && !string.IsNullOrEmpty(s.Value))
+            .ToList();
+        // Start from the existing Form.Secrets (preserving unchanged keys),
+        // then apply any replacements the user typed.
+        var merged = Form.Secrets != null
+            ? new Dictionary<string, string>(Form.Secrets)
+            : new Dictionary<string, string>();
+        foreach (var r in replacements)
+            merged[r.Key] = r.Value;
+        // Remove keys the user deleted from _secrets.
+        var currentKeys = new HashSet<string>(_secrets.Select(s => s.Key).Where(k => !string.IsNullOrEmpty(k)));
+        foreach (var key in merged.Keys.Where(k => !currentKeys.Contains(k)).ToList())
+            merged.Remove(key);
+        return merged.Count > 0 ? merged : null;
     }
 
     // ── Setup Steps ────────────────────────────────────────────────────────

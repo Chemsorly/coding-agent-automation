@@ -88,7 +88,7 @@ else
                         <Icon Name="search" Size="14" /> Scan for refactorings
                     </button>
                 }
-                <button @ref="_issueDrawerTrigger" class="btn-save" @onclick="OpenIssueDrawer"
+                <button class="btn-save" @onclick="OpenIssueDrawer"
                         disabled="@(!PageService.CanDispatch())"
                         title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
                         data-testid="browse-issues-btn">
@@ -96,7 +96,7 @@ else
                 </button>
                 @if (template.ReviewEnabled)
                 {
-                    <button @ref="_prDrawerTrigger" class="btn-save" @onclick="OpenPrDrawer"
+                    <button class="btn-save" @onclick="OpenPrDrawer"
                             disabled="@(!PageService.CanDispatch())"
                             title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
                             data-testid="browse-prs-btn">
@@ -105,7 +105,7 @@ else
                 }
                 @if (template.DecompositionEnabled)
                 {
-                    <button @ref="_epicDrawerTrigger" class="btn-save" @onclick="OpenEpicDrawer"
+                    <button class="btn-save" @onclick="OpenEpicDrawer"
                             disabled="@(!PageService.CanDispatch())"
                             title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
                             data-testid="browse-epics-btn">
@@ -511,11 +511,6 @@ else
 
     // The TemplateFormModel wrapping the BehaviourForm for RepositorySettingsEditor
     private TemplateTableSection.TemplateFormModel _behaviourSettingsForm = new();
-
-    // Drawer trigger button references for focus-return
-    private ElementReference _issueDrawerTrigger;
-    private ElementReference _prDrawerTrigger;
-    private ElementReference _epicDrawerTrigger;
 
     // Refactoring modal state
     private bool _showRefactoringModal;
