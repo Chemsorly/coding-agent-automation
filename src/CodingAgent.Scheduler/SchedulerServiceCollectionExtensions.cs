@@ -342,6 +342,22 @@ public static class SchedulerServiceCollectionExtensions
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<RetentionSweepSchedulerService>());
 
+        services.AddSingleton<ConsolidationStalenessService>(sp =>
+            new ConsolidationStalenessService(
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
+                sp.GetRequiredService<IProviderFactory>(),
+                Log.Logger));
+        services.AddSingleton<AutoConsolidationService>(sp =>
+            new AutoConsolidationService(
+                sp.GetRequiredService<IConsolidationService>(),
+                sp.GetRequiredService<ConsolidationStalenessService>(),
+                sp.GetRequiredService<IPipelineConfigStore>(),
+                sp.GetRequiredService<IPipelineApiConfigClient>(),
+                sp.GetService<ILeaderElectionService>(),
+                Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<AutoConsolidationService>());
+
         services.AddSingleton<WorkItemCountsService>(sp =>
             new WorkItemCountsService(
                 sp.GetRequiredService<ISchedulerApiClient>(),

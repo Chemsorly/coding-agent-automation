@@ -545,4 +545,65 @@ public sealed class ConsolidationServiceTests
     }
 
     #endregion
+
+    #region TriggerAutomaticAsync
+
+    [Fact]
+    public async Task TriggerAutomaticAsync_SetsConsolidationAutoAndNoAutoDispatch()
+    {
+        // Validates acceptance criteria: TriggerAutomaticAsync passes autoDispatch: false
+        // and sets InitiatedBy = "consolidation:auto".
+        JobDistributionRequest? capturedRequest = null;
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-auto-test", ErrorMessage: null));
+
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAutomaticAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().NotBeNull();
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.InitiatedBy.Should().Be(InitiatedByConstants.ConsolidationAuto,
+            "automatic triggers must record consolidation:auto as the initiator");
+        capturedRequest.AutoDispatch.Should().BeFalse(
+            "automatic refactoring scans must never add agent:next to created issues");
+    }
+
+    [Theory]
+    [InlineData(ConsolidationRunType.BrainConsolidation, "tmpl-1")]
+    [InlineData(ConsolidationRunType.RefactoringDetection, "tmpl-1")]
+    [InlineData(ConsolidationRunType.HarnessSuggestions, null)]
+    public async Task ScopeKey_MatchesTheIssueIdentifierOfTheDistributedRequest(
+        ConsolidationRunType type, string? templateId)
+    {
+        // When a template is required, use "tmpl-1" which has brainId "bp-1" in the test data.
+        string? actualTemplateId = templateId;
+
+        JobDistributionRequest? capturedRequest = null;
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-scope-key", ErrorMessage: null));
+
+        var sut = CreateSut();
+
+        TemplateId? typedTemplateId = actualTemplateId is not null ? new TemplateId(actualTemplateId) : (TemplateId?)null;
+        await sut.TriggerAsync(type, typedTemplateId, CancellationToken.None);
+
+        capturedRequest.Should().NotBeNull();
+
+        // For BrainConsolidation the scope key uses the brain provider ID, not the template ID.
+        // Template "tmpl-1" has BrainProviderId = "bp-1" in the test setup.
+        var expectedScopeKey = type == ConsolidationRunType.BrainConsolidation
+            ? ConsolidationService.ScopeKey(type, "bp-1", null)
+            : ConsolidationService.ScopeKey(type, null, actualTemplateId);
+
+        capturedRequest!.IssueIdentifier.Value.Should().Be(expectedScopeKey,
+            "ScopeKey must produce the same string used as IssueIdentifier in the distribution request");
+    }
+
+    #endregion
 }
