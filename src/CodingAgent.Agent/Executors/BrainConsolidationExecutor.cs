@@ -99,7 +99,8 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                     },
                     job.JobId,
                     ct,
-                    onOutputLine);
+                    onOutputLine,
+                    "brain_consolidation");
             });
 
             if (failure is not null) return failure;
@@ -136,6 +137,12 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             }
 
             // 5. Capture token usage (preserved regardless of subsequent step outcomes)
+            RecordUsage(diffSummaryTokenUsage, "brain_diff_summary");
+            if (reviewResult is not null)
+            {
+                RecordUsage(reviewResult.ReviewTokenUsage, "brain_review");
+                RecordUsage(reviewResult.RefinementTokenUsage, "brain_refinement");
+            }
             var reviewTokenUsage = reviewResult?.ReviewTokenUsage;
             var refinementTokenUsage = reviewResult?.RefinementTokenUsage;
 

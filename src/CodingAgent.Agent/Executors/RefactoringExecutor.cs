@@ -343,19 +343,20 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 },
                 job.JobId,
                 ct,
-                onOutputLine);
+                onOutputLine,
+                "refactoring_conventions");
         });
 
         if (failure is not null) return failure;
 
         // Phase 1: Parallel Focused Detection — run only the agents of the focus.
         TransitionTo(PipelineStep.DetectingFindings);
-        var agents = new (string SpanName, Func<string> BuildPrompt, RefactoringScanFocus Focus, string? OutputPrefix)[]
+        var agents = new (string SpanName, Func<string> BuildPrompt, RefactoringScanFocus Focus, string? OutputPrefix, string? UsagePhase)[]
         {
-            ("RefactoringDetection.Phase1.StructuralDebt", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt, RefactoringScanFocus.Structure, "[A] "),
-            ("RefactoringDetection.Phase1.Correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt, RefactoringScanFocus.Correctness, "[B] "),
-            ("RefactoringDetection.Phase1.DesignConsistency", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt, RefactoringScanFocus.Design, "[C] "),
-            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests, null),
+            ("RefactoringDetection.Phase1.StructuralDebt", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt, RefactoringScanFocus.Structure, "[A] ", "refactoring_structural"),
+            ("RefactoringDetection.Phase1.Correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt, RefactoringScanFocus.Correctness, "[B] ", "refactoring_correctness"),
+            ("RefactoringDetection.Phase1.DesignConsistency", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt, RefactoringScanFocus.Design, "[C] ", "refactoring_design"),
+            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests, null, null),
         };
 
         var selected = agents
@@ -381,7 +382,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                     },
                     job.JobId,
                     ct,
-                    agentOnOutputLine);
+                    agentOnOutputLine,
+                    a.UsagePhase);
             })).ToArray();
 
         var phase1Results = await Task.WhenAll(phase1Tasks);
@@ -421,7 +423,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 },
                 job.JobId,
                 ct,
-                onOutputLine);
+                onOutputLine,
+                "refactoring_aggregation");
         });
 
         if (failure is not null) return failure;
@@ -490,6 +493,9 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 Logger,
                 ct);
         });
+
+        RecordUsage(reviewResult.ReviewTokenUsage, "refactoring_review");
+        RecordUsage(reviewResult.RefinementTokenUsage, "refactoring_refinement");
 
         if (reviewResult.RefinementTriggered)
         {
