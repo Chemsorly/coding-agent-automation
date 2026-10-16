@@ -5,7 +5,8 @@ using CodingAgent.Web.Components.Pages;
 namespace CodingAgent.Web.UnitTests.Components;
 
 /// <summary>
-/// bUnit tests for TemplateAddForm, which adds a template or, opened from a template's Edit button, edits one in place.
+/// bUnit tests for TemplateAddForm, which adds a new pipeline job template.
+/// Editing an existing template happens on its repository page (/pipelines/{id}).
 /// </summary>
 public class TemplateAddFormComponentTests : BunitContext
 {
@@ -27,20 +28,5 @@ public class TemplateAddFormComponentTests : BunitContext
         var selects = cut.FindAll("select");
         Assert.Contains(selects, s => s.OuterHtml.Contains("Product"));
         Assert.All(selects, s => Assert.False(s.HasAttribute("disabled")));
-    }
-
-    [Fact]
-    public void EditMode_LocksTheTrackerAndRepository_AndLeavesTheProjectToMove()
-    {
-        var template = new PipelineJobTemplate { Id = "t-1", Name = "Api", IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
-
-        var cut = RenderForm(TemplateTableSection.TemplateFormModel.ForEdit(template, "proj"));
-
-        Assert.Contains("Edit Pipeline Job Template", cut.Markup);
-        Assert.Contains("add a new template", cut.Markup);
-        Assert.DoesNotContain(cut.FindAll("select"), s => s.OuterHtml.Contains("Product"));
-        var locked = cut.FindAll("select").Where(s => s.HasAttribute("disabled")).ToList();
-        Assert.Equal(2, locked.Count);
-        Assert.Equal("Api", cut.Find("input[type='text']").GetAttribute("value"));
     }
 }

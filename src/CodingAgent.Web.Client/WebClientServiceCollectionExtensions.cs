@@ -27,6 +27,7 @@ public static class WebClientServiceCollectionExtensions
         services.AddScoped<IEpicDrawerService, EpicDrawerService>();
         services.AddScoped<DispatchDrawers>();
         services.AddScoped<AgentCodingPageService>();
+        services.AddScoped<RepositoryPageService>();
         services.AddScoped<NotificationService>();
         services.AddScoped<CockpitState>();
         services.AddScoped<BlockedIssuesService>();
