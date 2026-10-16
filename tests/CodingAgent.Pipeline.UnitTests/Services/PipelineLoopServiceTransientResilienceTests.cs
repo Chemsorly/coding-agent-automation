@@ -312,6 +312,268 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
         hostCts.Cancel();
     }
 
+    // ── Factory helpers ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates a <see cref="PipelineLoopService"/> with a real <see cref="IWorkDistributor"/>
+    /// mock wired in (for tests that need to exercise WorkDistributor paths).
+    /// Passes <see cref="NullDispatchOrchestrationService"/> so <c>_dispatcher</c> is non-null
+    /// and <c>CycleCount</c> increments normally (without DispatchOrchestration, _dispatcher
+    /// is null and ExecuteCycleAsync returns false before reaching the CycleCount increment).
+    /// </summary>
+    private PipelineLoopService CreateServiceWithWorkDistributor(
+        IWorkDistributor workDistributor,
+        IHousekeepingService? housekeepingService = null)
+    {
+        _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = _runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = _mockLogger.Object,
+            WorkDistributor = workDistributor,
+            DispatchOrchestration = new NullDispatchOrchestrationService(),
+            DependencyChecker = null,
+            HousekeepingService = housekeepingService,
+            LeaderElection = null
+        });
+        return _loopService;
+    }
+
+    // ── AC1 test ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// AC1: A BrokenCircuitException that escapes ExecuteCycleAsync reaches the
+    /// <c>catch (Exception ex) when (IsTransientApiFailure(ex))</c> guard in
+    /// <c>RunMultiTemplateLoopAsync</c>. The guard logs a Warning and delays before retrying.
+    /// The loop does NOT stop and executes at least one subsequent cycle.
+    ///
+    /// Injection via IHousekeepingService: RunHousekeepingAsync has no internal catch, so
+    /// exceptions from housekeepingService.ExecuteAsync propagate through ExecuteCycleAsync
+    /// directly to the IsTransientApiFailure guard. This is the injection path that actually
+    /// exercises lines 53–56 of PipelineLoopService.MultiTemplateLoop.cs (the REQUIRED
+    /// explicit delay that prevents 100% CPU hot-looping when the circuit breaker is open).
+    ///
+    /// The Warning log assertion (contains "transient API failure mid-cycle") definitively
+    /// proves the IsTransientApiFailure catch body was reached, not just inferred from CycleCount.
+    /// </summary>
+    [Fact]
+    public async Task WhenBrokenCircuitExceptionEscapesExecuteCycle_IsTransientApiFailureGuardFires()
+    {
+        // Use a short poll interval so the second cycle starts within the test timeout
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50) });
+
+        // Housekeeping throws BrokenCircuitException on the first call; subsequent calls succeed.
+        // RunHousekeepingAsync has no internal catch — the exception escapes ExecuteCycleAsync
+        // and reaches RunMultiTemplateLoopAsync's IsTransientApiFailure guard.
+        var callCount = 0;
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        housekeepingMock
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new BrokenCircuitException("circuit is open");
+                return Task.CompletedTask;
+            });
+
+        var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        var started = await svc.StartLoopAsync();
+        started.Should().BeTrue("loop should start successfully");
+
+        await WaitUntilAsync(
+            () => svc.IsLoopActive,
+            TimeSpan.FromSeconds(5),
+            "loop should become active after StartLoopAsync");
+
+        // Wait for at least 2 completed cycles — proves the IsTransientApiFailure guard
+        // retried successfully and the loop executed at least one subsequent cycle (AC1 criterion)
+        await WaitUntilAsync(
+            () => svc.CycleCount >= 2,
+            TimeSpan.FromSeconds(30),
+            "loop must execute at least two cycles: first fails with BrokenCircuitException, second succeeds");
+
+        svc.IsLoopActive.Should().BeTrue(
+            "loop must stay active after BrokenCircuitException — IsTransientApiFailure guard retried, not stopped");
+
+        // The Warning log from the IsTransientApiFailure catch body must have been emitted.
+        // This assertion definitively proves the specific catch block at MultiTemplateLoop.cs:53-56
+        // was reached — not just an inner handler lower in the call stack.
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("transient API failure mid-cycle"))),
+            Times.AtLeastOnce,
+            "IsTransientApiFailure catch must log 'transient API failure mid-cycle' warning");
+
+        hostCts.Cancel();
+    }
+
+    // ── AC2 test ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// AC2: When IWorkDistributor.GetActiveDecompositionCountAsync throws, LoadActiveDecompositionCountAsync
+    /// catches the exception, logs a Warning, and returns 0. The cycle continues to completion
+    /// and dispatch is not blocked.
+    /// </summary>
+    [Fact]
+    public async Task WhenGetActiveDecompositionCountThrows_CycleCompletes_WarningLogged()
+    {
+        // Use a short poll interval for fast cycle completion
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50) });
+
+        var mockDistributor = new Mock<IWorkDistributor>();
+
+        // GetActiveDecompositionCountAsync must be explicitly set up to throw because it has a
+        // default interface implementation (=> Task.FromResult(0)); without an explicit Setup,
+        // Moq with CallBase=false does not invoke the default implementation.
+        mockDistributor
+            .Setup(d => d.GetActiveDecompositionCountAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API temporarily unavailable"));
+
+        // GetActiveIssueIdentifiersAsync has no default — return empty set to avoid NRE
+        mockDistributor
+            .Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
+
+        // ReconcileStuckItemsAsync also has a default impl; stub explicitly for clarity
+        mockDistributor
+            .Setup(d => d.ReconcileStuckItemsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var svc = CreateServiceWithWorkDistributor(mockDistributor.Object);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        var started = await svc.StartLoopAsync();
+        started.Should().BeTrue("loop should start successfully");
+
+        await WaitUntilAsync(
+            () => svc.IsLoopActive,
+            TimeSpan.FromSeconds(5),
+            "loop should become active after StartLoopAsync");
+
+        // Wait for a full cycle to complete — CycleCount increments after dispatch and before DelayOrStop
+        await WaitUntilAsync(
+            () => svc.CycleCount >= 1,
+            TimeSpan.FromSeconds(10),
+            "loop must complete at least one cycle after GetActiveDecompositionCountAsync throws");
+
+        // Dispatch was not blocked — loop is still active
+        svc.IsLoopActive.Should().BeTrue(
+            "loop must stay active when GetActiveDecompositionCountAsync throws — fail-open returns 0");
+
+        // A Warning must have been logged with the decomposition count failure message
+        // (non-generic Warning(Exception, string) overload since the message has no structured parameters)
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("decomposition count"))),
+            Times.AtLeastOnce,
+            "Warning must be logged when GetActiveDecompositionCountAsync throws");
+
+        hostCts.Cancel();
+    }
+
+    // ── AC3 tests ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// AC3 (primary): Cancelling the stoppingToken before loop activation causes
+    /// OperationCanceledException to propagate out of ExecuteAsync.
+    ///
+    /// Mechanism: ExecuteAsync suspends at <c>await _activationSignal.Task.WaitAsync(stoppingToken)</c>
+    /// while waiting for StartLoopAsync to signal activation. This await is NOT inside any
+    /// try/catch in ExecuteAsync's outer while body. When stoppingToken is cancelled while
+    /// suspended here, WaitAsync throws OCE which propagates uncaught from ExecuteAsync,
+    /// transitioning the returned Task to Canceled state.
+    ///
+    /// This is deterministic: InvokeExecuteAsync returns only after ExecuteAsync reaches its
+    /// first non-completed await (the activation wait). Cancelling the token after
+    /// InvokeExecuteAsync returns is guaranteed to find the service suspended at WaitAsync.
+    /// </summary>
+    [Fact]
+    public async Task WhenStoppingTokenCancelledBeforeActivation_OCEPropagatesFromExecuteAsync()
+    {
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
+
+        using var hostCts = new CancellationTokenSource();
+
+        // InvokeExecuteAsync returns once ExecuteAsync reaches its first suspension point:
+        // await _activationSignal.Task.WaitAsync(stoppingToken). Since StartLoopAsync has
+        // NOT been called, _activationSignal.Task is not completed and the service waits there.
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
+
+        // Cancelling the token while ExecuteAsync is suspended in WaitAsync causes WaitAsync to
+        // throw OCE. There is no try/catch around this await in ExecuteAsync's outer while body,
+        // so the OCE propagates uncaught, transitioning executeTask to Canceled state.
+        hostCts.Cancel();
+
+        // OCE must propagate: awaiting a Canceled Task throws OperationCanceledException
+        // (or its subclass TaskCanceledException which WaitAsync raises on cancellation).
+        var oce = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await executeTask);
+        oce.Should().NotBeNull("OCE must propagate out of ExecuteAsync when stoppingToken is cancelled before activation");
+    }
+
+    /// <summary>
+    /// AC3 (supplementary): When the stoppingToken is cancelled while the loop is mid-cycle,
+    /// ExecuteAsync completes cleanly without hanging. RunMultiTemplateLoopAsync catches OCE
+    /// via 'break' (does not re-throw) and DelayOrStop also swallows OCE, so ExecuteAsync
+    /// returns a normally-completed Task in this scenario.
+    ///
+    /// Pattern note: executeTask MUST be captured (not discarded with '_'). Discarding the task
+    /// with '_ = InvokeExecuteAsync(...)' makes the WaitAsync assertion unreachable (false-green).
+    /// </summary>
+    [Fact]
+    public async Task WhenStoppingTokenCancelledMidCycle_ExecuteAsyncCompletes_LoopDoesNotHang()
+    {
+        // Use a short poll interval so the first cycle completes quickly before cancellation
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50) });
+
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
+
+        using var hostCts = new CancellationTokenSource();
+
+        // CAPTURE the task — do NOT discard with `_ = ...`
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
+
+        var started = await svc.StartLoopAsync();
+        started.Should().BeTrue("loop should start successfully");
+
+        await WaitUntilAsync(
+            () => svc.IsLoopActive,
+            TimeSpan.FromSeconds(5),
+            "loop should become active after StartLoopAsync");
+
+        // Wait for at least one full cycle so the loop is confirmed running
+        await WaitUntilAsync(
+            () => svc.CycleCount >= 1,
+            TimeSpan.FromSeconds(10),
+            "loop must complete at least one cycle before cancellation is tested");
+
+        // Cancel the stoppingToken — this is the signal the .NET host sends on shutdown
+        hostCts.Cancel();
+
+        // ExecuteAsync must complete promptly (the loop does not spin indefinitely after cancellation).
+        // In the mid-cycle scenario RunMultiTemplateLoopAsync exits via 'break', so executeTask
+        // completes normally (no OCE thrown at the ExecuteAsync level).
+        await executeTask.WaitAsync(TimeSpan.FromSeconds(15));
+
+        // CleanupAsync has run by the time executeTask completes — IsLoopActive reflects the stopped state
+        svc.IsLoopActive.Should().BeFalse(
+            "loop must be stopped after the stoppingToken is cancelled");
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_loopService is not null)
