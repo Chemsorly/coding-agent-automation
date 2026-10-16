@@ -51,6 +51,20 @@ public static class StepOrder
         [PipelineStep.ReviewingRca] = 4,
         [PipelineStep.ReportingRca] = 5,
 
+        // Refactoring scan pipeline (Created=0, CloningRepository=1 shared from Implementation)
+        [PipelineStep.AnalyzingHotspots] = 2,
+        [PipelineStep.ReadingIssueContext] = 3,
+        [PipelineStep.ExtractingConventions] = 4,
+        [PipelineStep.DetectingFindings] = 5,
+        [PipelineStep.AggregatingProposals] = 6,
+        [PipelineStep.ReviewingProposals] = 7,
+        [PipelineStep.CreatingRefactoringIssues] = 8,
+
+        // Brain consolidation pipeline (Created=0, CloningRepository=1 shared from Implementation)
+        [PipelineStep.ConsolidatingKnowledge] = 2,
+        [PipelineStep.ReviewingBrainChanges] = 3,
+        [PipelineStep.PushingBrainChanges] = 4,
+
         // Shared terminal success state
         [PipelineStep.Completed] = 100,
     };

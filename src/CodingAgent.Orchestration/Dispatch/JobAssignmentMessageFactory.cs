@@ -71,6 +71,7 @@ public static class JobAssignmentMessageFactory
             ConsolidationFeedbackDataJson = request.ConsolidationFeedbackDataJson,
             TriageContextMarkdown = request.TriageContextMarkdown,
             AutoDispatch = request.AutoDispatch,
+            RefactoringFocus = request.RefactoringFocus,
             StalenessSignal = request.StalenessSignal,
             AnalysisRefreshCount = request.AnalysisRefreshCount
             // NOTE: ProjectSecrets are NOT serialized to WorkItem payload (security).

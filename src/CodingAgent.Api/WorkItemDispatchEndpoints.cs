@@ -200,6 +200,7 @@ public static class WorkItemDispatchEndpoints
             ConsolidationRunType = request.ConsolidationRunType,
             ConsolidationTemplateId = request.ConsolidationTemplateId,
             AutoDispatch = request.AutoDispatch,
+            RefactoringFocus = request.RefactoringFocus,
 
             // Issue title kept for GetPendingWorkItems display (not mutable config)
             IssueDetail = request.IssueDetail is not null

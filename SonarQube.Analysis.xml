@@ -67,11 +67,7 @@
        by delegating the same methods to SharedRepositoryOperations. The identical call sequences
        come from implementing a shared interface, not from copy-paste.
 
-       Prompt builders: they build prompt text from long runs of s.AppendLine("...") calls. The C#
-       CPD tokenizer replaces every string literal with the same token, so two such runs compare
-       equal even though their text differs; the files contain no verbatim duplicated prose. These
-       entries can go once the builders hold their prose in raw string literals ("""..."""), which
-       the tokenizer sees as a single token. -->
-  <Property Name="sonar.cpd.exclusions">src/CodingAgent.Infrastructure.Providers/GitHub/GitHubRepositoryProvider.Commits.cs,src/CodingAgent.Infrastructure.Providers/GitLab/GitLabRepositoryProvider.cs,src/CodingAgent.Pipeline/Services/Prompts/PromptBuilder.cs,src/CodingAgent.Pipeline/Services/Prompts/ConsolidationPromptBuilder.cs,src/CodingAgent.Pipeline/Services/Prompts/ConsolidationPromptBuilder.Refactoring.cs,src/CodingAgent.Pipeline/Services/Prompts/DecompositionPromptBuilder.cs,src/CodingAgent.Pipeline/Services/Prompts/FeedbackPromptBuilder.cs</Property>
+       Merging them into a shared library is tracked separately. -->
+  <Property Name="sonar.cpd.exclusions">src/CodingAgent.Infrastructure.Providers/GitHub/GitHubRepositoryProvider.Commits.cs,src/CodingAgent.Infrastructure.Providers/GitLab/GitLabRepositoryProvider.cs</Property>
 
 </SonarQubeAnalysisProperties>

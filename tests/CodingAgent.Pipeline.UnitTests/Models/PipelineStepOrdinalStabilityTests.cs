@@ -46,6 +46,16 @@ public sealed class PipelineStepOrdinalStabilityTests
     [InlineData(PipelineStep.PrMerged, 31)]
     [InlineData(PipelineStep.PrClosed, 32)]
     [InlineData(PipelineStep.CheckingDroppedIdentifiers, 33)]
+    [InlineData(PipelineStep.AnalyzingHotspots, 34)]
+    [InlineData(PipelineStep.ReadingIssueContext, 35)]
+    [InlineData(PipelineStep.ExtractingConventions, 36)]
+    [InlineData(PipelineStep.DetectingFindings, 37)]
+    [InlineData(PipelineStep.AggregatingProposals, 38)]
+    [InlineData(PipelineStep.ReviewingProposals, 39)]
+    [InlineData(PipelineStep.CreatingRefactoringIssues, 40)]
+    [InlineData(PipelineStep.ConsolidatingKnowledge, 41)]
+    [InlineData(PipelineStep.ReviewingBrainChanges, 42)]
+    [InlineData(PipelineStep.PushingBrainChanges, 43)]
     [InlineData(PipelineStep.Investigating, 47)]
     [InlineData(PipelineStep.ReviewingRca, 48)]
     [InlineData(PipelineStep.ReportingRca, 49)]
@@ -55,19 +65,20 @@ public sealed class PipelineStepOrdinalStabilityTests
     }
 
     [Fact]
-    public void EnumHasExactly36Members()
+    public void EnumHasExactly46Members()
     {
         // Guard against adding new members without updating the ordinal stability test.
         // If a new step is added, this test forces the developer to add a corresponding
         // [InlineData] assertion above and verify the wire protocol is not broken.
-        Enum.GetValues<PipelineStep>().Should().HaveCount(36);
+        Enum.GetValues<PipelineStep>().Should().HaveCount(46);
     }
 
     [Fact]
     public void MaxOrdinalIs49()
     {
         // Documents the current maximum ordinal value.
-        // New members MUST use a value above the current maximum. 34–46 are reserved for #3566.
+        // New members MUST use the next sequential value (50, 51, ...).
+        // Ordinals 44–46 remain vacant within the consolidation reservation range.
         var maxOrdinal = Enum.GetValues<PipelineStep>().Cast<int>().Max();
         maxOrdinal.Should().Be(49);
     }

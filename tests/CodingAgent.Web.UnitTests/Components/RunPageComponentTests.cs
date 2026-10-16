@@ -1027,6 +1027,35 @@ public class RunPageComponentTests : BunitContext
 
         cut.FindAll("[data-testid='consolidation-result']").Should().BeEmpty();
     }
+
+    /// <summary>
+    /// A completed brain consolidation summary must render the consolidation phase in the sidebar
+    /// and must not render the code-generation phase.
+    /// Verifies that BuildRunModelFromSummary propagates ConsolidationType to the PipelineRun model.
+    /// Issue #3566.
+    /// </summary>
+    [Fact]
+    public void ConsolidationSummary_RendersTheKindsPhases()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.BrainConsolidation,
+            IssueIdentifier = "BrainConsolidation:global",
+            IssueTitle = "BrainConsolidation:global",
+            FinalStep = PipelineStep.Completed,
+            LastActiveStep = PipelineStep.PushingBrainChanges,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.Find("[data-testid='phase-consolidation']").Should().NotBeNull();
+        cut.FindAll("[data-testid='phase-code-generation']").Should().BeEmpty();
+    }
 }
 
 /// <summary>

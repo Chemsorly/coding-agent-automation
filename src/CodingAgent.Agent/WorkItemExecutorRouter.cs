@@ -70,6 +70,7 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             FeedbackDataJson = assignment.ConsolidationFeedbackDataJson,
             TraceContext = assignment.TraceContext,
             AutoDispatch = assignment.AutoDispatch,
+            RefactoringFocus = assignment.RefactoringFocus,
             McpServers = assignment.McpServers
         };
 
