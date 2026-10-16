@@ -75,14 +75,9 @@ public sealed partial class AgentHub
 
         if (!string.IsNullOrEmpty(newLabel) && AgentLabels.DispatchGatedLabels.Contains(newLabel))
         {
-            // TODO (WARNING — Security): newLabel is agent-supplied external input and is logged raw here,
-            // matching the same omission fixed in RequestLabelChangeFallbackAsync. A crafted newLabel
-            // containing CR/LF (e.g. "agent:epic-approved\nINFO: auth=admin") would be written verbatim
-            // to structured log output. Wrap newLabel in SanitizeForLog here, consistent with the
-            // invalid-label branch above and the fallback path fix.
             _logger.Warning(
                 "Agent requested gated label '{Label}' for job {JobId} — requires human approval, ignoring",
-                newLabel, jobId.Value);
+                SanitizeForLog(newLabel), jobId.Value);
             return;
         }
 
@@ -90,13 +85,16 @@ public sealed partial class AgentHub
         // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
         // Note: the target kind is derived inside HubIssueOperations.SwapLabelAsync from run.LabelTargetKind.
 
-        // TODO (WARNING — Security): newLabel is agent-supplied external input and is logged raw here
-        // alongside run.AgentId and run.CurrentStep. A crafted newLabel containing CR/LF characters would
-        // be written verbatim to log output. Wrap newLabel (and validate/sanitize AgentId/CurrentStep
-        // if they are also external-input derived) in SanitizeForLog, consistent with the fallback path fix.
+        // TODO (WARNING — Security): run.AgentId and run.CurrentStep are included in this log entry
+        // and may be external-input-derived (populated from agent-controlled fields on the WorkItem or
+        // PipelineRun). If a compromised agent can influence these values, a crafted string such as
+        // "some-step\r\nINFO: auth=admin" in CurrentStep would still be written verbatim to structured
+        // log output, forging log entries. Audit whether AgentId and CurrentStep originate from
+        // trusted or agent-controlled sources, and wrap them in SanitizeForLog if they are
+        // agent-controlled. This is a separate concern from Issue #3702 (which addresses newLabel).
         _logger.Information(
             "RequestLabelChange: job {JobId} requesting label {Label} for issue {IssueIdentifier} (agent={AgentId}, currentStep={CurrentStep})",
-            jobId.Value, newLabel, run.IssueIdentifier, run.AgentId, run.CurrentStep);
+            jobId.Value, SanitizeForLog(newLabel), run.IssueIdentifier, run.AgentId, run.CurrentStep);
 
         await SwapLabelAsync(run, newLabel);
     }

@@ -233,21 +233,28 @@ Per-template controls (on `PipelineJobTemplate`):
 
 Pipeline Job Templates define which provider combination to use when polling for issues. Each template links an issue provider, repository provider, and optional brain/CI providers. Multiple templates enable round-robin polling across repositories.
 
-Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels. **Edit** changes a template in place; it keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project. Templates can be added, edited, moved and removed while the loop runs; the loop applies the change from its next cycle.
+Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating a template via the "+ Add Template" form, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels.
+
+Editing an existing template happens on its **repository page** at `/pipelines/{templateId}`, reachable by clicking the template name or the "Edit" link in the Pipelines table. The repository page splits template configuration into two cards:
+
+- **Binding card** (global admins only): providers, brain, CI provider, required labels, enabled. These are the operator-level settings.
+- **Behaviour card** (global admins only): name, workflow switches, housekeeping, steering instructions, setup steps, secrets (write-only), and commit blacklist.
+
+Changes on the repository page apply from the next poll cycle. A template keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project. Templates can be added, edited, moved and removed while the loop runs.
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | Name | Yes | Display name for the template |
 | Issue Provider | Yes | Which issue tracker to poll for `agent:next` issues. Fixed once the template is saved |
 | Repository Provider | Yes | Which repository to clone and push changes to. Fixed once the template is saved |
-| Brain Provider | No | Brain repository for knowledge persistence |
-| Pipeline/CI Provider | No | External CI provider for pipeline status checks |
+| Brain Provider | No | Brain repository for knowledge persistence. Shown in the Binding card |
+| Pipeline/CI Provider | No | External CI provider for pipeline status checks. Shown in the Binding card |
 | ImplementationEnabled | No | Whether this template processes issues for implementation (default: true) |
 | ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
 | DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
 | TriageEnabled | No | Whether the loop triages `agent:triage` issues of this template's tracker; the project's first triage-enabled template also runs those of the epic tracker (default: false). Operator triages from the Triage page don't need it. See [Triage](triage.md) |
 | HousekeepingEnabled | No | Whether this template manages agent:done PRs for branch updates and stale cleanup (default: false) |
-| BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings: its runs do not write to the brain, and brain consolidation does not run from it. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
+| BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings: its runs do not write to the brain, and brain consolidation does not run from it. Shown in the Binding card alongside the brain provider. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
 
 ## Environment Variables
 

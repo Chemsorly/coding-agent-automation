@@ -9,6 +9,7 @@ namespace CodingAgent.Agent.Executors;
 public sealed class ConsolidationProgress
 {
     private readonly Action<PipelineStep> _transitionTo;
+    private readonly Lock _usageLock = new();
 
     public ConsolidationProgress(PipelineRun run, Action<PipelineStep> transitionTo)
     {
@@ -23,6 +24,37 @@ public sealed class ConsolidationProgress
 
     /// <summary>Reports that the run entered <paramref name="step"/>.</summary>
     public void TransitionTo(PipelineStep step) => _transitionTo(step);
+
+    /// <summary>Adds one agent call's tokens and cost to the run. Thread-safe: the scan's detectors run in parallel.</summary>
+    public void AccumulateTokenUsage(AgentResult? result, string phase)
+    {
+        // TODO [WARNING]: `phase` has no ArgumentNullException.ThrowIfNull guard, deviating from the ThrowIfNull
+        // pattern used by this class's constructor. A null phase is forwarded to Run.AccumulateTokenUsage(…, null).
+        lock (_usageLock) Run.AccumulateTokenUsage(result, phase);
+    }
+
+    /// <summary>Adds tokens without a cost (review and refinement report only tokens). Thread-safe.</summary>
+    public void AccumulateTokenUsage(TokenUsage? usage, string phase)
+    {
+        // TODO [WARNING]: `phase` has no ArgumentNullException.ThrowIfNull guard, deviating from the ThrowIfNull
+        // pattern used by this class's constructor. A null phase is forwarded to Run.AccumulateTokenUsage(…, null).
+        lock (_usageLock) Run.AccumulateTokenUsage(usage, phase);
+    }
+
+    /// <summary>Copies the run's token totals into the result reported to the orchestrator.</summary>
+    public void CopyUsageTo(ConsolidationJobResult result)
+    {
+        // TODO [WARNING]: `result` has no ArgumentNullException.ThrowIfNull guard, deviating from the ThrowIfNull
+        // pattern used by this class's constructor. A null argument surfaces as NullReferenceException inside
+        // the lock body rather than as ArgumentNullException at method entry, obscuring the fault origin.
+        lock (_usageLock)
+        {
+            result.TotalTokens = Run.TotalTokens;
+            result.TotalCost = Run.TotalCost;
+            result.CacheReadTokens = Run.CacheReadTokens;
+            result.CacheWriteTokens = Run.CacheWriteTokens;
+        }
+    }
 
     /// <summary>
     /// Creates the agent-side run of a consolidation job. A consolidation job has no issue; the
