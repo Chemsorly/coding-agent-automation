@@ -141,6 +141,13 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
 
                 // Write the change back: with Redis, GetRun returns a copy, and RemoveRun inside
                 // CompleteRunAsync/FailRunAsync reads the stored run again.
+                if (result.TotalTokens > 0)
+                {
+                    inMemoryRun.TotalTokens = result.TotalTokens;
+                    inMemoryRun.TotalCost = result.TotalCost;
+                    inMemoryRun.CacheReadTokens = result.CacheReadTokens;
+                    inMemoryRun.CacheWriteTokens = result.CacheWriteTokens;
+                }
                 _runService.ReplaceRun(inMemoryRun);
             }
             else
