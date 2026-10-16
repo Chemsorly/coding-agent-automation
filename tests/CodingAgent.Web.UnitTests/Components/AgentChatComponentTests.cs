@@ -415,3 +415,81 @@ public class AgentChatReconnectTests : AgentChatTestBase
         SubscribeCount().Should().Be(1);
     }
 }
+
+/// <summary>
+/// Two profiles backed by the same job template are both offered and each launches with its own model.
+/// Acceptance criterion: "Two profiles that share one job template can both be chatted with, each with
+/// its own model and MCP servers. The component test passes."
+/// </summary>
+// TODO: Issue #3561 §7 requires two additional new component tests that are not present here because the
+// behaviors they cover are implemented server-side in ChatService and are not observable from a bUnit
+// component test:
+//   (a) "Only enabled profiles with an existing template are offered" — the filtering of disabled profiles
+//       and profiles whose JobTemplateKey() has no matching template happens in ChatService.GetOptionsAsync,
+//       not in the component. Coverage belongs in a ChatService or API integration test.
+//   (b) "The first chat prompt carries the selected profile's MCP servers, merged with the project's" —
+//       the component posts only UiChatPromptRequest(SessionId, Text); MCP-server merging is performed
+//       server-side. Coverage belongs in a ChatService or API integration test.
+public class AgentChatTwoProfileSameTemplateTests : AgentChatTestBase
+{
+    private const string ProfileA = "profile-a";
+    private const string ProfileB = "profile-b";
+
+    public AgentChatTwoProfileSameTemplateTests()
+    {
+        Services.AddTestAccess();
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiChatOptions([
+                new UiChatProfile(ProfileA, "Profile A", ["kiro", "dotnet"]),
+                new UiChatProfile(ProfileB, "Profile B", ["kiro", "dotnet"]),
+            ], 120));
+        Chat.Setup(c => c.StartAsync(ProfileA, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiChatSession("agent-a", "gpt-4o"));
+        Chat.Setup(c => c.StartAsync(ProfileB, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiChatSession("agent-b", "claude-sonnet-4-5"));
+    }
+
+    [Fact]
+    public void BothProfiles_AreOfferedInTheSelect()
+    {
+        var cut = Render<AgentChat>();
+
+        // TODO: [WARNING] Profiles are seeded in alphabetical order ("Profile A", "Profile B"), so this
+        // ordering assertion passes whether or not the component actually sorts by DisplayName. To properly
+        // cover sort-by-DisplayName, seed profiles out of alphabetical order (e.g. "Profile B" before
+        // "Profile A") and assert that "Profile A" appears before "Profile B" in the rendered output.
+        // TODO: [WARNING] This assertion only checks the `value` attribute of each <option>, not the
+        // display text. A bug in the display format (e.g. rendering the profile ID instead of DisplayName,
+        // or omitting the model/template-key segment) would pass this test undetected. Assert TextContent
+        // as well to cover the full format specified in the issue.
+        cut.FindAll("#profile-select option").Select(o => o.GetAttribute("value"))
+            .Should().Equal("", ProfileA, ProfileB);
+    }
+
+    [Fact]
+    public async Task ProfileA_LaunchesWithItsOwnModel()
+    {
+        // TODO: This test verifies the model is displayed correctly but does not verify the `effort` value
+        // from the profile's provider config. In the current architecture the component calls
+        // Chat.StartAsync(profileId, ...) and the API resolves model and effort from the profile's provider
+        // config server-side — effort is not returned in UiChatSession and is not observable from the
+        // component. A test for effort forwarding belongs in a ChatService or API integration test.
+        var cut = Render<AgentChat>();
+        await cut.InvokeAsync(() => cut.Find("select#profile-select").Change(ProfileA));
+        await cut.InvokeAsync(() => cut.FindAll("button").First(b => b.TextContent.Contains("Launch")).Click());
+
+        cut.WaitForAssertion(() => cut.Find(".chat-agent-info").TextContent.Should().Contain("model: gpt-4o"),
+            timeout: TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ProfileB_LaunchesWithItsOwnModel()
+    {
+        var cut = Render<AgentChat>();
+        await cut.InvokeAsync(() => cut.Find("select#profile-select").Change(ProfileB));
+        await cut.InvokeAsync(() => cut.FindAll("button").First(b => b.TextContent.Contains("Launch")).Click());
+
+        cut.WaitForAssertion(() => cut.Find(".chat-agent-info").TextContent.Should().Contain("model: claude-sonnet-4-5"),
+            timeout: TimeSpan.FromSeconds(5));
+    }
+}

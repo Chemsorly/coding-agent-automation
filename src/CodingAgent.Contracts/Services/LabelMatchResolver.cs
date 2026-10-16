@@ -16,7 +16,7 @@ public static class LabelMatchResolver
     /// <param name="enabledPredicate">Predicate to filter only enabled items.</param>
     /// <param name="labelSelector">Function to extract match labels from an item.</param>
     /// <param name="matchStrategy">Strategy function determining how labels are matched
-    /// (e.g., <see cref="LabelMatchStrategies.Intersection"/> or <see cref="LabelMatchStrategies.Subset"/>).</param>
+    /// (e.g., <see cref="LabelMatchStrategies.Intersection"/> or <see cref="LabelMatchStrategies.Superset"/>).</param>
     /// <param name="orderBy">Function to apply ordering to the filtered results.</param>
     /// <returns>A read-only list of matching items in the specified order.</returns>
     public static IReadOnlyList<T> Resolve<T>(

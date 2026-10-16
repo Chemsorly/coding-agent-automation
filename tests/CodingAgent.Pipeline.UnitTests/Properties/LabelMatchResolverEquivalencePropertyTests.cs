@@ -9,8 +9,8 @@ namespace CodingAgent.Pipeline.UnitTests;
 
 /// <summary>
 /// Property-based tests verifying that the generic LabelMatchResolver produces identical results
-/// to the original QualityGateResolver, ReviewerResolver, and ProfileResolver implementations.
-/// Feature: 018-encapsulation-improvements, Properties 1 &amp; 2: LabelMatchResolver equivalence
+/// to the original QualityGateResolver and ReviewerResolver implementations.
+/// Feature: 018-encapsulation-improvements, Property 1: LabelMatchResolver equivalence
 /// </summary>
 public class LabelMatchResolverEquivalencePropertyTests
 {
@@ -83,47 +83,6 @@ public class LabelMatchResolverEquivalencePropertyTests
                 $"item at index {i} must be identical between generic resolver and ReviewerResolver");
         }
     }
-
-    /// <summary>
-    /// Property 2: LabelMatchResolver subset equivalence (ProfileResolver)
-    /// For any collection of AgentProfiles and agent labels, calling LabelMatchResolver.Resolve
-    /// directly with Subset strategy + .FirstOrDefault() produces the same result as ProfileResolver.Resolve().
-    /// **Validates: Requirements 25.5, 25.7**
-    /// </summary>
-    [Property(MaxTest = 20, Arbitrary = new[] { typeof(LabelMatchResolverEquivalenceArbitraries) })]
-    public void SubsetEquivalence_ProfileResolver_MatchesGenericResolver(ProfileEquivalenceInput input)
-    {
-        // Call via ProfileResolver (the public API)
-        var resolver = new ProfileResolver();
-        var resolverResult = resolver.Resolve(input.Profiles, input.AgentLabels);
-
-        // Call LabelMatchResolver directly with the same parameters + FirstOrDefault
-        var genericResult = LabelMatchResolver.Resolve(
-            input.Profiles,
-            input.AgentLabels,
-            enabledPredicate: p => p.Enabled,
-            labelSelector: p => p.MatchLabels,
-            matchStrategy: LabelMatchStrategies.Subset,
-            orderBy: items => items
-                .OrderByDescending(p => p.MatchLabels.Count)
-                .ThenByDescending(p => p.Priority)
-                .ThenBy(p => p.Id, StringComparer.Ordinal))
-            .FirstOrDefault();
-
-        // Results must be identical (both null or same instance)
-        if (resolverResult is null)
-        {
-            genericResult.Should().BeNull(
-                "generic resolver with Subset strategy must return null when ProfileResolver returns null");
-        }
-        else
-        {
-            genericResult.Should().NotBeNull(
-                "generic resolver with Subset strategy must return a result when ProfileResolver returns one");
-            genericResult.Should().Be(resolverResult,
-                "generic resolver with Subset strategy must return the same profile as ProfileResolver");
-        }
-    }
 }
 
 // --- Wrapper types for FsCheck ---
@@ -144,14 +103,6 @@ public sealed class ReviewerEquivalenceInput
     public override string ToString() => $"Configs={Configs.Count}, TargetLabels=[{string.Join(",", TargetLabels)}]";
 }
 
-/// <summary>Input for ProfileResolver equivalence property tests.</summary>
-public sealed class ProfileEquivalenceInput
-{
-    public required IReadOnlyList<AgentProfile> Profiles { get; init; }
-    public required IReadOnlyList<string> AgentLabels { get; init; }
-    public override string ToString() => $"Profiles={Profiles.Count}, AgentLabels=[{string.Join(",", AgentLabels)}]";
-}
-
 // --- Arbitrary generators ---
 
 public class LabelMatchResolverEquivalenceArbitraries
@@ -159,8 +110,6 @@ public class LabelMatchResolverEquivalenceArbitraries
     private static readonly string[] LabelPool = ["kiro", "dotnet", "python", "java", "node", "dotnet10", "python312", "java21"];
     private static readonly string[] QgcIds = ["qgc-1", "qgc-2", "qgc-3", "qgc-4", "qgc-5", "qgc-6"];
     private static readonly string[] QgcDisplayNames = ["Build Gate", "Test Gate", "Coverage Gate", "Security Gate", "Lint Gate"];
-    private static readonly string[] ProfileIds = ["p1", "p2", "p3", "p4", "p5", "p6"];
-    private static readonly string[] ProfileDisplayNames = ["Profile A", "Profile B", "Profile C", "Profile D"];
     private static readonly string[] ReviewerDisplayNames = ["Global Reviewers", "DotNet Reviewers", "Python Reviewers", "Security Gate", "Performance Gate"];
     private static readonly string[] AgentNamePool = ["Correctness", "Security", "DotNetSpecialist", "PythonLinter", "Performance"];
 
@@ -237,39 +186,6 @@ public class LabelMatchResolverEquivalenceArbitraries
             {
                 Configs = configs.ToList(),
                 TargetLabels = targetLabels
-            };
-
-        return inputGen.ToArbitrary();
-    }
-
-    public static Arbitrary<ProfileEquivalenceInput> ProfileEquivalenceInputArb()
-    {
-        var labelSubsetGen = Gen.SubListOf(LabelPool).Select(l => (IReadOnlyList<string>)l.ToList());
-
-        var profileGen =
-            from id in Gen.Elements(ProfileIds)
-            from displayName in Gen.Elements(ProfileDisplayNames)
-            from matchLabels in labelSubsetGen
-            from enabled in Gen.Elements(true, false)
-            from priority in Gen.Choose(0, 10)
-            select new AgentProfile
-            {
-                Id = id,
-                DisplayName = displayName,
-                MatchLabels = matchLabels,
-                AgentProviderConfigId = "provider-1",
-                Enabled = enabled,
-                Priority = priority
-            };
-
-        var inputGen =
-            from count in Gen.Choose(1, 8)
-            from profiles in Gen.ArrayOf(profileGen, count)
-            from agentLabels in labelSubsetGen
-            select new ProfileEquivalenceInput
-            {
-                Profiles = profiles.ToList(),
-                AgentLabels = agentLabels
             };
 
         return inputGen.ToArbitrary();
