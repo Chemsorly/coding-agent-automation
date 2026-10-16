@@ -287,6 +287,16 @@ public sealed record JobAssignmentMessage
     /// </summary>
     [Key(43)]
     public string? TriageContextMarkdown { get; init; }
+
+    /// <summary>Which detection agent a refactoring scan runs. Propagated from <see cref="JobDistributionRequest.RefactoringFocus"/>.</summary>
+    // TODO [WARNING]: The acceptance criteria for issue #3583 state this property must be [Key(43)], but
+    // Key(43) is already occupied by TriageContextMarkdown above (present before commit d75d6c3e6 that the
+    // issue was written against). Using Key(44) — the next free key — is correct per the issue's own
+    // MessagePack rule ("add new members at new keys only, never renumber or reuse"). Satisfying the literal
+    // Key(43) criterion would require renumbering TriageContextMarkdown, which violates that rule and would
+    // corrupt in-flight deserialization. Flag for human confirmation that Key(44) is the intended assignment.
+    [Key(44)]
+    public RefactoringScanFocus RefactoringFocus { get; init; }
 }
 
 /// <summary>

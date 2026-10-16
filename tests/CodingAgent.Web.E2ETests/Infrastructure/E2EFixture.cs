@@ -126,7 +126,16 @@ public sealed class E2EFixture : IAsyncLifetime
     public async Task StopLoopAsync()
     {
         await Factory.ConfigStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
-        SchedulerFactory.LoopService.StopLoop();
+        var loop = SchedulerFactory.LoopService;
+        loop.StopLoop();
+
+        // Wait for the loop to actually finish its current cycle, the same way ResetAllAsync() does.
+        // Without this wait, StopLoopAsync() returns while IsLoopActive may still be true, and the
+        // next test's page load shows "Stop Loop" instead of "Start Loop" — causing
+        // LoopControlTests.Loop_StartStop_UIReflectsState to time out on the missing button.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (loop.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(25);
     }
 
     /// <summary>

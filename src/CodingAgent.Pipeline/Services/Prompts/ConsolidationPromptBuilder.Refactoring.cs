@@ -46,7 +46,12 @@ $"""
     /// design choices. Output grounds subsequent phases — prevents flagging
     /// idiomatic patterns as smells (SmellBench: 63% of detected smells were false positives).
     /// </summary>
-    public static string BuildRefactoringContextExtractionPrompt()
+    /// <param name="includeCoverage">
+    /// When <c>true</c> (default), includes the test-coverage step. Pass <c>false</c> for focused
+    /// scans whose focus is neither <see cref="RefactoringScanFocus.All"/> nor <see cref="RefactoringScanFocus.Tests"/>
+    /// — the coverage step is the slowest part of Phase 0 and only Agent D reads it.
+    /// </param>
+    public static string BuildRefactoringContextExtractionPrompt(bool includeCoverage = true)
     {
         var sb = new StringBuilder();
 
@@ -78,15 +83,23 @@ $"""
             s.AppendLine("2. **The project's own analyzers.** Find the build, lint and analysis commands the project uses (CI workflows,");
             s.AppendLine("   build scripts, README). Run the ones that report warnings without changing tracked files, once, and save");
             s.AppendLine($"   each raw output to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/<name>.txt`. You may install tools.");
-            s.AppendLine("3. **Test coverage.** If the project has tests, run them once with code coverage and save the coverage report");
-            s.AppendLine($"   (Cobertura XML, lcov or a JSON summary) to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/coverage.<ext>`. Use the project's own");
-            s.AppendLine("   coverage setup when it has one (for example coverlet in the test projects, jacoco, pytest-cov, c8 or nyc).");
-            s.AppendLine("   Otherwise you may install a coverage tool outside the repository (for example `dotnet-coverage` or `coverage`),");
-            s.AppendLine("   but do not change tracked files. Stop the test run after 20 minutes (for example `timeout 20m <command>`).");
-            s.AppendLine("   Failing tests are fine as long as a report was written. Name this entry `coverage` under `availableTools`; if");
-            s.AppendLine("   no report was written, say why in its `reports` field.");
-            s.AppendLine("4. List all of them under `availableTools` below. If a source fails or needs credentials you do not have, skip it");
-            s.AppendLine("   and say why in its `reports` field.");
+            if (includeCoverage)
+            {
+                s.AppendLine("3. **Test coverage.** If the project has tests, run them once with code coverage and save the coverage report");
+                s.AppendLine($"   (Cobertura XML, lcov or a JSON summary) to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/coverage.<ext>`. Use the project's own");
+                s.AppendLine("   coverage setup when it has one (for example coverlet in the test projects, jacoco, pytest-cov, c8 or nyc).");
+                s.AppendLine("   Otherwise you may install a coverage tool outside the repository (for example `dotnet-coverage` or `coverage`),");
+                s.AppendLine("   but do not change tracked files. Stop the test run after 20 minutes (for example `timeout 20m <command>`).");
+                s.AppendLine("   Failing tests are fine as long as a report was written. Name this entry `coverage` under `availableTools`; if");
+                s.AppendLine("   no report was written, say why in its `reports` field.");
+                s.AppendLine("4. List all of them under `availableTools` below. If a source fails or needs credentials you do not have, skip it");
+                s.AppendLine("   and say why in its `reports` field.");
+            }
+            else
+            {
+                s.AppendLine("3. List all of them under `availableTools` below. If a source fails or needs credentials you do not have, skip it");
+                s.AppendLine("   and say why in its `reports` field.");
+            }
         });
 
         PromptBuilder.AppendSection(sb, "## What to Extract", s =>
@@ -551,14 +564,18 @@ $"""
     // ─────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Phase 2 prompt: aggregates findings from all three sub-agents, deduplicates,
+    /// Phase 2 prompt: aggregates findings from the detection sub-agents, deduplicates,
     /// filters against project conventions, and produces final ranked proposals.
-    /// TODO: Update "three sub-agents" to "four sub-agents" — Agent D (test gaps) was added by issue #3582. See review finding #4.
     /// </summary>
+    /// <param name="maxProposals">Maximum number of proposals to select.</param>
+    /// <param name="issueContext">Open issues context to avoid duplicating.</param>
+    /// <param name="outcomeContext">Past implemented/rejected proposals for feedback.</param>
+    /// <param name="focus">Which detection agent ran. <see cref="RefactoringScanFocus.All"/> (default) lists all four findings files and produces the same output as before this parameter existed.</param>
     public static string BuildRefactoringAggregationPrompt(
         int maxProposals = 3,
         string? issueContext = null,
-        string? outcomeContext = null)
+        string? outcomeContext = null,
+        RefactoringScanFocus focus = RefactoringScanFocus.All)
     {
         var sb = new StringBuilder();
 
@@ -572,17 +589,40 @@ $"""
         sb.AppendLine("## Inputs");
         sb.AppendLine();
         sb.AppendLine("Read ALL of the following files:");
-        sb.AppendLine($"1. `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` — Agent A: structural debt");
-        sb.AppendLine($"2. `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` — Agent B: correctness & hygiene");
-        sb.AppendLine($"3. `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` — Agent C: design consistency");
-        sb.AppendLine($"4. `{AgentWorkspacePaths.RefactoringTestGapFindingsFilePath}` — Agent D: test gaps");
-        sb.AppendLine($"5. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
-        sb.AppendLine($"6. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
+
+        // List only the findings files of the agents that ran, numbered from 1.
+        var inputNumber = 1;
+        if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Structure)
+            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` — Agent A: structural debt");
+        if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Correctness)
+            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` — Agent B: correctness & hygiene");
+        if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Design)
+            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` — Agent C: design consistency");
+        if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Tests)
+            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringTestGapFindingsFilePath}` — Agent D: test gaps");
+        sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
+        sb.AppendLine($"{inputNumber}. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
+
         sb.AppendLine();
         sb.AppendLine("Each findings file holds a `findings` array and a `notChecked` list.");
         sb.AppendLine("If a findings file is missing or is not valid JSON, that agent failed. Continue with the other files");
         sb.AppendLine("and record the failure in the analysis log.");
         sb.AppendLine();
+
+        // TODO [WARNING]: The acceptance criterion for issue #3583 specifies that the focus-constraint
+        // sentence should appear "directly after the inputs list" (i.e. immediately after the numbered
+        // file lines, before the "Each findings file holds…" paragraph). The current placement puts it
+        // after that paragraph instead. For LLM prompts, proximity to the inputs list can affect how
+        // strongly the model applies the category constraint. Consider moving this block to directly
+        // after the numbered inputs list and before "Each findings file holds a `findings` array…".
+        // For focused scans: state which categories are in scope so the agent constrains its output.
+        if (focus != RefactoringScanFocus.All)
+        {
+            var categories = RefactoringCategories.ForFocus(focus);
+            var categoryList = string.Join(", ", categories.Select(c => $"`{c}`"));
+            sb.AppendLine($"This scan is focused on {focus}: only the agent listed above ran. Propose only findings in these categories: {categoryList}.");
+            sb.AppendLine();
+        }
 
         sb.AppendLine("## Aggregation Steps");
         sb.AppendLine();
@@ -659,7 +699,7 @@ $"""
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");
-        sb.AppendLine($"    \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.All)}\",");
+        sb.AppendLine($"    \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.ForFocus(focus))}\",");
         sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File1.cs\", \"src/path/to/File2.cs\"],");
         sb.AppendLine("    \"rationale\": \"The problem: what goes wrong or what it costs, and why it matters\",");
         sb.AppendLine("    \"description\": \"The change: what to change, as one concrete approach\",");

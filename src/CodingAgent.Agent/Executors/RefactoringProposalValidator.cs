@@ -29,11 +29,14 @@ internal static class RefactoringProposalValidator
     /// Splits <paramref name="proposals"/> into the ones that pass every check and the rejected ones with
     /// their reason, keeping the input order. A title counts as a duplicate when, after normalization, it
     /// equals one of <paramref name="existingIssueTitles"/> or the title of an earlier valid proposal.
+    /// When <paramref name="allowedCategories"/> is non-null, proposals whose category is not in the list
+    /// are also rejected.
     /// </summary>
     internal static (IReadOnlyList<RefactoringProposal> Valid, IReadOnlyList<Rejection> Rejected) Validate(
         IReadOnlyList<RefactoringProposal> proposals,
         string workspacePath,
-        IEnumerable<string> existingIssueTitles)
+        IEnumerable<string> existingIssueTitles,
+        IReadOnlyList<string>? allowedCategories = null)
     {
         var seenTitles = new HashSet<string>(existingIssueTitles.Select(NormalizeTitle), StringComparer.Ordinal);
         var valid = new List<RefactoringProposal>();
@@ -41,7 +44,7 @@ internal static class RefactoringProposalValidator
 
         foreach (var proposal in proposals)
         {
-            var reason = GetRejectionReason(proposal, workspacePath, seenTitles);
+            var reason = GetRejectionReason(proposal, workspacePath, seenTitles, allowedCategories);
             if (reason is null)
             {
                 valid.Add(proposal);
@@ -56,7 +59,7 @@ internal static class RefactoringProposalValidator
         return (valid, rejected);
     }
 
-    private static string? GetRejectionReason(RefactoringProposal proposal, string workspacePath, HashSet<string> seenTitles)
+    private static string? GetRejectionReason(RefactoringProposal proposal, string workspacePath, HashSet<string> seenTitles, IReadOnlyList<string>? allowedCategories)
     {
         if (string.IsNullOrWhiteSpace(proposal.Title))
             return "empty title";
@@ -81,6 +84,10 @@ internal static class RefactoringProposalValidator
 
         if (proposal.Category is not null && !RefactoringCategories.IsKnown(proposal.Category))
             return $"unknown category '{proposal.Category}'";
+
+        if (proposal.Category is not null && allowedCategories is not null
+            && !allowedCategories.Contains(proposal.Category.Trim(), StringComparer.OrdinalIgnoreCase))
+            return $"category '{proposal.Category}' is outside the scan focus";
 
         if (seenTitles.Contains(NormalizeTitle(proposal.Title)))
             return "title duplicates an existing issue or another proposal";

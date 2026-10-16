@@ -19,7 +19,7 @@ public interface IUiConsolidationClient
     /// Queues a run and returns the message to show. A refused trigger (already running, a configuration
     /// error, or an unknown template) throws <see cref="InvalidOperationException"/> with the reason.
     /// </summary>
-    Task<string> TriggerAsync(ConsolidationRunType type, string? templateId, bool autoDispatch, CancellationToken ct = default);
+    Task<string> TriggerAsync(ConsolidationRunType type, string? templateId, bool autoDispatch, CancellationToken ct = default, RefactoringScanFocus focus = RefactoringScanFocus.All);
 }
 
 public sealed class UiConsolidationClient(HttpClient http, IUiAccessTokenSource tokens) : UiApiClient(http, tokens), IUiConsolidationClient
@@ -32,11 +32,11 @@ public sealed class UiConsolidationClient(HttpClient http, IUiAccessTokenSource 
     public Task<UiRefactoringScanSettings> GetRefactoringScanSettingsAsync(string templateId, CancellationToken ct = default) =>
         GetAsync($"{Consolidation}/templates/{Uri.EscapeDataString(templateId)}/refactoring-scan", UiJsonContext.Default.UiRefactoringScanSettings, ct);
 
-    public Task<string> TriggerAsync(ConsolidationRunType type, string? templateId, bool autoDispatch, CancellationToken ct = default) =>
+    public Task<string> TriggerAsync(ConsolidationRunType type, string? templateId, bool autoDispatch, CancellationToken ct = default, RefactoringScanFocus focus = RefactoringScanFocus.All) =>
         SendForResultAsync(
             HttpMethod.Post,
             $"{Consolidation}/runs",
-            JsonContent.Create(new UiConsolidationTriggerRequest(type, templateId, autoDispatch), UiJsonContext.Default.UiConsolidationTriggerRequest),
+            JsonContent.Create(new UiConsolidationTriggerRequest(type, templateId, autoDispatch, focus), UiJsonContext.Default.UiConsolidationTriggerRequest),
             UiJsonContext.Default.String,
             ct);
 }
