@@ -2645,7 +2645,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [new IssueSummary { Identifier = "1", Title = "Existing open issue", Labels = [] }],
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         // The clone callback creates workspacePath/.agent as a FILE (not a directory).
