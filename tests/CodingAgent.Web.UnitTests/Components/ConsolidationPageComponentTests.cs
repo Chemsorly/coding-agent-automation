@@ -1373,18 +1373,28 @@ public class ConsolidationPageComponentTests : BunitContext
         const string BrainId = "brain-shared";
         var template1 = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Repo A", BrainProviderId = BrainId,
-            IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t1",
+            Name = "Repo A",
+            BrainProviderId = BrainId,
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var template2 = new PipelineJobTemplate
         {
-            Id = "t2", Name = "Repo B", BrainProviderId = BrainId,
-            IssueProviderId = "ip-2", RepoProviderId = "rp-2", Enabled = true
+            Id = "t2",
+            Name = "Repo B",
+            BrainProviderId = BrainId,
+            IssueProviderId = "ip-2",
+            RepoProviderId = "rp-2",
+            Enabled = true
         };
         var project = new PipelineProject
         {
-            Id = WellKnownIds.DefaultProjectId, Name = "Default",
-            TemplateIds = ["t1", "t2"], Enabled = true
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            TemplateIds = ["t1", "t2"],
+            Enabled = true
         };
 
         var mockConfigStore = new Mock<IPipelineConfigStore>();

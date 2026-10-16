@@ -18,13 +18,22 @@ public sealed class ConsolidationPageServiceTests
     private static PipelineJobTemplate Template(string id, string? brain = "brain-1", string? repo = "repo-1", string? issues = "issues-1",
         bool enabled = true, bool brainReadOnly = false) => new()
         {
-            Id = id, Name = $"{id}-name", BrainProviderId = brain, RepoProviderId = repo ?? "", IssueProviderId = issues ?? "",
-            Enabled = enabled, BrainReadOnly = brainReadOnly,
+            Id = id,
+            Name = $"{id}-name",
+            BrainProviderId = brain,
+            RepoProviderId = repo ?? "",
+            IssueProviderId = issues ?? "",
+            Enabled = enabled,
+            BrainReadOnly = brainReadOnly,
         };
 
     private static PipelineProject Project(string name, bool enabled = true, bool? brainReadOnly = null, params string[] templateIds) => new()
     {
-        Id = $"{name}-id", Name = name, Enabled = enabled, BrainReadOnly = brainReadOnly, TemplateIds = templateIds,
+        Id = $"{name}-id",
+        Name = name,
+        Enabled = enabled,
+        BrainReadOnly = brainReadOnly,
+        TemplateIds = templateIds,
     };
 
     [Fact]
@@ -72,7 +81,9 @@ public sealed class ConsolidationPageServiceTests
 
         overview.Templates.ToDictionary(t => t.Id, t => t.BrainReadOnly).Should().BeEquivalentTo(new Dictionary<string, bool>
         {
-            ["own-flag"] = true, ["global"] = true, ["project-writes"] = false,
+            ["own-flag"] = true,
+            ["global"] = true,
+            ["project-writes"] = false,
         });
     }
 
@@ -86,7 +97,8 @@ public sealed class ConsolidationPageServiceTests
 
         overview.BrainProviderByTemplate.Should().BeEquivalentTo(new Dictionary<string, string>
         {
-            ["enabled"] = "brain-1", ["disabled"] = "brain-2",
+            ["enabled"] = "brain-1",
+            ["disabled"] = "brain-2",
         });
         overview.HarnessSuggestions.Should().BeSameAs(suggestions);
     }
