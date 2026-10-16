@@ -157,6 +157,8 @@ public class IPipelineExecutorTests
             .Setup(x => x.ExecuteAsync(
                 It.IsAny<ConsolidationJobMessage>(),
                 It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+                It.IsAny<OutputBatcher?>(),
+                It.IsAny<Action<PipelineStep?>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationJobResult { JobId = "test", Success = true });
 

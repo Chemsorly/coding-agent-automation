@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CodingAgent.Agent.Executors;
+using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -33,12 +34,14 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     private readonly ConsolidationProviderResolver _resolver;
     private readonly Serilog.ILogger _logger;
     private readonly IBrainUpdateService _brainUpdateService;
+    private readonly IPipelineReporterFactory _reporterFactory;
 
     public LocalConsolidationExecutor(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
         Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService = null)
+        IBrainUpdateService? brainUpdateService = null,
+        IPipelineReporterFactory? reporterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
@@ -47,17 +50,32 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         _resolver = new ConsolidationProviderResolver(orchestrator, httpClientFactory, logger);
         _logger = logger;
         _brainUpdateService = brainUpdateService ?? new CodingAgent.Infrastructure.Git.BrainUpdateService(logger);
+        _reporterFactory = reporterFactory ?? new PipelineReporterFactory(logger);
     }
 
     /// <summary>
-    /// Executes a consolidation job and reports the result back to the orchestrator.</summary>
+    /// Executes a consolidation job and reports the result back to the orchestrator.
+    /// </summary>
     /// <param name="job">The consolidation job message from the orchestrator.</param>
     /// <param name="connection">The SignalR hub connection for reporting results.</param>
     /// <param name="ct">Cancellation token (linked to shutdown and agent timeout).</param>
     /// <returns>The consolidation job result.</returns>
+    public Task<ConsolidationJobResult> ExecuteAsync(
+        ConsolidationJobMessage job,
+        HubConnection connection,
+        CancellationToken ct)
+        => ExecuteAsync(job, connection, null, null, ct);
+
+    /// <summary>
+    /// Executes a consolidation job, reports its steps and streams its agent output while it runs, and
+    /// reports the result back to the orchestrator. Without an <paramref name="outputBatcher"/> nothing is
+    /// reported while the job runs.
+    /// </summary>
     public async Task<ConsolidationJobResult> ExecuteAsync(
         ConsolidationJobMessage job,
         HubConnection connection,
+        OutputBatcher? outputBatcher,
+        Action<PipelineStep?>? onStepChanged,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(job);
@@ -78,6 +96,22 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         // This mirrors what LocalPipelineExecutor does for regular pipeline jobs.
         using var orchestratorProxy = new OrchestratorProxy(connection, job.JobId);
 
+        PipelineSignalRReporter? reporter = null;
+        ConsolidationProgress? progress = null;
+        Action<string> emitOutputLine;
+
+        if (outputBatcher is not null)
+        {
+            var run = ConsolidationProgress.CreateRun(job);
+            reporter = _reporterFactory.Create(connection, outputBatcher, job.JobId, run, onStepChanged);
+            progress = new ConsolidationProgress(run, step => reporter.TransitionTo(step, ct));
+            emitOutputLine = line => reporter.EmitOutputLine(line, null, ct);
+        }
+        else
+        {
+            emitOutputLine = line => _logger.Information("Consolidation output: {Line}", line);
+        }
+
         ConsolidationJobResult result;
         try
         {
@@ -85,8 +119,8 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
                 job.PipelineConfiguration.AgentTimeout, ct,
                 async linkedCt => job.Type switch
                 {
-                    ConsolidationRunType.BrainConsolidation => await ExecuteBrainConsolidationAsync(job, orchestratorProxy, linkedCt),
-                    ConsolidationRunType.RefactoringDetection => await ExecuteRefactoringDetectionAsync(job, orchestratorProxy, linkedCt),
+                    ConsolidationRunType.BrainConsolidation => await ExecuteBrainConsolidationAsync(job, orchestratorProxy, progress, emitOutputLine, linkedCt),
+                    ConsolidationRunType.RefactoringDetection => await ExecuteRefactoringDetectionAsync(job, orchestratorProxy, progress, emitOutputLine, linkedCt),
                     ConsolidationRunType.HarnessSuggestions => await ExecuteHarnessSuggestionsAsync(job, orchestratorProxy, linkedCt),
                     _ => new ConsolidationJobResult
                     {
@@ -129,8 +163,16 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
                 ErrorMessage = ex.Message
             };
         }
+        finally
+        {
+            if (reporter is not null)
+            {
+                try { await reporter.DisposeAsync(); }
+                catch (Exception ex) { _logger.Warning(ex, "Failed to dispose reporter for consolidation job {JobId}", job.JobId); }
+            }
+        }
 
-        // Report result back to orchestrator
+        // Report result back to orchestrator (after reporter is disposed, so all step transitions are drained first)
         try
         {
             await connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, result, ct);
@@ -169,7 +211,8 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     }
 
     private async Task<ConsolidationJobResult> ExecuteBrainConsolidationAsync(
-        ConsolidationJobMessage job, OrchestratorProxy orchestratorProxy, CancellationToken ct)
+        ConsolidationJobMessage job, OrchestratorProxy orchestratorProxy,
+        ConsolidationProgress? progress, Action<string> emitOutputLine, CancellationToken ct)
     {
         var resolution = await _resolver.ResolveBrainConsolidationProvidersAsync(job, orchestratorProxy, ct);
         if (!resolution.IsSuccess)
@@ -178,13 +221,13 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         await using var providers = resolution.Providers!;
         WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger, providers.AgentProvider.ProviderType);
 
-        var executor = new BrainConsolidationExecutor(_logger, _brainUpdateService);
-        return await executor.ExecuteAsync(job, providers.BrainProvider, providers.AgentProvider, ct,
-            line => _logger.Information("Consolidation output: {Line}", line));
+        var executor = new BrainConsolidationExecutor(_logger, _brainUpdateService, progress);
+        return await executor.ExecuteAsync(job, providers.BrainProvider, providers.AgentProvider, ct, emitOutputLine);
     }
 
     private async Task<ConsolidationJobResult> ExecuteRefactoringDetectionAsync(
-        ConsolidationJobMessage job, OrchestratorProxy orchestratorProxy, CancellationToken ct)
+        ConsolidationJobMessage job, OrchestratorProxy orchestratorProxy,
+        ConsolidationProgress? progress, Action<string> emitOutputLine, CancellationToken ct)
     {
         var resolution = await _resolver.ResolveRefactoringProvidersAsync(job, orchestratorProxy, ct);
         if (!resolution.IsSuccess)
@@ -193,10 +236,9 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         await using var providers = resolution.Providers!;
         WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger, providers.AgentProvider.ProviderType);
 
-        var executor = new RefactoringExecutor(_logger);
+        var executor = new RefactoringExecutor(_logger, progress);
         return await executor.ExecuteAsync(job, providers.RepoProvider, providers.BrainProvider,
-            providers.IssueProvider, providers.AgentProvider, ct,
-            line => _logger.Information("Consolidation output: {Line}", line));
+            providers.IssueProvider, providers.AgentProvider, ct, emitOutputLine);
     }
 
     private async Task<ConsolidationJobResult> ExecuteHarnessSuggestionsAsync(

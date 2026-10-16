@@ -134,6 +134,32 @@ The page is reached through the "Consolidation" item in the sidebar navigation. 
 
 A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review), the auto-dispatch option and the focus before it starts. A focused scan (Structure, Correctness, Design or Tests) runs only that detection agent and proposes only its categories; Phase 0 runs the test coverage only for the All and Tests focus.
 
+### Progress on the run page
+
+Consolidation runs report their steps and stream their agent output the same way implementation runs do: each step the run enters is sent to the orchestrator (`HubMethodNames.ReportStepTransition`) and agent output lines are batched through `OutputBatcher`. The run page's step ladder therefore follows the run in real time.
+
+**Brain consolidation steps** (in order):
+
+1. `CloningRepository` — brain repo cloned into the run workspace
+2. `ConsolidatingKnowledge` — agent executes the 4-phase consolidation prompt
+3. `ReviewingBrainChanges` — diff summary generated; adversarial review executed (if enabled)
+4. `PushingBrainChanges` — changes committed and pushed to the brain repo
+
+**Refactoring detection steps** (in order):
+
+1. `CloningRepository` — code repo (and optionally brain repo) cloned
+2. `AnalyzingHotspots` — git log analysed for frequently-changed files
+3. `ReadingIssueContext` — open and past-outcome issues queried for deduplication context
+4. `ExtractingConventions` — Phase 0 agent extracts project conventions and coverage data
+5. `DetectingFindings` — Phase 1 agents run in parallel (1–4 agents depending on focus)
+6. `AggregatingProposals` — Phase 2 agent aggregates and prioritises findings
+7. `ReviewingProposals` — adversarial review validates proposals (if enabled and proposals non-empty)
+8. `CreatingRefactoringIssues` — validated proposals are created as GitHub issues
+
+The three Phase 1 detection agents (structural debt, correctness, design consistency) produce output prefixed `[A] `, `[B] ` and `[C] ` respectively. The test-gaps agent (when focus is `All` or `Tests`) produces output without a prefix. When a run has no proposals after Phase 2, steps 7 and 8 are skipped.
+
+Harness suggestion runs report no steps and keep their output in the pod log; that workflow is handled by a separate issue.
+
 ### Retention
 
 Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:

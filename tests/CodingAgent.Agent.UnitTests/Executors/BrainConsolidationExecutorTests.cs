@@ -205,4 +205,45 @@ public class BrainConsolidationExecutorTests
         contradictionsResolved.Should().Be(0);
         entriesPruned.Should().Be(0);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WithProgress_ReportsStepsInOrder()
+    {
+        // Arrange
+        var job = CreateJob();
+        var steps = new List<PipelineStep>();
+        var progress = new ConsolidationProgress(ConsolidationProgress.CreateRun(job), steps.Add);
+        var executor = new BrainConsolidationExecutor(_mockLogger.Object, _mockBrainUpdateService.Object, progress);
+
+        _mockBrainProvider.Setup(x => x.BaseBranch).Returns("main");
+        _mockBrainProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockBrainProvider
+            .Setup(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockBrainProvider
+            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Use It.IsAny for the callback param since TryGenerateDiffSummaryAsync now passes onOutputLine through
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Files modified: 1", "Entries merged: 2", "Contradictions resolved: 0", "Entries pruned: 0"]
+            });
+
+        // Act
+        var result = await executor.ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        steps.Should().Equal(
+            PipelineStep.CloningRepository,
+            PipelineStep.ConsolidatingKnowledge,
+            PipelineStep.ReviewingBrainChanges,
+            PipelineStep.PushingBrainChanges);
+    }
 }

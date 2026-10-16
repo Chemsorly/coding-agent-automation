@@ -149,7 +149,8 @@ internal static class AgentHostRegistration
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             logger,
-            sp.GetRequiredService<IBrainUpdateService>()));
+            sp.GetRequiredService<IBrainUpdateService>(),
+            reporterFactory: sp.GetRequiredService<IPipelineReporterFactory>()));
 
         return services;
     }
