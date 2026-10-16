@@ -18,7 +18,7 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 {
     protected override string ExecutorName => "Harness suggestion";
 
-    public HarnessSuggestionExecutor(Serilog.ILogger logger) : base(logger)
+    public HarnessSuggestionExecutor(Serilog.ILogger logger, ConsolidationProgress? progress = null) : base(logger, progress)
     {
     }
 
@@ -91,7 +91,8 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
                         Timeout = job.PipelineConfiguration.AgentTimeout
                     },
                     job.JobId,
-                    ct);
+                    ct,
+                    usagePhase: "harness_generation");
             });
 
             if (failure is not null) return failure;
@@ -152,7 +153,7 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
             try
             {
                 onOutputLine?.Invoke("📄 Instructing agent to write suggestions to file...");
-                await agentProvider.ExecuteAsync(
+                var writeResult = await agentProvider.ExecuteAsync(
                     new AgentRequest
                     {
                         Prompt = "Write your harness improvement suggestions as a JSON array to the file `.agent/harness-suggestions-output.json`. Use the same JSON format you used in your response. Do not modify any other files.",
@@ -160,6 +161,7 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
                         Timeout = job.PipelineConfiguration.AgentTimeout,
                         UseResume = true
                     }, ct, onOutputLine);
+                RecordUsage(writeResult, "harness_write");
 
                 if (!File.Exists(suggestionsOutputPath))
                 {
@@ -208,6 +210,8 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 
                 reviewTokenUsage = reviewResult.ReviewTokenUsage;
                 refinementTokenUsage = reviewResult.RefinementTokenUsage;
+                RecordUsage(reviewResult.ReviewTokenUsage, "harness_review");
+                RecordUsage(reviewResult.RefinementTokenUsage, "harness_refinement");
 
                 suggestions = await TryParseSuggestionsFromFileAsync(
                     suggestionsOutputPath, reviewResult.RefinementTriggered, job.JobId, onOutputLine, ct);

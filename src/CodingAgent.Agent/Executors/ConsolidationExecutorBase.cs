@@ -57,9 +57,12 @@ public abstract class ConsolidationExecutorBase
         AgentRequest request,
         string jobId,
         CancellationToken ct,
-        Action<string>? onOutputLine = null)
+        Action<string>? onOutputLine = null,
+        string? usagePhase = null)
     {
         var agentResult = await agentProvider.ExecuteAsync(request, ct, onOutputLine);
+
+        if (usagePhase is not null) Progress?.AccumulateTokenUsage(agentResult, usagePhase);
 
         if (!agentResult.Success)
         {
@@ -70,6 +73,12 @@ public abstract class ConsolidationExecutorBase
 
         return (agentResult, null);
     }
+
+    /// <summary>Records token usage from a <see cref="TokenUsage"/> into the run's totals.</summary>
+    protected void RecordUsage(TokenUsage? usage, string phase) => Progress?.AccumulateTokenUsage(usage, phase);
+
+    /// <summary>Records token usage from an <see cref="AgentResult"/> into the run's totals.</summary>
+    protected void RecordUsage(AgentResult? result, string phase) => Progress?.AccumulateTokenUsage(result, phase);
 
     /// <summary>
     /// Wraps an async action with the standard cancellation and error handling pattern.
