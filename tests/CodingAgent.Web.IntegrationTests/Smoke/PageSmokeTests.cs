@@ -67,6 +67,7 @@ public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("/overview")]
     [InlineData("/runs")]
     [InlineData("/runs/00000000-0000-0000-0000-000000000000")]
+    [InlineData("/pipelines/00000000-0000-0000-0000-000000000000")]
     public async Task Get_Page_Resolves_Assets_From_App_Root(string path)
     {
         var documentUri = new Uri(_client.BaseAddress!, path);

@@ -136,9 +136,9 @@ public sealed class LoopControlTests : E2ETestBase
             await removeBtn.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
             Assert.True(await removeBtn.CountAsync() > 0, "Remove button should be visible while loop is active");
 
-            var editBtn = Page.Locator("button.btn-edit:has-text('Edit')");
+            var editBtn = Page.Locator("a.btn-edit:has-text('Edit')");
             await editBtn.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
-            Assert.True(await editBtn.CountAsync() > 0, "Edit button should be visible while loop is active");
+            Assert.True(await editBtn.CountAsync() > 0, "Edit link should be visible while loop is active");
 
             var addBtn = Page.Locator("button.btn-add:has-text('Add Template')");
             await addBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });

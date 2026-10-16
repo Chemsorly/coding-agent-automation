@@ -47,7 +47,6 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleHousekeeping { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleBranchCleanup { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
-    [Parameter] public EventCallback<PipelineJobTemplate> OnEditTemplate { get; set; }
     [Parameter] public EventCallback<(TemplateId TemplateId, string SourceProjectId, string TargetProjectId)> OnMoveTemplate { get; set; }
     [Parameter] public EventCallback OnShowAddForm { get; set; }
     [Parameter] public EventCallback OnAddTemplate { get; set; }
@@ -203,8 +202,6 @@ public partial class TemplateTableSection
 
     public class TemplateFormModel
     {
-        /// <summary>The template being edited; null when the form adds a new one.</summary>
-        public string? EditingTemplateId { get; set; }
         public string Name { get; set; } = "";
         public string ProjectId { get; set; } = "";
         public string IssueProviderId { get; set; } = "";
@@ -226,31 +223,6 @@ public partial class TemplateTableSection
         public IReadOnlyList<SetupStep>? SetupSteps { get; set; }
         public string? SteeringContent { get; set; }
         public IReadOnlyList<string>? BlacklistedPaths { get; set; }
-
-        /// <summary>A form that edits <paramref name="template"/>, filled with its current values.</summary>
-        public static TemplateFormModel ForEdit(PipelineJobTemplate template, string projectId) => new()
-        {
-            EditingTemplateId = template.Id,
-            Name = template.Name,
-            ProjectId = projectId,
-            IssueProviderId = template.IssueProviderId,
-            RepoProviderId = template.RepoProviderId,
-            BrainProviderId = template.BrainProviderId ?? "",
-            PipelineProviderId = template.PipelineProviderId ?? "",
-            HousekeepingEnabled = template.HousekeepingEnabled,
-            HousekeepingConcurrencyLimit = template.HousekeepingConcurrencyLimit,
-            HousekeepingBranchCleanupEnabled = template.HousekeepingBranchCleanupEnabled,
-            BrainReadOnly = template.BrainReadOnly,
-            ImplementationEnabled = template.ImplementationEnabled,
-            ReviewEnabled = template.ReviewEnabled,
-            DecompositionEnabled = template.DecompositionEnabled,
-            TriageEnabled = template.TriageEnabled,
-            RequiredLabels = template.RequiredLabels,
-            Secrets = template.Secrets is { Count: > 0 } ? new Dictionary<string, string>(template.Secrets) : null,
-            SetupSteps = template.SetupSteps,
-            SteeringContent = template.SteeringContent,
-            BlacklistedPaths = template.BlacklistedPaths,
-        };
     }
 
     private sealed class ProjectTemplateGroup
