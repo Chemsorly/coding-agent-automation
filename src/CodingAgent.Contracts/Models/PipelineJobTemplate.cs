@@ -91,4 +91,45 @@ public sealed record PipelineJobTemplate
     /// </summary>
     [Key(14)]
     public bool TriageEnabled { get; init; } = false;
+
+    // ── Repository settings (moved from ProviderConfig) ───────────────────
+
+    /// <summary>
+    /// Explicit required agent labels for the repository. When set, takes precedence
+    /// in label resolution. Null or empty means fall back to
+    /// <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/>, then empty (any agent).
+    /// </summary>
+    [Key(15)]
+    public IReadOnlyList<string>? RequiredLabels { get; init; }
+
+    /// <summary>
+    /// Environment secrets injected into setup step processes as environment variables.
+    /// Keys are variable names, values are plaintext.
+    /// A null or empty value behaves as an unset value.
+    /// </summary>
+    [Key(16)]
+    public Dictionary<string, string>? Secrets { get; init; }
+
+    /// <summary>
+    /// Shell commands executed sequentially after clone, before the agent starts.
+    /// Commands can reference Secrets via standard shell variable expansion ($KEY).
+    /// A null or empty value behaves as an unset value.
+    /// </summary>
+    [Key(17)]
+    public IReadOnlyList<SetupStep>? SetupSteps { get; init; }
+
+    /// <summary>
+    /// Optional markdown steering content written to the agent workspace before each run.
+    /// A null or empty value behaves as an unset value.
+    /// </summary>
+    [Key(18)]
+    public string? SteeringContent { get; init; }
+
+    /// <summary>
+    /// Path prefixes excluded from agent commits for this repository.
+    /// Null means fall back to <see cref="PipelineConfiguration.BlacklistedPaths"/> global default.
+    /// A null or empty value behaves as an unset value.
+    /// </summary>
+    [Key(19)]
+    public IReadOnlyList<string>? BlacklistedPaths { get; init; }
 }

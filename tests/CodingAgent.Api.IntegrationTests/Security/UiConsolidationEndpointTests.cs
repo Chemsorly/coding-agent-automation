@@ -49,16 +49,29 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
         await projects.SaveProjectAsync(new PipelineProject { Id = Project, Name = "Delta", MaxRefactoringProposals = 9 }, CancellationToken.None);
         await projects.SaveTemplateAsync(Project, new PipelineJobTemplate
         {
-            Id = Template, Name = "delta-api", IssueProviderId = "ip-delta", RepoProviderId = RepoProvider, BrainProviderId = "brain-delta", Enabled = true,
+            Id = Template,
+            Name = "delta-api",
+            IssueProviderId = "ip-delta",
+            RepoProviderId = RepoProvider,
+            BrainProviderId = "brain-delta",
+            Enabled = true,
+            RequiredLabels = [.. Labels],
         }, CancellationToken.None);
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(new ProviderConfig
         {
-            Id = RepoProvider, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Delta repo", RequiredLabels = [.. Labels],
+            Id = RepoProvider,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Delta repo",
         }, CancellationToken.None);
         await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(new AgentProfile
         {
-            Id = Profile, DisplayName = "Delta agent", AgentProviderConfigId = "agent-cfg", MatchLabels = Labels, Enabled = true,
+            Id = Profile,
+            DisplayName = "Delta agent",
+            AgentProviderConfigId = "agent-cfg",
+            MatchLabels = Labels,
+            Enabled = true,
         }, CancellationToken.None);
     }
 

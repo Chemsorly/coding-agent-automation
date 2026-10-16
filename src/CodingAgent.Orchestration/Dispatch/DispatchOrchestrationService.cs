@@ -499,7 +499,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     }
 
     /// <summary>
-    /// Resolves required labels from the repo provider config, falling back to global config defaults.
+    /// Resolves required labels from the repo's pipeline job template, falling back to global config defaults.
     /// </summary>
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsInternalAsync(
         ProviderConfigId repoProviderId, CancellationToken ct)
@@ -507,7 +507,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var repoConfig = await _providerConfigStore
             .GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         var pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-        return LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+        var enrichedRepoConfig = repoConfig is not null
+            ? RepositorySettings.WithTemplateSettings(repoConfig, RepositorySettings.TemplateFor(repoProviderId.Value, templates))
+            : null;
+        return LabelResolver.ResolveRequiredLabels(enrichedRepoConfig, pipelineConfig);
     }
 
     /// <summary>

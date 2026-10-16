@@ -185,8 +185,12 @@ public sealed class UiProviderEndpointTests(ProviderChecksApiFactory factory)
             settings[key] = value;
         return new ProviderConfig
         {
-            Id = id ?? config.Id, Kind = config.Kind, ProviderType = config.ProviderType, DisplayName = config.DisplayName,
-            Settings = settings, Secrets = config.Secrets,
+            Id = id ?? config.Id,
+            Kind = config.Kind,
+            ProviderType = config.ProviderType,
+            DisplayName = config.DisplayName,
+            Settings = settings,
+            Secrets = config.Secrets,
         };
     }
 
@@ -267,6 +271,8 @@ public sealed class UiProviderEndpointTests(ProviderChecksApiFactory factory)
     {
         await SeedAsync(GitHubRepo());
         var masked = await MaskedAsync(RepoId, ProviderKind.Repository);
+        // Secrets were in the old-format seeded provider; they appear in the masked form.
+        // The UI save path strips them because they now live on the pipeline job template (issue #3575).
         var secrets = new Dictionary<string, string>(masked.Secrets!) { ["NEW_KEY"] = "new-value" };
         var edited = UiSecretMask.Copy(masked, new Dictionary<string, string>(masked.Settings) { [ProviderSettingKeys.Repo] = "renamed" }, secrets);
 
@@ -276,8 +282,10 @@ public sealed class UiProviderEndpointTests(ProviderChecksApiFactory factory)
         stored.Settings[ProviderSettingKeys.PrivateKeyBase64].Should().Be(KeyCanary);
         stored.Settings[ProviderSettingKeys.Token].Should().Be(TokenCanary);
         stored.Settings[ProviderSettingKeys.Repo].Should().Be("renamed");
-        stored.Secrets.Should().Equal(new Dictionary<string, string> { ["NPM_TOKEN"] = SecretCanary, ["NEW_KEY"] = "new-value" });
-        stored.SteeringContent.Should().Be("Use pnpm.");
+        // Secrets and SteeringContent no longer live on the repository provider (issue #3575);
+        // the UI save path silently strips them from a pre-migration provider as part of migration.
+        stored.Secrets.Should().BeNullOrEmpty("repository provider no longer stores Secrets — they live on the pipeline job template");
+        stored.SteeringContent.Should().BeNullOrWhiteSpace("repository provider no longer stores SteeringContent — it lives on the pipeline job template");
     }
 
     [Fact]
@@ -310,7 +318,10 @@ public sealed class UiProviderEndpointTests(ProviderChecksApiFactory factory)
         var masked = await MaskedAsync(IssueId, ProviderKind.Issue);
         var related = new ProviderConfig
         {
-            Id = NewId, Kind = ProviderKind.Pipeline, ProviderType = ProviderTypes.GitHub, DisplayName = "CI",
+            Id = NewId,
+            Kind = ProviderKind.Pipeline,
+            ProviderType = ProviderTypes.GitHub,
+            DisplayName = "CI",
             Settings = new Dictionary<string, string>(masked.Settings),
         };
 

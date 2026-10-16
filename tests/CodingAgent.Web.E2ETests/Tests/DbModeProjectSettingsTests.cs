@@ -434,24 +434,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
     {
         const string secretsProjectId = "aaaaaaaa-bbbb-cccc-dddd-555555555555";
 
-        // Update the existing "repo-e2e" provider config to add a repo-level secret K2=r.
-        // Must UPDATE (not add a new config) — DispatchIssueAsync defaults repoProviderId="repo-e2e"
-        // and adding a different ID would break dispatch.
-        // TODO [WARNING]: This mutates the shared "repo-e2e" provider config without restoring it
-        // after the test. Because all tests share the same E2EFixture (xUnit [Collection]), any
-        // test running after this one that relies on "repo-e2e" having no secrets (or different
-        // secrets) will observe the contaminated state. Add a teardown step (e.g., call
-        // SaveProviderConfigAsync again with Secrets = null) after the test body, or use a
-        // try/finally block to ensure cleanup even on assertion failures.
-        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
-        {
-            Id = "repo-e2e",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "E2E Repo Provider",
-            Secrets = new Dictionary<string, string> { ["K2"] = "r" }
-        }, CancellationToken.None);
-
         // Seed project with K1=p and K2=p.
         await Fixture.ConfigStore.SaveProjectAsync(new PipelineProject
         {
@@ -472,7 +454,9 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Name = "Secrets Merge Template",
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-e2e",
-            Enabled = true
+            Enabled = true,
+            // Repo-level secrets live on the template (issue #3575). K2=r comes from here.
+            Secrets = new Dictionary<string, string> { ["K2"] = "r" }
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile

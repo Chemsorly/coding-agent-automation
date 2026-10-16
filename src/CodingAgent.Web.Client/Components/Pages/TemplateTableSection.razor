@@ -102,7 +102,7 @@
                                     <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, IssueProviders)</td>
                                     <td class="monitoring-mono">
                                         @GetProviderDisplayName(template.RepoProviderId, RepoProviders)
-                                        @{ var previewLabels = GetLabelPreview(template.RepoProviderId); }
+                                        @{ var previewLabels = GetLabelPreview(template.RequiredLabels); }
                                         @if (previewLabels.Labels.Count > 0)
                                         {
                                             <button class="btn-label-preview" @onclick="() => ToggleLabelPreview(template.Id)" title="Show label-mapped resources" aria-expanded="@(_expandedPreviewTemplateId == template.Id ? "true" : "false")"><Icon Name="info" Size="14" /></button>
@@ -295,7 +295,7 @@
         <TemplateAddForm Form="AddForm" FormError="@FormError" Projects="Projects"
             IssueProviders="IssueProviders" RepoProviders="RepoProviders"
             BrainProviders="BrainProviders" PipelineProviders="PipelineProviders"
-            LabelPreview="@(!string.IsNullOrEmpty(AddForm.RepoProviderId) ? GetLabelPreview(AddForm.RepoProviderId) : new LabelPreviewResult())"
+            LabelPreview="@(!string.IsNullOrEmpty(AddForm.RepoProviderId) ? GetLabelPreview(AddForm.RequiredLabels) : new LabelPreviewResult())"
             OnSave="OnAddTemplate" OnCancel="OnCancelAdd" />
     }
     else if (CanEdit)

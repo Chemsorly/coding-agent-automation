@@ -283,52 +283,29 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
     public async Task Settings_RepoProvider_SetupStepsAndSecrets_ReachAssignment()
     {
         var ct = CancellationToken.None;
-        var page = new SettingsPage(Page, BaseUrl);
 
-        // ── Step 1: Edit the pre-seeded "E2E Repo Provider" via the UI ──────────────────
+        // ── Steps 1-4 (pre-issue #3575): setup steps and secrets were edited via the repository
+        // provider form. After issue #3575, these fields live on the pipeline job template, not
+        // the repository provider connection. The repository provider form no longer has these
+        // editors. We seed the data directly on a template and verify it reaches the assignment.
 
-        await page.NavigateAsync();
-        await page.SelectTreeNodeAsync("Repository");
-        await page.ClickEditProviderAsync("E2E Repo Provider");
-
-        // Switch to GitLab type to bypass GitHub credential validation
-        // TODO [WARNING]: This silently mutates the pre-seeded "E2E Repo Provider" — changing its type
-        // and adding SetupSteps/Secrets — for the lifetime of this collection run. Other tests that rely
-        // on "E2E Repo Provider" being the original type (or having no SetupSteps/Secrets) may break or
-        // observe stale state. There is no teardown to restore the provider. Since ResetAll() + SeedDefaults()
-        // runs before the next test, this is safe as long as no other test in the same run interacts with
-        // this provider after this test executes. Document this assumption explicitly, or restore the
-        // provider in a finally block if test ordering guarantees cannot be relied upon.
-        await page.SelectProviderTypeAsync("GitLab");
-
-        // Fill required GitLab fields
-        await page.FillGitLabProviderFormAsync("E2E Repo Provider", "test-token", "12345");
-
-        // ── Step 2: Add two setup steps ─────────────────────────────────────────────────
-
-        await page.AddSetupStepAsync("Restore", "dotnet restore");
-        await page.AddSetupStepAsync("Build", "dotnet build --no-restore");
-
-        // ── Step 3: Add a repository secret ─────────────────────────────────────────────
-
-        await page.AddSecretAsync("FEED_TOKEN", "abcd1234");
-
-        // ── Step 4: Save via the UI ──────────────────────────────────────────────────────
-
-        await page.ClickSaveAsync();
-
-        // Verify the provider was saved with the setup steps and secrets
-        var savedConfigs = await Fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var savedRepo = savedConfigs.FirstOrDefault(c => c.Id == "repo-e2e");
-        Assert.NotNull(savedRepo);
-        Assert.NotNull(savedRepo.SetupSteps);
-        Assert.Equal(2, savedRepo.SetupSteps.Count);
-        Assert.Equal("Restore", savedRepo.SetupSteps[0].Name);
-        Assert.Equal("dotnet restore", savedRepo.SetupSteps[0].Command);
-        Assert.Equal("Build", savedRepo.SetupSteps[1].Name);
-        Assert.Equal("dotnet build --no-restore", savedRepo.SetupSteps[1].Command);
-        Assert.NotNull(savedRepo.Secrets);
-        Assert.Equal("abcd1234", savedRepo.Secrets["FEED_TOKEN"]);
+        // Seed a template for repo-e2e with setup steps, secrets, and required labels.
+        // RequiredLabels is needed so PrepareDistributionRequestAsync selects the right profile.
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-setup-e2e",
+            Name = "Setup E2E Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true,
+            RequiredLabels = new[] { "setup-e2e" },
+            SetupSteps = new List<SetupStep>
+            {
+                new() { Name = "Restore", Command = "dotnet restore" },
+                new() { Name = "Build", Command = "dotnet build --no-restore" }
+            },
+            Secrets = new Dictionary<string, string> { ["FEED_TOKEN"] = "abcd1234" }
+        }, ct);
 
         // ── Step 5: Also seed a project-level secret to verify repo wins on collision ────
 
@@ -373,7 +350,7 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         await using var agent = new FakeAgentClient("setup-agent-1", "setup-e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // ── Step 8: Dispatch the issue (UI save happened before this — payload frozen at dispatch time) ──
+        // ── Step 8: Dispatch the issue (template settings frozen at dispatch time) ──
 
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
