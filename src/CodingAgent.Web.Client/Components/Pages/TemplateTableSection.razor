@@ -93,7 +93,7 @@
 
                                 <tr class="@(isPolling ? "monitoring-row-busy" : "") @(!template.Enabled ? "monitoring-row-disabled" : "")">
                                     <td>
-                                        @template.Name
+                                        <a href="/pipelines/@template.Id">@template.Name</a>
                                         @if (providerMissing)
                                         {
                                             <span class="badge-disabled-table" title="Referenced provider no longer exists"><Icon Name="alert-triangle" Size="14" /></span>
@@ -174,7 +174,7 @@
                                     {
                                     <td>
                                         <div style="display: flex; gap: 4px; align-items: center;">
-                                                <button class="btn-edit" @onclick="() => OnEditTemplate.InvokeAsync(template)">Edit</button>
+                                                <a class="btn-edit" href="/pipelines/@template.Id">Edit</a>
                                                 <button class="btn-delete" @onclick="() => OnConfirmRemove.InvokeAsync(template)">Remove</button>
                                                 @if (Projects.Count > 1)
                                                 {
