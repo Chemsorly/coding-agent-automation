@@ -43,7 +43,7 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
 
         if (assignment.TaskType == WorkItemTaskType.Consolidation)
         {
-            return await ExecuteConsolidationAsync(assignment, connection, ct);
+            return await ExecuteConsolidationAsync(assignment, connection, outputBatcher, onStepChanged, ct);
         }
 
         // Standard pipeline execution (Implementation, Review, Decomposition)
@@ -53,6 +53,8 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
     private async Task<JobCompletionPayload> ExecuteConsolidationAsync(
         JobAssignmentMessage assignment,
         HubConnection connection,
+        OutputBatcher outputBatcher,
+        Action<PipelineStep?>? onStepChanged,
         CancellationToken ct)
     {
         _logger.Information("Routing work item {JobId} to consolidation executor (type={ConsolidationType})",
@@ -75,7 +77,7 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
         };
 
         // Execute and report via the consolidation-specific hub method
-        var result = await _consolidationExecutor.ExecuteAsync(consolidationJob, connection, ct);
+        var result = await _consolidationExecutor.ExecuteAsync(consolidationJob, connection, outputBatcher, onStepChanged, ct);
 
         // Note: LocalConsolidationExecutor already calls ReportConsolidationComplete internally.
         // Adapt ConsolidationJobResult → JobCompletionPayload for uniform return type.

@@ -2329,4 +2329,113 @@ public class RefactoringExecutorTests : IDisposable
             Times.Never,
             "bug proposals must not be filed when focus=Structure");
     }
+
+    [Fact]
+    public async Task ExecuteAsync_ValidProposals_ReportsScanStepsInOrder()
+    {
+        // Arrange
+        var job = CreateJob();
+        var steps = new List<PipelineStep>();
+        var progress = new ConsolidationProgress(ConsolidationProgress.CreateRun(job), steps.Add);
+        var executor = new RefactoringExecutor(_mockLogger.Object, progress);
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "affectedFiles": ["src/Service.cs", "src/Handler.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Found 1 refactoring opportunity."]
+            });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        steps.Should().Equal(
+            PipelineStep.CloningRepository,
+            PipelineStep.AnalyzingHotspots,
+            PipelineStep.ReadingIssueContext,
+            PipelineStep.ExtractingConventions,
+            PipelineStep.DetectingFindings,
+            PipelineStep.AggregatingProposals,
+            PipelineStep.ReviewingProposals,
+            PipelineStep.CreatingRefactoringIssues);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithOutputCallback_PrefixesDetectorOutput()
+    {
+        // Arrange
+        var job = CreateJob();
+        var executor = CreateExecutor();
+        var lines = new List<string>();
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "affectedFiles": ["src/Service.cs", "src/Handler.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Set up to match any callback (including non-null from Phase 1) and invoke it with "line"
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((_, _, cb) => cb?.Invoke("line"))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Done."]
+            });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object,
+            CancellationToken.None, onOutputLine: lines.Add);
+
+        // Assert: Phase 1 structural/correctness/design get prefixed; TestGaps and Phases 0/2 do not
+        lines.Should().Contain("[A] line");
+        lines.Should().Contain("[B] line");
+        lines.Should().Contain("[C] line");
+    }
 }
