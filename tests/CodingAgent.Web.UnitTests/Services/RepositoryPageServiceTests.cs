@@ -218,7 +218,10 @@ public class RepositoryPageServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub, DisplayName = "Repo",
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = ProviderTypes.GitHub,
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "myorg", [ProviderSettingKeys.Repo] = "myrepo" }
         };
 
@@ -232,7 +235,10 @@ public class RepositoryPageServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub, DisplayName = "GHE",
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = ProviderTypes.GitHub,
+            DisplayName = "GHE",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.Owner] = "org",
@@ -253,7 +259,10 @@ public class RepositoryPageServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub, DisplayName = "Repo",
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = ProviderTypes.GitHub,
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string> { [ProviderSettingKeys.Repo] = "myrepo" }
         };
 
@@ -265,7 +274,10 @@ public class RepositoryPageServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub, DisplayName = "Repo",
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = ProviderTypes.GitHub,
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "myorg" }
         };
 
@@ -277,7 +289,10 @@ public class RepositoryPageServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitLab, DisplayName = "GL",
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = ProviderTypes.GitLab,
+            DisplayName = "GL",
             Settings = new Dictionary<string, string> { [ProviderSettingKeys.ProjectId] = "123" }
         };
 
@@ -289,7 +304,10 @@ public class RepositoryPageServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "Unknown", DisplayName = "X",
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "Unknown",
+            DisplayName = "X",
             Settings = new Dictionary<string, string>()
         };
 
@@ -302,7 +320,10 @@ public class RepositoryPageServiceTests
         // null Settings dict would throw when accessing it
         var config = new ProviderConfig
         {
-            Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub, DisplayName = "Repo",
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = ProviderTypes.GitHub,
+            DisplayName = "Repo",
             Settings = null!
         };
 
