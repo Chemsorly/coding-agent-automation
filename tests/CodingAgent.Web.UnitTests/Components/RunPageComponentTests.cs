@@ -1056,6 +1056,84 @@ public class RunPageComponentTests : BunitContext
         cut.Find("[data-testid='phase-consolidation']").Should().NotBeNull();
         cut.FindAll("[data-testid='phase-code-generation']").Should().BeEmpty();
     }
+
+    // ── Issue #3589: failure diagnosis card ───────────────────────────────────
+
+    /// <summary>
+    /// A failed run with ExitCodeFailure + OOMKilled must show the diagnosis card
+    /// with verdict "Configuration".
+    /// </summary>
+    [Fact]
+    public void RunPage_FailedRunWithOomKilled_ShowsDiagnosisCard()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3589",
+            IssueTitle = "OOM run",
+            FinalStep = PipelineStep.Failed,
+            FailureCategory = FailureReason.ExitCodeFailure,
+            FailureReason = "OOMKilled",
+            StartedAtOffset = new DateTimeOffset(2026, 10, 1, 11, 55, 0, TimeSpan.Zero),
+            CompletedAtOffset = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero),
+        };
+
+        var mockRunClient = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        mockRunClient
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false });
+        RegisterServices(summary, mockRunClient);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        Assert.NotEmpty(cut.FindAll("[data-testid='diagnosis-card']"));
+        Assert.Equal("Configuration", cut.Find("[data-testid='diagnosis-verdict']").TextContent.Trim());
+    }
+
+    /// <summary>
+    /// A completed run must NOT show the diagnosis card.
+    /// </summary>
+    [Fact]
+    public void RunPage_CompletedRun_ShowsNoDiagnosisCard()
+    {
+        var summary = MakeSummary(PipelineRunType.Implementation, PipelineStep.Completed);
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        Assert.Empty(cut.FindAll("[data-testid='diagnosis-card']"));
+    }
+
+    /// <summary>
+    /// When GetRunHistoryAsync throws, the diagnosis card must still appear because
+    /// the diagnoser falls back to single-run rules (OOMKilled → Configuration).
+    /// </summary>
+    [Fact]
+    public void RunPage_FailedRun_GetRunHistoryThrows_StillShowsDiagnosisCard()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3589",
+            IssueTitle = "OOM run with history error",
+            FinalStep = PipelineStep.Failed,
+            FailureCategory = FailureReason.ExitCodeFailure,
+            FailureReason = "OOMKilled",
+            StartedAtOffset = new DateTimeOffset(2026, 10, 1, 11, 55, 0, TimeSpan.Zero),
+            CompletedAtOffset = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero),
+        };
+
+        var mockRunClient = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        mockRunClient
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated history failure"));
+        RegisterServices(summary, mockRunClient);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        Assert.NotEmpty(cut.FindAll("[data-testid='diagnosis-card']"));
+        Assert.Equal("Configuration", cut.Find("[data-testid='diagnosis-verdict']").TextContent.Trim());
+    }
 }
 
 /// <summary>
