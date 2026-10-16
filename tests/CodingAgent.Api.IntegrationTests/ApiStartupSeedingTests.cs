@@ -264,6 +264,305 @@ public sealed class ApiStartupSeedingTests : IDisposable
         cleanup.Database.EnsureDeleted();
     }
 
+    // ── AC3: MoveRepositorySettingsToTemplatesAsync — repository settings migrated to templates ────
+
+    /// <summary>
+    /// When a repository provider carries any of the five repository-settings fields and at least
+    /// one enabled and one disabled template reference it, the fields are copied onto both templates
+    /// (respecting null-means-unset) and cleared from the provider. Covers the primary migration path.
+    /// </summary>
+    [Fact]
+    public async Task MoveRepositorySettings_CopiesFieldsFromProviderOntoItsTemplates()
+    {
+        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
+        var providerGuid = Guid.NewGuid();
+        var enabledTemplateGuid = Guid.NewGuid();
+        var disabledTemplateGuid = Guid.NewGuid();
+        const string providerId = "rp-migrate-1";
+
+        var provider = new ProviderConfig
+        {
+            Id = providerId,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Migrate Me",
+            Settings = new Dictionary<string, string> { ["owner"] = "org" },
+            RequiredLabels = ["kiro", "dotnet"],
+            Secrets = new Dictionary<string, string> { ["NPM_TOKEN"] = "s3cr3t" },
+            SetupSteps = [new SetupStep { Name = "restore", Command = "dotnet restore" }],
+            SteeringContent = "## Architecture\nFoo",
+            BlacklistedPaths = [".kiro"],
+        };
+        var enabledTemplate = new PipelineJobTemplate
+        {
+            Id = enabledTemplateGuid.ToString(),
+            Name = "Enabled",
+            IssueProviderId = "ip-1",
+            RepoProviderId = providerId,
+            Enabled = true,
+        };
+        var disabledTemplate = new PipelineJobTemplate
+        {
+            Id = disabledTemplateGuid.ToString(),
+            Name = "Disabled",
+            IssueProviderId = "ip-1",
+            RepoProviderId = providerId,
+            Enabled = false,
+        };
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", Enabled = true });
+            db.ProviderConfigs.Add(new ProviderConfigEntity
+            {
+                Id = providerGuid,
+                Kind = ProviderKind.Repository,
+                DisplayName = "Migrate Me",
+                ProviderType = "GitHub",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(provider, PipelineJsonOptions.Default)
+            });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = enabledTemplateGuid,
+                ProjectId = defaultGuid,
+                Name = "Enabled",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(enabledTemplate, PipelineJsonOptions.Default)
+            });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = disabledTemplateGuid,
+                ProjectId = defaultGuid,
+                Name = "Disabled",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(disabledTemplate, PipelineJsonOptions.Default)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await CreateService().RunStartupSeedingAsync(CancellationToken.None);
+
+        await using var check = _dbFactory.CreateDbContext();
+
+        // Provider's five fields must be cleared
+        var updatedProvider = await check.ProviderConfigs.FindAsync(providerGuid);
+        var providerConfig = System.Text.Json.JsonSerializer.Deserialize<ProviderConfig>(
+            updatedProvider!.Configuration!, PipelineJsonOptions.Lenient);
+        providerConfig!.RequiredLabels.Should().BeNullOrEmpty("five fields must be cleared from the provider");
+        providerConfig.Secrets.Should().BeNullOrEmpty();
+        providerConfig.SetupSteps.Should().BeNullOrEmpty();
+        providerConfig.SteeringContent.Should().BeNullOrWhiteSpace();
+        providerConfig.BlacklistedPaths.Should().BeNullOrEmpty();
+
+        // Both templates (enabled and disabled) must now carry the fields
+        foreach (var templateGuid in new[] { enabledTemplateGuid, disabledTemplateGuid })
+        {
+            var entity = await check.PipelineJobTemplates.FindAsync(templateGuid);
+            var tmpl = System.Text.Json.JsonSerializer.Deserialize<PipelineJobTemplate>(
+                entity!.Configuration!, PipelineJsonOptions.Lenient);
+            tmpl!.RequiredLabels.Should().BeEquivalentTo(["kiro", "dotnet"],
+                $"template {templateGuid} must receive RequiredLabels from the provider");
+            tmpl.Secrets.Should().ContainKey("NPM_TOKEN").WhoseValue.Should().Be("s3cr3t");
+            tmpl.SetupSteps.Should().HaveCount(1);
+            tmpl.SteeringContent.Should().Be("## Architecture\nFoo");
+            tmpl.BlacklistedPaths.Should().BeEquivalentTo([".kiro"]);
+        }
+    }
+
+    /// <summary>
+    /// When a template already has a non-empty value for a field, the migration must NOT
+    /// overwrite it — even if the provider also has a value for that field.
+    /// </summary>
+    [Fact]
+    public async Task MoveRepositorySettings_DoesNotOverwriteExistingTemplateValue()
+    {
+        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
+        var providerGuid = Guid.NewGuid();
+        var templateGuid = Guid.NewGuid();
+        const string providerId = "rp-migrate-2";
+
+        var provider = new ProviderConfig
+        {
+            Id = providerId,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "No Overwrite",
+            Settings = new Dictionary<string, string>(),
+            RequiredLabels = ["from-provider"],
+            SteeringContent = "provider-steering",
+        };
+        var template = new PipelineJobTemplate
+        {
+            Id = templateGuid.ToString(),
+            Name = "AlreadyHasLabels",
+            IssueProviderId = "ip-1",
+            RepoProviderId = providerId,
+            Enabled = true,
+            RequiredLabels = ["existing-label"],  // already set — must not be overwritten
+            SteeringContent = null,               // not set — must be copied from provider
+        };
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", Enabled = true });
+            db.ProviderConfigs.Add(new ProviderConfigEntity
+            {
+                Id = providerGuid,
+                Kind = ProviderKind.Repository,
+                DisplayName = "No Overwrite",
+                ProviderType = "GitHub",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(provider, PipelineJsonOptions.Default)
+            });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = templateGuid,
+                ProjectId = defaultGuid,
+                Name = "AlreadyHasLabels",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(template, PipelineJsonOptions.Default)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await CreateService().RunStartupSeedingAsync(CancellationToken.None);
+
+        await using var check = _dbFactory.CreateDbContext();
+        var entity = await check.PipelineJobTemplates.FindAsync(templateGuid);
+        var tmpl = System.Text.Json.JsonSerializer.Deserialize<PipelineJobTemplate>(
+            entity!.Configuration!, PipelineJsonOptions.Lenient);
+
+        tmpl!.RequiredLabels.Should().BeEquivalentTo(["existing-label"],
+            "existing non-empty template value must not be overwritten by provider value");
+        tmpl.SteeringContent.Should().Be("provider-steering",
+            "null template field must be filled from provider");
+    }
+
+    /// <summary>
+    /// A repository provider whose five fields are set but which no template references
+    /// must keep its values and generate a warning log — the migration must not silently discard them.
+    /// </summary>
+    [Fact]
+    public async Task MoveRepositorySettings_KeepsValuesOnUnreferencedProvider()
+    {
+        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
+        var providerGuid = Guid.NewGuid();
+        const string providerId = "rp-migrate-3";
+
+        var provider = new ProviderConfig
+        {
+            Id = providerId,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Unreferenced",
+            Settings = new Dictionary<string, string>(),
+            RequiredLabels = ["kiro"],
+            SteeringContent = "keep me",
+        };
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", Enabled = true });
+            db.ProviderConfigs.Add(new ProviderConfigEntity
+            {
+                Id = providerGuid,
+                Kind = ProviderKind.Repository,
+                DisplayName = "Unreferenced",
+                ProviderType = "GitHub",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(provider, PipelineJsonOptions.Default)
+            });
+            // No templates reference this provider
+            await db.SaveChangesAsync();
+        }
+
+        // Must not throw
+        await CreateService().RunStartupSeedingAsync(CancellationToken.None);
+
+        await using var check = _dbFactory.CreateDbContext();
+        var updatedProvider = await check.ProviderConfigs.FindAsync(providerGuid);
+        var providerConfig = System.Text.Json.JsonSerializer.Deserialize<ProviderConfig>(
+            updatedProvider!.Configuration!, PipelineJsonOptions.Lenient);
+
+        providerConfig!.RequiredLabels.Should().BeEquivalentTo(["kiro"],
+            "provider settings must be preserved when no template references it");
+        providerConfig.SteeringContent.Should().Be("keep me",
+            "provider settings must be preserved when no template references it");
+    }
+
+    /// <summary>
+    /// A second call to <see cref="DatabaseStartupService.RunStartupSeedingAsync"/> after the
+    /// migration has already run must change nothing — the migration is idempotent.
+    /// </summary>
+    [Fact]
+    public async Task MoveRepositorySettings_IsIdempotent_SecondRunChangesNothing()
+    {
+        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
+        var providerGuid = Guid.NewGuid();
+        var templateGuid = Guid.NewGuid();
+        const string providerId = "rp-migrate-4";
+
+        var provider = new ProviderConfig
+        {
+            Id = providerId,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Idempotent",
+            Settings = new Dictionary<string, string>(),
+            RequiredLabels = ["kiro"],
+        };
+        var template = new PipelineJobTemplate
+        {
+            Id = templateGuid.ToString(),
+            Name = "Idempotent",
+            IssueProviderId = "ip-1",
+            RepoProviderId = providerId,
+            Enabled = true,
+        };
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", Enabled = true });
+            db.ProviderConfigs.Add(new ProviderConfigEntity
+            {
+                Id = providerGuid,
+                Kind = ProviderKind.Repository,
+                DisplayName = "Idempotent",
+                ProviderType = "GitHub",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(provider, PipelineJsonOptions.Default)
+            });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = templateGuid,
+                ProjectId = defaultGuid,
+                Name = "Idempotent",
+                Configuration = System.Text.Json.JsonSerializer.Serialize(template, PipelineJsonOptions.Default)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateService();
+
+        // First run: migrates
+        await sut.RunStartupSeedingAsync(CancellationToken.None);
+
+        // Capture state after first run
+        string providerConfigAfterFirst;
+        string templateConfigAfterFirst;
+        await using (var check = _dbFactory.CreateDbContext())
+        {
+            providerConfigAfterFirst = (await check.ProviderConfigs.FindAsync(providerGuid))!.Configuration!;
+            templateConfigAfterFirst = (await check.PipelineJobTemplates.FindAsync(templateGuid))!.Configuration!;
+        }
+
+        // Second run: must not change anything
+        await sut.RunStartupSeedingAsync(CancellationToken.None);
+
+        await using var checkAgain = _dbFactory.CreateDbContext();
+        var providerConfigAfterSecond = (await checkAgain.ProviderConfigs.FindAsync(providerGuid))!.Configuration!;
+        var templateConfigAfterSecond = (await checkAgain.PipelineJobTemplates.FindAsync(templateGuid))!.Configuration!;
+
+        providerConfigAfterSecond.Should().Be(providerConfigAfterFirst,
+            "second run must not change the provider configuration (idempotent)");
+        templateConfigAfterSecond.Should().Be(templateConfigAfterFirst,
+            "second run must not change the template configuration (idempotent)");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────────
 
     private DatabaseStartupService CreateService() =>

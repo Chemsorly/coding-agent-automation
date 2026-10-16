@@ -201,6 +201,7 @@ public sealed class DatabaseStartupService
         await SeedDefaultProjectIfNeededAsync(ct);
         await SeedDefaultReviewerConfigsIfNeededAsync(ct);
         await ClaimOrphanedTemplatesAsync(ct);
+        await MoveRepositorySettingsToTemplatesAsync(ct);
     }
 
     /// <summary>
@@ -318,6 +319,168 @@ public sealed class DatabaseStartupService
                 "ClaimOrphanedTemplatesAsync: repaired {Count} orphaned template(s)",
                 repairedCount);
         }
+    }
+
+    /// <summary>
+    /// Moves repository settings (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths)
+    /// from repository <see cref="ProviderConfig"/> records onto the templates that reference them.
+    /// This is a one-time data migration for the issue #3575 change where those fields moved from the
+    /// repository connection to the pipeline job template. Idempotent: skips fields already set on the
+    /// template; only clears from the provider once all templates have been updated.
+    /// A provider referenced by no template keeps its values and emits a warning.
+    /// Acquires the schema-migration advisory lock to prevent concurrent replicas from racing.
+    /// </summary>
+    internal async Task MoveRepositorySettingsToTemplatesAsync(CancellationToken ct)
+    {
+        await using var lockHandle = await _lockProvider.AcquireAsync(MigrationLockKey, ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        await ApplyRepositorySettingsMigrationAsync(db, _logger, ct);
+    }
+
+    /// <summary>
+    /// Core migration body: moves the five repository-settings fields
+    /// (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths)
+    /// from <see cref="ProviderConfig"/> records onto the
+    /// <see cref="PipelineJobTemplate"/> records that reference them.
+    /// Shared between <see cref="MoveRepositorySettingsToTemplatesAsync"/> (startup)
+    /// and <see cref="CodingAgent.Api.ConfigEndpoints"/> (post-import).
+    /// Idempotent: fields already set on a template are not overwritten; the provider
+    /// is cleared only after every referencing template has been updated successfully.
+    /// A provider referenced by no template keeps its values and emits a warning.
+    /// </summary>
+    public static async Task ApplyRepositorySettingsMigrationAsync(
+        PipelineDbContext db,
+        Serilog.ILogger logger,
+        CancellationToken ct)
+    {
+        // TODO: [WARNING] db and logger have no ArgumentNullException.ThrowIfNull guards; a null
+        // db causes NullReferenceException on the first db.ProviderConfigs access and a null logger
+        // causes NullReferenceException on the first logger.Warning(...) call inside the loop.
+        // Add ThrowIfNull guards for both parameters (DotNetSpecialist finding).
+        var allProviderEntities = await db.ProviderConfigs
+            .Where(p => p.Kind == ProviderKind.Repository)
+            .ToListAsync(ct);
+
+        if (allProviderEntities.Count == 0)
+            return;
+
+        var allTemplateEntities = await db.PipelineJobTemplates.ToListAsync(ct);
+
+        var anyChanged = false;
+
+        foreach (var providerEntity in allProviderEntities)
+        {
+            if (string.IsNullOrEmpty(providerEntity.Configuration))
+                continue;
+
+            var provider = JsonSerializer.Deserialize<ProviderConfig>(
+                providerEntity.Configuration, PipelineJsonOptions.Lenient);
+            if (provider is null)
+                continue;
+
+            var hasSettings = provider.RequiredLabels is { Count: > 0 }
+                || provider.Secrets is { Count: > 0 }
+                || provider.SetupSteps is { Count: > 0 }
+                || !string.IsNullOrEmpty(provider.SteeringContent)
+                || provider.BlacklistedPaths is { Count: > 0 };
+
+            if (!hasSettings)
+                continue;
+
+            // Match templates by the provider's Id field in the JSON (the logical identifier
+            // used in the template's RepoProviderId field), not by the entity's GUID key.
+            var referencingEntities = allTemplateEntities
+                .Where(t =>
+                {
+                    if (string.IsNullOrEmpty(t.Configuration)) return false;
+                    var tmpl = JsonSerializer.Deserialize<PipelineJobTemplate>(
+                        t.Configuration, PipelineJsonOptions.Lenient);
+                    return tmpl?.RepoProviderId == provider.Id;
+                })
+                .ToList();
+
+            if (referencingEntities.Count == 0)
+            {
+                logger.Warning(
+                    "ApplyRepositorySettingsMigration: provider '{DisplayName}' ({Id}) has repository settings " +
+                    "but no template references it; values kept",
+                    provider.DisplayName, provider.Id);
+                continue;
+            }
+
+            // Copy fields onto each referencing template whose own value is null/empty.
+            // Track whether every template was successfully updated before clearing the provider.
+            var allUpdated = true;
+            foreach (var templateEntity in referencingEntities)
+            {
+                var template = JsonSerializer.Deserialize<PipelineJobTemplate>(
+                    templateEntity.Configuration!, PipelineJsonOptions.Lenient);
+                if (template is null)
+                {
+                    allUpdated = false;
+                    continue;
+                }
+
+                var needsUpdate =
+                    (provider.RequiredLabels is { Count: > 0 } && template.RequiredLabels is not { Count: > 0 })
+                    || (provider.Secrets is { Count: > 0 } && template.Secrets is not { Count: > 0 })
+                    || (provider.SetupSteps is { Count: > 0 } && template.SetupSteps is not { Count: > 0 })
+                    || (!string.IsNullOrEmpty(provider.SteeringContent) && string.IsNullOrEmpty(template.SteeringContent))
+                    || (provider.BlacklistedPaths is { Count: > 0 } && template.BlacklistedPaths is not { Count: > 0 });
+
+                if (!needsUpdate)
+                    continue;
+
+                var updated = template with
+                {
+                    RequiredLabels = template.RequiredLabels is { Count: > 0 } ? template.RequiredLabels : provider.RequiredLabels,
+                    Secrets = template.Secrets is { Count: > 0 } ? template.Secrets : provider.Secrets,
+                    SetupSteps = template.SetupSteps is { Count: > 0 } ? template.SetupSteps : provider.SetupSteps,
+                    SteeringContent = !string.IsNullOrEmpty(template.SteeringContent) ? template.SteeringContent : provider.SteeringContent,
+                    BlacklistedPaths = template.BlacklistedPaths is { Count: > 0 } ? template.BlacklistedPaths : provider.BlacklistedPaths,
+                };
+
+                templateEntity.Configuration = SerializeToJson(updated);
+                anyChanged = true;
+
+                logger.Information(
+                    "ApplyRepositorySettingsMigration: copied repository settings from provider '{ProviderDisplayName}' ({ProviderId}) to template '{TemplateName}' ({TemplateId})",
+                    provider.DisplayName, provider.Id, template.Name, template.Id);
+            }
+
+            if (!allUpdated)
+            {
+                logger.Warning(
+                    "ApplyRepositorySettingsMigration: provider '{DisplayName}' ({Id}) has repository settings but some referencing templates could not be deserialized; provider values kept",
+                    provider.DisplayName, provider.Id);
+                continue;
+            }
+
+            // Clear the five fields from the provider only after all templates have been updated.
+            var cleared = new ProviderConfig
+            {
+                BlacklistedPaths = null,
+                DisplayName = provider.DisplayName,
+                Id = provider.Id,
+                Kind = provider.Kind,
+                ProviderType = provider.ProviderType,
+                RepositoryRole = provider.RepositoryRole,
+                RequiredLabels = null,
+                Secrets = null,
+                Settings = provider.Settings,
+                SetupSteps = null,
+                SteeringContent = null,
+            };
+            providerEntity.Configuration = SerializeToJson(cleared);
+            anyChanged = true;
+
+            logger.Information(
+                "ApplyRepositorySettingsMigration: cleared repository settings from provider '{DisplayName}' ({Id})",
+                provider.DisplayName, provider.Id);
+        }
+
+        if (anyChanged)
+            await db.SaveChangesAsync(ct);
     }
 }
 

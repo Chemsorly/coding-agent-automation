@@ -192,7 +192,7 @@ public static class PipelineConfigurationResolver
     /// <summary>
     /// Applies template-level overrides to the pipeline configuration.
     /// Resolution order: find the template by its repository → apply BrainReadOnly
-    /// (one-directional: only overrides to true) → apply blacklist from repo provider config.
+    /// (one-directional: only overrides to true) → apply blacklist from the template's BlacklistedPaths.
     /// A repository belongs to one enabled template (<see cref="TemplateBindingRules"/>), so the repository
     /// identifies the template; an enabled template wins over disabled ones that use the same repository.
     /// Called AFTER <see cref="ApplyProjectOverrides"/> in the dispatch pipeline.
@@ -203,14 +203,18 @@ public static class PipelineConfigurationResolver
         IReadOnlyList<ProviderConfig> providerConfigs,
         IReadOnlyList<PipelineJobTemplate> templates)
     {
-        var matchingTemplate = templates
-            .Where(t => t.RepoProviderId == repoProviderId.Value)
-            .OrderByDescending(t => t.Enabled)
-            .FirstOrDefault();
+        var matchingTemplate = RepositorySettings.TemplateFor(repoProviderId.Value, templates);
         if (matchingTemplate is { BrainReadOnly: true })
             config = config with { BrainReadOnly = true };
 
-        return ApplyBlacklistOverride(config, providerConfigs.TryGetProviderConfig(repoProviderId.Value));
+        // Apply blacklist from the template (not the provider). Create an enriched ProviderConfig
+        // carrying the template's BlacklistedPaths so ApplyBlacklistOverride keeps its existing
+        // signature (used by LocalPipelineExecutor which must not change).
+        var rawRepoConfig = providerConfigs.TryGetProviderConfig(repoProviderId.Value);
+        var enrichedForBlacklist = rawRepoConfig is not null
+            ? RepositorySettings.WithTemplateSettings(rawRepoConfig, matchingTemplate)
+            : null;
+        return ApplyBlacklistOverride(config, enrichedForBlacklist);
     }
 
     /// <summary>

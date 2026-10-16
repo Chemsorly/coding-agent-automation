@@ -168,6 +168,9 @@ public class DispatchInfrastructure
     /// <summary>
     /// Builds the list of provider configs to send to the agent.
     /// Excludes issue provider configs (agents don't get issue access).
+    /// The repository config is enriched with the five repository settings
+    /// (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths)
+    /// from the template that owns the repository.
     /// </summary>
     internal async Task<IReadOnlyList<ProviderConfig>> BuildAgentProviderConfigsAsync(
         ProviderConfigId repoProviderId,
@@ -179,10 +182,13 @@ public class DispatchInfrastructure
     {
         var configs = new List<ProviderConfig>();
 
+        var templates = await Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+
         var repoConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(
             Resolution.ConfigStore, repoProviderId.Value, ProviderKind.Repository, repoConfigs, required: true, logger, ct);
-        configs.Add(repoConfig!);
+        configs.Add(RepositorySettings.WithTemplateSettings(
+            repoConfig!, RepositorySettings.TemplateFor(repoProviderId.Value, templates)));
 
         var agentConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var agentConfig = await ProviderConfigResolver.ResolveAsync(

@@ -141,13 +141,23 @@ public partial class TemplateTableSection
         return groups;
     }
 
-    internal LabelPreviewResult GetLabelPreview(string repoProviderId)
+    internal LabelPreviewResult GetLabelPreview(IReadOnlyList<string>? requiredLabels)
     {
-        var repoConfig = RepoProviders.FirstOrDefault(p => p.Id == repoProviderId);
-        if (repoConfig is null)
+        // Resolve labels: template's RequiredLabels take precedence; fall back to global default.
+        IReadOnlyList<string> labels;
+        if (requiredLabels is { Count: > 0 })
+        {
+            labels = requiredLabels;
+        }
+        else if (!string.IsNullOrWhiteSpace(PipelineConfig?.DefaultRequiredAgentLabels))
+        {
+            labels = PipelineConfig.DefaultRequiredAgentLabels
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList().AsReadOnly();
+        }
+        else
             return new LabelPreviewResult();
 
-        var labels = LabelResolver.ResolveRequiredLabels(repoConfig, PipelineConfig);
         if (labels.Count == 0)
             return new LabelPreviewResult();
 
@@ -210,6 +220,13 @@ public partial class TemplateTableSection
         public bool DecompositionEnabled { get; set; }
         public bool TriageEnabled { get; set; }
 
+        // ── Repository settings (moved from ProviderConfig) ───────────────
+        public IReadOnlyList<string>? RequiredLabels { get; set; }
+        public Dictionary<string, string>? Secrets { get; set; }
+        public IReadOnlyList<SetupStep>? SetupSteps { get; set; }
+        public string? SteeringContent { get; set; }
+        public IReadOnlyList<string>? BlacklistedPaths { get; set; }
+
         /// <summary>A form that edits <paramref name="template"/>, filled with its current values.</summary>
         public static TemplateFormModel ForEdit(PipelineJobTemplate template, string projectId) => new()
         {
@@ -228,6 +245,11 @@ public partial class TemplateTableSection
             ReviewEnabled = template.ReviewEnabled,
             DecompositionEnabled = template.DecompositionEnabled,
             TriageEnabled = template.TriageEnabled,
+            RequiredLabels = template.RequiredLabels,
+            Secrets = template.Secrets is { Count: > 0 } ? new Dictionary<string, string>(template.Secrets) : null,
+            SetupSteps = template.SetupSteps,
+            SteeringContent = template.SteeringContent,
+            BlacklistedPaths = template.BlacklistedPaths,
         };
     }
 

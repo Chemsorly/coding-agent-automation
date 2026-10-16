@@ -136,6 +136,10 @@
             <span class="form-hint-icon" title="When enabled, periodically deletes stale agent branches that have no open PR and whose linked issue is not actively being worked on.">?</span>
         </label>
     </div>
+    @if (!string.IsNullOrEmpty(Form.RepoProviderId))
+    {
+        <RepositorySettingsEditor Form="Form" />
+    }
     <div class="form-buttons">
         <button class="btn-save" @onclick="() => OnSave.InvokeAsync()">Save</button>
         <button class="btn-cancel" @onclick="() => OnCancel.InvokeAsync()">Cancel</button>

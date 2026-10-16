@@ -375,9 +375,10 @@ public sealed class TriageService
     private async Task<JobDistributionRequest> BuildDistributionRequestAsync(
         TriageRecord record, PipelineProject project, PipelineJobTemplate executor, Guid workItemId, CancellationToken ct)
     {
-        var repoConfig = await _config.GetProviderConfigByIdAsync(executor.RepoProviderId, ProviderKind.Repository, ct)
+        var rawRepoConfig = await _config.GetProviderConfigByIdAsync(executor.RepoProviderId, ProviderKind.Repository, ct)
             ?? throw new TriageRequestException(StatusCodes.Status400BadRequest,
                 $"The repository of template '{executor.Name}' is not configured");
+        var repoConfig = RepositorySettings.WithTemplateSettings(rawRepoConfig, executor);
         var globalConfig = await _config.LoadPipelineConfigAsync(ct);
         var config = PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project);
         var labels = LabelResolver.ResolveRequiredLabels(repoConfig, globalConfig);
