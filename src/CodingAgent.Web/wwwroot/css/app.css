@@ -970,6 +970,8 @@ select option { background: var(--surface); color: var(--text); }
 .consolidation-card-label { color: var(--text-muted); font-weight: 500; min-width: 140px; }
 .consolidation-card-value { color: var(--text); }
 .consolidation-muted { color: var(--text-muted); font-style: italic; }
+.consolidation-auto-counter { color: var(--text-muted); font-size: 0.85em; }
+.consolidation-auto-blocked { color: var(--warning); font-size: 0.85em; }
 .consolidation-card-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 
 .btn-trigger { padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--accent); background: transparent; color: var(--accent-light); font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s; }
