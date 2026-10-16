@@ -550,6 +550,30 @@ public sealed class GetAssignmentTests
     }
 
     [Fact]
+    public void BuildMinimalPayload_PreservesRefactoringFocus()
+    {
+        // RefactoringFocus must survive BuildMinimalPayload so the agent executor can filter phases.
+        var full = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/refactoring-focus"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            ConsolidationRunType = CodingAgent.Pipeline.Models.ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateId = "tmpl-focus",
+            RefactoringFocus = RefactoringScanFocus.Correctness,
+        };
+
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+
+        minimal.RefactoringFocus.Should().Be(RefactoringScanFocus.Correctness,
+            "RefactoringFocus must be preserved in the minimal payload so it reaches the executor");
+    }
+
+    [Fact]
     public void BuildMinimalPayload_IssueDetailRetainsIdentityButStripsBody()
     {
         var full = MakeFullRequest() with

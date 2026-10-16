@@ -58,4 +58,11 @@ public sealed class ConsolidationJobMessage
     /// </summary>
     [Key(11)]
     public IReadOnlyList<McpServerConfig> McpServers { get; init; } = [];
+
+    /// <summary>
+    /// Which detection agent a refactoring scan runs. Defaults to <see cref="RefactoringScanFocus.All"/>
+    /// for backward compatibility, so messages written before this field existed run every agent.
+    /// </summary>
+    [Key(12)]
+    public RefactoringScanFocus RefactoringFocus { get; init; }
 }

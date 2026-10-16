@@ -93,7 +93,7 @@ internal sealed class ConsolidationPageService(
         ArgumentNullException.ThrowIfNull(request);
         TemplateId? templateId = string.IsNullOrEmpty(request.TemplateId) ? (TemplateId?)null : new TemplateId(request.TemplateId);
 
-        var run = await consolidation.TriggerAsync(request.Type, templateId, ct, request.AutoDispatch);
+        var run = await consolidation.TriggerAsync(request.Type, templateId, ct, request.AutoDispatch, request.RefactoringFocus);
         if (run is not null)
             return $"{FormatRunType(request.Type)} queued — waiting for an idle agent.";
 
