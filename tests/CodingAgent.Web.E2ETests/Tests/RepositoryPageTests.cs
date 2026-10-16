@@ -46,7 +46,13 @@ public sealed class RepositoryPageTests : E2ETestBase
 
         // Wait for navigation to the repository page
         await Page.WaitForURLAsync($"**/pipelines/{templateId}", new() { Timeout = 10_000 });
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
+        // Wait specifically for the RepositoryPage's h1 to contain the template name rather than
+        // the preceding AgentCoding page's h1 ("Pipelines"), which can still be in the DOM while
+        // the new page is loading during in-app Blazor navigation.
+        await Page.WaitForFunctionAsync(
+            "(name) => { const h1 = document.querySelector('h1'); return h1 && h1.textContent.includes(name); }",
+            "Steering Test Template",
+            new() { Timeout = 10_000 });
 
         // Assert: we landed on the correct page
         var pageText = await Page.TextContentAsync("h1");
