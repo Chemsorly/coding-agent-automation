@@ -124,4 +124,21 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
         (await again.Should().ThrowAsync<InvalidOperationException>())
             .WithMessage("Refactoring scan rejected for delta-api — already running*");
     }
+
+    [Fact]
+    public async Task AutoCounters_NeedsGlobalRead_AndReturnsEmptyWhenThresholdsAreZero()
+    {
+        // Authorization: a project-scoped role is not enough (same as the overview endpoint).
+        (await Http(TestUserTokens.Scoped(Project, AccessRole.Operator))
+            .GetAsync("/api/ui/consolidation/auto-counters"))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        // With global read and all auto-start thresholds at their default (0), all counter
+        // dictionaries are empty and the harness counter is null.
+        var counters = await Client(TestUserTokens.Global(AccessRole.ReadOnly)).GetAutoCountersAsync();
+
+        counters.BrainCounters.Should().BeEmpty();
+        counters.RefactoringCounters.Should().BeEmpty();
+        counters.HarnessCounter.Should().BeNull();
+    }
 }

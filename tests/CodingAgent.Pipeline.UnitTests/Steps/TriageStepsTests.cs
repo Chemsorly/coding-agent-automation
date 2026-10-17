@@ -141,6 +141,24 @@ public sealed class TriageStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task Investigation_NamesTheRunsMcpServersInThePrompt()
+    {
+        var context = Context(config: Config(review: false));
+        string? prompt = null;
+        _agent.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((request, _, _) => prompt = request.Prompt)
+            .ReturnsAsync(() =>
+            {
+                File.WriteAllText(ResultPath, ValidResult);
+                return Ok();
+            });
+
+        await new TriageInvestigationStep(false, ["observability", "tracker"]).ExecuteAsync(context, CancellationToken.None);
+
+        prompt.Should().Contain("MCP servers configured for this run: `observability`, `tracker`.");
+    }
+
+    [Fact]
     public async Task Investigation_NoResultFile_FailsTheRun()
     {
         var context = Context(config: Config(review: false));
