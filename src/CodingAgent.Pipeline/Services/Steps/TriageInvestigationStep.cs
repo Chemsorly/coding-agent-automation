@@ -15,11 +15,14 @@ namespace CodingAgent.Pipeline.Services.Steps;
 public sealed class TriageInvestigationStep : IPipelineStep
 {
     private readonly bool _reportToTracker;
+    private readonly IReadOnlyList<string>? _mcpServers;
 
     /// <param name="reportToTracker">True when the result is posted on a tracker issue.</param>
-    public TriageInvestigationStep(bool reportToTracker)
+    /// <param name="mcpServers">The names of the MCP servers configured for the run, named in the prompt.</param>
+    public TriageInvestigationStep(bool reportToTracker, IReadOnlyList<string>? mcpServers = null)
     {
         _reportToTracker = reportToTracker;
+        _mcpServers = mcpServers;
     }
 
     public string StepName => "TriageInvestigation";
@@ -48,7 +51,7 @@ public sealed class TriageInvestigationStep : IPipelineStep
                 new AgentMonitorContext(context.AgentProvider, run, config, "Triage agent", context.Callbacks.NotifyChange, logger),
                 new AgentRequest
                 {
-                    Prompt = TriagePromptBuilder.BuildInvestigationPrompt(_reportToTracker, context.ProjectContext),
+                    Prompt = TriagePromptBuilder.BuildInvestigationPrompt(_reportToTracker, context.ProjectContext, _mcpServers),
                     WorkspacePath = run.WorkspacePath!,
                     Timeout = config.AgentTimeout,
                     UseResume = false

@@ -55,6 +55,8 @@ namespace CodingAgent.Web.Ui;
 [JsonSerializable(typeof(UiConsolidationOverview))]
 [JsonSerializable(typeof(UiRefactoringScanSettings))]
 [JsonSerializable(typeof(UiConsolidationTriggerRequest))]
+[JsonSerializable(typeof(UiConsolidationAutoCounters))]
+[JsonSerializable(typeof(UiAutoCounter))]
 [JsonSerializable(typeof(UiLoopStatus))]
 [JsonSerializable(typeof(TriageListPage))]
 [JsonSerializable(typeof(TriageDetail))]

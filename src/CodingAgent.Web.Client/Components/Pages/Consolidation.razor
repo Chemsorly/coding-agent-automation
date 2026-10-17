@@ -13,7 +13,7 @@
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
 @* Runs end on the agents' side, so the last-run cards and the history refresh on a timer (spec 051 D8). *@
-<AutoRefresh IntervalSeconds="15" OnTick="LoadDataAsync" />
+<AutoRefresh IntervalSeconds="15" OnTick="TimerRefreshAsync" />
 
 <div class="cockpit-page">
     <div class="cockpit-page-header">
@@ -51,6 +51,8 @@
                     var brainReadOnly = template.BrainReadOnly;
                     var lastBrain = _lastRuns.GetValueOrDefault((ConsolidationRunType.BrainConsolidation, template.Id));
                     var lastRefactoring = _lastRuns.GetValueOrDefault((ConsolidationRunType.RefactoringDetection, template.Id));
+                    var brainCounter = _autoCounters?.BrainCounters.GetValueOrDefault(template.Id); // TODO [WARNING]: If STJ deserializes a null JSON field into BrainCounters (despite non-nullable type), GetValueOrDefault throws NRE. Use _autoCounters?.BrainCounters?.GetValueOrDefault(template.Id) for safety.
+                    var refactoringCounter = _autoCounters?.RefactoringCounters.GetValueOrDefault(template.Id); // TODO [WARNING]: Same null-chain risk as BrainCounters — use RefactoringCounters?.GetValueOrDefault in a future cleanup.
 
                     <div class="consolidation-card">
                         <h3 class="consolidation-card-title">@template.Name</h3>
@@ -74,6 +76,14 @@
                                 {
                                     <span class="consolidation-card-value consolidation-muted">— read-only for this template</span>
                                 }
+                                @if (brainCounter is not null)
+                                {
+                                    <span class="consolidation-auto-counter" data-testid="auto-counter-brain">@brainCounter.Count / @brainCounter.Threshold runs since the last run@(brainCounter.Blocked is null ? " · auto" : "")</span>
+                                    @if (brainCounter.Blocked is not null)
+                                    {
+                                        <span class="consolidation-auto-blocked" data-testid="auto-blocked-brain">@brainCounter.Blocked</span>
+                                    }
+                                }
                             }
                             else
                             {
@@ -95,6 +105,14 @@
                                 else
                                 {
                                     <span class="consolidation-card-value consolidation-muted">Never run</span>
+                                }
+                                @if (refactoringCounter is not null)
+                                {
+                                    <span class="consolidation-auto-counter" data-testid="auto-counter-refactoring">@refactoringCounter.Count / @refactoringCounter.Threshold closed issues since the last run@(refactoringCounter.Blocked is null ? " · auto" : "")</span>
+                                    @if (refactoringCounter.Blocked is not null)
+                                    {
+                                        <span class="consolidation-auto-blocked" data-testid="auto-blocked-refactoring">@refactoringCounter.Blocked</span>
+                                    }
                                 }
                             }
                             else
@@ -129,7 +147,17 @@
 
     <!-- Global Harness Suggestions -->
     <section class="settings-section">
-        <div class="cockpit-card-header"><h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2></div>
+        <div class="cockpit-card-header">
+            <h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2>
+            @if (_autoCounters?.HarnessCounter is { } harnessCounter)
+            {
+                <span class="consolidation-auto-counter" data-testid="auto-counter-harness">@harnessCounter.Count / @harnessCounter.Threshold feedback entries since the last run@(harnessCounter.Blocked is null ? " · auto" : "")</span>
+                @if (harnessCounter.Blocked is not null)
+                {
+                    <span class="consolidation-auto-blocked" data-testid="auto-blocked-harness">@harnessCounter.Blocked</span>
+                }
+            }
+        </div>
         @if (_isLoading)
         {
             <div class="monitoring-empty">Loading...</div>
@@ -328,6 +356,9 @@
     private bool _statusIsError;
     private bool _isLoading = true;
 
+    // Auto-start counters — loaded after first render so they do not block the initial page display.
+    private UiConsolidationAutoCounters? _autoCounters;
+
     // Refactoring modal state
     private bool _showRefactoringModal;
     private bool _modalJustOpened;
@@ -359,6 +390,30 @@
                 await _modalOverlayRef.FocusAsync();
             }
             catch (Exception) { /* Element may not be rendered yet */ }
+        }
+
+        if (firstRender)
+        {
+            await LoadAutoCountersAsync();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Loads the automatic-start counters after the first render so the page displays immediately.
+    /// Called again from the three non-initial refresh paths (timer tick, trigger, cancel) to keep
+    /// the numbers current after a run starts.
+    /// </summary>
+    private async Task LoadAutoCountersAsync()
+    {
+        try
+        {
+            _autoCounters = await ConsolidationApi.GetAutoCountersAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Consolidation page: failed to load automatic-start counters");
+            _autoCounters = null;
         }
     }
 
@@ -502,6 +557,7 @@
             // the Job turns it Running once the agent starts.
             _statusMessage = await ConsolidationApi.TriggerAsync(type, templateId, autoDispatch, focus: focus);
             await LoadDataAsync();
+            await LoadAutoCountersAsync();
         }
         catch (InvalidOperationException ex)
         {
@@ -533,6 +589,7 @@
             _statusMessage = "Cannot cancel: run has no associated WorkItem ID.";
             _statusIsError = true;
             await LoadDataAsync();
+            await LoadAutoCountersAsync();
             return;
         }
 
@@ -549,6 +606,16 @@
             _statusIsError = true;
         }
         await LoadDataAsync();
+        await LoadAutoCountersAsync();
+    }
+
+    /// <summary>
+    /// Called by the <c>AutoRefresh</c> timer: refreshes both the page data and the auto-start counters.
+    /// </summary>
+    private async Task TimerRefreshAsync()
+    {
+        await LoadDataAsync();
+        await LoadAutoCountersAsync();
     }
 
     /// <summary>
