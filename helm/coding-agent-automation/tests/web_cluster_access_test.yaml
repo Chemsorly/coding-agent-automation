@@ -9,6 +9,7 @@
 #   2. No leader-election settings are passed to the web pod
 #   3. The web ConfigMap carries no work-distribution keys
 #   4. The removed pipeline-loop startup delay is not rendered
+#   5. The web pod's environment, mounts and ConfigMap match an allow-list (spec 052 Task 5.8)
 
 suite: web cluster access
 
@@ -77,3 +78,69 @@ tests:
           content:
             name: job-templates
           any: true
+
+  # Spec 052 Req 0.3, 0.4 (Task 5.8): the web pod's environment and mounts are exactly these. A new
+  # variable or mount fails here until it is added on purpose; nothing of the database, Redis, the
+  # master API key or a provider reaches the internet-facing pod.
+  - it: gives the web pod only the allow-listed environment variables
+    template: templates/web-deployment.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].env
+          count: 11
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_EXPORTER_OTLP_HEADERS }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: UserToken__SigningKey }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: DataProtection__Key }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: Auth__Admin__Password }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: PipelineApi__BaseUrl }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_SERVICE_NAME }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_EXPORTER_OTLP_ENDPOINT }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_EXPORTER_OTLP_PROTOCOL }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: K8S_NAMESPACE_NAME }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: K8S_POD_NAME }, any: true }
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_RESOURCE_ATTRIBUTES }, any: true }
+
+  - it: adds only the OIDC client secret when OIDC is on
+    template: templates/web-deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: "https://idp.example"
+      auth.oidc.clientId: "web"
+      auth.oidc.clientSecret.existingSecret: "oidc"
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].env
+          count: 12
+      - contains: { path: spec.template.spec.containers[0].env, content: { name: Auth__Oidc__ClientSecret }, any: true }
+
+  - it: mounts only the auth config into the web pod, and takes settings only from its ConfigMap
+    template: templates/web-deployment.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 1
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /app/config/auth.json
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 1
+      - matchRegex:
+          path: spec.template.spec.volumes[0].configMap.name
+          pattern: -web-auth$
+      - lengthEqual:
+          path: spec.template.spec.containers[0].envFrom
+          count: 1
+      - matchRegex:
+          path: spec.template.spec.containers[0].envFrom[0].configMapRef.name
+          pattern: -web-env$
+
+  - it: carries no database, Redis, API key or provider settings in the web ConfigMap
+    template: templates/web-env-configmap.yaml
+    asserts:
+      - notExists: { path: data.Database__Host }
+      - notExists: { path: data.Database__Name }
+      - notExists: { path: data.ConnectionStrings__Redis }
+      - notExists: { path: data.SignalR__Redis__ConnectionString }
+      - notExists: { path: data.AGENT_API_KEY }
+      - notExists: { path: data.OperatorApiKey }

@@ -90,15 +90,8 @@ builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.
 
 var app = builder.Build();
 
-// ── Health probes ─────────────────────────────────────────────────────────────
-app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
-// /readyz returns 200 for all replicas regardless of leader state.
-// Leader election gates the actual reconciliation work inside
-// ReconciliationService — the non-leader idles and is still
-// healthy. Returning 503 for non-leaders would keep the pod stuck as 0/1 Ready
-// in multi-replica deployments (strategy: RollingUpdate) and is incorrect: the
-// non-leader is not degraded, just standing by.
-app.MapGet("/readyz", () => Results.Ok(new { status = "ready" }));
+// ── Health probes (the only endpoints) ─────────────────────────────────────
+app.MapJobControllerHealthEndpoints();
 
 await app.RunAsync();
 

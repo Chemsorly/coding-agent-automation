@@ -11,6 +11,20 @@ The Pipeline API has two surfaces:
 
 An API endpoint that declares no policy is denied. A credential of one surface is never accepted on the other.
 
+## Endpoint protection by host
+
+Every host's endpoints are pinned in a test: a new endpoint, hub method or listener fails CI until it is classified. The snapshot files are the source of truth.
+
+| Host | What it serves, and what each part needs | Anonymous | Source of truth |
+|---|---|---|---|
+| Web host | Pages (a signed-in user, plus the page's role policy), `/bff/session` (a signed-in user), `/api/ui/**` and `/hubs/ui` forwarded to the API (a signed-in user with a role), the static client files | `GET /`, `/login` (GET, POST, HEAD), `POST /auth/login`, `GET /auth/oidc`, `POST /auth/logout`, `/healthz`, `/readyz`, the static client files | `tests/CodingAgent.Web.IntegrationTests/Security/web-endpoint-authorization.snapshot.txt` |
+| Pipeline API | Service surface: API keys. UI surface: the user token. Agent hub: an agent key, and the agent must own the job a method addresses | `/healthz`, `/readyz` | `tests/CodingAgent.Api.IntegrationTests/Security/api-endpoint-authorization.snapshot.txt`, `tests/CodingAgent.Web.UnitTests/Hubs/agent-hub-methods.snapshot.txt` |
+| Scheduler | Health probes only | `/health`, `/healthz`, `/readyz` | `SchedulerHealthSurfaceTests`, `LayerBoundaryTests.HostSurface` |
+| Job Controller | Health probes only | `/healthz`, `/readyz` | `JobControllerHealthSurfaceTests`, `LayerBoundaryTests.HostSurface` |
+| Agent pod | Health probes only | `/healthz`, `/readyz`, `/startupz` | `HealthSurfaceTests` (agent), `LayerBoundaryTests.HostSurface` |
+
+Probe responses carry only status fields. Every host listens on port 8080 only. No host serves OpenAPI, Swagger UI, a metrics scrape endpoint, directory browsing or the developer exception page, and the chart never runs a host in the `Development` environment. Each UI endpoint that takes a project, run, work-item, template or chat ID has a test that another project's user gets 404 (`IdorCoverageTests`).
+
 ## Roles
 
 | Role | Grants |

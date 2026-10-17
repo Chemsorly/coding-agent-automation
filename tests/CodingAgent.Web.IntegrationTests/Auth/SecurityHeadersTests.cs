@@ -4,6 +4,8 @@ using CodingAgent.Web.IntegrationTests.Helpers;
 using CodingAgent.Web.IntegrationTests.Smoke;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.IntegrationTests.Auth;
 
@@ -59,6 +61,27 @@ public class SecurityHeadersTests : IClassFixture<CustomWebApplicationFactory>
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         Header(response, "Cross-Origin-Resource-Policy").Should().Be("cross-origin");
         Header(response, "X-Content-Type-Options").Should().Be("nosniff");
+    }
+
+    /// <summary>
+    /// Spec 052 Req 14.7: the WebAssembly runtime files are served with their real MIME type, nosniff and a
+    /// same-origin resource policy, so no other site can load the app's code.
+    /// </summary>
+    [Theory]
+    [InlineData(@"^_framework/blazor\.web(\.[a-z0-9]+)?\.js$", "text/javascript")]
+    [InlineData(@"^_framework/dotnet\.native(\.[a-z0-9]+)?\.wasm$", "application/wasm")]
+    public async Task FrameworkFiles_HaveTheirMimeType_NoSniff_AndSameOriginResourcePolicy(string routePattern, string mediaType)
+    {
+        var route = _factory.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()
+            .Select(e => e.RoutePattern.RawText ?? "")
+            .First(r => System.Text.RegularExpressions.Regex.IsMatch(r.TrimStart('/'), routePattern));
+
+        var response = await IngressClient("https").GetAsync("/" + route.TrimStart('/'));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType?.MediaType.Should().Be(mediaType);
+        Header(response, "X-Content-Type-Options").Should().Be("nosniff");
+        Header(response, "Cross-Origin-Resource-Policy").Should().Be("same-origin");
     }
 
     [Fact]
