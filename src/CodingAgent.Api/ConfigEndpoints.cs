@@ -58,7 +58,6 @@ public static class ConfigEndpoints
 
         // ── Pipeline config ─────────────────────────────────────────────
         group.MapGet("/pipeline", GetPipelineConfig);
-        group.MapPut("/pipeline", SavePipelineConfig);
 
         // ── Provider configs ────────────────────────────────────────────
         group.MapGet("/provider-configs", GetProviderConfigs);
@@ -74,11 +73,9 @@ public static class ConfigEndpoints
 
         // ── Projects (requires two store calls — Req 6.3a) ─────────────
         group.MapGet("/projects", GetProjects);
-        group.MapGet("/projects/{id}", GetProjectById);
 
         // ── Templates ───────────────────────────────────────────────────
         group.MapGet("/templates", GetAllTemplates);
-        group.MapGet("/projects/{projectId}/templates", GetTemplatesForProject);
     }
 
     // ── Pipeline config ────────────────────────────────────────────────────
@@ -88,23 +85,6 @@ public static class ConfigEndpoints
     {
         var config = await store.LoadPipelineConfigAsync(ct);
         return TypedResults.Ok(config);
-    }
-
-    /// <summary>
-    /// PUT /api/config/pipeline. Rejects settings outside their range (400, one sentence per setting). AgentTimeout's
-    /// minimum is the reconciliation canary minimum, below which the timeout could never be enforced.
-    /// </summary>
-    internal static async Task<IResult> SavePipelineConfig(
-        [FromBody] PipelineConfiguration config,
-        IPipelineConfigStore store,
-        CancellationToken ct)
-    {
-        var errors = PipelineSettingsValidator.Validate(config);
-        if (errors.Count > 0)
-            return TypedResults.BadRequest(string.Join(" ", errors));
-
-        await store.SavePipelineConfigAsync(config, ct);
-        return TypedResults.Ok();
     }
 
     // ── Provider configs ───────────────────────────────────────────────────
@@ -307,22 +287,6 @@ public static class ConfigEndpoints
     }
 
     /// <summary>
-    /// GET /api/config/projects/{id}
-    /// Returns a single project with its templates.
-    /// </summary>
-    internal static async Task<IResult> GetProjectById(
-        string id,
-        IProjectStore store,
-        CancellationToken ct)
-    {
-        var project = await store.GetProjectByIdAsync(id, ct);
-        if (project is null)
-            return TypedResults.NotFound();
-
-        return TypedResults.Ok(project);
-    }
-
-    /// <summary>
     /// PUT /api/config/projects. Rejects overrides outside the range of the setting they override (400, one sentence
     /// per override), so a bad value never reaches the resolver.
     /// </summary>
@@ -370,15 +334,6 @@ public static class ConfigEndpoints
             all.AddRange(templates);
         }
         return TypedResults.Ok(all);
-    }
-
-    internal static async Task<IResult> GetTemplatesForProject(
-        string projectId,
-        IProjectStore store,
-        CancellationToken ct)
-    {
-        var templates = await store.LoadTemplatesForProjectAsync(projectId, ct);
-        return TypedResults.Ok(templates);
     }
 
     internal static async Task<IResult> SaveTemplate(

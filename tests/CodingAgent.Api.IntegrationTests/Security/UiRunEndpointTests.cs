@@ -114,6 +114,9 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
         }
     }
 
+    [IdorCase("GET /api/ui/runs")]
+    [IdorCase("GET /api/ui/work-items/pending")]
+    [IdorCase("GET /api/ui/work-items/active")]
     [Fact]
     public async Task Lists_OfAnotherProject_AreNotFound()
     {
@@ -175,6 +178,7 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
         detail.AgentProviderName.Should().Be("Kiro (team pool)");
     }
 
+    [IdorCase("GET /api/ui/runs/{runId:guid}")]
     [Fact]
     public async Task RunDetail_OfAnotherProject_IsNotFound()
     {
@@ -217,6 +221,8 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
         Stored(queued).Status.Should().Be(WorkItemStatus.Cancelled);
     }
 
+    [IdorCase("POST /api/ui/work-items/{id:guid}/cancel")]
+    [IdorCase("PUT /api/ui/work-items/{id:guid}/priority")]
     [Fact]
     public async Task Actions_OnAnotherProjectsItem_AreNotFound_AndChangeNothing()
     {

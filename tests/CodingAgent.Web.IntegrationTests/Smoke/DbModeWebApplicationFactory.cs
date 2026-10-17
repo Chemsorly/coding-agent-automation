@@ -150,8 +150,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
                 .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
             configClientMock.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-            configClientMock.Setup(s => s.GetTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
             // Replace any existing IPipelineApiConfigClient registration
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);

@@ -37,15 +37,6 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         return result!;
     }
 
-    public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
-    {
-        var response = await _http.GetAsync($"/api/pipeline-runs/{runId}", ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            return null;
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<PipelineRunSummary>(PipelineJsonOptions.Default, ct);
-    }
-
     public async Task AddRunToHistoryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(summary);

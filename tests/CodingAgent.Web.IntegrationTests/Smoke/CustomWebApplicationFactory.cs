@@ -162,8 +162,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             var runHistoryMock = new Mock<IPipelineApiRunHistoryClient>();
             runHistoryMock.Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = Array.Empty<PipelineRunSummary>(), Page = 1, PageSize = 50, HasMore = false });
-            runHistoryMock.Setup(s => s.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((PipelineRunSummary?)null);
             services.RemoveAll<IPipelineApiRunHistoryClient>();
             services.AddSingleton(runHistoryMock.Object);
 

@@ -100,8 +100,6 @@ public class AgentCodingPageComponentTests : BunitContext
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
         _mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
-        _mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         Services.AddSingleton<CodingAgent.Api.Client.IPipelineApiConfigClient>(_mockConfigClient.Object);
         // Spec 051 2.7: the page reads /api/ui/pipelines, answered from the config mock, and writes templates through Settings.
         Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiConfig(_mockConfigClient).Object);

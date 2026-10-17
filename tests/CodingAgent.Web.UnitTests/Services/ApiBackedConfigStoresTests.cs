@@ -182,7 +182,7 @@ public sealed class ApiBackedConfigStoresTests
     // ── ApiPipelineConfigStore ──────────────────────────────────────────────
 
     [Fact]
-    public async Task ApiPipelineConfigStore_CachesWithinTtl_AndInvalidatesOnUpdate()
+    public async Task ApiPipelineConfigStore_CachesWithinTtl_AndInvalidatesOnRequest()
     {
         var client = new Mock<IPipelineApiConfigClient>();
         client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -193,11 +193,11 @@ public sealed class ApiBackedConfigStoresTests
         await store.LoadPipelineConfigAsync(CancellationToken.None);
         client.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
 
-        await store.UpdatePipelineConfigAsync(c => c, CancellationToken.None);
+        store.InvalidateCaches();
         await store.LoadPipelineConfigAsync(CancellationToken.None);
 
         client.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2),
-            "an update must invalidate the cached configuration");
+            "InvalidateCaches must drop the cached configuration");
     }
 
     [Fact]
@@ -268,46 +268,24 @@ public sealed class ApiBackedConfigStoresTests
             "a zero TTL must disable caching so every templates load fetches from the API");
     }
 
+    /// <summary>Spec 052 Req 14.10: the API key does not write the pipeline configuration or read one project.</summary>
     [Fact]
-    public async Task ApiPipelineConfigStore_SavePipelineConfig_CallsClientAndUpdatesCache()
+    public async Task ApiBackedStores_RefuseTheWritesAndReadsTheServiceSurfaceNoLongerServes()
     {
         var client = EmptyClient();
-        var store = new ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 600 };
-        var config = new PipelineConfiguration { MaxRetries = 99 };
+        var pipeline = new ApiPipelineConfigStore(client.Object);
+        var projects = new ApiProjectStore(client.Object);
 
-        await store.SavePipelineConfigAsync(config, CancellationToken.None);
+        var save = () => pipeline.SavePipelineConfigAsync(new PipelineConfiguration(), CancellationToken.None);
+        var update = () => pipeline.UpdatePipelineConfigAsync(c => c, CancellationToken.None);
+        var project = () => projects.GetProjectByIdAsync("p1", CancellationToken.None);
+        var templates = () => projects.LoadTemplatesForProjectAsync("p1", CancellationToken.None);
 
-        client.Verify(c => c.SavePipelineConfigAsync(config, It.IsAny<CancellationToken>()), Times.Once);
-
-        // After save, the provided config is cached — next load must not call API again
-        client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("should not be called"));
-        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
-        loaded.MaxRetries.Should().Be(99);
-    }
-
-    [Fact]
-    public async Task ApiPipelineConfigStore_UpdatePipelineConfig_CallsClientAndInvalidatesCache()
-    {
-        var client = EmptyClient();
-        var store = new ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 600 };
-
-        // Pre-populate the cache
-        await store.LoadPipelineConfigAsync(CancellationToken.None);
-
-        await store.UpdatePipelineConfigAsync(c => c, CancellationToken.None);
-
-        client.Verify(c => c.UpdatePipelineConfigAsync(
-            It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
-            It.IsAny<CancellationToken>()), Times.Once);
-
-        // After update, cache is invalidated — next load should hit the API
-        var loadCallCount = 0;
-        client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => { loadCallCount++; return new PipelineConfiguration(); });
-
-        await store.LoadPipelineConfigAsync(CancellationToken.None);
-        loadCallCount.Should().Be(1, "cache invalidated by UpdatePipelineConfigAsync");
+        await save.Should().ThrowAsync<NotSupportedException>().WithMessage("*/api/ui/settings*");
+        await update.Should().ThrowAsync<NotSupportedException>().WithMessage("*/api/ui/settings*");
+        await project.Should().ThrowAsync<NotSupportedException>();
+        await templates.Should().ThrowAsync<NotSupportedException>();
+        client.VerifyNoOtherCalls();
     }
 
     [Fact]

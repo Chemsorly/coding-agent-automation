@@ -66,6 +66,7 @@ public sealed class UiTriageEndpointTests(ApiWebApplicationFactory factory)
             .StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    [IdorCase("GET /api/ui/triages")]
     [Fact]
     public async Task List_OfAProject_NeedsReadOnIt()
     {
@@ -75,6 +76,7 @@ public sealed class UiTriageEndpointTests(ApiWebApplicationFactory factory)
         (await reader.GetAsync($"/api/ui/triages?projectId={ProjectU}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    [IdorCase("GET /api/ui/triages/{id:guid}")]
     [Fact]
     public async Task Get_IsCheckedAgainstTheStoredTriagesProject()
     {
@@ -90,6 +92,7 @@ public sealed class UiTriageEndpointTests(ApiWebApplicationFactory factory)
             .StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    [IdorCase("POST /api/ui/triages/{id:guid}/dismiss")]
     [Fact]
     public async Task Acting_NeedsOperatorOnTheTriagesProject()
     {
@@ -151,5 +154,73 @@ public sealed class UiTriageEndpointTests(ApiWebApplicationFactory factory)
         var preview = await Http(TestUserTokens.Scoped(ProjectT, AccessRole.Operator))
             .GetFromJsonAsync<TriagePreview>($"/api/ui/triages/preview?projectId={ProjectT}");
         preview!.Repositories.Should().ContainSingle(r => r.Name == "t-web" && r.IsExecutor);
+    }
+
+    // ── T3: a triage of a project the user cannot see (spec 052 Req 14.10) ──
+
+    [Fact]
+    [IdorCase("POST /api/ui/triages/{id:guid}/rerun")]
+    [IdorCase("PUT /api/ui/triages/{id:guid}/drafts/{draftId}")]
+    [IdorCase("POST /api/ui/triages/{id:guid}/drafts/{draftId}/reset")]
+    [IdorCase("POST /api/ui/triages/{id:guid}/create-issues")]
+    public async Task Actions_OnAnotherProjectsTriage_AreNotFound_AndChangeNothing()
+    {
+        var id = await SeedTriageAsync(ProjectT);
+        var store = factory.Services.GetRequiredService<ITriageStore>();
+        var before = (await store.GetAsync(id))!.UpdatedAt;
+        var operatorOfU = Http(TestUserTokens.Scoped(ProjectU, AccessRole.Operator));
+        var draft = new UpdateTriageDraftRequest { Kind = TriageDraftKind.RootFix, TargetRepository = "r", Title = "t", Body = "b" };
+
+        var responses = new[]
+        {
+            await operatorOfU.PostAsJsonAsync($"/api/ui/triages/{id}/rerun", new RerunTriageRequest(), PipelineJsonOptions.Default),
+            await operatorOfU.PutAsJsonAsync($"/api/ui/triages/{id}/drafts/d1", draft, PipelineJsonOptions.Default),
+            await operatorOfU.PostAsync($"/api/ui/triages/{id}/drafts/d1/reset", null),
+            await operatorOfU.PostAsJsonAsync($"/api/ui/triages/{id}/create-issues", new CreateTriageIssuesRequest { DraftIds = ["d1"] }, PipelineJsonOptions.Default),
+        };
+
+        responses.Select(r => r.StatusCode).Should().AllBeEquivalentTo(HttpStatusCode.NotFound);
+        (await store.GetAsync(id))!.UpdatedAt.Should().Be(before, "nothing was changed");
+    }
+
+    [Fact]
+    [IdorCase("GET /api/ui/triages/similar")]
+    [IdorCase("GET /api/ui/triages/preview")]
+    public async Task SimilarAndPreview_ForAnotherProject_AreNotFound()
+    {
+        (await Http(TestUserTokens.Scoped(ProjectT, AccessRole.ReadOnly)).GetAsync($"/api/ui/triages/similar?projectId={ProjectU}&title=x"))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await Http(TestUserTokens.Scoped(ProjectT, AccessRole.Operator)).GetAsync($"/api/ui/triages/preview?projectId={ProjectU}"))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    [IdorCase("GET /api/ui/triages/by-run/{runId:guid}")]
+    public async Task ByRun_OfAnotherProjectsTriage_IsNotFound()
+    {
+        var id = await SeedTriageAsync(ProjectT);
+        var runId = Guid.NewGuid();
+        using (var db = factory.CreateDbContext())
+        {
+            db.WorkItems.Add(new CodingAgent.Infrastructure.Persistence.Entities.WorkItemEntity
+            {
+                Id = runId,
+                TaskType = WorkItemTaskType.Triage,
+                IssueIdentifier = TriageConstants.IssueIdentifierFor(id),
+                IssueProviderConfigId = TriageConstants.ProviderConfigId,
+                Status = WorkItemStatus.Running,
+                Payload = "{}",
+                AgentSelector = "",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                ProjectId = Guid.Parse(ProjectT),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        (await Http(TestUserTokens.Scoped(ProjectT, AccessRole.ReadOnly)).GetAsync($"/api/ui/triages/by-run/{runId}"))
+            .StatusCode.Should().Be(HttpStatusCode.OK, "positive control: the run's own project finds its triage");
+        (await Http(TestUserTokens.Scoped(ProjectU, AccessRole.ReadOnly)).GetAsync($"/api/ui/triages/by-run/{runId}"))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }

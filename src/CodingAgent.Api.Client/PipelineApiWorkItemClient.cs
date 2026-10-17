@@ -33,29 +33,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result ?? [];
     }
 
-    public async Task<WorkItemClaimResponse?> ClaimAsync(Guid workItemId, ClaimWorkItemRequest request, CancellationToken ct = default)
-    {
-        var response = await _http.PostAsJsonAsync(
-            $"/api/work-items/{workItemId}/claim",
-            request,
-            PipelineJsonOptions.Default,
-            ct);
-
-        // 409 Conflict — expected contention: another instance claimed first. Caller should skip.
-        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
-            return null;
-
-        // 404 Not Found — unexpected: item was in the pending list but no longer exists.
-        // This indicates a data race (deleted between GetPendingAsync and ClaimAsync) or a
-        // bug in the pending query. Throw so the caller can log a distinct warning rather
-        // than silently treating it as a normal 409 contention case.
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            throw new WorkItemNotFoundException(workItemId);
-
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<WorkItemClaimResponse>(PipelineJsonOptions.Default, ct);
-    }
-
     public async Task<JobAssignmentMessage?> GetAssignmentAsync(Guid workItemId, CancellationToken ct = default)
     {
         var response = await _http.GetAsync($"/api/work-items/{workItemId}/assignment", ct);
@@ -90,25 +67,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return true;
     }
 
-    public async Task RequeueAsync(Guid workItemId, CancellationToken ct = default)
-    {
-        var response = await _http.PostAsync($"/api/work-items/{workItemId}/requeue", null, ct);
-        // 409 Conflict — expected: item already in Pending, Running, or terminal state.
-        // The requeue intent is satisfied; treat as success (no-op).
-        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
-            return;
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct = default)
-    {
-        var result = await _http.GetFromJsonAsync<RetryCountResponse>(
-            $"/api/work-items/{workItemId}/retry-count",
-            PipelineJsonOptions.Default,
-            ct);
-        return result?.RetryCount ?? 0;
-    }
-
     public async Task<WorkItemStalenessResult?> GetStalenessAsync(
         IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderConfigId,
@@ -137,17 +95,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
     }
 
-    public async Task PostLabelSwapAsync(Guid workItemId, string label, CancellationToken ct = default)
-    {
-        var body = new { label };
-        var response = await _http.PostAsJsonAsync(
-            $"/api/work-items/{workItemId}/label-swap",
-            body,
-            PipelineJsonOptions.Default,
-            ct);
-        response.EnsureSuccessStatusCode();
-    }
-
     public async Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, string? projectId = null, CancellationToken ct = default)
     {
         var url = $"/api/work-items/active?olderThanSeconds={olderThanSeconds}";
@@ -159,17 +106,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
             PipelineJsonOptions.Default,
             ct);
         return result ?? [];
-    }
-
-    public async Task PostLastProgressAsync(Guid workItemId, DateTimeOffset timestamp, CancellationToken ct = default)
-    {
-        var body = new { timestamp };
-        var response = await _http.PostAsJsonAsync(
-            $"/api/work-items/{workItemId}/last-progress",
-            body,
-            PipelineJsonOptions.Default,
-            ct);
-        response.EnsureSuccessStatusCode();
     }
 
     public async Task<WorkItemStatus?> GetStatusAsync(Guid workItemId, CancellationToken ct = default)

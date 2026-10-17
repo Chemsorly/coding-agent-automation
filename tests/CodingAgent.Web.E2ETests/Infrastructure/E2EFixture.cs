@@ -227,7 +227,8 @@ public sealed class E2EFixture : IAsyncLifetime
         _jobController = new FakeJobController(
             WorkItems,
             _apiFactory.AgentRegistry,
-            DbContextFactory);
+            DbContextFactory,
+            _apiFactory.Services);
 
         // Build the real JobController in-process against the API host.
         // Must be built after _apiFactory so ServerAddress is known.

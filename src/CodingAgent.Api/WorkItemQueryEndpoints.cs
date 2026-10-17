@@ -11,7 +11,7 @@ namespace CodingAgent.Api;
 
 /// <summary>
 /// Minimal API endpoints for read-only Work Item query and metrics routes:
-/// pending, active, retry-count, staleness, counts-by-status, and status.
+/// pending, active, staleness, counts-by-status, and status.
 /// </summary>
 public static class WorkItemQueryEndpoints
 {
@@ -25,7 +25,6 @@ public static class WorkItemQueryEndpoints
 
         group.MapGet("/pending", GetPendingWorkItems).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/active", GetActiveWorkItems).RequireAuthorization(ApiAuthPolicies.Operator);
-        group.MapGet("/{id:guid}/retry-count", GetRetryCount).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/staleness", GetStaleness).RequireAuthorization(ApiAuthPolicies.Operator);
 
         // ── Metrics feed for the Scheduler's WorkItemCountsService ─────────────
@@ -245,29 +244,6 @@ public static class WorkItemQueryEndpoints
         }
 
         return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)dtos);
-    }
-
-    // ── GET /{id}/retry-count ──────────────────────────────────────────────
-
-    /// <summary>
-    /// GET /api/work-items/{id}/retry-count
-    /// Returns { "retryCount": int }. 200 or 404.
-    /// </summary>
-    internal static async Task<IResult> GetRetryCount(
-        Guid id,
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var item = await db.WorkItems.AsNoTracking()
-            .Where(w => w.Id == id)
-            .Select(w => new { w.RetryCount })
-            .FirstOrDefaultAsync(ct);
-
-        if (item is null)
-            return TypedResults.NotFound();
-
-        return TypedResults.Ok(new { retryCount = item.RetryCount });
     }
 
     // ── GET /staleness ─────────────────────────────────────────────────────
