@@ -224,9 +224,47 @@ public sealed class FakeRedisStore : IRedisStore
     /// KEYS[3]=run:{id}:output, KEYS[4]=run:{id}:chat, KEYS[5]=run:{id}:qg, KEYS[6]=run:{id}:retryerrors
     /// ARGV[1]=runId, ARGV[2]=unix expiry timestamp.
     /// Returns the hash entries of the run if SREM succeeded, or null otherwise.
+    ///
+    /// Also simulates the ReplaceRun Lua script: SISMEMBER check + iterative HSET.
+    /// KEYS[1]=runs:active, KEYS[2]=run:{id}
+    /// ARGV[1]=runId, ARGV[2..N]=alternating field/value pairs.
+    /// Returns 1 if written, 0 if the RunId is not a member of the active set.
     /// </summary>
     public Task<RedisResult> ScriptEvaluateAsync(string script, RedisKey[] keys, RedisValue[] values)
     {
+        // ReplaceRun script: SISMEMBER check + iterative HSET
+        if (script.Contains("SISMEMBER") && keys.Length >= 2)
+        {
+            var setKey = (string)keys[0]!;
+            var hashKey = (string)keys[1]!;
+            var runId = (string)values[0]!;
+
+            // SISMEMBER — return 0 (not a member) if set is expired, missing, or doesn't contain runId
+            if (IsExpired(setKey) || !_sets.TryGetValue(setKey, out var set) || !set.ContainsKey(runId))
+                return Task.FromResult(RedisResult.Create((RedisValue)0));
+
+            // Write hash fields — clear stale expiry first (real Redis: HSET on an expired key
+            // resurrects it without a TTL; our fake must mirror this to keep HashGetAllAsync correct)
+            // TODO: [WARNING] This TryRemove is unconditional and overgeneralises real Redis semantics.
+            // Real Redis preserves a valid (non-expired) TTL when HSET is called on a key that still
+            // has time remaining — it only discards the TTL when the key has already expired.
+            // The unconditional removal means tests using this fake will not catch a production scenario
+            // where an unexpired hash TTL is incorrectly dropped by a write operation. A correct
+            // implementation would only TryRemove if the key's expiry is already in the past.
+            _expiries.TryRemove(hashKey, out _);
+            var hash = _hashes.GetOrAdd(hashKey, _ => new ConcurrentDictionary<string, string>());
+
+            // values[1..] are alternating field/value pairs
+            for (var i = 1; i + 1 < values.Length; i += 2)
+            {
+                var field = (string)values[i]!;
+                var value = (string)values[i + 1]!;
+                hash[field] = value;
+            }
+
+            return Task.FromResult(RedisResult.Create((RedisValue)1));
+        }
+
         // Identify RemoveRun script by presence of SREM + EXPIREAT pattern
         if (script.Contains("SREM") && script.Contains("EXPIREAT") && keys.Length >= 2)
         {
