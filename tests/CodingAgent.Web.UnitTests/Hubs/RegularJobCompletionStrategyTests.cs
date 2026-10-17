@@ -125,6 +125,27 @@ public sealed class RegularJobCompletionStrategyTests
             "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), null, null), Times.Once);
     }
 
+    [Theory]
+    [InlineData(false, false)] // rejected: the other path's status and label stand
+    [InlineData(true, true)]   // took effect (timeout recovery): this payload's label must follow
+    public async Task Null_CompleteRunAsync_result_returns_whether_the_direct_transition_took_effect(
+        bool transitioned, bool expected)
+    {
+        var run = MakeRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+        _facade
+            .Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(transitioned);
+
+        var result = await CreateStrategy().ExecuteAsync(new JobId("job-1"), run, payload, null, CancellationToken.None);
+
+        result.Should().Be(expected);
+    }
+
     // ── Defensive cleanup path ────────────────────────────────────────────────
 
     [Fact]

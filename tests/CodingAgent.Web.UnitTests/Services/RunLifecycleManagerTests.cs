@@ -1264,6 +1264,84 @@ public sealed class RunLifecycleManagerErrorPathTests
             It.IsAny<RunId>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── CompleteRunAsync — another path set the WorkItem's terminal status first ──
+
+    private void RejectTransitionWithCurrentStatus(WorkItemStatus? current)
+    {
+        _mockFallbackTransition
+            .Setup(f => f.TryFallbackChainAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockFallbackTransition
+            .Setup(f => f.GetCurrentStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(current);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_WorkItemAlreadyFailed_LabelsAndRecordsFailed_ReturnsNull()
+    {
+        // The JobController's HTTP Failed (timeout) won the DB write, this report removed the run (#3009).
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Cancelled;
+        _runService.AddRun(run);
+        RejectTransitionWithCurrentStatus(WorkItemStatus.Failed);
+
+        var result = await _sut.CompleteRunAsync(runId, WorkItemStatus.Cancelled, CancellationToken.None);
+
+        result.Should().BeNull("the caller must not apply this report's label again");
+        _runService.GetRun(runId).Should().BeNull("the run is still removed");
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Cancelled,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == runId && r.CurrentStep == PipelineStep.Failed),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_WorkItemAlreadyAtThisStatus_KeepsFinalLabel_ReturnsRun()
+    {
+        // HTTP Failed with the same payload landed first: Failed→Failed is rejected as a no-op.
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Failed;
+        run.FinalLabel = AgentLabels.NeedsRefinement;
+        _runService.AddRun(run);
+        RejectTransitionWithCurrentStatus(WorkItemStatus.Failed);
+
+        var result = await _sut.CompleteRunAsync(runId, WorkItemStatus.Failed, CancellationToken.None);
+
+        result.Should().BeSameAs(run);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.NeedsRefinement,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(WorkItemStatus.Pending)]
+    [InlineData(null)]
+    public async Task CompleteRunAsync_RejectedWithoutTerminalStatus_KeepsThisReportsOutcome(WorkItemStatus? current)
+    {
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Completed;
+        _runService.AddRun(run);
+        RejectTransitionWithCurrentStatus(current);
+
+        var result = await _sut.CompleteRunAsync(runId, WorkItemStatus.Succeeded, CancellationToken.None);
+
+        result.Should().BeSameAs(run);
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Done,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── FailRunAsync — job cleanup ────────────────────────────────────────
 
     [Fact]

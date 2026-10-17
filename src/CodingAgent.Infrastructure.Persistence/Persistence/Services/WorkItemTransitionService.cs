@@ -290,7 +290,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     /// and retries up to 3 times on DbUpdateConcurrencyException (matching TransitionCoreAsync).
     /// </summary>
     /// <param name="workItemId">The work item to recover.</param>
-    /// <param name="desiredStatus">The target status (Running, Succeeded, Failed, or Cancelled).</param>
+    /// <param name="desiredStatus">The target status (Running, Succeeded or Failed; Cancelled is not recovered).</param>
     /// <param name="mutate">Optional action to set additional fields during recovery.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>True if recovery succeeded, false if not applicable (wrong state, wrong reason, or item not found).</returns>
@@ -375,9 +375,11 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         return false;
     }
 
+    // Not Cancelled: an agent that reports Cancelled after the server gave up was stopped by that
+    // timeout, so the failure stands and the run keeps agent:error (#3009). agent:cancelled would read
+    // as an operator's abandon and block rework.
     private static bool IsRecoverableTargetStatus(WorkItemStatus desiredStatus)
-        => desiredStatus is WorkItemStatus.Running or WorkItemStatus.Succeeded
-            or WorkItemStatus.Failed or WorkItemStatus.Cancelled;
+        => desiredStatus is WorkItemStatus.Running or WorkItemStatus.Succeeded or WorkItemStatus.Failed;
 
     private static bool IsRaceInducedFailure(WorkItemEntity item)
     {

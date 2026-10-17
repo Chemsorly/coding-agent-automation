@@ -181,7 +181,25 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             run.MarkCompleted();
 
         // 1. Transition WorkItem in DB
-        await TransitionWorkItemAsync(runId, terminalStatus, ct, errorMessage, failureReason);
+        var effectiveStatus = await TransitionWorkItemAsync(runId, terminalStatus, ct, errorMessage, failureReason);
+
+        // Another path (e.g. the JobController's HTTP Failed for a timeout) moved the WorkItem to a
+        // different terminal status first, but this call removed the run, so that path found no run to
+        // label. The run's history and label follow the WorkItem's status, not this report.
+        var otherPathWon = effectiveStatus != terminalStatus;
+        if (otherPathWon)
+        {
+            _logger.Warning(
+                "CompleteRunAsync: WorkItem {RunId} is already {Effective}, not {Requested}; recording the run and its label as {Effective}",
+                runId, effectiveStatus, terminalStatus, effectiveStatus);
+            run.CurrentStep = effectiveStatus switch
+            {
+                WorkItemStatus.Succeeded => PipelineStep.Completed,
+                WorkItemStatus.Cancelled => PipelineStep.Cancelled,
+                _ => PipelineStep.Failed,
+            };
+            run.FinalLabel = null;
+        }
 
         // 2. Compute the target label — skip for consolidation runs (they have no issue label).
         //    Best-effort fallback for hub crash scenario — PostCompletionBookkeepingAsync is the
@@ -191,7 +209,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         string? label = null;
         if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
-            label = CompletionOutcomeResolver.ResolveAgentLabel(terminalStatus, run.FinalLabel);
+            label = CompletionOutcomeResolver.ResolveAgentLabel(effectiveStatus, run.FinalLabel);
         }
 
         // 3. Shared terminal cleanup: history-persist → label-swap
@@ -201,9 +219,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _logger.Information(
             "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId})",
-            runId, terminalStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
+            runId, effectiveStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
 
-        return run;
+        // null tells the caller another path won, so it does not apply this report's label again.
+        return otherPathWon ? null : run;
     }
 
     /// <inheritdoc />
@@ -359,24 +378,34 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
     }
 
-    private async Task TransitionWorkItemAsync(RunId runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
+    /// <summary>
+    /// Moves the run's WorkItem to <paramref name="status"/> and returns the status it has afterwards: that
+    /// status, or the different terminal status another writer set first (the transition was rejected).
+    /// Without a database, or when the status cannot be read, it returns <paramref name="status"/>.
+    /// </summary>
+    private async Task<WorkItemStatus> TransitionWorkItemAsync(RunId runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
     {
         if (_workItemFallbackTransition is null || !Guid.TryParse(runId.Value, out var workItemId))
-            return;
+            return status;
 
         try
         {
             var result = await _workItemFallbackTransition.TryFallbackChainAsync(workItemId, status, errorMessage, failureReason, ct);
-            if (!result)
-            {
-                _logger.Warning(
-                    "RunLifecycleManager: WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
-                    workItemId, status);
-            }
+            if (result)
+                return status;
+
+            _logger.Warning(
+                "RunLifecycleManager: WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
+                workItemId, status);
+            var current = await _workItemFallbackTransition.GetCurrentStatusAsync(workItemId, ct);
+            return current is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled
+                ? current.Value
+                : status;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex, "RunLifecycleManager: WorkItem {WorkItemId} transition to {Status} failed (non-fatal)", workItemId, status);
+            return status;
         }
     }
 
