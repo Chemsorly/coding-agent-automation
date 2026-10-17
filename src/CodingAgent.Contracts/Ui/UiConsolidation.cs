@@ -44,3 +44,22 @@ public sealed record UiRefactoringScanSettings(
 /// <c>agent:next</c>; <paramref name="RefactoringFocus"/> selects which detection agent runs.
 /// </summary>
 public sealed record UiConsolidationTriggerRequest(ConsolidationRunType Type, string? TemplateId, bool AutoDispatch, RefactoringScanFocus RefactoringFocus = RefactoringScanFocus.All);
+
+/// <summary>
+/// Automatic-start counters for the Consolidation page (<c>GET /api/ui/consolidation/auto-counters</c>).
+/// Only counters for types whose threshold is above zero are included; a missing key means the threshold
+/// is zero or the counter failed to load (in which case the page omits it).
+/// </summary>
+/// <param name="BrainCounters">Keyed by template id.</param>
+/// <param name="RefactoringCounters">Keyed by template id.</param>
+public sealed record UiConsolidationAutoCounters(
+    IReadOnlyDictionary<string, UiAutoCounter> BrainCounters,
+    IReadOnlyDictionary<string, UiAutoCounter> RefactoringCounters,
+    UiAutoCounter? HarnessCounter);
+
+/// <summary>One automatic-start counter with current value, threshold, and optional blocked reason.</summary>
+/// <param name="Blocked">
+/// Non-null when the next automatic run is suppressed:
+/// "auto paused: the last run failed" or "auto waiting: N scan issues still open".
+/// </param>
+public sealed record UiAutoCounter(int Count, int Threshold, string? Blocked);

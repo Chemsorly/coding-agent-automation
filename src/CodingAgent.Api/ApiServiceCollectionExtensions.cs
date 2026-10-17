@@ -714,6 +714,13 @@ public static class ApiServiceCollectionExtensions
 
         // ── Consolidation page (spec 051 2.4b) ───────────────────────────────
         // Reads the cards and triggers through IConsolidationService (AddLifecycleAndConsolidation).
+        // ConsolidationStalenessService powers the auto-start counters shown on the page (issue #3592).
+        services.AddSingleton<CodingAgent.Orchestration.ConsolidationStalenessService>(sp =>
+            new CodingAgent.Orchestration.ConsolidationStalenessService(
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
+                sp.GetRequiredService<IProviderFactory>(),
+                Log.Logger));
         services.AddSingleton<CodingAgent.Api.Consolidation.ConsolidationPageService>();
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
