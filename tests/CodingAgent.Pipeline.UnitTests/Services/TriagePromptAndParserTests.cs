@@ -75,6 +75,41 @@ public sealed class TriagePromptAndParserTests
     }
 
     [Fact]
+    public void InvestigationPrompt_NamesTheMcpServersOfTheRun()
+    {
+        var prompt = TriagePromptBuilder.BuildInvestigationPrompt(false, Project, ["observability", "tracker"]);
+
+        prompt.Should().Contain("MCP servers configured for this run: `observability`, `tracker`.");
+    }
+
+    [Fact]
+    public void InvestigationPrompt_WithoutMcpServers_SaysNoneAreConfigured()
+    {
+        TriagePromptBuilder.BuildInvestigationPrompt(false, Project, [])
+            .Should().Contain("No MCP servers are configured for this run");
+    }
+
+    [Fact]
+    public void InvestigationPrompt_LooksUpWhatTheReportNames_AndNeedsAFailedCallToCallASourceUnavailable()
+    {
+        var prompt = TriagePromptBuilder.BuildInvestigationPrompt(false, Project, ["observability"]);
+
+        prompt.Should().Contain("Look up what the report names")
+            .And.Contain("A source is unavailable only when a call to it failed")
+            .And.Contain("can be a preset")
+            .And.Contain("not a fact")
+            .And.Contain("\"reproduced\": false")
+            .And.NotContain("no trace source connected");
+    }
+
+    [Fact]
+    public void ReviewPrompt_ChecksWhatTheReportNamesAndUnavailableSources()
+    {
+        TriagePromptBuilder.BuildReviewPrompt(reportToTracker: false)
+            .Should().Contain("What the report names").And.Contain("Unavailable sources");
+    }
+
+    [Fact]
     public void ReviewPrompt_ChecksEvidenceCausationAndSensitiveData_AndUsesSeverityMarkers()
     {
         var prompt = TriagePromptBuilder.BuildReviewPrompt(reportToTracker: true);

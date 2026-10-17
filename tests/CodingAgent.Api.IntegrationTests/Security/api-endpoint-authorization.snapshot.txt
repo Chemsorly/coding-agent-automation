@@ -33,6 +33,7 @@ POST /api/ui/chat/{agentId}/keepalive -> Ui: Ui.AnyAccess, Ui.AnyOperator
 POST /api/ui/chat/{agentId}/prompt -> Ui: Ui.AnyAccess, Ui.AnyOperator
 POST /api/ui/chat/{agentId}/terminate -> Ui: Ui.AnyAccess, Ui.AnyOperator
 GET /api/ui/consolidation -> Ui: Ui.AnyAccess, Ui.GlobalRead
+GET /api/ui/consolidation/auto-counters -> Ui: Ui.AnyAccess, Ui.GlobalRead
 POST /api/ui/consolidation/runs -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 GET /api/ui/consolidation/templates/{templateId}/refactoring-scan -> Ui: Ui.AnyAccess, Ui.GlobalRead
 GET /api/ui/health -> Ui: Ui.AnyAccess

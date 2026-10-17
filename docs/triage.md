@@ -61,10 +61,14 @@ the other project's runs neither read nor write it.
   given after each) and up to 30 other triages of the project from the retention window, for duplicate detection.
 - `.agent/open-issues/`: the open issues of every enabled tracker of the project (`MaxOpenIssuesForContext` each).
 
-The prompt asks the agent to check cheap, high-signal sources first (recent changes, existing issues and triages),
-to form at least three hypotheses before testing them, to reproduce in the workspace without pushing, to cite
-evidence for every claim, to prefer links and queries over pasted log lines, to never write to external systems,
-and to answer `inconclusive` with questions instead of guessing.
+The prompt names the MCP servers configured for the run (they differ per deployment and project) and asks the agent
+to call each one once to learn what it covers, then to look up every run, request, ID or time range the report names
+in the running system's records before forming hypotheses. It then asks it to check cheap, high-signal sources
+(recent changes and which version was deployed, existing issues and triages — an earlier triage's cause is a
+hypothesis, not a fact), to form at least three hypotheses before testing them, to reproduce the reported symptom
+in the workspace without pushing, to cite evidence for every claim, to call a source unavailable only after a call
+to it failed, to prefer links and queries over pasted log lines, to never write to external systems, and to answer
+`inconclusive` with questions instead of guessing.
 
 ## The Report
 
