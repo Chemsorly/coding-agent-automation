@@ -22,6 +22,8 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// </summary>
 public sealed class SchedulerHealthSurfaceTests : IAsyncDisposable
 {
+    private static readonly string[] GetOnly = ["GET"];
+
     private IHost? _host;
 
     [Fact]
@@ -30,15 +32,14 @@ public sealed class SchedulerHealthSurfaceTests : IAsyncDisposable
         _host = await new HostBuilder()
             .ConfigureWebHost(web => web
                 .UseTestServer()
-                .ConfigureServices(s => s.AddRouting().AddAuthorization(o =>
-                    o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build()))
+                .ConfigureServices(s => s.AddRouting().AddAuthorizationBuilder().SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build()))
                 .Configure(app => app.UseRouting().UseAuthorization().UseEndpoints(e => e.MapSchedulerHealthEndpoints())))
             .StartAsync();
 
         var endpoints = _host.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>().ToList();
         endpoints.Select(e => "/" + e.RoutePattern.RawText!.TrimStart('/')).Should().BeEquivalentTo(["/health", "/healthz", "/readyz"]);
         endpoints.Should().OnlyContain(e => e.Metadata.GetMetadata<IAllowAnonymous>() != null);
-        endpoints.Should().OnlyContain(e => e.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods.SequenceEqual(new[] { "GET" }));
+        endpoints.Should().OnlyContain(e => e.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods.SequenceEqual(GetOnly));
 
         using var client = _host.GetTestClient();
         foreach (var endpoint in endpoints)
