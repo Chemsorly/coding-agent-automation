@@ -13,6 +13,9 @@ public interface IUiConsolidationClient
 {
     Task<UiConsolidationOverview> GetOverviewAsync(CancellationToken ct = default);
 
+    /// <summary>Automatic-start counters: current count, threshold, and optional blocked reason per template / harness.</summary>
+    Task<UiConsolidationAutoCounters> GetAutoCountersAsync(CancellationToken ct = default);
+
     Task<UiRefactoringScanSettings> GetRefactoringScanSettingsAsync(string templateId, CancellationToken ct = default);
 
     /// <summary>
@@ -28,6 +31,9 @@ public sealed class UiConsolidationClient(HttpClient http, IUiAccessTokenSource 
 
     public Task<UiConsolidationOverview> GetOverviewAsync(CancellationToken ct = default) =>
         GetAsync(Consolidation, UiJsonContext.Default.UiConsolidationOverview, ct);
+
+    public Task<UiConsolidationAutoCounters> GetAutoCountersAsync(CancellationToken ct = default) =>
+        GetAsync($"{Consolidation}/auto-counters", UiJsonContext.Default.UiConsolidationAutoCounters, ct);
 
     public Task<UiRefactoringScanSettings> GetRefactoringScanSettingsAsync(string templateId, CancellationToken ct = default) =>
         GetAsync($"{Consolidation}/templates/{Uri.EscapeDataString(templateId)}/refactoring-scan", UiJsonContext.Default.UiRefactoringScanSettings, ct);
