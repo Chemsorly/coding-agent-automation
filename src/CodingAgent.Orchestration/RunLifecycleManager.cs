@@ -190,8 +190,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         if (otherPathWon)
         {
             _logger.Warning(
-                "CompleteRunAsync: WorkItem {RunId} is already {Effective}, not {Requested}; recording the run and its label as {Effective}",
-                runId, effectiveStatus, terminalStatus, effectiveStatus);
+                "CompleteRunAsync: WorkItem {RunId} is already {Effective}, not {Requested}; the run's history and label follow the WorkItem",
+                runId, effectiveStatus, terminalStatus);
             run.CurrentStep = effectiveStatus switch
             {
                 WorkItemStatus.Succeeded => PipelineStep.Completed,
