@@ -161,6 +161,9 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
     [InlineData("/\\evil.example")]
     [InlineData("/login?returnUrl=/overview")]
     [InlineData("/auth/logout")]
+    [InlineData("/api/ui/me")]
+    [InlineData("/bff/session")]
+    [InlineData("/hubs/ui")]
     public async Task Login_NonLocalOrAuthReturnUrl_LandsOnOverview(string returnUrl)
     {
         var response = await AuthTestEnvironment.PostLoginAsync(NoRedirectClient(), "admin", AuthTestEnvironment.AdminPassword, returnUrl);
@@ -247,17 +250,26 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
     [Fact]
     public async Task ApiPaths_AcceptNoApiKey_AndMapNothing()
     {
-        var anonymous = await NoRedirectClient().GetAsync("/api/export/runs.json");
-        anonymous.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the cookie scheme challenges /api paths with 401");
+        // Spec 052 Req 2.11: the CSRF rule answers first, with or without a session.
+        (await NoRedirectClient().GetAsync("/api/export/runs.json")).StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "a request without X-CSRF is refused before authentication");
+
+        var anonymous = NoRedirectClient();
+        anonymous.DefaultRequestHeaders.Add("X-CSRF", "1");
+        (await anonymous.GetAsync("/api/export/runs.json")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "the cookie scheme challenges /api paths with 401");
 
         var withKey = NoRedirectClient();
+        withKey.DefaultRequestHeaders.Add("X-CSRF", "1");
         withKey.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "test-api-key");
         withKey.DefaultRequestHeaders.Add("X-Api-Key", "test-api-key");
         (await withKey.GetAsync("/api/export/runs.json")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
             "the master key is not a credential the web host accepts");
 
         var signedIn = await AuthTestEnvironment.CreateSignedInClientAsync(_factory, allowAutoRedirect: false);
-        (await signedIn.GetAsync("/api/export/runs.json")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        signedIn.DefaultRequestHeaders.Add("X-CSRF", "1");
+        (await signedIn.GetAsync("/api/export/runs.json")).StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "only /api/ui/** is forwarded");
     }
 
     [Fact]

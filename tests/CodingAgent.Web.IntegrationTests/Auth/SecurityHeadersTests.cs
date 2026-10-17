@@ -47,6 +47,7 @@ public class SecurityHeadersTests : IClassFixture<CustomWebApplicationFactory>
         Header(response, "Permissions-Policy").Should().Be(SecurityHeadersRegistration.PermissionsPolicy);
         Header(response, "Cross-Origin-Opener-Policy").Should().Be("same-origin");
         Header(response, "Cross-Origin-Resource-Policy").Should().Be("same-origin");
+        Header(response, SecurityHeadersRegistration.AppVersionHeader).Should().NotBeEmpty("spec 052 Req 5.1: every response names the build");
     }
 
     [Fact]

@@ -33,145 +33,36 @@ internal sealed class MappedRbacEvaluator(Func<ClaimsPrincipal, AccessGrant> map
     public Task<AccessGrant> EvaluateAsync(ClaimsPrincipal user, CancellationToken ct = default) => Task.FromResult(map(user));
 }
 
-/// <summary>Spec 051 T8: minting user tokens in the web host.</summary>
+/// <summary>
+/// Spec 051 D2: the per-scope token cache in front of <see cref="UserTokenMinter"/> (the minting rules
+/// are <see cref="UserTokenMinterTests"/>). Spec 052 deletes the provider with the circuits.
+/// </summary>
 public class UserTokenProviderTests
 {
-    internal static readonly SecurityKey Key = UserTokens.CreateSigningKey("unit-test-user-token-signing-key-0123456789");
-    private const string PaymentsId = "6f1c2a9e-0000-0000-0000-00000000000a";
-
     private readonly FakeTimeProvider _time = new(DateTimeOffset.UtcNow);
     private readonly SwitchableAuthenticationStateProvider _auth = new();
-    private readonly FakeLogger<UserTokenProvider> _logger = new();
-    private AccessGrant _grant = new(AccessRole.ReadOnly, new Dictionary<string, AccessRole> { [PaymentsId] = AccessRole.Operator }, []);
+    private readonly AccessGrant _grant = new(AccessRole.ReadOnly, new Dictionary<string, AccessRole>(), []);
 
     private UserTokenProvider Provider() =>
-        new(_auth, new MappedRbacEvaluator(_ => _grant), new UserTokenSigningKey(Key), _time, _logger);
+        new(_auth, new UserTokenMinter(new MappedRbacEvaluator(_ => _grant), new UserTokenSigningKey(UserTokenMinterTests.Key), _time,
+            new FakeLogger<UserTokenMinter>()), _time);
 
-    private ClaimsPrincipal SignIn(string username = "alice", TimeSpan? session = null)
-    {
-        var user = AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{username}", username, email: null, displayName: null,
-            groups: ["team-a"], _time.GetUtcNow() + (session ?? TimeSpan.FromHours(8)));
-        _auth.SetUser(user);
-        return user;
-    }
-
-    private async Task<ClaimsIdentity> ValidateAsync(string token)
-    {
-        var parameters = UserTokens.CreateValidationParameters(Key);
-        parameters.LifetimeValidator = (_, _, _, _) => true; // the fake clock is checked through the exp claim instead
-        var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, parameters);
-        result.IsValid.Should().BeTrue(result.Exception?.Message);
-        return result.ClaimsIdentity;
-    }
-
-    private static TimeSpan Lifetime(string token)
-    {
-        var jwt = new JsonWebToken(token);
-        return jwt.ValidTo - jwt.IssuedAt;
-    }
+    private void SignIn(string username = "alice", TimeSpan? session = null) =>
+        _auth.SetUser(AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{username}", username, email: null, displayName: null,
+            groups: ["team-a"], _time.GetUtcNow() + (session ?? TimeSpan.FromHours(8))));
 
     [Fact]
-    public async Task Token_CarriesTheUserAndExactlyTheirGrant()
+    public async Task HubToken_IsKeptApartFromTheHttpToken_AndReused()
     {
         SignIn();
-
-        var token = await Provider().GetTokenAsync();
-
-        var identity = await ValidateAsync(token!);
-        identity.FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-alice");
-        identity.FindFirst(UserTokenClaimTypes.Username)!.Value.Should().Be("alice");
-        identity.FindFirst(UserTokenClaimTypes.IdentitySource)!.Value.Should().Be(IdentitySources.Oidc);
-        var readBack = AccessGrantClaims.FromClaims(identity.Claims);
-        readBack.GlobalRole.Should().Be(_grant.GlobalRole);
-        readBack.ProjectRoles.Should().BeEquivalentTo(_grant.ProjectRoles);
-        identity.FindAll(AuthClaimTypes.Group).Should().BeEmpty("the token carries the grant, not the IdP's groups");
-    }
-
-    [Fact]
-    public async Task Lifetime_IsTheHttpLifetime_WhenTheSessionLastsLonger()
-    {
-        SignIn();
-
-        var token = await Provider().GetTokenAsync();
-
-        Lifetime(token!).Should().Be(UserTokens.HttpLifetime);
-    }
-
-    [Fact]
-    public async Task Lifetime_EndsWithTheSession()
-    {
-        SignIn(session: TimeSpan.FromMinutes(2));
-
-        var token = await Provider().GetTokenAsync();
-
-        Lifetime(token!).Should().BeCloseTo(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(1));
-    }
-
-    /// <summary>
-    /// Spec 051 D7: the UI hub's token lasts the session, so a connection older than the HTTP lifetime keeps
-    /// receiving; the hub closes it when the session ends. It is the same user and grant as the HTTP token.
-    /// </summary>
-    [Fact]
-    public async Task HubToken_LastsTheSession_AndIsKeptApartFromTheHttpToken()
-    {
-        SignIn(session: TimeSpan.FromHours(8));
         var provider = Provider();
 
         var hubToken = await provider.GetHubTokenAsync();
         var httpToken = await provider.GetTokenAsync();
 
-        Lifetime(hubToken!).Should().BeCloseTo(TimeSpan.FromHours(8), TimeSpan.FromSeconds(1));
-        Lifetime(httpToken!).Should().Be(UserTokens.HttpLifetime);
-        (await ValidateAsync(hubToken!)).FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-alice");
-        (await ValidateAsync(hubToken!)).FindFirst(UserTokenClaimTypes.Use)?.Value.Should().Be(UserTokenClaimTypes.HubUse, "the API accepts it only on the hub");
-        (await ValidateAsync(httpToken!)).FindFirst(UserTokenClaimTypes.Use).Should().BeNull("HTTP tokens carry no use restriction");
+        hubToken.Should().NotBe(httpToken);
+        (await UserTokenMinterTests.ValidateAsync(hubToken!)).FindFirst(UserTokenClaimTypes.Use)?.Value.Should().Be(UserTokenClaimTypes.HubUse);
         (await provider.GetHubTokenAsync()).Should().Be(hubToken, "a hub token is reused while it is the same user's");
-    }
-
-    [Fact]
-    public async Task HubToken_EndedSession_GetsNone()
-    {
-        SignIn(session: TimeSpan.FromMinutes(1));
-        _time.Advance(TimeSpan.FromMinutes(2));
-
-        (await Provider().GetHubTokenAsync()).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task EndedSession_GetsNoToken()
-    {
-        SignIn(session: TimeSpan.FromMinutes(1));
-        _time.Advance(TimeSpan.FromMinutes(2));
-
-        (await Provider().GetTokenAsync()).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task Anonymous_GetsNoToken()
-    {
-        (await Provider().GetTokenAsync()).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task UserWithoutAnyRole_GetsNoToken()
-    {
-        SignIn();
-        _grant = AccessGrant.None;
-
-        (await Provider().GetTokenAsync()).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task LocalAdmin_GetsAnAdminToken()
-    {
-        _auth.SetUser(AuthPrincipals.CreateLocalAdmin(_time.GetUtcNow().AddHours(1)));
-        _grant = new AccessGrant(AccessRole.Admin, new Dictionary<string, AccessRole>(), []);
-
-        var identity = await ValidateAsync((await Provider().GetTokenAsync())!);
-
-        identity.FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be(AuthPrincipals.LocalAdminSubject);
-        identity.FindFirst(UserTokenClaimTypes.IdentitySource)!.Value.Should().Be(IdentitySources.Local);
-        AccessGrantClaims.FromClaims(identity.Claims).GlobalRole.Should().Be(AccessRole.Admin);
     }
 
     [Fact]
@@ -188,7 +79,7 @@ public class UserTokenProviderTests
 
         stillFirst.Should().Be(first);
         renewed.Should().NotBe(first);
-        (await ValidateAsync(renewed!)).FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-alice");
+        (await UserTokenMinterTests.ValidateAsync(renewed!)).FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-alice");
     }
 
     [Fact]
@@ -201,7 +92,7 @@ public class UserTokenProviderTests
         SignIn("bob");
         var bob = await provider.GetTokenAsync();
 
-        (await ValidateAsync(bob!)).FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-bob");
+        (await UserTokenMinterTests.ValidateAsync(bob!)).FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-bob");
         bob.Should().NotBe(alice);
     }
 
@@ -215,22 +106,6 @@ public class UserTokenProviderTests
         _auth.SetUser(new ClaimsPrincipal(new ClaimsIdentity()));
 
         (await provider.GetTokenAsync()).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task TokenValue_IsNeverLogged()
-    {
-        SignIn();
-
-        var token = await Provider().GetTokenAsync();
-
-        var records = _logger.Collector.GetSnapshot();
-        records.Should().NotBeEmpty("minting is logged, so the assertion below has something to check");
-        foreach (var record in records)
-        {
-            record.Message.Should().NotContain(token!);
-            (record.StructuredState ?? []).Should().NotContain(pair => pair.Value != null && pair.Value.Contains(token!));
-        }
     }
 }
 
@@ -251,7 +126,7 @@ public class UiClientUserIsolationTests
         services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<SwitchableAuthenticationStateProvider>());
         services.AddSingleton<IRbacEvaluator>(new MappedRbacEvaluator(_ =>
             new AccessGrant(AccessRole.ReadOnly, new Dictionary<string, AccessRole>(), [])));
-        services.AddUiClients("http://api.test", UserTokenProviderTests.Key);
+        services.AddUiClients("http://api.test", UserTokenMinterTests.Key);
         var api = new EchoMeApi();
         services.ConfigureHttpClientDefaults(client => client.ConfigurePrimaryHttpMessageHandler(() => api));
         await using var provider = services.BuildServiceProvider();
@@ -292,7 +167,7 @@ public class UiClientUserIsolationTests
             Interlocked.Increment(ref _requests);
             await Task.Delay(Random.Shared.Next(0, 3), cancellationToken); // interleave the two users
             var token = request.Headers.Authorization?.Parameter;
-            var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, UserTokens.CreateValidationParameters(UserTokenProviderTests.Key));
+            var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, UserTokens.CreateValidationParameters(UserTokenMinterTests.Key));
             if (!result.IsValid)
                 return new HttpResponseMessage(HttpStatusCode.Unauthorized);
 

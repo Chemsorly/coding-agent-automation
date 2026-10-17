@@ -14,6 +14,7 @@ internal static class UiClientRegistration
     public static IServiceCollection AddUiClients(this IServiceCollection services, string apiBaseUrl, SecurityKey userTokenSigningKey)
     {
         services.AddSingleton(new UserTokenSigningKey(userTokenSigningKey));
+        services.AddSingleton<UserTokenMinter>();
         services.AddScoped<IUiAccessTokenSource, UserTokenProvider>();
         return services.AddWebClientServices(apiBaseUrl);
     }

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Net;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -23,7 +24,7 @@ namespace CodingAgent.Web.IntegrationTests.Auth;
 /// the real session cookie for an OIDC-shaped principal, so page policies can be exercised for
 /// principals other than the local admin without an identity provider.
 /// </summary>
-public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
+public class RbacWebApplicationFactory : CustomWebApplicationFactory
 {
     public const string PaymentsProjectId = "6f1c2a9e-0000-0000-0000-00000000000a";
 
@@ -92,13 +93,24 @@ public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
                     return;
                 }
 
-                var user = context.Request.Query["user"].ToString();
-                var groups = context.Request.Query["groups"].ToString()
+                var query = context.Request.Query;
+                var user = query["user"].ToString();
+                var groups = query["groups"].ToString()
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                var expiresAt = DateTimeOffset.UtcNow.AddHours(1);
-                await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
-                    AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{user}", user, null, null, groups, expiresAt),
-                    new AuthenticationProperties { IsPersistent = true, ExpiresUtc = expiresAt });
+                // Optional: the session length in seconds (negative = already expired), and the
+                // email and display name an IdP would send.
+                var expiresAt = DateTimeOffset.UtcNow.AddSeconds(int.TryParse(query["ttl"], out var ttl) ? ttl : 3600);
+                var principal = AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{user}", user,
+                    query["email"].FirstOrDefault(), query["name"].FirstOrDefault(), groups, expiresAt);
+                var properties = new AuthenticationProperties { IsPersistent = true, ExpiresUtc = expiresAt };
+                // Spec 052 T4 on the session endpoint: claims and saved tokens it must never echo.
+                if (query["canary"].FirstOrDefault() is { } canary)
+                {
+                    ((ClaimsIdentity)principal.Identity!).AddClaims(
+                        new[] { "access_token", "id_token", "refresh_token", "api_key", "secret" }.Select(type => new Claim(type, canary)));
+                    properties.StoreTokens([new AuthenticationToken { Name = "access_token", Value = canary }]);
+                }
+                await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, properties);
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
             });
             next(app);

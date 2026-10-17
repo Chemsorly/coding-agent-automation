@@ -1,3 +1,4 @@
+using CodingAgent.Web.Bff;
 using CodingAgent.Web;
 using CodingAgent.Infrastructure.Common.Auth;
 using CodingAgent.Infrastructure.Telemetry;
@@ -78,6 +79,9 @@ catch (InvalidOperationException ex)
 }
 
 builder.Services.AddUiClients(apiBaseUrl, userTokenSigningKey);
+
+// Spec 052: the BFF forwards /api/ui/** and /hubs/ui to the API with a user token it mints.
+builder.Services.AddBffForwarding();
 
 // Spec 051 D10: the login cookie and antiforgery tokens are protected with one fixed key from the
 // same Secret, so every replica and every restart accepts them. No Redis, nothing written.

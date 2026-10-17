@@ -1,3 +1,4 @@
+using CodingAgent.Web.Models;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.HttpOverrides;
 
@@ -38,9 +39,18 @@ internal static class SecurityHeadersRegistration
 
         // HSTS only on HTTPS responses and never for localhost, so port-forwards keep working.
         app.UseHsts();
-        app.Use(AddHeadersAsync);
+        var version = app.Services.GetRequiredService<BuildInfo>().ShortSha;
+        app.Use((context, next) =>
+        {
+            // Spec 052 Req 5.1: the build the web host runs, so an open client notices a new release.
+            context.Response.Headers[AppVersionHeader] = version;
+            return AddHeadersAsync(context, next);
+        });
         return app;
     }
+
+    /// <summary>The web host's build version on every response (spec 052 Req 5.1).</summary>
+    public const string AppVersionHeader = "X-App-Version";
 
     /// <summary>
     /// Sends a client that used plain HTTP to the ingress to the same URL over HTTPS, before it can
