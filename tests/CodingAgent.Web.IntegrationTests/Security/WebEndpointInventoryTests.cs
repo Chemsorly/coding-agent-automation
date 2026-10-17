@@ -34,8 +34,9 @@ public sealed partial class WebEndpointInventoryTests : IClassFixture<Production
     /// <summary>The two forwarders, the only endpoints under /api and /hubs.</summary>
     private static readonly string[] ForwarderRoutes = ["/api/ui/{**rest}", "/hubs/ui"];
 
-    // The fingerprint Blazor puts into the resource-collection file name, e.g. resource-collection.yI4pu.js.
-    [GeneratedRegex(@"^/_framework/resource-collection(\.[A-Za-z0-9]+)?\.js(\.gz|\.br)?$")]
+    // The fingerprint Blazor puts into the resource-collection file name, e.g. resource-collection.yI4pu.js or
+    // resource-collection._MpCU.js (base64url, so it may hold '_' and '-').
+    [GeneratedRegex(@"^/_framework/resource-collection(\.[A-Za-z0-9_-]+)?\.js(\.gz|\.br)?$")]
     private static partial Regex ResourceCollectionRoute();
 
     private readonly ProductionWebApplicationFactory _factory;
