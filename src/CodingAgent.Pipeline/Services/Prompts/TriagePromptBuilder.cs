@@ -9,6 +9,20 @@ namespace CodingAgent.Pipeline.Services.Prompts;
 /// </summary>
 public static class TriagePromptBuilder
 {
+    /// <summary>The investigation's method steps, in order.</summary>
+    private const string InvestigationMethod = """
+        1. **Restate the report.** What is the symptom, what was expected, when and where did it happen, which version was running. Note what is unknown. The reported time range can be a preset such as "the last hour" rather than an observed start: find the real start in the evidence.
+        2. **Take stock of your tools.** Call one cheap, read-only tool of every MCP server — for example one that lists its data sources, projects or repositories — and note what each one covers. Note any source you would need but do not have.
+        3. **Look up what the report names.** For every run, job, request, ID, URL, error message or time range in the report, query the servers that show the running system's state and history before you form hypotheses: did it happen, when did it start and end, and what did the system record about it? Start from what the system recorded, not from the code.
+        4. **Check the cheap, high-signal sources:** existing open issues and earlier triages (is this a duplicate?), and what changed around the time it started (commits, merged pull requests, deployments, configuration). Find out which version of each component was running then: the newest commit is not necessarily the deployed one. An earlier triage's root cause is a hypothesis to test again, not a fact: check whether the issues it created have been fixed since.
+        5. **Form at least three different hypotheses before you test any.** Agents tend to lock onto the first explanation; do not. Give each an id (H1, H2, …).
+        6. **Test each hypothesis** against logs, metrics, traces, code and documentation. Look for evidence against it as hard as for evidence for it. A coincidence in time is not a cause.
+        7. **Reproduce the problem if you can**, for example with a failing test in the workspace. Do not commit or push it. A reproduction shows the reported symptom; a test that only shows the suspected code path is evidence, not a reproduction.
+        8. **Write the causal chain** from the symptom back to the root cause. Every link needs evidence. Distinguish the trigger (what set it off) from the root cause (what made the system fail).
+        9. **Decide the verdict.** If you cannot tie the problem to one cause with evidence, say so and ask the questions that would let the next attempt decide — do not guess.
+        10. **Propose fixes** as complete issue drafts: the root fix, and where useful a mitigation and a prevention (a test, a check, an alert). If the fix already exists, for example merged but not yet deployed, name it instead of drafting it again.
+        """;
+
     /// <summary>
     /// Builds the investigation prompt.
     /// </summary>
@@ -44,19 +58,7 @@ public static class TriagePromptBuilder
             s.AppendLine($"- `{AgentWorkspacePaths.BrainContextFilePath}`, when present — project knowledge.");
         });
 
-        PromptBuilder.AppendSection(sb, "## Method", s =>
-        {
-            s.AppendLine("1. **Restate the report.** What is the symptom, what was expected, when and where did it happen, which version was running. Note what is unknown. The reported time range can be a preset such as \"the last hour\" rather than an observed start: find the real start in the evidence.");
-            s.AppendLine("2. **Take stock of your tools.** Call one cheap, read-only tool of every MCP server — for example one that lists its data sources, projects or repositories — and note what each one covers. Note any source you would need but do not have.");
-            s.AppendLine("3. **Look up what the report names.** For every run, job, request, ID, URL, error message or time range in the report, query the servers that show the running system's state and history before you form hypotheses: did it happen, when did it start and end, and what did the system record about it? Start from what the system recorded, not from the code.");
-            s.AppendLine("4. **Check the cheap, high-signal sources:** existing open issues and earlier triages (is this a duplicate?), and what changed around the time it started (commits, merged pull requests, deployments, configuration). Find out which version of each component was running then: the newest commit is not necessarily the deployed one. An earlier triage's root cause is a hypothesis to test again, not a fact: check whether the issues it created have been fixed since.");
-            s.AppendLine("5. **Form at least three different hypotheses before you test any.** Agents tend to lock onto the first explanation; do not. Give each an id (H1, H2, …).");
-            s.AppendLine("6. **Test each hypothesis** against logs, metrics, traces, code and documentation. Look for evidence against it as hard as for evidence for it. A coincidence in time is not a cause.");
-            s.AppendLine("7. **Reproduce the problem if you can**, for example with a failing test in the workspace. Do not commit or push it. A reproduction shows the reported symptom; a test that only shows the suspected code path is evidence, not a reproduction.");
-            s.AppendLine("8. **Write the causal chain** from the symptom back to the root cause. Every link needs evidence. Distinguish the trigger (what set it off) from the root cause (what made the system fail).");
-            s.AppendLine("9. **Decide the verdict.** If you cannot tie the problem to one cause with evidence, say so and ask the questions that would let the next attempt decide — do not guess.");
-            s.AppendLine("10. **Propose fixes** as complete issue drafts: the root fix, and where useful a mitigation and a prevention (a test, a check, an alert). If the fix already exists, for example merged but not yet deployed, name it instead of drafting it again.");
-        });
+        PromptBuilder.AppendSection(sb, "## Method", s => s.AppendLine(InvestigationMethod));
 
         PromptBuilder.AppendSection(sb, "## Rules", s =>
         {
