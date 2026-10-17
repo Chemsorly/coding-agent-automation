@@ -21,4 +21,10 @@ public interface IWorkItemFallbackTransitionService
         Guid workItemId, WorkItemStatus status,
         string? errorMessage, FailureReason? failureReason,
         CancellationToken ct);
+
+    /// <summary>
+    /// Reads the work item's current status, or <c>null</c> if it does not exist. Used after a rejected
+    /// <see cref="TryFallbackChainAsync"/> to find the status another writer set.
+    /// </summary>
+    Task<WorkItemStatus?> GetCurrentStatusAsync(Guid workItemId, CancellationToken ct);
 }

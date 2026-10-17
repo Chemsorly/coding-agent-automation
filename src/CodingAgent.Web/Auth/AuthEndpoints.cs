@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace CodingAgent.Web.Auth;
 
 /// <summary>
-/// Login and logout endpoints (Spec 049 Req 2, 3, 10). An interactive Blazor circuit cannot set
+/// Login and logout endpoints (Spec 049 Req 2, 3, 10). An interactive Blazor component cannot set
 /// cookies, so the login page posts to these plain HTTP endpoints. All are anonymous; the form
 /// posts are antiforgery-validated.
 /// </summary>
@@ -140,7 +140,8 @@ internal static class AuthEndpoints
 
     /// <summary>
     /// Returns <paramref name="returnUrl"/> when it is a local path that is not part of the
-    /// authentication UI; otherwise the default landing page (Req 1.3).
+    /// authentication UI; otherwise the default landing page (Req 1.3). The forwarded and BFF paths
+    /// (<c>/api/</c>, <c>/bff/</c>, <c>/hubs/</c>) are not pages either (spec 052 n4).
     /// </summary>
     internal static string SafeReturnUrl(string? returnUrl)
     {
@@ -151,7 +152,10 @@ internal static class AuthEndpoints
         if (path.StartsWith("/auth/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith(AuthPaths.Login, StringComparison.OrdinalIgnoreCase)
             || path.StartsWith(AuthPaths.AccessDenied, StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/signin-oidc", StringComparison.OrdinalIgnoreCase))
+            || path.StartsWith("/signin-oidc", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/bff/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase))
         {
             return AuthPaths.DefaultLanding;
         }

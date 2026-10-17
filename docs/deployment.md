@@ -4,7 +4,7 @@
 
 The application runs on Kubernetes as five distinct processes:
 
-- **Web UI** (`CodingAgent.Web`) — Blazor Server app that hosts the web UI. It calls the Pipeline API only as the signed-in user: HTTP on `/api/ui/**` and the UI hub `/hubs/ui`, with a user token it signs ([User Token Secret](#user-token-secret)). It holds no agent API key, no database or Redis connection, no provider credentials and no Kubernetes access, and references none of the server projects (spec 051).
+- **Web UI** (`CodingAgent.Web`) — The backend-for-frontend (BFF) of the browser UI, which runs as Blazor WebAssembly. It signs users in, keeps the session cookie, serves the client's files from the web image, and forwards `/api/ui/**` and the UI hub `/hubs/ui` to the Pipeline API with a user token it signs ([User Token Secret](#user-token-secret)); the token never reaches the browser. It renders no pages, holds no agent API key, no database or Redis connection, no provider credentials and no Kubernetes access, and references none of the server projects (specs 051, 052). See [Authentication](authentication.md#the-web-host-and-the-browser-client).
 - **Pipeline API** (`CodingAgent.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub` (agents), `UiHub` (the web UI), `AgentRegistryService`, `OrchestratorRunService`, `DatabaseMaintenanceService`, `ChatJobDispatcher`, `ChatSessionWatcher`, and `ChatHeartbeatTracker`.
 - **Job Controller** (`CodingAgent.JobController`) — Reconciliation of dispatched work: `ReconciliationService` watches the K8s Jobs, enforces timeouts and records each Job's outcome on its work item. It dispatches nothing. Leader-elected via a `caa-{release}-dispatch-lock` Lease (name configured via `jobController.leaderElection.dispatchLeaseName`). Stateless; all state lives in Postgres via the API.
 - **Scheduler** (`CodingAgent.Scheduler`) — Owns all scheduled/periodic background work: dispatch of queued work items (`WorkItemDispatchLoop` calls `POST /api/work-items/{id}/dispatch`, and the Pipeline API creates the K8s Job), orphaned label recovery, housekeeping, work-item metrics polling, and periodic maintenance sweeps. No direct Postgres connection — all persistence goes through the Pipeline API. Leader-elected via `caa-{release}-scheduler-lock` Lease.
@@ -12,7 +12,7 @@ The application runs on Kubernetes as five distinct processes:
 
 Supporting libraries (shared, not deployed independently):
 
-- **Web.Client** (`CodingAgent.Web.Client`) — The pages, layout, UI services and the typed `/api/ui` and UI hub clients. It references Contracts only and nothing of ASP.NET Core that needs a server, so it can later run as WebAssembly unchanged (spec 051 D9; architecture tests in `LayerBoundaryTests.WebHost.cs` keep it that way). The web host adds the server-only parts: sign-in, token minting, `App.razor`, `Login`.
+- **Web.Client** (`CodingAgent.Web.Client`) — The pages, layout, UI services and the typed `/api/ui` and UI hub clients. It runs in the browser as WebAssembly (spec 052) and references Contracts and nothing of ASP.NET Core that needs a server (architecture tests in `LayerBoundaryTests.WebHost.cs` keep it that way). The web host adds the server-only parts: sign-in, token minting, forwarding, `App.razor`, `Login`.
 
 - **Orchestration** (`CodingAgent.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API and the Scheduler. References `Infrastructure.Providers` directly; does not reference `Infrastructure.Persistence`.
 - **Infrastructure.Persistence** (`CodingAgent.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgent.Api` only. The Scheduler and the web host have no direct or transitive reference to Persistence.
@@ -59,9 +59,11 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 - kubectl ≥ 1.25
 - Helm ≥ 3.12
 - A running PostgreSQL instance accessible from the cluster
-- Redis, unless the Pipeline API and the web UI run with one replica each
+- Redis, unless the Pipeline API runs with one replica (the web UI never needs Redis)
 
 ### Install
+
+> **Upgrading to the release with the WebAssembly UI (Spec 052):** the upgrade is a hard cut. The UI may be unavailable briefly while the web pods roll out, and every open tab reloads once; the pipeline keeps running. Sticky-session annotations are now optional and can stay. With Traefik, no values change is needed. With ingress-nginx, the UI's long calls now pass through the ingress: chat launch (up to 2 minutes), triage, browse, dispatch and provider calls, and config import. Add `nginx.ingress.kubernetes.io/proxy-read-timeout: "300"` and `nginx.ingress.kubernetes.io/proxy-body-size: "16m"` to `web.ingress.annotations`; the defaults are 60 seconds and 1 MB.
 
 > **Upgrading to the release with sign-in (Spec 049):** every page of the web UI now requires a signed-in user. Serve the UI at the root of its own host (`web.ingress`, or `kubectl port-forward` for the local admin) before you upgrade; path-prefix proxies such as the Rancher service proxy stop working. Read the generated admin password as shown in [Authentication](authentication.md#local-admin-password), then configure OIDC and role bindings.
 
@@ -100,7 +102,7 @@ A tag is resolved to its digest at verification time, so verifying a mutable tag
 ### Architecture
 
 The chart deploys:
-- **1 Web Deployment** — Blazor Server app (`CodingAgent.Web`). Calls the API as the signed-in user; no database connection, no agent API key and no service-account token.
+- **1 Web Deployment** — `CodingAgent.Web`, the BFF that serves the WebAssembly UI. Forwards the UI's calls to the API as the signed-in user; no database connection, no agent API key and no service-account token.
 - **1 Pipeline API Deployment** — `CodingAgent.Api`. Authoritative database owner, agent hub, and config/run-history server.
 - **1 Job Controller Deployment** — `CodingAgent.JobController`. Runs reconciliation of agent Jobs. Leader-elected.
 - **1 Scheduler Deployment** — `CodingAgent.Scheduler`. Owns all periodic background work (orphaned label recovery, housekeeping, metrics polling). No direct Postgres connection. Leader-elected.
@@ -111,8 +113,9 @@ The chart deploys:
 | Path | Description |
 |------|-------------|
 | `web.image.repository/tag` | Web container image |
-| `web.replicas` | Number of web replicas (default: `2`). Values > 1 require sticky sessions at the ingress (see `web.service.annotations`). Login sessions work on every replica through the shared `data-protection-key`; the web host needs no Redis. |
-| `web.service.annotations` | Annotations on the web Service. With Traefik and more than one web replica, enable sticky sessions here (`traefik.ingress.kubernetes.io/service.sticky.cookie: "true"`): a Blazor Server circuit lives in one pod, and its connection and reconnects must reach that pod. See [Authentication](authentication.md#exposing-the-ui). |
+| `web.replicas` | Number of web replicas (default: `2`). Sticky sessions are optional: any replica serves the browser's next request. Login sessions work on every replica through the shared `data-protection-key`; the web host needs no Redis. |
+| `web.service.annotations` | Annotations on the web Service, for example Traefik's sticky-session annotations (optional). See [Authentication](authentication.md#exposing-the-ui). |
+| `web.ingress.annotations` | Annotations on the web Ingress. With ingress-nginx, set `nginx.ingress.kubernetes.io/proxy-read-timeout: "300"` and `nginx.ingress.kubernetes.io/proxy-body-size: "16m"` for the UI's long calls and the config import. See [Authentication](authentication.md#exposing-the-ui). |
 | `web.ingress.httpsRedirect` | With a `tls` section on the Ingress, redirect clients that reached it over plain HTTP to HTTPS (default: `true`). Set `false` when TLS ends in front of the ingress. See [Authentication](authentication.md#exposing-the-ui). |
 | `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
@@ -193,7 +196,7 @@ When the Kubernetes client is unavailable (e.g., local `dotnet run`), `ILeaderEl
 >
 > **Note:** Redis does **not** eliminate the PVC dispatch race. All work is queued and started by the Scheduler, which takes a per-selector Postgres advisory lock; two Kiro selectors that share the PVC pool are not serialised against each other. An occasional `503` from a dispatch is transient: the work stays queued and is retried on the next cycle. See [Concurrency Model — PVC Dispatch Race in Multi-Replica Deployments](architecture/concurrency-model.md#pvc-dispatch-race-in-multi-replica-deployments) for details.
 
-> **Note on Data Protection:** The web host (Blazor Server) uses ASP.NET Core Data Protection to encrypt the login cookie and antiforgery tokens. Its key ring is read-only and holds one key, built from `DataProtection__Key` (the `data-protection-key` of the [User Token Secret](#user-token-secret)). Every replica builds the same key, so a cookie issued by one replica is accepted by the others and after restarts. Nothing can add a key to the ring. The web host has no Redis connection. Several web replicas need sticky sessions (`web.service.annotations`), because each open page keeps its circuit on one replica. The sidebar's database and Redis indicators show the Pipeline API's view (`GET /api/ui/health`).
+> **Note on Data Protection:** The web host uses ASP.NET Core Data Protection to encrypt the login cookie and antiforgery tokens. Its key ring is read-only and holds one key, built from `DataProtection__Key` (the `data-protection-key` of the [User Token Secret](#user-token-secret)). Every replica builds the same key, so a cookie issued by one replica is accepted by the others and after restarts. Nothing can add a key to the ring. The web host has no Redis connection and keeps no page state, so several web replicas need no sticky sessions. The sidebar's database and Redis indicators show the Pipeline API's view (`GET /api/ui/health`).
 
 ### Graceful Shutdown
 

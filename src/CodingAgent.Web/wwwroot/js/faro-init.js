@@ -70,6 +70,7 @@
         }
 
         try {
+            var LogLevel = window.GrafanaFaroWebSdk.LogLevel;
             var faroInstance = window.GrafanaFaroWebSdk.initializeFaro({
                 url: collectorUrl,
                 app: {
@@ -80,7 +81,16 @@
                 sessionTracking: {
                     enabled: true,
                     persistent: true
-                }
+                },
+                // The WebAssembly UI logs Information and up to the console (spec 052): only warnings
+                // and errors leave the browser. pushLog calls (NotificationFaroBridge) are not affected.
+                consoleInstrumentation: {
+                    disabledLevels: [LogLevel.TRACE, LogLevel.DEBUG, LogLevel.LOG, LogLevel.INFO]
+                },
+                // The polling calls, as in the server's noise filter (OtelNoiseFilter): no fetch span,
+                // so no traceparent. The fetch transport adds these to its own collector URL, and
+                // tracing ignores that list.
+                ignoreUrls: [/\/bff\/session(\?|$)/, /\/api\/ui\/health(\?|$)/, /\/api\/ui\/loop\/status(\?|$)/]
                 // Default instrumentations: errors, web vitals, performance, console, xhr/fetch
             });
 

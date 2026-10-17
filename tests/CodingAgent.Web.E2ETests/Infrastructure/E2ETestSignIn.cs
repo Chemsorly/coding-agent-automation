@@ -64,7 +64,8 @@ public static class E2ETestSignIn
                 var user = context.Request.Query["user"].ToString();
                 var groups = context.Request.Query["groups"].ToString()
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                var expiresAt = DateTimeOffset.UtcNow.AddHours(1);
+                // Optional ttl (seconds): a short session for the expiry tests (spec 052 Req 9.5, 14.3).
+                var expiresAt = DateTimeOffset.UtcNow.AddSeconds(int.TryParse(context.Request.Query["ttl"], out var ttl) ? ttl : 3600);
                 await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
                     AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{user}", user, null, null, groups, expiresAt),
                     new AuthenticationProperties { IsPersistent = true, ExpiresUtc = expiresAt });

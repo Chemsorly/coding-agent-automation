@@ -166,6 +166,9 @@ public sealed class UiChatEndpointTests
         (await Sessions.FindAsync(agentId)).Should().BeNull();
     }
 
+    [IdorCase("POST /api/ui/chat/{agentId}/keepalive")]
+    [IdorCase("POST /api/ui/chat/{agentId}/prompt")]
+    [IdorCase("POST /api/ui/chat/{agentId}/terminate")]
     [Fact]
     public async Task AnotherUser_CannotUseTheChat_ButAnAdminCan()
     {

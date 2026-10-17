@@ -1,0 +1,30 @@
+AgentReady(AgentId)
+DeregisterAgent(AgentId)
+Heartbeat(HeartbeatMessage)
+JobAccepted(JobId) [RequiresActiveJob]
+JobRejected(JobId, String) [RequiresActiveJob]
+RegisterAgent(AgentRegistrationMessage)
+ReportBrainSyncResult(JobId, Boolean, Int32) [RequiresActiveJob]
+ReportChatCompleted(ChatCompletedMessage)
+ReportChatEntry(JobId, ChatRole, String) [RequiresActiveJob]
+ReportChatResponse(ChatResponseMessage)
+ReportConsolidationComplete(ConsolidationJobResult)
+ReportFetchModelsResult(FetchModelsResponse)
+ReportJobCompleted(JobId, JobCompletionPayload) [RequiresActiveJob]
+ReportOutputLines(JobId, IReadOnlyList<String>) [RequiresActiveJob]
+ReportPipelineRunEvent(JobId, PipelineRunEventReport) [RequiresActiveJob]
+ReportQualityGateResult(JobId, QualityGateReport) [RequiresActiveJob]
+ReportStepTransition(JobId, PipelineStep, DateTimeOffset, Dictionary<String, String>) [RequiresActiveJob]
+ReportTriageResult(JobId, String) [RequiresActiveJob]
+RequestCreateIssue(JobId, String, String, IReadOnlyList<String>) [RequiresActiveJob]
+RequestCreateIssueForProvider(JobId, String, String, String, IReadOnlyList<String>) [RequiresActiveJob]
+RequestGetIssue(JobId, String) [RequiresActiveJob]
+RequestLabelChange(JobId, String, Int32) [RequiresActiveJob]
+RequestListClosedIssues(JobId, Int32, Int32, IReadOnlyList<String>, DateTime?) [RequiresActiveJob]
+RequestListClosedIssuesForProvider(JobId, String, Int32, Int32, IReadOnlyList<String>, DateTime?) [RequiresActiveJob]
+RequestListComments(JobId, String) [RequiresActiveJob]
+RequestListOpenIssues(JobId, Int32, Int32, IReadOnlyList<String>) [RequiresActiveJob]
+RequestListOpenIssuesForProvider(JobId, String, Int32, Int32, IReadOnlyList<String>) [RequiresActiveJob]
+RequestPostComment(JobId, CommentType, CommentPayload) [RequiresActiveJob]
+RequestTokenRefresh(JobId, ProviderKind, Boolean) [RequiresActiveJob]
+RequestUpdateComment(JobId, String, String, String) [RequiresActiveJob]

@@ -290,7 +290,7 @@ public sealed class ConfigEndpointTests
         importResponse.StatusCode.Should().Be(HttpStatusCode.OK, "import must succeed");
 
         // Verify: template must now carry RequiredLabels and Secrets (migrated from provider)
-        var templatesResponse = await _client.GetAsync($"/api/config/projects/{projectGuid}/templates");
+        var templatesResponse = await _client.GetAsync("/api/config/templates");
         templatesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var templates = await templatesResponse.Content.ReadFromJsonAsync<List<PipelineJobTemplate>>(PipelineJsonOptions.Default);
         var importedTemplate = templates!.FirstOrDefault(t => t.Id == templateGuid.ToString());
@@ -1090,7 +1090,7 @@ public sealed class ConfigEndpointTests
     // ── AgentTimeout minimum validation ──────────────────────────────────────────
 
     /// <summary>
-    /// Unit test: calls <see cref="ConfigEndpoints.SavePipelineConfig"/> directly (no HTTP host)
+    /// Unit test: calls <see cref="CodingAgent.Api.Ui.UiSettingsEndpoints.SavePipelineConfig"/> directly (no HTTP host)
     /// with an <c>AgentTimeout</c> below the 60s minimum.
     /// Verifies the method returns 400 and never calls the store.
     /// This is the unit test required by the acceptance criterion.
@@ -1104,7 +1104,7 @@ public sealed class ConfigEndpointTests
         };
         var mockStore = new Moq.Mock<CodingAgent.Pipeline.Interfaces.IPipelineConfigStore>();
 
-        var result = await ConfigEndpoints.SavePipelineConfig(config, mockStore.Object, CancellationToken.None);
+        var result = await CodingAgent.Api.Ui.UiSettingsEndpoints.SavePipelineConfig(config, mockStore.Object, CancellationToken.None);
 
         // Result must be a 400 IResult
         result.Should().BeAssignableTo<Microsoft.AspNetCore.Http.IResult>("a sub-60s AgentTimeout must be rejected");
@@ -1114,13 +1114,13 @@ public sealed class ConfigEndpointTests
         badRequest!.Value.Should().Contain("AgentTimeout must be between 00:01:00", "the error message names the setting and its minimum");
 
         // Store must never have been called
-        mockStore.Verify(s => s.SavePipelineConfigAsync(
-            Moq.It.IsAny<PipelineConfiguration>(), Moq.It.IsAny<CancellationToken>()), Moq.Times.Never,
+        mockStore.Verify(s => s.UpdatePipelineConfigAsync(
+            Moq.It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), Moq.It.IsAny<CancellationToken>()), Moq.Times.Never,
             "the store must not be called when AgentTimeout is below the minimum");
     }
 
     /// <summary>
-    /// HTTP integration test: PUT /api/config/pipeline with AgentTimeout = 30s must return 400
+    /// HTTP integration test: PUT /api/ui/settings/pipeline (as the admin) with AgentTimeout = 30s must return 400
     /// with a descriptive error body that references the 60s minimum.
     /// </summary>
     [Fact]
@@ -1131,7 +1131,7 @@ public sealed class ConfigEndpointTests
             AgentTimeout = TimeSpan.FromSeconds(30)
         };
 
-        var response = await _client.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/pipeline", config, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             "AgentTimeout below 60s must be rejected at the API layer");
@@ -1142,7 +1142,7 @@ public sealed class ConfigEndpointTests
     }
 
     /// <summary>
-    /// HTTP integration test: PUT /api/config/pipeline with AgentTimeout = exactly 60s must
+    /// HTTP integration test: PUT /api/ui/settings/pipeline (as the admin) with AgentTimeout = exactly 60s must
     /// return 200. The boundary value must be accepted (strict less-than comparison).
     /// </summary>
     [Fact]
@@ -1153,13 +1153,13 @@ public sealed class ConfigEndpointTests
             AgentTimeout = TimeSpan.FromSeconds(60)
         };
 
-        var response = await _client.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/pipeline", config, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK,
             "AgentTimeout of exactly 60s is the minimum acceptable value and must not be rejected");
         // TODO: [WARNING] This test only asserts the HTTP status code. A bug where the endpoint returns 200
         // but silently drops the write would pass undetected. Add a read-back assertion via the corresponding
-        // GET /api/config/pipeline endpoint to confirm the AgentTimeout was actually persisted.
+        // GET /api/ui/settings/pipeline endpoint to confirm the AgentTimeout was actually persisted.
     }
 
     /// <summary>
@@ -1244,7 +1244,7 @@ public sealed class ConfigEndpointTests
     {
         var config = new PipelineConfiguration { MaxRetries = 11 };
 
-        var response = await _client.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default);
+        var response = await _admin.PutAsJsonAsync("/api/ui/settings/pipeline", config, PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await response.Content.ReadAsStringAsync()).Should().Contain("MaxRetries must be between 0 and 10 (was 11).");
@@ -1512,11 +1512,11 @@ public sealed class ConfigEndpointTests
         projects.Should().Contain(p => p.Id == projectId.ToString(),
             "imported Project must appear in GET /api/config/projects");
 
-        // JobTemplates (via project templates endpoint)
+        // JobTemplates (via the all-templates endpoint the Scheduler reads)
         var templates = await _client.GetFromJsonAsync<List<PipelineJobTemplate>>(
-            $"/api/config/projects/{projectId}/templates", PipelineJsonOptions.Default);
+            "/api/config/templates", PipelineJsonOptions.Default);
         templates.Should().Contain(t => t.Id == templateId.ToString(),
-            "imported JobTemplate must appear in GET /api/config/projects/{id}/templates");
+            "imported JobTemplate must appear in GET /api/config/templates");
     }
 
     // ── IDs that are not GUIDs ────────────────────────────────────────────────────

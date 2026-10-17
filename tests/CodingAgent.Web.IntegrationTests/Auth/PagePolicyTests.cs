@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Net;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -23,7 +24,7 @@ namespace CodingAgent.Web.IntegrationTests.Auth;
 /// the real session cookie for an OIDC-shaped principal, so page policies can be exercised for
 /// principals other than the local admin without an identity provider.
 /// </summary>
-public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
+public class RbacWebApplicationFactory : CustomWebApplicationFactory
 {
     public const string PaymentsProjectId = "6f1c2a9e-0000-0000-0000-00000000000a";
 
@@ -50,15 +51,8 @@ public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
             services.RemoveAll<IProjectStore>();
             services.AddSingleton(projects.Object);
             services.AddSingleton<IStartupFilter, TestSignInStartupFilter>();
-
-            // Spec 051: the real UI client and token provider, with the API's /api/ui/me stubbed.
-            services.AddHttpClient<IUiMeClient, UiMeClient>().ConfigurePrimaryHttpMessageHandler(() => MeApi);
         });
     }
-
-    /// <summary>Stands in for the Pipeline API's <c>GET /api/ui/me</c>.</summary>
-    public UiMeApiStub MeApi { get; } = new();
-
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -80,6 +74,8 @@ public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
 
     private sealed class TestSignInStartupFilter : IStartupFilter
     {
+        private static readonly string[] CanaryClaimTypes = ["access_token", "id_token", "refresh_token", "api_key", "secret"];
+
         // A plain path check, not app.Map: Map moves the path into PathBase, and the cookie
         // handler would then scope the session cookie to /test/sign-in.
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -92,13 +88,23 @@ public sealed class RbacWebApplicationFactory : CustomWebApplicationFactory
                     return;
                 }
 
-                var user = context.Request.Query["user"].ToString();
-                var groups = context.Request.Query["groups"].ToString()
+                var query = context.Request.Query;
+                var user = query["user"].ToString();
+                var groups = query["groups"].ToString()
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                var expiresAt = DateTimeOffset.UtcNow.AddHours(1);
-                await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
-                    AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{user}", user, null, null, groups, expiresAt),
-                    new AuthenticationProperties { IsPersistent = true, ExpiresUtc = expiresAt });
+                // Optional: the session length in seconds (negative = already expired), and the
+                // email and display name an IdP would send.
+                var expiresAt = DateTimeOffset.UtcNow.AddSeconds(int.TryParse(query["ttl"], out var ttl) ? ttl : 3600);
+                var principal = AuthPrincipals.Create(IdentitySources.Oidc, $"sub-{user}", user,
+                    query["email"].FirstOrDefault(), query["name"].FirstOrDefault(), groups, expiresAt);
+                var properties = new AuthenticationProperties { IsPersistent = true, ExpiresUtc = expiresAt };
+                // Spec 052 T4 on the session endpoint: claims and saved tokens it must never echo.
+                if (query["canary"].FirstOrDefault() is { } canary)
+                {
+                    ((ClaimsIdentity)principal.Identity!).AddClaims(CanaryClaimTypes.Select(type => new Claim(type, canary)));
+                    properties.StoreTokens([new AuthenticationToken { Name = "access_token", Value = canary }]);
+                }
+                await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, properties);
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
             });
             next(app);
@@ -182,15 +188,18 @@ public class PagePolicyTests : IClassFixture<RbacWebApplicationFactory>
     }
 
     [Fact]
-    public async Task NoAccessUser_SeesItsProfileAndTheNoAccessMessage()
+    public async Task NoAccessUser_OpensItsProfileAndTheNoAccessPage()
     {
+        // Spec 052: both pages render in the browser (their content is bUnit's, CockpitLayoutAccessTests);
+        // the web host serves their host page instead of a redirect, so a no-access user never loops.
         var client = await _factory.SignInAsync("carol", "unbound-group");
 
-        var profile = await client.GetStringAsync("/user");
-        var denied = await client.GetStringAsync("/access-denied");
-
-        profile.Should().Contain("unbound-group");
-        denied.Should().Contain("You have no access yet");
+        foreach (var path in new[] { "/user", "/access-denied" })
+        {
+            var response = await client.GetAsync(path);
+            response.StatusCode.Should().Be(HttpStatusCode.OK, path);
+            (await response.Content.ReadAsStringAsync()).Should().Contain("<!--Blazor:{\"type\":\"webassembly\"", path);
+        }
     }
 
     [Fact]

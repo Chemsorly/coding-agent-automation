@@ -4,7 +4,7 @@
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Services
-@using Serilog
+@inject ILogger<Consolidation> Logger
 @inject IUiConsolidationClient ConsolidationApi
 @inject IUiRunClient RunHistory
 @inject IUiWorkItemClient WorkItems
@@ -125,7 +125,7 @@
                             @* Spec 049: consolidation runs need global operator. *@
                             @if (supportsBrain && Access.HasGlobalOperate)
                             {
-                                <button class="btn-trigger" disabled="@(brainReadOnly || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
+                                <button class="btn-trigger" disabled="@(brainReadOnly || _triggering || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
                                         title="@(brainReadOnly ? BrainReadOnlyHint : null)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id)">
                                     <Icon Name="brain" Size="14" /> Brain Consolidation
@@ -194,7 +194,7 @@
         @if (Access.HasGlobalOperate)
         {
             <div class="consolidation-card-actions" style="margin-top: 12px;">
-                <button class="btn-trigger" disabled="@(_isLoading || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
+                <button class="btn-trigger" disabled="@(_isLoading || _triggering || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
                         @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null)">
                     <Icon Name="sparkles" Size="14" /> Generate Suggestions
                 </button>
@@ -412,7 +412,7 @@
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Consolidation page: failed to load automatic-start counters");
+            Logger.LogWarning(ex, "Consolidation page: failed to load automatic-start counters");
             _autoCounters = null;
         }
     }
@@ -429,7 +429,7 @@
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to load templates for consolidation page");
+            Logger.LogWarning(ex, "Failed to load templates for consolidation page");
             _templates = [];
             _brainByTemplate = new Dictionary<string, string>(StringComparer.Ordinal);
             _harnessSuggestions = null;
@@ -447,7 +447,7 @@
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to load consolidation run history from pipeline-run read path");
+            Logger.LogWarning(ex, "Failed to load consolidation run history from pipeline-run read path");
             _runHistory = [];
             _anyRunCancellable = false;
         }
@@ -502,7 +502,7 @@
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to load pipeline config for refactoring modal");
+            Logger.LogWarning(ex, "Failed to load pipeline config for refactoring modal");
             _modalMaxProposals = 3;
             _modalMaxProposalsIsOverride = false;
             _modalHotspotDays = 90;
@@ -546,8 +546,15 @@
         }
     }
 
+    // Spec 052: set while a trigger is in flight. In WebAssembly a double click reaches the handler twice
+    // before the reloaded history shows the run as running, so the second click is ignored here.
+    private bool _triggering;
+
     private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, bool autoDispatch = false, RefactoringScanFocus focus = RefactoringScanFocus.All)
     {
+        if (_triggering)
+            return;
+        _triggering = true;
         _statusMessage = null;
         _statusIsError = false;
 
@@ -567,9 +574,13 @@
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to trigger consolidation {Type} for template {TemplateId}", type, templateId);
+            Logger.LogError(ex, "Failed to trigger consolidation {Type} for template {TemplateId}", type, templateId);
             _statusMessage = $"{FormatRunType(type)} dispatch failed — check orchestrator logs for details.";
             _statusIsError = true;
+        }
+        finally
+        {
+            _triggering = false;
         }
     }
 
@@ -601,7 +612,7 @@
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to cancel WorkItem {WorkItemId} for consolidation run {RunId}", run.WorkItemId, run.RunId);
+            Logger.LogWarning(ex, "Failed to cancel WorkItem {WorkItemId} for consolidation run {RunId}", run.WorkItemId, run.RunId);
             _statusMessage = "Cancel failed — check orchestrator logs.";
             _statusIsError = true;
         }

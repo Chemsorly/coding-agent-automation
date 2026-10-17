@@ -19,7 +19,7 @@ The Pipeline API (`CodingAgent.Api`, port **8080**) exposes HTTP API endpoints f
 The API has two surfaces, and each accepts one kind of credential:
 
 - **Service surface** — every path except `/api/ui/**`: the agent API keys below (`AgentApiKey`, `OperatorApiKey`).
-- **UI surface** — `/api/ui/**`: a user token (`Authorization: Bearer <token>`) signed by the web host for the signed-in user. See [Authentication and Roles](authentication.md). API keys get `401` there, and user tokens get `401` on the service surface.
+- **UI surface** — `/api/ui/**`: a user token (`Authorization: Bearer <token>`) signed by the web host for the signed-in user. The browser never calls the API itself: the web host forwards its `/api/ui/**` and `/hubs/ui` requests and adds the token ([The web host and the browser client](authentication.md#the-web-host-and-the-browser-client)). API keys get `401` there, and user tokens get `401` on the service surface.
 
 An endpoint without a declared policy is denied (`401` without credentials, `403` with an API key). Only `/healthz` and `/readyz` are anonymous.
 
@@ -247,7 +247,7 @@ The [triage](triage.md) endpoints, on the UI surface under `/api/ui/triages` (sp
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/ui/triages` | List: `projectId` (omit for all projects, global readers only), `tab` (`all`, `need_you`, `investigating`, `done`), `source` (`operator`, `issue`), `q` (title contains), `page`, `pageSize`. Returns `{ items, total }` |
+| GET | `/api/ui/triages` | List: `projectId` (omit for all projects, global readers only), `tab` (`all`, `need_you`, `investigating`, `done`), `source` (`operator`, `issue`), `q` (title contains), `page` (from 1, default 1), `pageSize` (1 to 200, default 25). A page out of bounds is `400` with the reason. Returns `{ items, total }` |
 | GET | `/api/ui/triages/similar` | Triages of `projectId` from the last 30 days whose titles share words with `title` (at most 3) |
 | GET | `/api/ui/triages/preview` | What an operator triage of `projectId` would use, started in `startIn` (optional template id): the repositories (and which one runs the job), the MCP servers, tracker count, brain, steering, time limit, and why it cannot start, if so. Needs `operator` on the project |
 | GET | `/api/ui/triages/by-run/{runId}` | `{ id }` of the triage a run belongs to, or `404` |
@@ -530,7 +530,7 @@ The run detail is checked against the run's own project. A run the user cannot r
 
 | Path | Returns |
 |---|---|
-| `GET /api/ui/runs` | Run history, newest first. It has the same query parameters as `GET /api/pipeline-runs`: `page`, `pageSize`, `feedbackOnly`, `includeActive`, `finalStep`, `projectId`, `since` and `runType`. |
+| `GET /api/ui/runs` | Run history, newest first. It has the same query parameters as `GET /api/pipeline-runs`: `page`, `pageSize`, `feedbackOnly`, `includeActive`, `finalStep`, `projectId`, `since` and `runType`. `page` starts at 1 and `pageSize` is 1 to 1000; a value out of bounds is `400` with the reason, never a clamped page. |
 | `GET /api/ui/runs/{runId}` | `{ run, agentProviderName }`: the run, and the display name of the agent provider it ran with. |
 | `GET /api/ui/work-items/pending?maxResults=&projectId=` | The queue, in dispatch order. |
 | `GET /api/ui/work-items/active?olderThanSeconds=&projectId=` | Dispatched and running work items. |
@@ -554,7 +554,7 @@ Re-dispatch needs the `operator` role on the run's stored project, with the same
 
 ### Template browse (any role)
 
-The dispatch drawers browse a template's providers through `/api/ui/templates/{templateId}/…`. A template needs read on the project that owns it, and a template of no project needs global read. A template the user cannot read is `404`, like a missing one. When the template's provider is gone or fails, the API answers `502` with the message to show, as a JSON string. Pages hold 15 issues or pull requests. `labels` can be repeated and is passed to the provider's label filter.
+The dispatch drawers browse a template's providers through `/api/ui/templates/{templateId}/…`. A template needs read on the project that owns it, and a template of no project needs global read. A template the user cannot read is `404`, like a missing one. When the template's provider is gone or fails, the API answers `502` with the message to show, as a JSON string. Pages hold 15 issues or pull requests, and `page` starts at 1 (`400` below that). `labels` can be repeated and is passed to the provider's label filter.
 
 | Path | Returns |
 |---|---|

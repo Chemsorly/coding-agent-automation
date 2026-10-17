@@ -1,5 +1,4 @@
 using CodingAgent.Infrastructure.Telemetry;
-using OpenTelemetry.Metrics;
 
 namespace CodingAgent.Web;
 
@@ -16,24 +15,13 @@ internal static class OpenTelemetryRegistration
     /// The <c>service.version</c> resource attribute falls back to <c>"local"</c> when
     /// <c>SERVICE_VERSION</c> is not set (previously fell back to the assembly version string).
     /// This is an intentional behaviour change to align with the other hosts (issue #3446).
+    /// The web host hosts no SignalR hub and renders no circuits (spec 052), so it adds no source or
+    /// metric view of its own: forwarded calls show up in the shared ASP.NET Core and HttpClient
+    /// instrumentation.
     /// </remarks>
     internal static IServiceCollection AddApplicationTelemetry(this IServiceCollection services)
     {
-        services.AddHostOpenTelemetry(
-            "coding-agent-web",
-            configureTracing: t =>
-            {
-                // AgentHub spans (RegisterAgent, JobAccepted, etc.) from the SignalR server.
-                t.AddSource("Microsoft.AspNetCore.SignalR.Server");
-            },
-            configureMetrics: m => m
-                // Drop low-value built-in ASP.NET Core metrics to reduce OTLP cardinality.
-                // aspnetcore.components.active_circuits (circuit count) is intentionally kept;
-                // the other components.* and memory_pool.* instruments are high-volume noise.
-                .AddView("aspnetcore.components.parameters.count", MetricStreamConfiguration.Drop)
-                .AddView("aspnetcore.components.wrote_to_client", MetricStreamConfiguration.Drop)
-                .AddView("aspnetcore.memory_pool.allocated_bytes", MetricStreamConfiguration.Drop)
-                .AddView("aspnetcore.memory_pool.total_allocated_bytes", MetricStreamConfiguration.Drop));
+        services.AddHostOpenTelemetry("coding-agent-web");
 
         return services;
     }

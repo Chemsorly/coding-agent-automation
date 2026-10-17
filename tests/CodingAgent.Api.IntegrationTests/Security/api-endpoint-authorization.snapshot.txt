@@ -4,10 +4,7 @@ GET /api/config/agent-profiles -> Service: OperatorApiKey
 GET /api/config/export -> Service: OperatorApiKey
 POST /api/config/import -> Service: OperatorApiKey
 GET /api/config/pipeline -> Service: OperatorApiKey
-PUT /api/config/pipeline -> Service: OperatorApiKey
 GET /api/config/projects -> Service: OperatorApiKey
-GET /api/config/projects/{id} -> Service: OperatorApiKey
-GET /api/config/projects/{projectId}/templates -> Service: OperatorApiKey
 GET /api/config/provider-configs -> Service: OperatorApiKey
 GET /api/config/quality-gate-configs -> Service: OperatorApiKey
 GET /api/config/reviewer-configs -> Service: OperatorApiKey
@@ -21,7 +18,6 @@ PUT /api/harness-suggestions/ -> Service: OperatorApiKey
 GET /api/pipeline-runs/ -> Service: OperatorApiKey
 POST /api/pipeline-runs/ -> Service: OperatorApiKey
 GET /api/pipeline-runs/active-branches -> Service: OperatorApiKey
-GET /api/pipeline-runs/{runId:guid} -> Service: OperatorApiKey
 PUT /api/scheduler/loop-status -> Service: OperatorApiKey
 POST /api/scheduler/maintenance/retention-sweep -> Service: OperatorApiKey
 GET /api/ui/agents -> Ui: Ui.AnyAccess
@@ -117,14 +113,8 @@ GET /api/work-items/is-distributed -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/pending -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/staleness -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/{id:guid}/assignment -> Service: AgentApiKey
-POST /api/work-items/{id:guid}/claim -> Service: AgentApiKey, OperatorApiKey
 POST /api/work-items/{id:guid}/dispatch -> Service: AgentApiKey, OperatorApiKey
-GET /api/work-items/{id:guid}/k8s-job-name -> Service: AgentApiKey, OperatorApiKey
-POST /api/work-items/{id:guid}/label-swap -> Service: AgentApiKey, OperatorApiKey
-POST /api/work-items/{id:guid}/last-progress -> Service: AgentApiKey, OperatorApiKey
 POST /api/work-items/{id:guid}/priority -> Service: AgentApiKey, OperatorApiKey
-POST /api/work-items/{id:guid}/requeue -> Service: AgentApiKey, OperatorApiKey
-GET /api/work-items/{id:guid}/retry-count -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/{id:guid}/status -> Service: AgentApiKey, OperatorApiKey
 POST /api/work-items/{id:guid}/status -> Service: AgentApiKey
 GET /healthz -> Anonymous

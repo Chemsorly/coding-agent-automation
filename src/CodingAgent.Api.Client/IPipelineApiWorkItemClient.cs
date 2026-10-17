@@ -15,16 +15,11 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     /// <summary>Project-scoped pending query for the Work / Overview screens. projectId is required so this
     /// overload never collides with the sweep's <see cref="IWorkItemSweepClient.GetPendingAsync"/>.</summary>
     Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults, string? projectId, CancellationToken ct = default);
-    Task<WorkItemClaimResponse?> ClaimAsync(Guid workItemId, ClaimWorkItemRequest request, CancellationToken ct = default);
     Task<JobAssignmentMessage?> GetAssignmentAsync(Guid workItemId, CancellationToken ct = default);
     new Task<bool> PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
-    Task RequeueAsync(Guid workItemId, CancellationToken ct = default);
-    Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct = default);
     Task<WorkItemStalenessResult?> GetStalenessAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, DateTimeOffset since, CancellationToken ct = default);
     Task<Guid> CreateAsync(JobDistributionRequest request, CancellationToken ct = default);
-    Task PostLabelSwapAsync(Guid workItemId, string label, CancellationToken ct = default);
     Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, string? projectId = null, CancellationToken ct = default);
-    Task PostLastProgressAsync(Guid workItemId, DateTimeOffset timestamp, CancellationToken ct = default);
 
     /// <summary>
     /// Returns the current status of a WorkItem, or null if not found.

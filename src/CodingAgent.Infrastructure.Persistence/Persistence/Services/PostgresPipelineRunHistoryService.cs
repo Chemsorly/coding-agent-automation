@@ -20,7 +20,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     private readonly ILogger _logger;
 
     /// <summary>Maximum number of run summaries returned by <see cref="GetRunHistoryAsync"/>.</summary>
-    internal const int MaxHistorySize = 1000;
+    internal const int MaxHistorySize = RunHistoryQuery.MaxPageSize;
 
     /// <summary>Default page size for paginated queries.</summary>
     internal const int DefaultPageSize = 50;

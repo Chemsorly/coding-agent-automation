@@ -88,6 +88,7 @@ public sealed class UiConfigEndpointTests(ApiWebApplicationFactory factory)
         templates.Should().Equal(new UiTemplate(TemplateA, "alpha-api", true));
     }
 
+    [IdorCase("GET /api/ui/projects/{projectId}/templates")]
     [Fact]
     public async Task Templates_OfAnotherProject_Are404_LikeAMissingProject()
     {

@@ -357,7 +357,5 @@ public class AgentCodingValidationBannerTests : BunitContext
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
         _mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
-        _mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
     }
 }

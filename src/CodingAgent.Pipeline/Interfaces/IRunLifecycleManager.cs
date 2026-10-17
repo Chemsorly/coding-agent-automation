@@ -61,7 +61,9 @@ public interface IRunLifecycleManager
     ///
     /// Does NOT clear agent state or swap labels (caller handles those for completion,
     /// since the final label depends on business logic in ReportJobCompleted).
-    /// Returns the removed PipelineRun, or null if not found.
+    /// Returns the removed PipelineRun, or null if another path terminated the run first: the run was
+    /// not found, or the WorkItem already had a different terminal status. In the second case the run
+    /// is still removed, and its history and label follow the WorkItem's status.
     /// </summary>
     Task<PipelineRun?> CompleteRunAsync(RunId runId, WorkItemStatus terminalStatus, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null);

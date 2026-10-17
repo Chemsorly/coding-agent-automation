@@ -292,6 +292,48 @@ public class WorkItemTransitionServiceTests
         }
     }
 
+    [Theory]
+    [InlineData(FailureReason.Timeout)]
+    [InlineData(FailureReason.InfrastructureFailure)]
+    public async Task TryRecoverFromInfrastructureFailure_ToCancelled_ReturnsFalse_FailureStands(FailureReason reason)
+    {
+        // #3009: the agent's Cancelled report after a JobController timeout must not turn the run into
+        // Cancelled (agent:cancelled reads as an operator's abandon and blocks rework).
+        var workItemId = Guid.NewGuid();
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#201",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Failed,
+                FailureReason = reason,
+                ErrorMessage = "Job timed out after 3600s",
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new ConcurrencyConflictDbContextFactory(dbOptions, throwOnSaveCallNumbers: []);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var result = await service.TryRecoverFromInfrastructureFailureAsync(workItemId, WorkItemStatus.Cancelled);
+
+        result.Should().BeFalse();
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+            item.FailureReason.Should().Be(reason);
+        }
+    }
+
     [Fact]
     public async Task TryRecoverFromInfrastructureFailure_WithAgentErrorReason_ReturnsFalse()
     {

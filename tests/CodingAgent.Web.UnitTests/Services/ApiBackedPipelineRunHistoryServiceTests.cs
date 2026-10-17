@@ -259,33 +259,16 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
 
     // ── GetRunAsync ───────────────────────────────────────────────────────
 
+    /// <summary>Spec 052 Req 14.10: the service surface serves no single run; only the UI reads one.</summary>
     [Fact]
-    public async Task GetRunAsync_Found_ReturnsSummary()
+    public async Task GetRunAsync_IsNotServedThroughTheApiKey()
     {
-        var id = Guid.NewGuid();
-        var summary = MakeSummary(id.ToString());
-
-        _client.Setup(c => c.GetRunAsync(id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(summary);
-
         var sut = CreateSut();
-        var result = await sut.GetRunAsync(id);
 
-        result.Should().NotBeNull();
-        result!.RunId.Should().Be(id.ToString());
-    }
+        var act = () => sut.GetRunAsync(Guid.NewGuid());
 
-    [Fact]
-    public async Task GetRunAsync_NotFound_ReturnsNull()
-    {
-        var id = Guid.NewGuid();
-        _client.Setup(c => c.GetRunAsync(id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((PipelineRunSummary?)null);
-
-        var sut = CreateSut();
-        var result = await sut.GetRunAsync(id);
-
-        result.Should().BeNull();
+        await act.Should().ThrowAsync<NotSupportedException>();
+        _client.VerifyNoOtherCalls();
     }
 
     // ── AddRunSummaryAsync — retry behaviour (issue #3038) ───────────────

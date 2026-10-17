@@ -110,7 +110,7 @@ public class AccessServicesTests
     {
         var logger = new FakeLogger<AccessGuard>();
         var user = TestAccess.User("eve\r\nINJECTED");
-        // The circuit was rendered as admin, but the evaluation now yields no role (binding removed).
+        // The page was rendered as admin, but the evaluation now yields no role (binding removed).
         var guard = new AccessGuard(CurrentAccess.CreateLoaded(user, TestAccess.Global(AccessRole.Admin)),
             Evaluator(_ => AccessGrant.None).Object, logger);
 
@@ -120,19 +120,6 @@ public class AccessServicesTests
         var record = logger.Collector.GetSnapshot().Should().ContainSingle().Subject;
         record.Level.Should().Be(Microsoft.Extensions.Logging.LogLevel.Warning);
         record.Message.Should().Contain("SaveTemplate").And.NotContain("\r\nINJECTED");
-    }
-
-    [Fact]
-    public void SessionRevalidation_ValidOnlyBeforeExpiry()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var user = AuthPrincipals.Create(IdentitySources.Oidc, "s", "u", null, null, [], now.AddMinutes(1));
-        var state = new AuthenticationState(user);
-
-        SessionRevalidatingAuthenticationStateProvider.IsSessionValid(state, now).Should().BeTrue();
-        SessionRevalidatingAuthenticationStateProvider.IsSessionValid(state, now.AddMinutes(2)).Should().BeFalse();
-        SessionRevalidatingAuthenticationStateProvider.IsSessionValid(
-            new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity("x"))), now).Should().BeFalse("no expiry claim means no valid session");
     }
 
     [Fact]

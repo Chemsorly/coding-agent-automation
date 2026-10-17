@@ -20,7 +20,7 @@ public class BlockedIssuesServiceTests
         new BacklogIssue("13", "Ready", null, IsReady: true, BlockedBy: []),
     ], IsTruncated: true);
 
-    private static BlockedIssuesService Service(Mock<IUiBrowseClient> browse) => new(browse.Object);
+    private static BlockedIssuesService Service(Mock<IUiBrowseClient> browse) => new(browse.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<BlockedIssuesService>.Instance);
 
     [Fact]
     public async Task GetBacklogAsync_ReturnsTheApisBacklog_ForTheProject()

@@ -6,6 +6,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
+@inject ILogger<TriagePage> Logger
 @inject IUiTriageClient Triages
 @inject IUiConfigClient UiConfig
 @inject CurrentAccess Access
@@ -522,7 +523,7 @@
             {
                 try { _retentionDays = (await UiConfig.GetPipelineSettingsAsync(_cts.Token)).TriageRetentionDays; }
                 catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { Serilog.Log.Debug(ex, "TriageDetail: failed to load the retention setting"); }
+                catch (Exception ex) { Logger.LogDebug(ex, "TriageDetail: failed to load the retention setting"); }
             }
             try
             {
@@ -530,7 +531,7 @@
                 _repositories = TemplateOrder.ByName(_templates.Where(t => t.Enabled), t => t.Name, t => t.Id).Select(t => t.Name).ToList();
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { Serilog.Log.Debug(ex, "TriageDetail: failed to load the project's repositories"); }
+            catch (Exception ex) { Logger.LogDebug(ex, "TriageDetail: failed to load the project's repositories"); }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
@@ -553,7 +554,7 @@
             }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
-        catch (Exception ex) { Serilog.Log.Debug(ex, "TriageDetail: refresh failed"); }
+        catch (Exception ex) { Logger.LogDebug(ex, "TriageDetail: refresh failed"); }
     }
 
     /// <summary>Selects every uncreated draft when a new set of drafts arrives; keeps the selection otherwise.</summary>

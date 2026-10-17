@@ -258,107 +258,6 @@ public sealed class WorkItemEndpointTests
         updated!.CompletedAt.Should().NotBeNull();
     }
 
-    // ── Claim ─────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task ClaimWorkItem_Returns200_WhenPending()
-    {
-        var entity = SeedEntity(WorkItemStatus.Pending);
-        var claim = new { assignedAgentId = "agent-1", dispatchedAt = DateTimeOffset.UtcNow };
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/claim", claim,
-            PipelineJsonOptions.Default);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    /// <summary>
-    /// HTTP contract test: 409 when TransitionIfAsync returns false.
-    /// Tests the endpoint's status mapping, not actual concurrency.
-    /// Real concurrency (Req 4.5c) is deferred to Infrastructure.IntegrationTests
-    /// where a live Postgres instance is available.
-    /// </summary>
-    [Fact]
-    public async Task ClaimWorkItem_Returns409_WhenAlreadyDispatched()
-    {
-        // Seed as Dispatched — TransitionIfAsync returns false because item.Status != Pending
-        var entity = SeedEntity(WorkItemStatus.Dispatched);
-        var claim = new { assignedAgentId = "agent-2", dispatchedAt = DateTimeOffset.UtcNow };
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/claim", claim,
-            PipelineJsonOptions.Default);
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-    }
-
-    [Fact]
-    public async Task ClaimWorkItem_Returns404_WhenNotFound()
-    {
-        var claim = new { assignedAgentId = "agent-x", dispatchedAt = DateTimeOffset.UtcNow };
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{Guid.NewGuid()}/claim", claim,
-            PipelineJsonOptions.Default);
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    /// <summary>
-    /// Regression guard for issue #2338: when a kiro agent claims a work item, the
-    /// <c>KiroPvcName</c> from the request must be persisted to <c>ClaimedPvcName</c>
-    /// on the <see cref="WorkItemEntity"/>, so that <c>GET /api/agents/credential-pool</c>
-    /// can compute accurate available-PVC counts from the database.
-    ///
-    /// Without this fix the <c>ClaimedPvcName</c> column remained null for Job Controller-
-    /// dispatched items, causing the credential pool tile to always report <c>4/4</c>
-    /// (all available) even when all 4 slots were consumed.
-    /// </summary>
-    [Fact]
-    public async Task ClaimWorkItem_WithKiroPvcName_PersistsClaimedPvcNameToEntity()
-    {
-        var entity = SeedEntity(WorkItemStatus.Pending);
-        var claim = new ClaimWorkItemRequest
-        {
-            AssignedAgentId = "kiro-job-1",
-            K8sJobName = "kiro-job-1",
-            DispatchedAt = DateTimeOffset.UtcNow,
-            KiroPvcName = "kiro-creds-pvc-1"
-        };
-
-        var response = await _client.PostAsJsonAsync(
-            $"/api/work-items/{entity.Id}/claim", claim, PipelineJsonOptions.Default);
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated.Should().NotBeNull();
-        updated!.ClaimedPvcName.Should().Be("kiro-creds-pvc-1",
-            "KiroPvcName from the claim request must be persisted to ClaimedPvcName so the " +
-            "credential pool endpoint can report accurate availability (issue #2338)");
-    }
-
-    /// <summary>
-    /// Non-kiro agents do not supply a <c>KiroPvcName</c>; <c>ClaimedPvcName</c> must remain
-    /// null so they do not pollute the PVC availability query (issue #2338).
-    /// </summary>
-    [Fact]
-    public async Task ClaimWorkItem_WithoutKiroPvcName_LeavesClaimedPvcNameNull()
-    {
-        var entity = SeedEntity(WorkItemStatus.Pending);
-        var claim = new ClaimWorkItemRequest
-        {
-            AssignedAgentId = "opencode-job-1",
-            K8sJobName = "opencode-job-1",
-            DispatchedAt = DateTimeOffset.UtcNow
-            // KiroPvcName intentionally omitted — non-kiro agent
-        };
-
-        var response = await _client.PostAsJsonAsync(
-            $"/api/work-items/{entity.Id}/claim", claim, PipelineJsonOptions.Default);
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated.Should().NotBeNull();
-        updated!.ClaimedPvcName.Should().BeNull(
-            "non-kiro agents must not set ClaimedPvcName; PVC availability query is kiro-only");
-    }
-
     // ── Create ────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -629,104 +528,6 @@ public sealed class WorkItemEndpointTests
         dto.InitiatedBy.Should().BeNull();
         dto.ProjectName.Should().BeNull();
         dto.ProjectId.Should().BeNull();
-    }
-
-    // ── Requeue ───────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task RequeueWorkItem_FailedToPending_IncrementsRetryCount()
-    {
-        var entity = SeedEntity(WorkItemStatus.Failed);
-        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Pending);
-        updated.RetryCount.Should().Be(entity.RetryCount + 1);
-    }
-
-    [Fact]
-    public async Task RequeueWorkItem_Returns409_WhenPending()
-    {
-        var entity = SeedEntity(WorkItemStatus.Pending);
-        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-    }
-
-    [Fact]
-    public async Task RequeueWorkItem_Returns404_WhenNotFound()
-    {
-        var response = await _client.PostAsync($"/api/work-items/{Guid.NewGuid()}/requeue", null);
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    /// <summary>
-    /// Characterization test for the Dispatched→Pending path in <c>RequeueWorkItem</c>.
-    /// Verifies that: (1) the item transitions to Pending, (2) RetryCount is incremented,
-    /// and (3) <c>K8sJobName</c> is cleared to null (the Dispatched-specific mutation).
-    ///
-    /// <para>
-    /// This test is the safety net for the AC3 loop refactoring. After collapsing the three
-    /// sequential <c>TransitionIfAsync</c> blocks into a loop, this test locks in the
-    /// conditional <c>K8sJobName = null</c> mutation that only applies to the Dispatched→Pending
-    /// path (the Failed and Cancelled paths do not clear <c>K8sJobName</c>).
-    /// </para>
-    /// </summary>
-    [Fact]
-    public async Task RequeueWorkItem_DispatchedToPending_IncrementsRetryCount_ClearsK8sJobName()
-    {
-        // Arrange: seed a Dispatched item with a non-null K8sJobName and a known RetryCount.
-        var entity = SeedEntity(WorkItemStatus.Dispatched);
-        using (var db = _factory.CreateDbContext())
-        {
-            var item = await db.WorkItems.FindAsync(entity.Id);
-            item!.K8sJobName = "k8s-job-abc123";
-            item.RetryCount = 2;
-            await db.SaveChangesAsync();
-        }
-
-        // Act
-        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // Assert
-        using var verifyDb = _factory.CreateDbContext();
-        var updated = await verifyDb.WorkItems.FindAsync(entity.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Pending, "Dispatched→Pending transition must succeed");
-        updated.RetryCount.Should().Be(3, "RetryCount must be incremented from 2 to 3");
-        updated.K8sJobName.Should().BeNull("K8sJobName must be cleared to null on Dispatched→Pending requeue");
-    }
-
-    // ── RetryCount ────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task GetRetryCount_Returns0_ForNewItem()
-    {
-        var id = await CreatePendingItemAsync();
-        var response = await _client.GetAsync($"/api/work-items/{id}/retry-count");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
-        body.GetProperty("retryCount").GetInt32().Should().Be(0);
-    }
-
-    [Fact]
-    public async Task GetRetryCount_IncrementsAfterRequeue()
-    {
-        var entity = SeedEntity(WorkItemStatus.Failed);
-        await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-
-        var response = await _client.GetAsync($"/api/work-items/{entity.Id}/retry-count");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
-        body.GetProperty("retryCount").GetInt32().Should().Be(1);
-    }
-
-    [Fact]
-    public async Task GetRetryCount_Returns404_WhenNotFound()
-    {
-        var response = await _client.GetAsync($"/api/work-items/{Guid.NewGuid()}/retry-count");
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     // ── Staleness ─────────────────────────────────────────────────────────────────
@@ -1070,81 +871,6 @@ public sealed class WorkItemEndpointTests
             "must not be returned — it is not yet eligible for grace-window escalation");
     }
 
-    // ── LabelSwap ─────────────────────────────────────────────────────────────────
-
-    // The tests below seed non-Review work items, so the review branch that reads RepoProviderConfigId
-    // from the payload is never entered. PostLabelSwapPayloadTests covers it (PascalCase, camelCase and
-    // malformed payloads).
-    [Fact]
-    public async Task PostLabelSwap_Returns200_WhenWorkItemExists()
-    {
-        // ILabelSwapService is registered but ILabelService is a mock with no configured provider.
-        // The endpoint's ILabelSwapService? nullable injection: endpoint returns 200 even if
-        // LabelSwapService is null. Integration tests mock IProviderFactory, so swap is skipped.
-        var entity = SeedEntity(WorkItemStatus.Dispatched);
-        var body = new { label = "agent:in-progress" };
-
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/label-swap", body,
-            PipelineJsonOptions.Default);
-
-        // 200 is expected — the handler degrades gracefully when ILabelSwapService cannot
-        // complete the swap (no configured provider factory in integration tests).
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    [Fact]
-    public async Task PostLabelSwap_Returns404_WhenWorkItemNotFound()
-    {
-        var body = new { label = "agent:in-progress" };
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{Guid.NewGuid()}/label-swap", body,
-            PipelineJsonOptions.Default);
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    // ── LastProgress ──────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task PostLastProgress_Returns200_AndUpdatesField()
-    {
-        var entity = SeedEntity(WorkItemStatus.Running);
-        var progressTime = DateTimeOffset.UtcNow.AddMinutes(-5);
-        var body = new { timestamp = progressTime };
-
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/last-progress", body,
-            PipelineJsonOptions.Default);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated!.LastProgressAt.Should().NotBeNull();
-        // Allow ±1s tolerance for serialization rounding
-        updated.LastProgressAt!.Value.Should().BeCloseTo(progressTime, TimeSpan.FromSeconds(1));
-    }
-
-    [Fact]
-    public async Task PostLastProgress_Returns404_WhenWorkItemNotFound()
-    {
-        var body = new { timestamp = DateTimeOffset.UtcNow };
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{Guid.NewGuid()}/last-progress", body,
-            PipelineJsonOptions.Default);
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    // ── RequeueWorkItem — Cancelled→Pending ───────────────────────────────────────
-
-    [Fact]
-    public async Task RequeueWorkItem_CancelledToPending_IncrementsRetryCount()
-    {
-        var entity = SeedEntity(WorkItemStatus.Cancelled);
-        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Pending);
-        updated.RetryCount.Should().Be(entity.RetryCount + 1);
-    }
-
     // ── GetWorkItemStatus — GET /{id}/status ──────────────────────────────────────
 
     [Fact]
@@ -1165,44 +891,6 @@ public sealed class WorkItemEndpointTests
         var response = await _client.GetAsync($"/api/work-items/{Guid.NewGuid()}/status");
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
-
-    // ── GetK8sJobName — GET /{id}/k8s-job-name ───────────────────────────────────
-
-    [Fact]
-    public async Task GetK8sJobName_Returns200_WhenJobNameSet()
-    {
-        var entity = SeedEntity(WorkItemStatus.Dispatched);
-
-        // Write the K8sJobName directly — not exposed via the creation API
-        using (var db = _factory.CreateDbContext())
-        {
-            var row = await db.WorkItems.FindAsync(entity.Id);
-            row!.K8sJobName = "k8s-job-abc123";
-            await db.SaveChangesAsync();
-        }
-
-        var response = await _client.GetAsync($"/api/work-items/{entity.Id}/k8s-job-name");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
-        body.GetProperty("jobName").GetString().Should().Be("k8s-job-abc123");
-    }
-
-    [Fact]
-    public async Task GetK8sJobName_Returns404_WhenJobNameAbsent()
-    {
-        // SeedEntity does not set K8sJobName — should return 404
-        var entity = SeedEntity(WorkItemStatus.Pending);
-        var response = await _client.GetAsync($"/api/work-items/{entity.Id}/k8s-job-name");
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    // TODO: Add a test for GetK8sJobName returning 404 when the row exists but K8sJobName is an
-    // empty string (""). The refactored handler checks `notFound is not null || string.IsNullOrEmpty(jobName)`,
-    // meaning both the null-column path (via LoadProjectionOrNotFoundAsync) and the empty-string path
-    // (via the secondary IsNullOrEmpty guard) should each independently yield 404. The null path is
-    // covered by GetK8sJobName_Returns404_WhenJobNameAbsent above; the empty-string branch is untested.
-    // Seed an entity with K8sJobName = "" and assert the endpoint returns 404.
 
     // ── GetIsDistributed — recent-terminal path ───────────────────────────────────
 
@@ -1361,134 +1049,6 @@ public sealed class WorkItemEndpointTests
     // The current tests only cover: (a) no matching item, (b) recently-terminal within window,
     // (c) active status. The expired-terminal boundary condition is untested — a regression that
     // widens the cooldown bound or drops the `CompletedAt >= since` clause would not be caught.
-
-    // ── RequeueWorkItem — Succeeded → 409 ────────────────────────────────────────
-
-    [Fact]
-    public async Task RequeueWorkItem_Returns409_WhenSucceeded()
-    {
-        var entity = SeedEntity(WorkItemStatus.Succeeded);
-        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-        // Succeeded is not Failed or Cancelled — requeue must return 409 Conflict
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-    }
-
-    // ── RequeueWorkItem — Dispatched→Pending ─────────────────────────────────────
-
-    /// <summary>
-    /// Guards the fix for the CRITICAL finding: when K8s Job creation fails after ClaimAsync
-    /// succeeds, SafeRequeueAsync is called on a Dispatched item. Without Dispatched→Pending
-    /// support the item would be stuck until EnforceDispatchedTimeoutAsync marks it Failed,
-    /// losing the retry entirely.
-    /// </summary>
-    [Fact]
-    public async Task RequeueWorkItem_DispatchedToPending_IncrementsRetryCount()
-    {
-        var entity = SeedEntity(WorkItemStatus.Dispatched);
-        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Pending);
-        updated.RetryCount.Should().Be(entity.RetryCount + 1);
-        updated.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on requeue from Dispatched");
-        updated.AssignedAgentId.Should().BeNull("AssignedAgentId must be cleared on requeue from Dispatched");
-        updated.K8sJobName.Should().BeNull("K8sJobName must be cleared on requeue from Dispatched");
-    }
-
-    // ── ClaimWorkItem — ELAPSED bug fix (issue #2106) ─────────────────────────────
-
-    /// <summary>
-    /// Regression test for issue #2106: ClaimWorkItem must update the in-memory PipelineRun's
-    /// StartedAtOffset to DispatchedAt, not leave it at the enqueue-time UtcNow default.
-    /// Uses CreatePendingItemAsync (POST /api/work-items) to materialise the PipelineRun in
-    /// IOrchestratorRunService before claiming.
-    /// </summary>
-    [Fact]
-    public async Task ClaimWorkItem_UpdatesInMemoryRunStartedAtOffset_ToDispatchedAt()
-    {
-        // 1. Create work item via API — also materialises PipelineRun in IOrchestratorRunService
-        var id = await CreatePendingItemAsync();
-
-        // Simulate a 15-minute queue wait so dispatchedAt is well before enqueue time
-        var dispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-15);
-        var claim = new ClaimWorkItemRequest
-        {
-            AssignedAgentId = "agent-1",
-            DispatchedAt = dispatchedAt
-        };
-
-        // 2. Claim the item
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{id}/claim", claim,
-            PipelineJsonOptions.Default);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // 3. Assert in-memory run was updated to dispatch time, not enqueue time
-        var runService = _factory.Services.GetRequiredService<IOrchestratorRunService>();
-        var run = runService.GetRun(new RunId(id.ToString()));
-        run.Should().NotBeNull("PipelineRun must still be in the run service after claim");
-        run!.StartedAtOffset.Should().BeCloseTo(dispatchedAt, TimeSpan.FromSeconds(1),
-            "StartedAtOffset must reflect DispatchedAt, not enqueue time");
-        // Verify it is NOT enqueue time (enqueue time ≈ UtcNow, not 15 min ago)
-        run.StartedAtOffset.Should().BeBefore(DateTimeOffset.UtcNow.AddMinutes(-14),
-            "StartedAtOffset must not be the enqueue-time default (≈ UtcNow)");
-    }
-
-    /// <summary>
-    /// Regression guard for issue #2106 pod-restart scenario: when the API pod restarts
-    /// between CreateWorkItem and ClaimWorkItem, no PipelineRun exists in IOrchestratorRunService.
-    /// ClaimWorkItem must not throw in this case — the null-safe guard must be in place.
-    /// Uses SeedEntity (direct DB insert) to create the WorkItem without calling CreateWorkItem,
-    /// so no PipelineRun is materialised in the run service.
-    /// </summary>
-    [Fact]
-    public async Task ClaimWorkItem_Returns200_WhenNoInMemoryRunExists()
-    {
-        // Seed DB-only — no in-memory PipelineRun materialised (simulates API pod restart)
-        var entity = SeedEntity(WorkItemStatus.Pending);
-        var claim = new ClaimWorkItemRequest
-        {
-            AssignedAgentId = "agent-pod-restart",
-            DispatchedAt = DateTimeOffset.UtcNow
-        };
-
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/claim", claim,
-            PipelineJsonOptions.Default);
-
-        // Must not throw — null-safe guard (run is not null) must prevent NRE
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    /// <summary>
-    /// Regression guard for issue #2106: requeueing a claimed item must not interfere with
-    /// the claim endpoint or throw. Verifies the requeue path is unaffected by the new
-    /// ReplaceRun logic in ClaimWorkItem.
-    /// </summary>
-    [Fact]
-    public async Task RequeueWorkItem_Returns200_AfterClaim()
-    {
-        // Create, claim, then requeue
-        var id = await CreatePendingItemAsync();
-        var dispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
-
-        var claimResponse = await _client.PostAsJsonAsync($"/api/work-items/{id}/claim",
-            new ClaimWorkItemRequest { AssignedAgentId = "agent-1", DispatchedAt = dispatchedAt },
-            PipelineJsonOptions.Default);
-        claimResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // Requeue from Dispatched → Pending
-        var requeueResponse = await _client.PostAsync($"/api/work-items/{id}/requeue", null);
-        requeueResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // Verify DB state — DispatchedAt nulled, RetryCount incremented
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(id);
-        updated!.Status.Should().Be(WorkItemStatus.Pending);
-        updated.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on requeue");
-        updated.RetryCount.Should().Be(1, "RetryCount must be incremented by requeue");
-    }
 
     // ── PriorityWeight — AC tests for issue #2172 ────────────────────────────
 
@@ -1864,36 +1424,6 @@ public sealed class WorkItemEndpointTests
         updated!.PriorityWeight.Should().Be(weight);
     }
 
-    /// <summary>
-    /// AC: POST /api/work-items/{id}/requeue on a Failed item with PriorityWeight=100
-    /// preserves PriorityWeight after the transition back to Pending.
-    /// </summary>
-    [Fact]
-    public async Task RequeueWorkItem_PreservesPriorityWeight_AfterTransitionFromFailed()
-    {
-        // Seed a Failed entity with PriorityWeight=100
-        var entity = SeedEntity(WorkItemStatus.Failed, failureReason: FailureReason.AgentError);
-        UpdateEntityPriorityWeight(entity.Id, 100);
-
-        // Verify the weight was persisted before calling requeue, so a silent failure in
-        // UpdateEntityPriorityWeight cannot mask a bug in the requeue transition.
-        using (var dbBefore = _factory.CreateDbContext())
-        {
-            var before = await dbBefore.WorkItems.FindAsync(entity.Id);
-            before!.PriorityWeight.Should().Be(100, "PriorityWeight must be 100 before requeue is called");
-        }
-
-        // Requeue Failed → Pending
-        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // PriorityWeight must be preserved (requeue does not touch the column)
-        using var db = _factory.CreateDbContext();
-        var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Pending);
-        updated.PriorityWeight.Should().Be(100, "PriorityWeight must be preserved across requeue transitions");
-    }
-
     // ── Priority test helpers ─────────────────────────────────────────────────
 
     private WorkItemEntity UpdateEntityPriorityWeight(Guid id, int priorityWeight)
@@ -2021,13 +1551,14 @@ public sealed class WorkItemEndpointTests
     [Fact]
     public async Task GetPendingWorkItems_FollowsTheConfiguredDispatchOrder()
     {
-        var original = await _client.GetFromJsonAsync<PipelineConfiguration>("/api/config/pipeline", PipelineJsonOptions.Default);
-        var configured = original! with
+        // The service surface no longer writes the pipeline configuration (spec 052 Req 14.10): set it in the store.
+        var store = _factory.Services.GetRequiredService<IPipelineConfigStore>();
+        var original = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        var configured = original with
         {
             DispatchOrder = [WorkItemTaskType.Implementation, WorkItemTaskType.Review, WorkItemTaskType.Triage]
         };
-        (await _client.PutAsJsonAsync("/api/config/pipeline", configured, PipelineJsonOptions.Default))
-            .StatusCode.Should().Be(HttpStatusCode.OK);
+        await store.SavePipelineConfigAsync(configured, CancellationToken.None);
         try
         {
             var prefix = $"configured-order-{Guid.NewGuid():N}";
@@ -2047,8 +1578,7 @@ public sealed class WorkItemEndpointTests
         }
         finally
         {
-            (await _client.PutAsJsonAsync("/api/config/pipeline", original, PipelineJsonOptions.Default))
-                .StatusCode.Should().Be(HttpStatusCode.OK);
+            await store.SavePipelineConfigAsync(original, CancellationToken.None);
         }
     }
 

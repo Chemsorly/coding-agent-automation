@@ -184,11 +184,13 @@ public class BacklogServiceTests
         var t1 = new PipelineJobTemplate { Id = "t1", Name = "T1", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true };
         var t2 = new PipelineJobTemplate { Id = "t2", Name = "T2", IssueProviderId = "prov2", RepoProviderId = "repo2", Enabled = true };
 
-        var config = new Mock<IPipelineApiConfigClient>();
-        config.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        // The API host's project store is DB-backed; the API-key store serves no single project.
+        var projects = new Mock<IProjectStore>();
+        projects.Setup(p => p.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { t1, t2 });
-        config.Setup(c => c.GetProjectByIdAsync("proj1", It.IsAny<CancellationToken>()))
+        projects.Setup(p => p.GetProjectByIdAsync("proj1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineProject { Id = "proj1", Name = "P", TemplateIds = TemplateT1 });
+        var config = new Mock<IPipelineApiConfigClient>();
         config.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[]
             {
@@ -210,7 +212,7 @@ public class BacklogServiceTests
                 It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 
-        var sut = Backlog(config, factory, dep);
+        var sut = new BacklogService(projects.Object, new ApiProviderConfigStore(config.Object) { CacheTtlSeconds = 0 }, factory.Object, dep.Object);
 
         await sut.GetBacklogAsync(projectId: "proj1", CancellationToken.None);
 

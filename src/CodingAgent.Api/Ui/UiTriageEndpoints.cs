@@ -40,6 +40,8 @@ internal static class UiTriageEndpoints
         var (projectId, tab, source, q, page, pageSize) = query;
         projectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
         access.DemandList(projectId);
+        if (PagingLimits.Validate(page ?? 1, pageSize ?? 25, TriageListQuery.MaxPageSize) is { } invalid)
+            return invalid;
         return TypedResults.Ok(await service.ListAsync(new TriageListQuery
         {
             ProjectId = projectId,

@@ -116,6 +116,9 @@ public sealed class UiDispatchEndpointTests
         _issues.Setup(t => t.GetIssueAsync(It.Is<IssueIdentifier>(i => i.Value == id), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail { Identifier = id, Title = $"Issue {id}", Description = "", Labels = labels });
 
+    [IdorCase("POST /api/ui/templates/{templateId}/issues/{issueIdentifier}/dispatch")]
+    [IdorCase("POST /api/ui/templates/{templateId}/pull-requests/{number:int}/dispatch")]
+    [IdorCase("POST /api/ui/templates/{templateId}/epics/{issueIdentifier}/dispatch")]
     [Fact]
     public async Task Dispatch_NeedsOperatorOnTheTemplatesProject()
     {
@@ -227,6 +230,7 @@ public sealed class UiDispatchEndpointTests
 
     private UiRunClient Runs(AccessGrant grant) => new(_factory.CreateClient(), new FixedToken(TestUserTokens.For(grant)));
 
+    [IdorCase("POST /api/ui/runs/{runId:guid}/redispatch")]
     [Fact]
     public async Task Redispatch_NeedsOperatorOnTheRunsProject()
     {

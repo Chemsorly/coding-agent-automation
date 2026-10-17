@@ -123,7 +123,7 @@ public sealed class PostgresTriageStore : ITriageStore
             });
         }
 
-        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+        var pageSize = Math.Clamp(query.PageSize, 1, TriageListQuery.MaxPageSize);
         var page = Math.Max(query.Page, 1);
         return new TriageListPage
         {

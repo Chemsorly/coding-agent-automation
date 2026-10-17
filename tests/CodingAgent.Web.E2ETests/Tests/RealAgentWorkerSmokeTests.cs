@@ -36,8 +36,8 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
     // ── Helpers ─────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates a Pending work item for <paramref name="issueId"/>, claims it for
-    /// <paramref name="agentId"/>, and posts the <c>agent:in-progress</c> label.
+    /// Creates a work item for <paramref name="issueId"/> and marks it Dispatched to
+    /// <paramref name="agentId"/> in the database, as the dispatch path would.
     /// Returns the claimed work item GUID.
     ///
     /// <para>
@@ -100,16 +100,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             minimalPayload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
 
         await db.SaveChangesAsync(ct);
-
-        // Post agent:in-progress label (FakeJobController does this; we replicate it here)
-        try
-        {
-            await Fixture.WorkItems.PostLabelSwapAsync(workItemId, "agent:in-progress", ct);
-        }
-        catch
-        {
-            // Non-fatal — same as FakeJobController
-        }
 
         return workItemId;
     }

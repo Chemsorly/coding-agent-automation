@@ -28,6 +28,10 @@ Ingress is enabled. Access the UI at:
 {{- range $web.ingress.hosts }}
   http{{ if $web.ingress.tls }}s{{ end }}://{{ .host }}
 {{- end }}
+With ingress-nginx, add nginx.ingress.kubernetes.io/proxy-read-timeout: "300" and
+nginx.ingress.kubernetes.io/proxy-body-size: "16m" to web.ingress.annotations: the UI's long calls
+(chat launch, triage, browse, dispatch, provider checks, config import) pass through the ingress,
+and its defaults are 60 s and 1 MB. Traefik needs no change.
 {{- end }}
 
 ── Sign-in ───────────────────────────────────────────────────────────────────
@@ -130,11 +134,11 @@ Key metrics (OpenTelemetry):
 {{- if gt (int $web.replicas) 1 }}
 Multi-replica mode active ({{ $web.replicas }} replicas).
 PodDisruptionBudget: minAvailable=1
-Web replicas share the login-cookie key from the web-user-token Secret and need sticky sessions
-(web.service.annotations): each open page keeps its connection to one replica.
+Web replicas share the login-cookie key from the web-user-token Secret. Sticky sessions are
+optional: the UI runs in the browser, so any replica serves its next request.
 {{- else }}
 Single-replica mode. Scale to multiple replicas with:
-  web.replicas: N  (requires sticky sessions)
+  web.replicas: N  (sticky sessions are optional)
 {{- end }}
 {{- if or (($web.env).pipelineLoopStartupDelaySeconds) (($web.leaderElection).pipelineLoopLeaseName) }}
 

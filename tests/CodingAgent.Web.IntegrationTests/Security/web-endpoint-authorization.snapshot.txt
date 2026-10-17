@@ -1,0 +1,60 @@
+GET / -> Anonymous
+GET /_framework/opaque-redirect -> Cookie (fallback)
+* /_framework/resource-collection{.fingerprint}.js -> Cookie (fallback)
+GET /about -> Page: (default), Access.Any
+POST /about -> Page: (default), Access.Any
+GET /access-denied -> Page: (default)
+POST /access-denied -> Page: (default)
+GET /agent-chat -> Page: (default), Access.AnyOperator
+POST /agent-chat -> Page: (default), Access.AnyOperator
+GET /agent-coding -> Page: (default), Access.Any
+POST /agent-coding -> Page: (default), Access.Any
+* /api/ui/{**rest} -> Forwarder: Access.Any
+GET /attention -> Page: (default), Access.Any
+POST /attention -> Page: (default), Access.Any
+POST /auth/login -> Anonymous
+POST /auth/logout -> Anonymous
+GET /auth/oidc -> Anonymous
+GET /bff/session -> Cookie (fallback)
+GET /consolidation -> Page: (default), Access.GlobalRead
+POST /consolidation -> Page: (default), Access.GlobalRead
+GET /fleet -> Page: (default), Access.GlobalRead
+POST /fleet -> Page: (default), Access.GlobalRead
+GET /healthz -> Anonymous
+HEAD /healthz -> Anonymous
+* /hubs/ui -> Forwarder: Access.Any
+GET /insights -> Page: (default), Access.Any
+POST /insights -> Page: (default), Access.Any
+GET /knowledge -> Page: (default), Access.Any
+POST /knowledge -> Page: (default), Access.Any
+GET /login -> Anonymous: (default)
+HEAD /login -> Anonymous
+POST /login -> Anonymous: (default)
+GET /overview -> Page: (default), Access.Any
+POST /overview -> Page: (default), Access.Any
+GET /pipelines -> Page: (default), Access.Any
+POST /pipelines -> Page: (default), Access.Any
+GET /pipelines/{TemplateId} -> Page: (default), Access.Any
+POST /pipelines/{TemplateId} -> Page: (default), Access.Any
+GET /readyz -> Anonymous
+HEAD /readyz -> Anonymous
+GET /runs -> Page: (default), Access.Any
+POST /runs -> Page: (default), Access.Any
+GET /runs/{RunId} -> Page: (default), Access.Any
+POST /runs/{RunId} -> Page: (default), Access.Any
+GET /settings -> Page: (default), Access.Admin
+POST /settings -> Page: (default), Access.Admin
+GET /triage -> Page: (default), Access.Any
+POST /triage -> Page: (default), Access.Any
+GET /triage/new -> Page: (default), Access.AnyOperator
+POST /triage/new -> Page: (default), Access.AnyOperator
+GET /triage/{Id:guid} -> Page: (default), Access.Any
+POST /triage/{Id:guid} -> Page: (default), Access.Any
+GET /user -> Page: (default)
+POST /user -> Page: (default)
+GET /work -> Page: (default), Access.Any
+POST /work -> Page: (default), Access.Any
+GET /{**path:file} -> Cookie (fallback)
+HEAD /{**path:file} -> Cookie (fallback)
+GET <static assets> -> Anonymous
+HEAD <static assets> -> Anonymous

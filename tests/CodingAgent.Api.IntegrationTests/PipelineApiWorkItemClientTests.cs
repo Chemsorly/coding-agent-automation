@@ -185,59 +185,6 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
     // ── ClaimAsync ─────────────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task ClaimAsync_Success_ReturnsResponse()
-    {
-        var workItemId = Guid.NewGuid();
-        var claim = new WorkItemClaimResponse
-        {
-            WorkItemId = workItemId,
-            RunId = "run-abc",
-            PayloadJson = "{}",
-            OrchestratorUrl = "http://localhost/hub"
-        };
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/claim").UsingPost())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(Serialize(claim)));
-
-        var result = await _client.ClaimAsync(workItemId,
-            new ClaimWorkItemRequest { AssignedAgentId = "agent-1", DispatchedAt = DateTimeOffset.UtcNow });
-
-        result.Should().NotBeNull();
-        result!.WorkItemId.Should().Be(workItemId);
-        result.RunId.Should().Be("run-abc");
-    }
-
-    [Fact]
-    public async Task ClaimAsync_Conflict_ReturnsNull()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/claim").UsingPost())
-            .RespondWith(Response.Create().WithStatusCode(409));
-
-        var result = await _client.ClaimAsync(workItemId,
-            new ClaimWorkItemRequest { DispatchedAt = DateTimeOffset.UtcNow });
-
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task ClaimAsync_NotFound_ThrowsWorkItemNotFoundException()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/claim").UsingPost())
-            .RespondWith(Response.Create().WithStatusCode(404));
-
-        var act = () => _client.ClaimAsync(workItemId,
-            new ClaimWorkItemRequest { DispatchedAt = DateTimeOffset.UtcNow });
-
-        await act.Should().ThrowAsync<WorkItemNotFoundException>()
-            .Where(ex => ex.WorkItemId == workItemId,
-                "404 during claim indicates a deleted/missing work item — distinct from 409 contention");
-    }
-
     // ── GetAssignmentAsync ─────────────────────────────────────────────────────
 
     [Fact]
@@ -439,37 +386,6 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
     // ── GetRetryCountAsync ─────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task GetRetryCountAsync_Returns_Count()
-    {
-        var workItemId = Guid.NewGuid();
-        var response = new { retryCount = 3 };
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/retry-count").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(JsonSerializer.Serialize(response)));
-
-        var result = await _client.GetRetryCountAsync(workItemId);
-
-        result.Should().Be(3);
-    }
-
-    [Fact]
-    public async Task GetRetryCountAsync_NullResponse_ReturnsZero()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/retry-count").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("null"));
-
-        var result = await _client.GetRetryCountAsync(workItemId);
-
-        result.Should().Be(0);
-    }
-
     // ── PostStatusAsync ────────────────────────────────────────────────────────
 
     [Fact]
@@ -506,36 +422,6 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
     }
 
     // ── RequeueAsync ───────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task RequeueAsync_SendsPostToCorrectPath()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/requeue").UsingPost())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("{}"));
-
-        await _client.RequeueAsync(workItemId);
-
-        _server.LogEntries.Should().Contain(e =>
-            e.RequestMessage!.Method == "POST" &&
-            e.RequestMessage.Path == $"/api/work-items/{workItemId}/requeue");
-    }
-
-    [Fact]
-    public async Task RequeueAsync_Conflict_DoesNotThrow()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/requeue").UsingPost())
-            .RespondWith(Response.Create().WithStatusCode(409));
-
-        // 409 means item is already Pending/Running/terminal — the requeue intent is satisfied.
-        await _client.RequeueAsync(workItemId); // must not throw
-
-        _server.LogEntries.Should().HaveCount(1, "the request was sent and the 409 was received");
-    }
 
     // ── GetActiveAsync ─────────────────────────────────────────────────────────
 
@@ -672,42 +558,7 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
     // ── PostLabelSwapAsync ─────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task PostLabelSwapAsync_SendsPostWithLabel()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/label-swap").UsingPost())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("{}"));
-
-        await _client.PostLabelSwapAsync(workItemId, "in-progress");
-
-        var entry = _server.LogEntries.First(e =>
-            e.RequestMessage!.Method == "POST" &&
-            e.RequestMessage.Path == $"/api/work-items/{workItemId}/label-swap");
-        entry.RequestMessage!.Body.Should().Contain("in-progress");
-    }
-
     // ── PostLastProgressAsync ──────────────────────────────────────────────────
-
-    [Fact]
-    public async Task PostLastProgressAsync_SendsPostWithTimestamp()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/last-progress").UsingPost())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("{}"));
-
-        await _client.PostLastProgressAsync(workItemId, DateTimeOffset.UtcNow);
-
-        _server.LogEntries.Should().Contain(e =>
-            e.RequestMessage!.Method == "POST" &&
-            e.RequestMessage.Path == $"/api/work-items/{workItemId}/last-progress");
-    }
 
     // ── SetPriorityAsync ─────────────────────────────────────────────────
 

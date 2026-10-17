@@ -162,7 +162,7 @@ public class AboutPageComponentTests : BunitContext
         var badges = cut.FindAll(".tech-badge");
         Assert.Equal(4, badges.Count);
         Assert.Equal(".NET 10", badges[0].TextContent);
-        Assert.Equal("Blazor Server", badges[1].TextContent);
+        Assert.Equal("Blazor WebAssembly", badges[1].TextContent);
         Assert.Equal("Kiro CLI", badges[2].TextContent);
         Assert.Equal("Docker", badges[3].TextContent);
     }
