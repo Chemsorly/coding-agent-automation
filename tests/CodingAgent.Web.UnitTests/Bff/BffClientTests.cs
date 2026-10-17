@@ -193,6 +193,41 @@ public class BffClientTests
     }
 
     [Fact]
+    public async Task ChangedGrantOrUser_ReachesTheAuthenticationState_AndTheEvaluatedGrant()
+    {
+        var handler = new ScriptedHandler()
+            .Then(() => Json(Session(AccessRole.ReadOnly)))
+            .Then(() => Json(Session(AccessRole.Operator, subject: "sub-bob")));
+        using var store = Store(handler);
+        using var provider = new BffAuthenticationStateProvider(store);
+        var evaluator = new SessionRbacEvaluator(store);
+        await store.LoadAsync();
+
+        (await store.CheckNowAsync()).Should().BeTrue();
+
+        var user = (await provider.GetAuthenticationStateAsync()).User;
+        user.FindFirst(AuthClaimTypes.Subject)!.Value.Should().Be("sub-bob", "a new sign-in in another tab is the session now");
+        (await evaluator.EvaluateAsync(user)).GlobalRole.Should().Be(AccessRole.Operator, "the latest grant, not the first one");
+    }
+
+    [Fact]
+    public async Task FirstLoad_RetriesANetworkError_BeforeTreatingTheUserAsSignedOut()
+    {
+        // A web pod stopping during a rollout must not send a deep link to the login page.
+        var handler = new ScriptedHandler()
+            .Then(() => throw new HttpRequestException("connection reset"))
+            .Then(() => Json(Session()));
+        using var store = Store(handler);
+
+        var load = store.LoadAsync();
+        await WaitUntilAsync(() => handler.Requests.Count == 1);
+        _time.Advance(SessionStore.FirstLoadRetryDelay);
+
+        (await load).Should().NotBeNull();
+        _nav.Navigations.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task NetworkError_KeepsTheLastSession_AndDoesNotNavigate()
     {
         var handler = new ScriptedHandler()

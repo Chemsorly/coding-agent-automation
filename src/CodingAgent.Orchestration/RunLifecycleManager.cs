@@ -246,8 +246,17 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         run.MarkCompleted();
         run.CurrentStep = PipelineStep.Cancelled;
 
-        // 2. Transition WorkItem in DB
-        await TransitionWorkItemAsync(runId, WorkItemStatus.Cancelled, ct);
+        // 2. Transition WorkItem in DB. When another path moved it to a different terminal status first (e.g. the
+        //    JobController's Failed for a timeout, which keeps agent:error, #3009), the run's history and label
+        //    follow the WorkItem, as in CompleteRunAsync.
+        var effectiveStatus = await TransitionWorkItemAsync(runId, WorkItemStatus.Cancelled, ct);
+        if (effectiveStatus != WorkItemStatus.Cancelled)
+        {
+            _logger.Warning(
+                "CancelRunAsync: WorkItem {RunId} is already {Effective}, not Cancelled; the run's history and label follow the WorkItem",
+                runId, effectiveStatus);
+            run.CurrentStep = effectiveStatus == WorkItemStatus.Succeeded ? PipelineStep.Completed : PipelineStep.Failed;
+        }
 
         // TODO: [WARNING] ClearAgentState is called here (before history-persist via
         //       RunTerminalCleanupAsync), deviating from the originally documented ordering
@@ -262,7 +271,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         //    Skip the label swap for consolidation runs (they have no issue label to swap).
         var cancelLabel = run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
             ? null
-            : AgentLabels.Cancelled;
+            : CompletionOutcomeResolver.ResolveAgentLabel(effectiveStatus, finalLabel: null);
         await RunTerminalCleanupAsync(run, cancelLabel, ct);
 
         // 5. Delete K8s Job to prevent pod retries consuming backoffLimit.
@@ -270,8 +279,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
-            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status=Cancelled, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
-            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
+            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
+            runId, effectiveStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
 
         return run;
     }

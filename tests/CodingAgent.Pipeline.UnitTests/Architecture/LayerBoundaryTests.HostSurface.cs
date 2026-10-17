@@ -11,8 +11,9 @@ namespace CodingAgent.Pipeline.UnitTests.Architecture;
 /// </summary>
 public partial class LayerBoundaryTests
 {
-    // An endpoint-mapping call: the routing builders' Map* methods and any Map…Endpoints extension.
-    [GeneratedRegex(@"\.(Map(?:Get|Post|Put|Delete|Patch|Methods|Group|Hub|Controllers|ControllerRoute|DefaultControllerRoute|Fallback\w*|StaticAssets|RazorPages|RazorComponents|OpenApi|HealthChecks|Forwarder|ReverseProxy|Prometheus\w*|BlazorHub|\w+Endpoints))\((?:""([^""]*)"")?")]
+    // An endpoint-mapping call: plain Map, the routing builders' Map* methods (generic ones such as MapHub<T> too)
+    // and any Map…Endpoints extension.
+    [GeneratedRegex(@"\.(Map(?:Get|Post|Put|Delete|Patch|Methods|Group|Hub|When|Controllers|ControllerRoute|DefaultControllerRoute|Fallback\w*|StaticAssets|RazorPages|RazorComponents|OpenApi|HealthChecks|Forwarder|ReverseProxy|Prometheus\w*|BlazorHub|Grpc\w*|IdentityApi|\w+Endpoints)?)(?:<[^<>()]*>)?\((?:""([^""]*)"")?")]
     private static partial Regex EndpointMappingCall();
 
     // A framework feature that must never be on: API description, Swagger UI, a metrics scrape endpoint, the
@@ -117,6 +118,26 @@ public partial class LayerBoundaryTests
     }
 
     /// <summary>The non-comment source lines of the C# files under <paramref name="directory"/>.</summary>
+    [GeneratedRegex(@"Invoke\w*Async(?:<[^>]*>)?\(\s*""eval""")]
+    private static partial Regex JsEvalCall();
+
+    [Fact]
+    public void TheBrowserClient_CallsNoJavaScriptEval()
+    {
+        // The web host's Content-Security-Policy allows no 'unsafe-eval', so the browser refuses it (silently, for a
+        // caught JSException). Add a named function to App.razor instead.
+        var sep = Path.DirectorySeparatorChar;
+        var files = new[] { "CodingAgent.Web.Client", "CodingAgent.Web" }
+            .SelectMany(p => Directory.EnumerateFiles(Path.Combine(RepoRoot, "src", p), "*.*", SearchOption.AllDirectories))
+            .Where(f => (f.EndsWith(".cs", StringComparison.Ordinal) || f.EndsWith(".razor", StringComparison.Ordinal))
+                && !f.Contains($"{sep}obj{sep}", StringComparison.Ordinal) && !f.Contains($"{sep}bin{sep}", StringComparison.Ordinal))
+            .ToList();
+
+        files.Should().Contain(f => f.EndsWith("AgentChat.razor", StringComparison.Ordinal), "positive control: the scan sees the pages");
+        files.SelectMany(f => File.ReadLines(f).Where(l => JsEvalCall().IsMatch(l)).Select(l => $"{Path.GetFileName(f)}: {l.Trim()}"))
+            .Should().BeEmpty();
+    }
+
     private static IEnumerable<(string File, string Text)> CodeLines(string directory)
     {
         var sep = Path.DirectorySeparatorChar;

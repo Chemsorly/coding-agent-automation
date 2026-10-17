@@ -44,8 +44,7 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         // Persist Apply's mutations back to Redis so CompleteRunAsync's RemoveRun
         // deserializes the updated state. Without this, DistributedRunService.RemoveRun
         // re-reads the pre-Apply Redis snapshot and history is persisted with nulls/zeros.
-        // Same pattern as WorkItemEndpoints.ClaimWorkItem — see that file's comment for
-        // a full explanation of why ReplaceRun is required (not just GetRun + mutate).
+        // So ReplaceRun is required, not just GetRun + mutate: in Redis mode GetRun returns a copy.
         // In OrchestratorRunService (in-memory), this is a no-op: the same reference is
         // already in the dictionary, so re-assigning it has no observable effect.
         _facade.ReplaceRun(run);
@@ -85,7 +84,9 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         }
         catch (Exception ex)
         {
-            await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex);
+            // The label follows the defensive transition too: when it is rejected, another path's status and
+            // label stand (#3009: a JobController timeout keeps agent:error).
+            outcomeApplied = await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex);
         }
 
         _logger.Information(
@@ -96,7 +97,7 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         return outcomeApplied;
     }
 
-    private async Task DefensiveRunCleanupAsync(
+    private async Task<bool> DefensiveRunCleanupAsync(
         JobId jobId, PipelineRun run, JobCompletionPayload payload, WorkItemStatus workItemStatus, Exception outerEx)
     {
         _logger.Warning(outerEx, "CompleteRunAsync failed for job {JobId} (status={Status}), performing defensive cleanup", jobId.Value, workItemStatus);
@@ -114,6 +115,6 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
 
         // intentional: ct may already be cancelled (e.g., during host shutdown — that is exactly when
         // this defensive path fires). Passing ct would short-circuit the transition silently.
-        await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, CancellationToken.None, errorMsg, failureEnum);
+        return await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, CancellationToken.None, errorMsg, failureEnum);
     }
 }

@@ -1304,6 +1304,48 @@ public sealed class RunLifecycleManagerErrorPathTests
     }
 
     [Fact]
+    public async Task CancelRunAsync_WorkItemAlreadyFailed_LabelsAndRecordsFailed()
+    {
+        // The JobController's HTTP Failed (timeout) won the DB write; the agent's Cancelled report removed the run.
+        var runId = Guid.NewGuid().ToString();
+        _runService.AddRun(CreateRun(runId, PipelineRunType.Implementation));
+        RejectTransitionWithCurrentStatus(WorkItemStatus.Failed);
+
+        await _sut.CancelRunAsync(runId, CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Cancelled,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == runId && r.CurrentStep == PipelineStep.Failed),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_TransitionTakesEffect_LabelsAndRecordsCancelled()
+    {
+        var runId = Guid.NewGuid().ToString();
+        _runService.AddRun(CreateRun(runId, PipelineRunType.Implementation));
+        _mockFallbackTransition
+            .Setup(f => f.TryFallbackChainAsync(
+                It.IsAny<Guid>(), WorkItemStatus.Cancelled,
+                It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await _sut.CancelRunAsync(runId, CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Cancelled,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == runId && r.CurrentStep == PipelineStep.Cancelled),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CompleteRunAsync_WorkItemAlreadyAtThisStatus_KeepsFinalLabel_ReturnsRun()
     {
         // HTTP Failed with the same payload landed first: Failed→Failed is rejected as a no-op.

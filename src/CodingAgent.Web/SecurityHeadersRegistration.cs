@@ -19,8 +19,14 @@ internal static class SecurityHeadersRegistration
     /// </summary>
     public const string HttpsRedirectKey = "WebUI:HttpsRedirect";
 
-    /// <summary>The CDN that faro-init.js loads the Faro bundles from (with SRI), allowed only when Faro is on.</summary>
-    internal const string FaroScriptOrigin = "https://unpkg.com";
+    /// <summary>
+    /// The two bundles faro-init.js loads from the CDN (with SRI), allowed only when Faro is on. Exact URLs, not
+    /// the CDN's origin, so an injected script tag cannot load any other package from it. Keep the version in
+    /// step with FARO_VERSION in wwwroot/js/faro-init.js (ContentSecurityPolicyTests checks it).
+    /// </summary>
+    internal const string FaroScriptSources =
+        "https://unpkg.com/@grafana/faro-web-sdk@2.8.1/dist/bundle/faro-web-sdk.iife.js "
+        + "https://unpkg.com/@grafana/faro-web-tracing@2.8.1/dist/bundle/faro-web-tracing.iife.js";
 
     private const string CspNonceItem = "csp-nonce";
 
@@ -63,7 +69,7 @@ internal static class SecurityHeadersRegistration
     /// </summary>
     internal static string ContentSecurityPolicy(string nonce, string? faroCollectorOrigin)
     {
-        var faroScripts = faroCollectorOrigin is null ? "" : " " + FaroScriptOrigin;
+        var faroScripts = faroCollectorOrigin is null ? "" : " " + FaroScriptSources;
         var faroCalls = faroCollectorOrigin is null ? "" : " " + faroCollectorOrigin;
         return "default-src 'self'; "
             + $"script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'{faroScripts}; "

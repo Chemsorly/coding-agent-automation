@@ -61,7 +61,12 @@
         (function () {
             var box = document.getElementById('app-loading');
             function started() { return !!document.querySelector('.cockpit'); }
-            function fail() { if (!started()) box.classList.add('app-loading-failed'); }
+            // A script from another origin (the Faro bundles on unpkg) is optional: blocked or offline, the app still starts.
+            function foreign(e) {
+                var t = e && e.target;
+                return !!(t && t.tagName === 'SCRIPT' && t.src && new URL(t.src, location.href).origin !== location.origin);
+            }
+            function fail(e) { if (!started() && !foreign(e)) box.classList.add('app-loading-failed'); }
             window.addEventListener('error', fail, true);
             window.addEventListener('unhandledrejection', fail);
             if (typeof WebAssembly === 'undefined') fail();
@@ -81,6 +86,9 @@
         window.getAppVersion = function () {
             var meta = document.querySelector('meta[name="app-version"]');
             return meta ? meta.getAttribute('content') : null;
+        };
+        window.scrollElementToBottom = function (element) {
+            if (element) element.scrollTop = element.scrollHeight;
         };
         window.scrollToBottom = function (elementId) {
             var element = document.getElementById(elementId);

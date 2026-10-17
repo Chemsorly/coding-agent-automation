@@ -487,7 +487,8 @@
     {
         try
         {
-            await JS.InvokeVoidAsync("eval", "document.querySelector('.chat-messages')?.scrollTo(0, document.querySelector('.chat-messages')?.scrollHeight)");
+            // No eval: the Content-Security-Policy allows no 'unsafe-eval' (App.razor defines the helper).
+            await JS.InvokeVoidAsync("scrollElementToBottom", _messagesContainer);
         }
         catch (Exception ex) { Logger.LogDebug(ex, "Failed to scroll chat to bottom"); }
     }

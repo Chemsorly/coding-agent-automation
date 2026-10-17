@@ -47,6 +47,26 @@ public sealed class SessionStore(
     public Task<BffSession?> LoadAsync() => _firstLoad ??= FirstLoadAsync();
 
     /// <summary>
+    /// The latest session the web host confirmed, once the first load has finished. The authentication state
+    /// and the grant read this, so a changed grant or another user (a new sign-in in another tab) reaches the
+    /// page; <see cref="LoadAsync"/> keeps returning the first session.
+    /// </summary>
+    public async Task<BffSession?> GetCurrentAsync()
+    {
+        await LoadAsync();
+        return Current;
+    }
+
+    /// <summary>
+    /// How often the first load tries when the web host cannot be reached or answers 5xx (e.g. a web pod
+    /// stopping during a rollout). There is no last session to keep yet, and an anonymous state would send
+    /// the browser to the login page and lose the page it was opening.
+    /// </summary>
+    internal const int FirstLoadAttempts = 3;
+
+    internal static readonly TimeSpan FirstLoadRetryDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>
     /// One immediate check outside the heartbeat (Req 3.3: a proxied call got 401). True when the
     /// session is still valid; on a 401 the store has already started the navigation to the login page.
     /// </summary>
@@ -63,6 +83,11 @@ public sealed class SessionStore(
     private async Task<BffSession?> FirstLoadAsync()
     {
         var session = await RefreshAsync(_stopping.Token);
+        for (var attempt = 1; session is null && !login.IsNavigating && attempt < FirstLoadAttempts; attempt++)
+        {
+            await Task.Delay(FirstLoadRetryDelay, time, _stopping.Token);
+            session = await RefreshAsync(_stopping.Token);
+        }
         _ = HeartbeatAsync();
         await WatchPageVisibilityAsync();
         return session;

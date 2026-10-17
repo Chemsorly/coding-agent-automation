@@ -69,13 +69,35 @@ public sealed partial class ContentSecurityPolicyTests : IClassFixture<CustomWeb
     }
 
     [Fact]
-    public void Policy_WithFaro_AddsItsCdnForScripts_AndItsCollectorForCalls()
+    public void Policy_WithFaro_AddsItsTwoBundles_AndItsCollectorForCalls()
     {
         var policy = Directives(SecurityHeadersRegistration.ContentSecurityPolicy("n0nce", "https://faro.example.test"));
 
-        policy["script-src"].Should().Be("'self' 'nonce-n0nce' 'wasm-unsafe-eval' " + SecurityHeadersRegistration.FaroScriptOrigin);
+        policy["script-src"].Should().Be("'self' 'nonce-n0nce' 'wasm-unsafe-eval' " + SecurityHeadersRegistration.FaroScriptSources);
+        policy["script-src"].Split(' ').Should().NotContain("https://unpkg.com", "only the two bundles, not every package on the CDN");
         policy["connect-src"].Should().Be("'self' https://faro.example.test");
     }
+
+    [GeneratedRegex(@"var FARO_VERSION = '([^']+)';")]
+    private static partial Regex FaroVersion();
+
+    [GeneratedRegex(@"var (?:SDK|TRACING)_URL = '([^']+)' \+ FARO_VERSION \+ '([^']+)';")]
+    private static partial Regex FaroBundleUrl();
+
+    [Fact]
+    public void FaroBundles_LoadedByFaroInit_AreTheOnesThePolicyAllows()
+    {
+        var script = File.ReadAllText(Path.Combine(RepoRoot(), "src", "CodingAgent.Web", "wwwroot", "js", "faro-init.js"));
+        var version = FaroVersion().Match(script).Groups[1].Value;
+        var urls = FaroBundleUrl().Matches(script).Select(m => m.Groups[1].Value + version + m.Groups[2].Value).ToList();
+
+        urls.Should().HaveCount(2, "positive control: faro-init.js loads the SDK and the tracing bundle");
+        SecurityHeadersRegistration.FaroScriptSources.Split(' ').Should().BeEquivalentTo(urls,
+            "a FARO_VERSION bump must update the policy, or the browser refuses the bundles");
+    }
+
+    private static string RepoRoot([System.Runtime.CompilerServices.CallerFilePath] string path = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, "..", "..", ".."));
 
     [Theory]
     [InlineData("https://faro-collector-prod-eu-west-0.grafana.net/collect/0123abc", "https://faro-collector-prod-eu-west-0.grafana.net")]

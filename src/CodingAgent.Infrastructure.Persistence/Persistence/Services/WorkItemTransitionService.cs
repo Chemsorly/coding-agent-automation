@@ -264,15 +264,14 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
         => (current, target) switch
         {
-            // Pending→Dispatched: used by ClaimWorkItem (POST /api/work-items/{id}/claim).
-            // The Scheduler's WorkItemDispatchLoop uses this endpoint for all task types.
+            // Pending→Dispatched: the dispatch (POST /api/work-items/{id}/dispatch), which the Scheduler's
+            // WorkItemDispatchLoop calls for all task types.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            // Dispatched→Pending: used by RequeueWorkItem (POST /api/work-items/{id}/requeue)
-            // when K8s Job creation fails after a successful claim — the item must be returned to
-            // the Pending queue for retry rather than being stuck in Dispatched state.
+            // Dispatched→Pending: back to the queue for a retry instead of staying Dispatched. Spec 052 deleted
+            // the caller-less POST /api/work-items/{id}/requeue; the transition stays valid in process.
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            // Requeue paths: Failed/Cancelled → Pending (Req 6.1, POST /api/work-items/{id}/requeue)
+            // Requeue paths: Failed/Cancelled → Pending (Req 6.1; the /requeue endpoint is gone, see above)
             (WorkItemStatus.Failed, WorkItemStatus.Pending) => true,
             (WorkItemStatus.Cancelled, WorkItemStatus.Pending) => true,
             _ => false

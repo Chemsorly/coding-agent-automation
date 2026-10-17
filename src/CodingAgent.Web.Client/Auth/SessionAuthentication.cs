@@ -20,7 +20,7 @@ public sealed class BffAuthenticationStateProvider : AuthenticationStateProvider
     }
 
     public override async Task<AuthenticationState> GetAuthenticationStateAsync() =>
-        new(ToPrincipal(await _store.LoadAsync()));
+        new(ToPrincipal(await _store.GetCurrentAsync()));
 
     internal static ClaimsPrincipal ToPrincipal(BffSession? session) =>
         session is null
@@ -41,7 +41,7 @@ public sealed class SessionRbacEvaluator(SessionStore store) : IRbacEvaluator
     {
         if (user.Identity?.IsAuthenticated != true)
             return AccessGrant.None;
-        return (await store.LoadAsync())?.Grant ?? AccessGrant.None;
+        return (await store.GetCurrentAsync())?.Grant ?? AccessGrant.None;
     }
 }
 

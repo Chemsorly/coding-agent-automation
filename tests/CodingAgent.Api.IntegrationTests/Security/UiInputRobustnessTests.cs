@@ -20,6 +20,8 @@ namespace CodingAgent.Api.IntegrationTests.Security;
 /// with a valid user token. It is driven by the endpoint inventory like T2: each route value and each scalar query or
 /// <c>[AsParameters]</c> field gets each hostile value in turn, the others a valid sample. A global admin token passes
 /// authorization, so the handler runs. JSON bodies are out of scope; a body-taking endpoint gets <c>{}</c>.
+/// Limits: the host runs on EF InMemory, so an error only PostgreSQL raises (a negative LIMIT) needs its own
+/// regression line below; and a route sample that names no entity is answered 404 before the query is used.
 /// </summary>
 [Collection(ApiIntegrationTestCollection.Name)]
 public sealed class UiInputRobustnessTests(ApiWebApplicationFactory factory)
@@ -80,6 +82,21 @@ public sealed class UiInputRobustnessTests(ApiWebApplicationFactory factory)
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await response.Content.ReadAsStringAsync()).Should().Contain("page");
+    }
+
+    /// <summary>
+    /// PostgreSQL refuses a negative LIMIT with an error (500) that EF InMemory never raises, so T9 cannot see it.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/ui/work-items/pending?maxResults=-1")]
+    [InlineData("/api/ui/work-items/pending?maxResults=0")]
+    public async Task NonPositiveMaxResults_Answers400_WithTheReason(string url)
+    {
+        using var client = AdminClient();
+        using var response = await client.GetAsync(url);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("maxResults");
     }
 
     /// <summary>D8: the largest page each store serves still answers 200; About.razor asks runs for 1000.</summary>

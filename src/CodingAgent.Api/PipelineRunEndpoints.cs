@@ -241,6 +241,8 @@ public static class PipelineRunEndpoints
         {
             var p = page ?? 1;
             var ps = pageSize ?? 50;
+            if (PagingLimits.Validate(p, ps, RunHistoryQuery.MaxPageSize) is { } invalid)
+                return invalid;
             var pagedResult = await history.GetRunHistoryAsync(p, ps);
             runs = pagedResult.Items;
         }

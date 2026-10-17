@@ -64,6 +64,9 @@ public static class WorkItemQueryEndpoints
         string? projectId = null,
         CancellationToken ct = default)
     {
+        // PostgreSQL refuses a negative LIMIT (500); EF InMemory hides it, so T9 cannot see it.
+        if (maxResults < 1)
+            return TypedResults.BadRequest($"maxResults must be 1 or more, not {maxResults}.");
         var dispatchOrder = (await configStore.LoadPipelineConfigAsync(ct)).DispatchOrder;
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 

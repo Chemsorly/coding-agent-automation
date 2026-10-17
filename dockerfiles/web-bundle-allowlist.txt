@@ -1,14 +1,14 @@
 # The assemblies the browser may download from the web image (spec 052 design 6.0 "Bundle allow-list").
-# dockerfiles/web-bundle-check.sh compares every wwwroot/_framework/*.wasm, its fingerprint stripped
+# dockerfiles/web-bundle-check.sh compares every wwwroot/_framework/*.wasm and *.dll, its fingerprint stripped
 # (System.Text.Json.vpf9uy3034.wasm -> System.Text.Json), with these lines: an exact name, or a prefix
 # followed by '*'. A name outside the list fails the image build, so a server assembly or an unreviewed
 # package never reaches the browser. Review a new name before you add it.
 
-# The .NET runtime and the framework libraries.
+# The .NET runtime and its base class library. NuGet packages named System.* (e.g.
+# System.IdentityModel.Tokens.Jwt) also match; review a new package reference to the client for that.
 dotnet.*
 System
 System.*
-Microsoft.*
 netstandard
 mscorlib
 
@@ -17,5 +17,39 @@ CodingAgent.Web.Client
 CodingAgent.Contracts
 CodingAgent.Pipeline.CodeReview
 
-# The UI hub's MessagePack protocol (MessagePack, MessagePack.Annotations; Microsoft.NET.StringTools comes with it).
-MessagePack*
+# ASP.NET Core in the browser: components, authorization, the SignalR client.
+Microsoft.AspNetCore.Authorization
+Microsoft.AspNetCore.Components
+Microsoft.AspNetCore.Components.Authorization
+Microsoft.AspNetCore.Components.Web
+Microsoft.AspNetCore.Components.WebAssembly
+Microsoft.AspNetCore.Connections.Abstractions
+Microsoft.AspNetCore.Http.Connections.Client
+Microsoft.AspNetCore.Http.Connections.Common
+Microsoft.AspNetCore.Metadata
+Microsoft.AspNetCore.SignalR.Client
+Microsoft.AspNetCore.SignalR.Client.Core
+Microsoft.AspNetCore.SignalR.Common
+Microsoft.AspNetCore.SignalR.Protocols.Json
+Microsoft.JSInterop
+Microsoft.JSInterop.WebAssembly
+
+# Microsoft.Extensions: configuration, DI, logging, options, the HTTP client factory.
+Microsoft.Extensions.Configuration
+Microsoft.Extensions.Configuration.Abstractions
+Microsoft.Extensions.Configuration.Json
+Microsoft.Extensions.DependencyInjection
+Microsoft.Extensions.DependencyInjection.Abstractions
+Microsoft.Extensions.Diagnostics
+Microsoft.Extensions.Diagnostics.Abstractions
+Microsoft.Extensions.Features
+Microsoft.Extensions.Http
+Microsoft.Extensions.Logging
+Microsoft.Extensions.Logging.Abstractions
+Microsoft.Extensions.Options
+Microsoft.Extensions.Primitives
+
+# The UI hub's MessagePack protocol; Microsoft.NET.StringTools comes with MessagePack.
+MessagePack
+MessagePack.Annotations
+Microsoft.NET.StringTools
