@@ -125,7 +125,7 @@
                             @* Spec 049: consolidation runs need global operator. *@
                             @if (supportsBrain && Access.HasGlobalOperate)
                             {
-                                <button class="btn-trigger" disabled="@(brainReadOnly || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
+                                <button class="btn-trigger" disabled="@(brainReadOnly || _triggering || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
                                         title="@(brainReadOnly ? BrainReadOnlyHint : null)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id)">
                                     <Icon Name="brain" Size="14" /> Brain Consolidation
@@ -194,7 +194,7 @@
         @if (Access.HasGlobalOperate)
         {
             <div class="consolidation-card-actions" style="margin-top: 12px;">
-                <button class="btn-trigger" disabled="@(_isLoading || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
+                <button class="btn-trigger" disabled="@(_isLoading || _triggering || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
                         @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null)">
                     <Icon Name="sparkles" Size="14" /> Generate Suggestions
                 </button>
@@ -546,8 +546,15 @@
         }
     }
 
+    // Spec 052: set while a trigger is in flight. In WebAssembly a double click reaches the handler twice
+    // before the reloaded history shows the run as running, so the second click is ignored here.
+    private bool _triggering;
+
     private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, bool autoDispatch = false, RefactoringScanFocus focus = RefactoringScanFocus.All)
     {
+        if (_triggering)
+            return;
+        _triggering = true;
         _statusMessage = null;
         _statusIsError = false;
 
@@ -570,6 +577,10 @@
             Logger.LogError(ex, "Failed to trigger consolidation {Type} for template {TemplateId}", type, templateId);
             _statusMessage = $"{FormatRunType(type)} dispatch failed — check orchestrator logs for details.";
             _statusIsError = true;
+        }
+        finally
+        {
+            _triggering = false;
         }
     }
 

@@ -460,7 +460,9 @@ public sealed class AgentOutputTests : E2ETestBase
             });
         });
 
-        await Page.GotoAsync(E2ETestSignIn.SignInUrl(BaseUrl, "e2e-operator", E2ETestSignIn.TeamGroup) + "&ttl=10");
+        // A request, not a page load: the context's request API shares the browser's cookie jar.
+        var signIn = await Page.Context.APIRequest.GetAsync(E2ETestSignIn.SignInUrl(BaseUrl, "e2e-operator", E2ETestSignIn.TeamGroup) + "&ttl=10");
+        Assert.True(signIn.Ok, $"test sign-in answered {signIn.Status}");
         var detail = new RunDetailPage(Page, BaseUrl);
         await detail.NavigateAsync(runId);
         Assert.True(await detail.HasLiveOutputPanelAsync(), "the run page subscribes to the live run over the hub");
