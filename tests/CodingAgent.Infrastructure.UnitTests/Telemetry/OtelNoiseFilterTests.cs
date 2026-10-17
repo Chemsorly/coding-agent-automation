@@ -37,6 +37,8 @@ public class OtelNoiseFilterTests : IDisposable
     [InlineData("/healthz")]
     [InlineData("/readyz")]
     [InlineData("/api/ui/loop/status")]
+    [InlineData("/api/ui/health")]
+    [InlineData("/bff/session")]
     public void FilterAspNetCoreRequest_NoisePaths_ReturnsFalse(string path)
     {
         var context = BuildHttpContext(path);
@@ -45,12 +47,31 @@ public class OtelNoiseFilterTests : IDisposable
     }
 
     [Theory]
+    [InlineData("/_framework/dotnet.native.abc123.wasm")]
+    [InlineData("/_framework/blazor.web.9hsif5t8mt.js")]
+    [InlineData("/_framework/CodingAgent.Web.Client.wasm")]
+    [InlineData("/_content/SomeLibrary/lib.css")]
+    [InlineData("/CodingAgent.Web.styles.css")]
+    [InlineData("/css/app.css")]
+    [InlineData("/js/faro-init.js")]
+    [InlineData("/favicon.svg")]
+    public void FilterAspNetCoreRequest_StaticAssetPaths_ReturnsFalse(string path)
+    {
+        OtelNoiseFilter.FilterAspNetCoreRequest(BuildHttpContext(path)).Should().BeFalse(
+            because: $"'{path}' is a static client file (spec 052 Req 13.3)");
+    }
+
+    [Theory]
     [InlineData("/api/work-items/")]
     [InlineData("/api/agents/")]
     [InlineData("/hubs/agent")]
+    [InlineData("/hubs/ui")]
     [InlineData("/healthz/detail")]     // sub-path of a noise path — must be kept
     [InlineData("/api/ui/loop/status/full")]   // sub-path of a noise path — must be kept
     [InlineData("/readyz/extra")]       // sub-path of a noise path — must be kept
+    [InlineData("/bff/session/extra")]  // sub-path of a noise path — must be kept
+    [InlineData("/api/ui/runs")]
+    [InlineData("/runs/00000000-0000-0000-0000-000000000000")]
     [InlineData("/")]
     public void FilterAspNetCoreRequest_NonNoisePaths_ReturnsTrue(string path)
     {
@@ -73,12 +94,12 @@ public class OtelNoiseFilterTests : IDisposable
     }
 
     /// <summary>
-    /// Property: any path that is not exactly one of the three noise paths is kept.
+    /// Property: any path that is not exactly one of the noise paths is kept.
     /// </summary>
     [Property]
     public Property FilterAspNetCoreRequest_AnyPathOtherThanNoiseIsKept()
     {
-        var noisePaths = new HashSet<string> { "/healthz", "/readyz", "/api/ui/loop/status" };
+        var noisePaths = new HashSet<string> { "/healthz", "/readyz", "/api/ui/loop/status", "/api/ui/health", "/bff/session" };
 
         // TODO: [WARNING] Gen.Elements cycles over only 7 fixed strings — FsCheck provides no real randomised
         // coverage. A regression dropping an arbitrary path would never be caught. Replace with
@@ -168,23 +189,18 @@ public class OtelNoiseFilterTests : IDisposable
 
     [Theory]
     [InlineData("AgentHub/Heartbeat", true)]
-    [InlineData("ComponentHub/Heartbeat", true)]
     [InlineData("AgentHub/ReportOutputLines", true)]
-    [InlineData("ComponentHub/OnRenderCompleted", true)]
-    [InlineData("Circuit abc123xyz", true)]
-    [InlineData("Circuit ", true)]                          // "Circuit " prefix with empty id
-    [InlineData("Event onclick -> SomeComponent<BuildRenderTree>b__0_12", true)]
-    [InlineData("Event mouseover -> Some<Component>b__0", true)]
     // Kept
-    [InlineData("Route /dashboard", false)]
-    [InlineData("Route /api/work-items", false)]
     [InlineData("GET /api/work-items/", false)]
     [InlineData("AgentHub/RegisterAgent", false)]
     [InlineData("AgentHub/JobAccepted", false)]
     [InlineData("Microsoft.AspNetCore.SignalR.Server/SendToGroup", false)]
     [InlineData("ExecutePipeline", false)]
-    [InlineData("Event", false)]                            // "Event" without trailing space must not match
-    [InlineData("Circuit", false)]                          // "Circuit" without trailing space must not match
+    [InlineData("AgentHub/Heartbeats", false)]              // the pattern is a suffix, not a substring
+    // Spec 052: no host renders circuits any more, so the former circuit patterns are plain names now.
+    [InlineData("Circuit abc123xyz", false)]
+    [InlineData("Event onclick -> SomeComponent<BuildRenderTree>b__0_12", false)]
+    [InlineData("ComponentHub/OnRenderCompleted", false)]
     public void ShouldDropSpan_ReturnsExpectedResult(string displayName, bool expectedDrop)
     {
         using var activitySource = new ActivitySource("test-should-drop");
@@ -199,25 +215,6 @@ public class OtelNoiseFilterTests : IDisposable
 
         OtelNoiseFilter.ShouldDropSpan(activity).Should().Be(expectedDrop,
             because: $"display name '{displayName}' should {(expectedDrop ? "" : "not ")}be dropped");
-    }
-
-    [Theory]
-    [InlineData("Event onclick without arrow")]             // "Event " prefix but no " -> "
-    [InlineData("Eventhandler -> something")]               // does not start with "Event " (no space)
-    public void ShouldDropSpan_EventWithoutArrow_ReturnsFalse(string displayName)
-    {
-        using var activitySource = new ActivitySource("test-should-drop-event");
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        using var activity = activitySource.StartActivity(displayName)!;
-
-        OtelNoiseFilter.ShouldDropSpan(activity).Should().BeFalse(
-            because: $"'{displayName}' does not match the noise pattern and must be kept");
     }
 
     // ── OtelNoiseSpanProcessor ────────────────────────────────────────────────
@@ -249,6 +246,10 @@ public class OtelNoiseFilterTests : IDisposable
     [InlineData("/healthz")]
     [InlineData("/readyz")]
     [InlineData("/api/ui/loop/status")]
+    [InlineData("/api/ui/health")]
+    [InlineData("/bff/session")]
+    [InlineData("/_framework/dotnet.native.wasm")]
+    [InlineData("/CodingAgent.Web.styles.css")]
     public void Processor_OnEnd_SuppressesProbeServerSpans(string path)
     {
         // The instrumentation filter did not drop the span when it started: the end-of-span check must.

@@ -72,29 +72,15 @@ public sealed class WebTelemetryExportTests : IDisposable
         _ = _factory.Services.GetRequiredService<TracerProvider>();
         using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        await client.GetAsync("/healthz");
-        await client.GetAsync("/readyz");
+        // Spec 052 Req 13.3: the session heartbeat and the static client files are noise too.
+        string[] noise = ["/healthz", "/readyz", "/bff/session", "/css/app.css", "/favicon.svg", "/_framework/blazor.web.js"];
+        foreach (var path in noise)
+            await client.GetAsync(path);
         await client.GetAsync("/telemetry-export-probe");
 
         await WaitForAsync(() => ServerPaths().Contains("/telemetry-export-probe"));
         ServerPaths().Should().Contain("/telemetry-export-probe");
-        ServerPaths().Should().NotContain(["/healthz", "/readyz"]);
-    }
-
-    [Fact]
-    public void HubHeartbeatAndOutputLineSpans_AreNotExported()
-    {
-        _ = _factory.Services.GetRequiredService<TracerProvider>();
-        using var hubSource = new ActivitySource("Microsoft.AspNetCore.SignalR.Server");
-
-        foreach (var method in new[] { "Heartbeat", "ReportOutputLines", "RegisterAgent" })
-        {
-            using var activity = hubSource.StartActivity($"CodingAgent.Web.Hub/{method}", ActivityKind.Server);
-        }
-
-        var names = _spans.Exported.Select(a => a.DisplayName).ToList();
-        names.Should().Contain("CodingAgent.Web.Hub/RegisterAgent");
-        names.Should().NotContain(["CodingAgent.Web.Hub/Heartbeat", "CodingAgent.Web.Hub/ReportOutputLines"]);
+        ServerPaths().Should().NotContain(noise);
     }
 
     [Fact]

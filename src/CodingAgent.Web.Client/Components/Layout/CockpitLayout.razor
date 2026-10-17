@@ -8,7 +8,6 @@
 @inject IUiRunClient RunHistory
 @inject IUiTriageClient Triages
 @inject CockpitState State
-@inject IFaroService Faro
 @inject NotificationFaroBridge FaroBridge
 @inject IJSRuntime JS
 @inject NavigationManager Nav
@@ -386,9 +385,6 @@
                 await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
 
                 await SyncThemeFromBrowserAsync();
-
-                // Signal to Faro that the Blazor circuit connected successfully (ported from MainLayout).
-                await Faro.PushEventAsync("blazor.circuit.connected");
             }
             catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
             catch (JSException) { /* Browser-side failure is non-fatal here. */ }
@@ -481,8 +477,6 @@
         State.OnChange -= HandleStateChanged;
         State.OnProjectChanged -= HandleProjectChanged;
         Nav.LocationChanged -= HandleLocationChanged;
-        // Push disconnect while JS is still available (ported from MainLayout; FaroService swallows a dead circuit).
-        await Faro.PushEventAsync("blazor.circuit.disconnected");
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
         catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
         catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }

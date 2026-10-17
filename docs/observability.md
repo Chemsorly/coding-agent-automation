@@ -275,17 +275,18 @@ The counter has no selector label. The API logs `DispatchPendingWorkItem: no job
 
 ### Span Noise Filters
 
-Three high-volume span categories are kept out of the export (~70% of raw daily span volume). `OtelNoiseFilter` and `OtelNoiseSpanProcessor` (`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`) are wired into every host: **API**, **Web**, **Scheduler**, **Job Controller** and the **agent**.
+Four high-volume span categories are kept out of the export (~70% of raw daily span volume). `OtelNoiseFilter` and `OtelNoiseSpanProcessor` (`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`) are wired into every host: **API**, **Web**, **Scheduler**, **Job Controller** and the **agent**.
 
 | Noise | What is dropped |
 |-------|-----------------|
-| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz` and the UI's loop status poll `/api/ui/loop/status`; sub-paths like `/healthz/detail` are kept |
+| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz` and the browser's polls: the loop status `/api/ui/loop/status`, the API health `/api/ui/health` and the session heartbeat `/bff/session`; sub-paths like `/healthz/detail` are kept |
+| Static client files | Server spans for the web host's `/_framework/*` (WebAssembly runtime and assemblies) and `/_content/*` files, any `.css`, `.js` or `.wasm` file (including the `CodingAgent.Web.styles.css` bundle), and `/favicon.svg` |
 | Kubernetes API server calls | Client spans to `KUBERNETES_SERVICE_HOST` (in-cluster) or `kubernetes.default.svc`, mostly leader-election leases (~387k spans per day) |
-| Chatty SignalR / Blazor circuit spans | Hub methods ending in `/Heartbeat`, `/ReportOutputLines`, `/OnRenderCompleted`; spans starting with `"Circuit "`; event callbacks starting with `"Event "` and containing `" -> "` |
+| Chatty agent-hub spans | Hub methods ending in `/Heartbeat` or `/ReportOutputLines` |
 
 They are dropped at two points:
 
-- **When the span starts:** the instrumentation filters (`AspNetCoreTraceInstrumentationOptions.Filter`, `HttpClientTraceInstrumentationOptions.FilterHttpRequestMessage`) and `OtelNoiseSpanProcessor.OnStart` (by name). A probe request dropped here also keeps the spans it creates underneath out of the trace.
+- **When the span starts:** the instrumentation filters (`AspNetCoreTraceInstrumentationOptions.Filter`, `HttpClientTraceInstrumentationOptions.FilterHttpRequestMessage`) and `OtelNoiseSpanProcessor.OnStart` (by name). A probe request dropped here also keeps the spans it creates underneath out of the trace. For a poll the web host forwards, that covers the forwarder's client span, and the API gets a `traceparent` without the sampled flag, so it records no span either (`BffTelemetryTests`).
 - **When the span ends:** `OtelNoiseSpanProcessor.OnEnd` checks the finished span's name and tags (`url.path` on server spans, `server.address` on client spans) and clears its `Recorded` flag, so the batch exporter skips it. This check does not depend on the instrumentation callbacks having run. The processor must be added **before** `AddOtlpExporter`, because processors run in the order they are added.
 
 `OnEnd` also renames kept outbound HTTP spans from the bare method to `"{METHOD} {host}"` (e.g. `"GET api.github.com"`): host-level detail without path cardinality.
