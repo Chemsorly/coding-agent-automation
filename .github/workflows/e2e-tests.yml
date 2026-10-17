@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,8 +48,13 @@ jobs:
       # -p:IsTestProject=true so the test host and adapters are copied to the output. The csproj
       # keeps the property false so ci.yml's solution-wide `dotnet test` does not pick this
       # project up and fail on "no tests match Category!=E2E". See the csproj for the full note.
+      #
+      # Faster than the defaults, which suit a dev machine: the compiler server (Directory.Build.props
+      # turns it off so no VBCSCompiler outlives a local build; the job container is thrown away) and no
+      # analyzers (ci.yml's Release build enforces them with TreatWarningsAsErrors). About a third less
+      # build time per shard, measured locally (spec 052 V7).
       - name: Build
-        run: dotnet build tests/CodingAgent.Web.E2ETests/ -c Debug -p:IsTestProject=true
+        run: dotnet build tests/CodingAgent.Web.E2ETests/ -c Debug -p:IsTestProject=true -p:UseSharedCompilation=true -p:RunAnalyzers=false
 
       # The sorted list of E2E test methods is dealt round-robin across the shards, so browser
       # and headless tests spread evenly and a new test class needs no shard assignment. Every
