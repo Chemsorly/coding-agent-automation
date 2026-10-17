@@ -115,7 +115,7 @@ internal static class AgentStepPipelineBuilder
         steps.AddRange([
             new WriteProjectContextStep(),
             new WriteTriageContextStep(job.TriageContextMarkdown),
-            new TriageInvestigationStep(reportToTracker),
+            new TriageInvestigationStep(reportToTracker, job.McpServers.Where(s => !s.Disabled).Select(s => s.Name).ToList()),
             new ReportTriageResultStep(reportToTracker, TriageSecretMasking.McpSecrets(job.McpServers))
         ]);
         return steps;
