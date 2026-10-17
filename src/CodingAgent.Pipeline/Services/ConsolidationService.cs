@@ -372,7 +372,7 @@ public sealed class ConsolidationService : IConsolidationService
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to save harness suggestions");
+            _logger.Warning(ex, "Failed to save harness suggestions");
         }
     }
 
