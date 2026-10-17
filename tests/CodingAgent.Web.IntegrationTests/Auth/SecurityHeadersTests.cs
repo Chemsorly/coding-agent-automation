@@ -42,8 +42,8 @@ public class SecurityHeadersTests : IClassFixture<CustomWebApplicationFactory>
     {
         var response = await IngressClient("https").GetAsync(path);
 
-        response.Headers.GetValues("Content-Security-Policy").Should().ContainSingle()
-            .Which.Should().Be(SecurityHeadersRegistration.ContentSecurityPolicy);
+        ContentSecurityPolicyTests.ShouldBeTheWebHostPolicy(
+            response.Headers.GetValues("Content-Security-Policy").Should().ContainSingle().Subject);
         Header(response, "X-Content-Type-Options").Should().Be("nosniff");
         Header(response, "Referrer-Policy").Should().Be("strict-origin-when-cross-origin");
         Header(response, "Permissions-Policy").Should().Be(SecurityHeadersRegistration.PermissionsPolicy);

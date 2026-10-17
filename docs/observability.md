@@ -280,7 +280,7 @@ Four high-volume span categories are kept out of the export (~70% of raw daily s
 | Noise | What is dropped |
 |-------|-----------------|
 | Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz` and the browser's polls: the loop status `/api/ui/loop/status`, the API health `/api/ui/health` and the session heartbeat `/bff/session`; sub-paths like `/healthz/detail` are kept |
-| Static client files | Server spans for the web host's `/_framework/*` (WebAssembly runtime and assemblies) and `/_content/*` files, any `.css`, `.js` or `.wasm` file (including the `CodingAgent.Web.styles.css` bundle), and `/favicon.svg` |
+| Static client files | Server spans for the web host's `/_framework/*` (WebAssembly runtime and assemblies) and `/_content/*` files, any `.css`, `.js`, `.wasm` or `.woff2` file (including the `CodingAgent.Web.styles.css` bundle and the fonts), and `/favicon.svg` |
 | Kubernetes API server calls | Client spans to `KUBERNETES_SERVICE_HOST` (in-cluster) or `kubernetes.default.svc`, mostly leader-election leases (~387k spans per day) |
 | Chatty agent-hub spans | Hub methods ending in `/Heartbeat` or `/ReportOutputLines` |
 

@@ -10,6 +10,9 @@ using CodingAgent.Web.Ui;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.JSInterop;
+using Microsoft.JSInterop.Infrastructure;
+using Moq;
 
 namespace CodingAgent.Web.UnitTests.Bff;
 
@@ -65,8 +68,10 @@ public class BffClientTests
         return response;
     }
 
+    private readonly Mock<IJSRuntime> _js = new();
+
     private SessionStore Store(ScriptedHandler handler) =>
-        new(new StubHttpClientFactory(handler), new LoginNavigator(_nav), _time, NullLogger<SessionStore>.Instance);
+        new(new StubHttpClientFactory(handler), new LoginNavigator(_nav), _time, _js.Object, NullLogger<SessionStore>.Instance);
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
@@ -147,6 +152,47 @@ public class BffClientTests
     }
 
     [Fact]
+    public async Task Load_AsksThePageToReport_WhenTheTabBecomesVisible()
+    {
+        using var store = Store(new ScriptedHandler().Then(() => Json(Session())));
+
+        await store.LoadAsync();
+
+        _js.Verify(js => js.InvokeAsync<IJSVoidResult>(SessionStore.WatchPageVisibilityFunction,
+            It.Is<object?[]?>(args => args != null && args.Length == 1 && args[0] is DotNetObjectReference<SessionStore>)), Times.Once);
+    }
+
+    [Fact]
+    public async Task TabBecomingVisible_ChecksTheSessionAtOnce_WithoutWaitingForTheHeartbeat()
+    {
+        // Req 3.4: a browser may run a hidden tab's heartbeat only once a minute.
+        var handler = new ScriptedHandler()
+            .Then(() => Json(Session()))
+            .Then(() => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        using var store = Store(handler);
+        await store.LoadAsync();
+
+        await store.OnPageVisibleAsync();
+
+        handler.Requests.Should().HaveCount(2, "no heartbeat tick has passed");
+        _nav.Navigations.Should().ContainSingle().Which.Should().Be(("login?returnUrl=%2Fruns%3Fpage%3D2", true));
+    }
+
+    [Fact]
+    public async Task VisibilityWatch_ThatCannotRegister_LeavesTheHeartbeat()
+    {
+        _js.Setup(js => js.InvokeAsync<IJSVoidResult>(SessionStore.WatchPageVisibilityFunction, It.IsAny<object?[]?>()))
+            .Throws(new JSException("watchPageVisibility is not defined"));
+        var handler = new ScriptedHandler().Then(() => Json(Session()));
+        using var store = Store(handler);
+
+        (await store.LoadAsync()).Should().NotBeNull();
+
+        _time.Advance(SessionStore.HeartbeatInterval);
+        await WaitUntilAsync(() => handler.Requests.Count == 2);
+    }
+
+    [Fact]
     public async Task NetworkError_KeepsTheLastSession_AndDoesNotNavigate()
     {
         var handler = new ScriptedHandler()
@@ -173,6 +219,7 @@ public class BffClientTests
             .AddSingleton<IHttpClientFactory>(new StubHttpClientFactory(sessionApi))
             .AddSingleton(new LoginNavigator(_nav))
             .AddSingleton<TimeProvider>(_time)
+            .AddSingleton(_js.Object)
             .AddSingleton(NullLogger<SessionStore>.Instance)
             .AddSingleton<Microsoft.Extensions.Logging.ILogger<SessionStore>>(NullLogger<SessionStore>.Instance)
             .AddSingleton<SessionStore>()

@@ -295,7 +295,7 @@ For full request/response examples, authentication details, and query parameters
 
 > **Free tier:** Grafana Cloud free tier includes 50,000 frontend sessions/month, which covers this feature at no cost.
 
-> **Air-gapped / firewalled deployments:** When `Faro__CollectorUrl` is set, `faro-init.js` asynchronously loads two bundles from `unpkg.com` (CDN). In environments without outbound internet access, these loads fail silently — the app continues normally, Faro stays as a no-op stub, and there is **no page-load stall** (loading is async, not blocking). If you need Faro in a firewalled environment: download the pinned bundle files locally, copy them to `wwwroot/js/faro/`, and update `SDK_URL` / `TRACING_URL` in `faro-init.js` to relative paths (`js/faro/faro-web-sdk.iife.js`, etc.).
+> **Air-gapped / firewalled deployments:** When `Faro__CollectorUrl` is set, `faro-init.js` asynchronously loads two bundles from `unpkg.com` (CDN). In environments without outbound internet access, these loads fail silently — the app continues normally, Faro stays as a no-op stub, and there is **no page-load stall** (loading is async, not blocking). If you need Faro in a firewalled environment: download the pinned bundle files locally, copy them to `wwwroot/js/faro/`, and update `SDK_URL` / `TRACING_URL` in `faro-init.js` to relative paths (`js/faro/faro-web-sdk.iife.js`, etc.). The web host's Content Security Policy allows the bundles from `https://unpkg.com` or from the web host itself, and calls to the collector's origin; a bundle from any other host is blocked.
 
 ### Web UI
 

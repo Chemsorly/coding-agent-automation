@@ -28,14 +28,12 @@
     <meta name="app-environment" content="@Env.EnvironmentName.ToLowerInvariant()" />
     <!-- Grafana Faro: faro-init.js reads faro-collector-url meta and dynamically loads the CDN bundles -->
     <script src="js/faro-init.js"></script>
+    @* app.css also declares the fonts, served from wwwroot/fonts (spec 052: no third-party stylesheet). *@
     <link rel="stylesheet" href="css/app.css" />
-    <!-- Redesigned shell fonts + theme (see docs/frontend-redesign-handoff.md). Scoped to .cockpit; legacy shell unaffected. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- Redesigned shell theme (see docs/frontend-redesign-handoff.md). Scoped to .cockpit; legacy shell unaffected. -->
     <link rel="stylesheet" href="css/cockpit.css" />
     <link rel="stylesheet" href="@Assets["CodingAgent.Web.styles.css"]" />
-    <ImportMap />
+    <ImportMap nonce="@CspNonce" />
     <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 <body>
@@ -55,7 +53,7 @@
         <span class="dismiss" aria-label="Dismiss">✕</span>
     </div>
 
-    <script>
+    <script nonce="@CspNonce">
         // The loading screen turns into an error with a Reload link when the client cannot start: a
         // script or download error, a missing fingerprinted file during a rolling update, or a browser
         // without WebAssembly. After 20 s it keeps the spinner and offers Reload too. Blazor.start()
@@ -71,7 +69,14 @@
         })();
     </script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
-    <script>
+    <script nonce="@CspNonce">
+        // Spec 052 Req 3.4: a hidden tab's timers may run only once a minute, so the session store checks
+        // the session as soon as the tab is visible again.
+        window.watchPageVisibility = function (dotNetRef) {
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState === 'visible') dotNetRef.invokeMethodAsync('OnPageVisibleAsync');
+            });
+        };
         // Spec 052 Req 5.2: the build this page was served with, which the client compares with X-App-Version.
         window.getAppVersion = function () {
             var meta = document.querySelector('meta[name="app-version"]');
@@ -164,6 +169,9 @@
     // App renders statically (only HeadOutlet and Routes are interactive), so the request's
     // HttpContext is available here; the request path decides the relative base href.
     [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    // The Content-Security-Policy allows inline scripts only with this request's nonce.
+    private string? CspNonce => HttpContext?.GetCspNonce();
 
     // Spec 052 D1, D2: every page runs in the browser as WebAssembly, without prerendering. A loading
     // screen covers the start (Req 1.4) and pages render once, through one DI setup.

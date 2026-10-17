@@ -27,7 +27,6 @@ public sealed partial class AccessControlTests : IAsyncLifetime
         await _fixture.ResetAllAsync();
         var browser = await _fixture.GetBrowserAsync();
         _context = await browser.NewContextAsync();
-        await E2ETestBase.StubExternalFontsAsync(_context);
         _page = await _context.NewPageAsync();
     }
 

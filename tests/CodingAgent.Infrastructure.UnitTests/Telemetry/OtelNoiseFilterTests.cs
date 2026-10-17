@@ -54,6 +54,7 @@ public class OtelNoiseFilterTests : IDisposable
     [InlineData("/CodingAgent.Web.styles.css")]
     [InlineData("/css/app.css")]
     [InlineData("/js/faro-init.js")]
+    [InlineData("/fonts/manrope-latin-wght-normal.woff2")]
     [InlineData("/favicon.svg")]
     public void FilterAspNetCoreRequest_StaticAssetPaths_ReturnsFalse(string path)
     {

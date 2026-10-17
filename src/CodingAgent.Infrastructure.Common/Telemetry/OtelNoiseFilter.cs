@@ -50,7 +50,7 @@ public static class OtelNoiseFilter
         path is "/healthz" or "/readyz" or "/api/ui/loop/status" or "/api/ui/health" or "/bff/session";
 
     // The web host's static client files: the WebAssembly runtime and assemblies, library assets,
-    // stylesheets (including the root CodingAgent.Web.styles.css bundle), scripts and the favicon.
+    // stylesheets (including the root CodingAgent.Web.styles.css bundle), scripts, fonts and the favicon.
     // No API route ends in these extensions.
     private static bool IsStaticAssetPath(string? path) =>
         path is not null
@@ -59,6 +59,7 @@ public static class OtelNoiseFilter
             || path.EndsWith(".css", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".wasm", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".woff2", StringComparison.OrdinalIgnoreCase)
             || path == "/favicon.svg");
 
     // ── HttpClient request filter ─────────────────────────────────────────────

@@ -197,6 +197,14 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** checking only POST, PUT, PATCH and DELETE; antiforgery tokens; `SameSite=Strict`, which would make links from other sites (a PR comment, a chat message) open the UI signed out.
 **Revisit when:** never; this is the standard BFF rule.
 
+### Content Security Policy: no inline script without a nonce; inline styles allowed
+<!-- 2026-10-17 (spec 052) -->
+**Rule:** Scripts run only from the web host, or inline with the response's nonce (the host page's scripts and import map), plus WebAssembly compilation. Fonts, images and calls stay on the web host; the fonts ship in the web image. Faro's CDN (`https://unpkg.com`, with SRI) and its collector are allowed only when Faro is on. Styles allow `'unsafe-inline'`.
+**Why:** The ZAP baseline found the policy without `script-src` and `style-src`, and the Google Fonts stylesheet without SRI (Google serves CSS per browser, so it cannot carry a hash). A nonce keeps the host page's inline scripts working without opening scripts to injection.
+**Accepting:** `style-src 'unsafe-inline'` stays, a Medium ZAP finding: Blazor renders `style` attributes, and a nonce does not cover attributes. Every new inline script in `App.razor` needs `nonce="@CspNonce"`.
+**Not:** moving the inline scripts into files (the import map stays inline anyway); hashes (the import map changes with every build); fonts from Google.
+**Revisit when:** the components stop rendering `style` attributes, or ZAP raises a High finding.
+
 ## Dispatch and scheduling
 
 ### Dispatch priority: one configurable order by task type

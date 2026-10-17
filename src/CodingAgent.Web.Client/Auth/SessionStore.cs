@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using CodingAgent.Web.Ui;
 using Microsoft.Extensions.Logging;
+using Microsoft.JSInterop;
 
 namespace CodingAgent.Web.Auth;
 
@@ -11,14 +12,19 @@ namespace CodingAgent.Web.Auth;
 /// endpoint means the session is gone, whatever the reason (expiry, logout in another tab, a new key),
 /// so the store sends the browser to the login page. A changed grant or expiry raises
 /// <see cref="Changed"/>, and the authentication state follows. A network error keeps the last session:
-/// the next heartbeat tries again.
+/// the next heartbeat tries again. A browser may run a hidden tab's timers only once a minute, so the
+/// store also checks at once when the tab comes back into view (<see cref="OnPageVisibleAsync"/>).
 /// </summary>
 public sealed class SessionStore(
     IHttpClientFactory httpClients,
     LoginNavigator login,
     TimeProvider time,
+    IJSRuntime js,
     ILogger<SessionStore> logger) : IDisposable
 {
+    /// <summary>The host page's function that calls <see cref="OnPageVisibleAsync"/> when the tab becomes visible.</summary>
+    public const string WatchPageVisibilityFunction = "watchPageVisibility";
+
     public const string ClientName = "bff-session";
 
     /// <summary>The session path, relative to the app's base address.</summary>
@@ -29,6 +35,7 @@ public sealed class SessionStore(
 
     private readonly CancellationTokenSource _stopping = new();
     private Task<BffSession?>? _firstLoad;
+    private DotNetObjectReference<SessionStore>? _self;
 
     /// <summary>The last session the web host confirmed, or null before the first load and after it ended.</summary>
     public BffSession? Current { get; private set; }
@@ -45,11 +52,34 @@ public sealed class SessionStore(
     /// </summary>
     public async Task<bool> CheckNowAsync(CancellationToken ct = default) => await RefreshAsync(ct) is not null;
 
+    /// <summary>The tab came back into view (Req 3.4): check the session now instead of at the next heartbeat.</summary>
+    [JSInvokable]
+    public async Task OnPageVisibleAsync()
+    {
+        if (!login.IsNavigating)
+            await RefreshAsync(_stopping.Token);
+    }
+
     private async Task<BffSession?> FirstLoadAsync()
     {
         var session = await RefreshAsync(_stopping.Token);
         _ = HeartbeatAsync();
+        await WatchPageVisibilityAsync();
         return session;
+    }
+
+    private async Task WatchPageVisibilityAsync()
+    {
+        try
+        {
+            _self = DotNetObjectReference.Create(this);
+            await js.InvokeVoidAsync(WatchPageVisibilityFunction, _self);
+        }
+        catch (Exception ex) when (ex is JSException or InvalidOperationException)
+        {
+            // The heartbeat still runs; only the check on returning to the tab is missing.
+            logger.LogWarning(ex, "The page visibility check could not be registered");
+        }
     }
 
     private async Task HeartbeatAsync()
@@ -108,5 +138,6 @@ public sealed class SessionStore(
     {
         _stopping.Cancel();
         _stopping.Dispose();
+        _self?.Dispose();
     }
 }

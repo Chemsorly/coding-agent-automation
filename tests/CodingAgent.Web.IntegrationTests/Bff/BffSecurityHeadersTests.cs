@@ -27,8 +27,8 @@ public class BffSecurityHeadersTests : IClassFixture<BffWebApplicationFactory>
         var response = await client.Http.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Headers.GetValues("Content-Security-Policy").Should().ContainSingle()
-            .Which.Should().Be(SecurityHeadersRegistration.ContentSecurityPolicy);
+        CodingAgent.Web.IntegrationTests.Auth.ContentSecurityPolicyTests.ShouldBeTheWebHostPolicy(
+            response.Headers.GetValues("Content-Security-Policy").Should().ContainSingle().Subject);
         foreach (var (name, value) in new[]
                  {
                      ("X-Content-Type-Options", "nosniff"),
