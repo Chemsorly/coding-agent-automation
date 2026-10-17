@@ -149,6 +149,7 @@ Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initi
 The page is reached through the "Consolidation" item in the sidebar navigation. It displays:
 
 - Per-template cards with trigger buttons and last-run status
+- Automatic-start counters per card and for harness suggestions, with the reason when an automatic start is paused or waiting (see Automatic Start)
 - Global harness suggestions section
 - Run history table across all consolidation types
 

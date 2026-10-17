@@ -15,6 +15,7 @@ internal static class UiConsolidationEndpoints
     public static RouteGroupBuilder MapUiConsolidationEndpoints(this RouteGroupBuilder group)
     {
         group.MapGet("/consolidation", GetOverview).RequireAuthorization(UiPolicies.GlobalRead);
+        group.MapGet("/consolidation/auto-counters", GetAutoCounters).RequireAuthorization(UiPolicies.GlobalRead);
         group.MapGet("/consolidation/templates/{templateId}/refactoring-scan", GetRefactoringScanSettings).RequireAuthorization(UiPolicies.GlobalRead);
         group.MapPost("/consolidation/runs", Trigger).RequireAuthorization(UiPolicies.GlobalOperate);
         return group;
@@ -23,6 +24,10 @@ internal static class UiConsolidationEndpoints
     /// <summary>GET /api/ui/consolidation — the template cards and the harness suggestions.</summary>
     internal static async Task<IResult> GetOverview(ConsolidationPageService page, CancellationToken ct) =>
         TypedResults.Ok(await page.GetOverviewAsync(ct));
+
+    /// <summary>GET /api/ui/consolidation/auto-counters — automatic-start counters for each template and for harness suggestions.</summary>
+    internal static async Task<IResult> GetAutoCounters(ConsolidationPageService page, CancellationToken ct) =>
+        TypedResults.Ok(await page.GetAutoCountersAsync(ct));
 
     /// <summary>GET /api/ui/consolidation/templates/{templateId}/refactoring-scan — the settings a scan of the template runs with.</summary>
     internal static async Task<IResult> GetRefactoringScanSettings(string templateId, ConsolidationPageService page, CancellationToken ct) =>

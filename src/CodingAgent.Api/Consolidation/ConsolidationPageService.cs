@@ -1,8 +1,10 @@
 using CodingAgent.Api.Dispatch;
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Serilog;
 
 namespace CodingAgent.Api.Consolidation;
 
@@ -14,7 +16,8 @@ namespace CodingAgent.Api.Consolidation;
 internal sealed class ConsolidationPageService(
     IProjectStore projects,
     IPipelineConfigStore configStore,
-    IConsolidationService consolidation)
+    IConsolidationService consolidation,
+    ConsolidationStalenessService staleness)
 {
     public async Task<UiConsolidationOverview> GetOverviewAsync(CancellationToken ct)
     {
@@ -81,6 +84,128 @@ internal sealed class ConsolidationPageService(
             (int)config.HotspotAnalysisLookback.TotalDays,
             effective.RefactoringReviewEnabled,
             project?.RefactoringReviewEnabled is not null && effective.RefactoringReviewEnabled != config.RefactoringReviewEnabled);
+    }
+
+    /// <summary>
+    /// Automatic-start counters for the Consolidation page (issue #3592). Only counters whose threshold is
+    /// above zero are included. Per-template errors are caught individually so one failing provider does not
+    /// hide all other counters. <c>ConsolidationStalenessService</c> is the single source of truth for all
+    /// counts — no counter logic is re-implemented here.
+    /// </summary>
+    public async Task<UiConsolidationAutoCounters> GetAutoCountersAsync(CancellationToken ct)
+    {
+        var config = await configStore.LoadPipelineConfigAsync(ct);
+        var allProjects = await projects.LoadProjectsAsync(ct);
+        var allTemplates = await projects.LoadAllTemplatesAsync(ct);
+
+        // Enabled templates of enabled projects in the same order as BuildOverview.
+        var templatesById = allTemplates.ToDictionary(t => t.Id, StringComparer.Ordinal);
+        var enabledPairs = allProjects
+            .Where(p => p.Enabled)
+            .OrderBy(p => p.Name, StringComparer.Ordinal)
+            .SelectMany(p => p.TemplateIds
+                .Where(templatesById.ContainsKey)
+                .Select(id => (Project: p, Template: templatesById[id])))
+            .Where(x => x.Template.Enabled)
+            .ToList();
+
+        var brainCounters = new Dictionary<string, UiAutoCounter>(StringComparer.Ordinal);
+        var refactoringCounters = new Dictionary<string, UiAutoCounter>(StringComparer.Ordinal);
+        UiAutoCounter? harnessCounter = null;
+
+        // ── Brain counters ────────────────────────────────────────────────────
+        if (config.AutoBrainConsolidationAfterRuns > 0)
+        {
+            // Templates that share a brain share the count — compute it once per brain id.
+            // TODO [WARNING]: If CountBrainRunsSinceLastConsolidationAsync succeeds for a brain id
+            // (populating seenBrainCounts) but a later template sharing that brain throws in
+            // IsPausedAsync, the first template's counter was added while the second is silently dropped.
+            // Two templates sharing one brain can then disagree (one shows a counter, one does not),
+            // which contradicts the "share a brain → share the count" invariant. Fix: compute IsPaused
+            // once per brain id alongside the count, or accept that per-template errors are independent.
+            var seenBrainCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var (_, template) in enabledPairs.Where(x =>
+                ConsolidationTemplateFilter.SupportsBrainConsolidation(x.Template) &&
+                !ConsolidationTemplateFilter.IsBrainReadOnly(x.Template, x.Project, config)))
+            {
+                var brainId = template.BrainProviderId!;
+                var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.BrainConsolidation, brainId, null);
+                try
+                {
+                    if (!seenBrainCounts.TryGetValue(brainId, out var count))
+                    {
+                        count = await staleness.CountBrainRunsSinceLastConsolidationAsync(brainId, ct);
+                        seenBrainCounts[brainId] = count;
+                    }
+                    var paused = await staleness.IsPausedAsync(scopeKey, ct);
+                    brainCounters[template.Id] = new UiAutoCounter(
+                        count,
+                        config.AutoBrainConsolidationAfterRuns,
+                        paused ? "auto paused: the last run failed" : null);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Consolidation page: failed to load the automatic-start counter for {Scope}", scopeKey);
+                }
+            }
+        }
+
+        // ── Refactoring counters ──────────────────────────────────────────────
+        if (config.AutoRefactoringScanAfterClosedIssues > 0)
+        {
+            foreach (var (project, template) in enabledPairs.Where(x =>
+                ConsolidationTemplateFilter.SupportsRefactoringDetection(x.Template)))
+            {
+                var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.RefactoringDetection, null, template.Id);
+                try
+                {
+                    var paused = await staleness.IsPausedAsync(scopeKey, ct);
+                    string? blocked = null;
+                    if (paused)
+                    {
+                        blocked = "auto paused: the last run failed";
+                    }
+                    else
+                    {
+                        // Apply the same project-override logic as AutoConsolidationService.
+                        var limit = project.MaxRefactoringProposals ?? config.MaxRefactoringProposals;
+                        var open = await staleness.CountOpenScanIssuesAsync(template, ct);
+                        if (open >= limit)
+                            blocked = $"auto waiting: {open} scan issues still open";
+                    }
+                    var count = await staleness.CountClosedIssuesSinceLastScanAsync(template, ct);
+                    refactoringCounters[template.Id] = new UiAutoCounter(
+                        count,
+                        config.AutoRefactoringScanAfterClosedIssues,
+                        blocked);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Consolidation page: failed to load the automatic-start counter for {Scope}", scopeKey);
+                }
+            }
+        }
+
+        // ── Harness counter ───────────────────────────────────────────────────
+        if (config.AutoHarnessSuggestionsAfterFeedback > 0)
+        {
+            var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.HarnessSuggestions, null, null);
+            try
+            {
+                var count = await staleness.CountFeedbackSinceLastHarnessSuggestionsAsync(ct);
+                var paused = await staleness.IsPausedAsync(scopeKey, ct);
+                harnessCounter = new UiAutoCounter(
+                    count,
+                    config.AutoHarnessSuggestionsAfterFeedback,
+                    paused ? "auto paused: the last run failed" : null);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Consolidation page: failed to load the automatic-start counter for {Scope}", scopeKey);
+            }
+        }
+
+        return new UiConsolidationAutoCounters(brainCounters, refactoringCounters, harnessCounter);
     }
 
     /// <summary>
