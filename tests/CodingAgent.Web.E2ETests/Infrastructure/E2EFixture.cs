@@ -195,7 +195,8 @@ public sealed class E2EFixture : IAsyncLifetime
             Factory.HistoryService,
             Factory.FakeProviders,
             Factory.FakeK8sClient,
-            ApiKey);
+            ApiKey,
+            uiSettings: Factory.ApiConfigClient);
 
         // CreateClient() forces the host to build and Kestrel to bind.
         using (var apiClient = _apiFactory.CreateClient()) { }
