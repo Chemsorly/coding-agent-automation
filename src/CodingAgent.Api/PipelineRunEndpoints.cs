@@ -65,6 +65,8 @@ public static class PipelineRunEndpoints
         [AsParameters] RunHistoryQuery query,
         CancellationToken ct = default)
     {
+        if (PagingLimits.Validate(query.Page, query.PageSize, RunHistoryQuery.MaxPageSize) is { } invalid)
+            return invalid;
         var result = await history.GetRunHistoryAsync(query, ct);
 
         // Skip the in-flight merge when an outcome filter is set: active runs are non-terminal, so they
