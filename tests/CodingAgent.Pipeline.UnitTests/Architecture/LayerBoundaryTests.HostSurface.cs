@@ -121,13 +121,15 @@ public partial class LayerBoundaryTests
     [GeneratedRegex(@"Invoke\w*Async(?:<[^>]*>)?\(\s*""eval""")]
     private static partial Regex JsEvalCall();
 
+    private static readonly string[] WebProjects = ["CodingAgent.Web.Client", "CodingAgent.Web"];
+
     [Fact]
     public void TheBrowserClient_CallsNoJavaScriptEval()
     {
         // The web host's Content-Security-Policy allows no 'unsafe-eval', so the browser refuses it (silently, for a
         // caught JSException). Add a named function to App.razor instead.
         var sep = Path.DirectorySeparatorChar;
-        var files = new[] { "CodingAgent.Web.Client", "CodingAgent.Web" }
+        var files = WebProjects
             .SelectMany(p => Directory.EnumerateFiles(Path.Combine(RepoRoot, "src", p), "*.*", SearchOption.AllDirectories))
             .Where(f => (f.EndsWith(".cs", StringComparison.Ordinal) || f.EndsWith(".razor", StringComparison.Ordinal))
                 && !f.Contains($"{sep}obj{sep}", StringComparison.Ordinal) && !f.Contains($"{sep}bin{sep}", StringComparison.Ordinal))
