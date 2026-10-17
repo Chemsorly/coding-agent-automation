@@ -43,7 +43,8 @@ internal sealed class UserTokenMinter(
         var tokenSubject = new UserTokenSubject(
             subject, AuthPrincipals.GetUsername(user), user.FindFirst(AuthClaimTypes.IdentitySource)?.Value);
         var token = UserTokens.Create(tokenSubject, grant, now, expires, signingKey.Key, hub ? UserTokenClaimTypes.HubUse : null);
-        logger.LogDebug("Minted a user token valid until {Expires:O}", expires);
+        if (logger.IsEnabled(LogLevel.Debug))
+            logger.LogDebug("Minted a user token valid until {Expires:O}", expires);
         return new MintedUserToken(token, expires);
     }
 }

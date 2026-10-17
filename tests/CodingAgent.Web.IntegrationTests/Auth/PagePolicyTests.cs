@@ -81,6 +81,8 @@ public class RbacWebApplicationFactory : CustomWebApplicationFactory
 
     private sealed class TestSignInStartupFilter : IStartupFilter
     {
+        private static readonly string[] CanaryClaimTypes = ["access_token", "id_token", "refresh_token", "api_key", "secret"];
+
         // A plain path check, not app.Map: Map moves the path into PathBase, and the cookie
         // handler would then scope the session cookie to /test/sign-in.
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -106,8 +108,7 @@ public class RbacWebApplicationFactory : CustomWebApplicationFactory
                 // Spec 052 T4 on the session endpoint: claims and saved tokens it must never echo.
                 if (query["canary"].FirstOrDefault() is { } canary)
                 {
-                    ((ClaimsIdentity)principal.Identity!).AddClaims(
-                        new[] { "access_token", "id_token", "refresh_token", "api_key", "secret" }.Select(type => new Claim(type, canary)));
+                    ((ClaimsIdentity)principal.Identity!).AddClaims(CanaryClaimTypes.Select(type => new Claim(type, canary)));
                     properties.StoreTokens([new AuthenticationToken { Name = "access_token", Value = canary }]);
                 }
                 await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, properties);

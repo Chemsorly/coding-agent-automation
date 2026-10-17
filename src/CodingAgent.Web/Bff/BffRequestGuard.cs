@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Primitives;
@@ -35,8 +36,12 @@ internal static class BffRequestGuard
         if (Refusal(context) is not { } status)
             return next(context);
 
-        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BffRequestGuard))
-            .LogDebug("Refused {Method} {Path} with {Status}", context.Request.Method, context.Request.Path.Value, status);
+        var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BffRequestGuard));
+        if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug("Refused {Method} {Path} with {Status}",
+                LogSanitizer.SanitizeForLog(context.Request.Method), LogSanitizer.SanitizeForLog(context.Request.Path.Value), status);
+        }
         context.Response.StatusCode = status;
         return Task.CompletedTask;
     }
