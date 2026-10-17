@@ -110,7 +110,7 @@ public class AccessServicesTests
     {
         var logger = new FakeLogger<AccessGuard>();
         var user = TestAccess.User("eve\r\nINJECTED");
-        // The circuit was rendered as admin, but the evaluation now yields no role (binding removed).
+        // The page was rendered as admin, but the evaluation now yields no role (binding removed).
         var guard = new AccessGuard(CurrentAccess.CreateLoaded(user, TestAccess.Global(AccessRole.Admin)),
             Evaluator(_ => AccessGrant.None).Object, logger);
 

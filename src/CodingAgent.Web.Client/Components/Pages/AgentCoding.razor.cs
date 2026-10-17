@@ -106,10 +106,10 @@ public partial class AgentCoding : IDisposable
 
     // OnTemplateChanged is async void because Blazor change event handlers cannot return Task.
     // PersistLastTemplateAsync catches all known exceptions (including OperationCanceledException
-    // from circuit tear-down) to prevent unobserved exceptions from escaping the async void.
+    // from page tear-down) to prevent unobserved exceptions from escaping the async void.
     // TODO: [WARNING] PersistLastTemplateAsync catches a finite list of exception types. If
     // JS.InvokeVoidAsync throws an exception type NOT in that list (e.g. TaskCanceledException,
-    // which is distinct from OperationCanceledException in some older Blazor Server paths), it
+    // which is distinct from OperationCanceledException in some older Blazor paths), it
     // will escape PersistLastTemplateAsync and propagate through this async void, becoming an
     // unobserved exception. Consider adding a bare catch-all Exception handler as a final safety
     // net inside PersistLastTemplateAsync, logging the unexpected type and suppressing it.
@@ -180,10 +180,10 @@ public partial class AgentCoding : IDisposable
             if (!string.IsNullOrEmpty(stored) && _templates.Any(t => t.Id == stored && t.Enabled))
                 _manualDispatchTemplateId = stored;
         }
-        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSDisconnectedException) { /* page torn down, skip */ }
         catch (JSException) { /* JS interop unavailable, skip */ }
         catch (ObjectDisposedException) { /* component disposed, skip */ }
-        catch (OperationCanceledException) { /* circuit torn down, skip */ }
+        catch (OperationCanceledException) { /* page torn down, skip */ }
         // Spec 052: no server-side prerendering any more, so JS interop works from OnInitializedAsync.
     }
 
@@ -193,10 +193,10 @@ public partial class AgentCoding : IDisposable
         {
             await JS.InvokeVoidAsync("localStorageSet", TemplateStorageKey, templateId);
         }
-        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSDisconnectedException) { /* page torn down, skip */ }
         catch (JSException) { /* JS interop unavailable, skip */ }
         catch (ObjectDisposedException) { /* component disposed, skip */ }
-        catch (OperationCanceledException) { /* circuit torn down, skip */ }
+        catch (OperationCanceledException) { /* page torn down, skip */ }
         catch (InvalidOperationException) { /* pre-render pass, skip */ }
     }
 

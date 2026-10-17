@@ -166,7 +166,7 @@
     private CancellationTokenSource? _cts;
     private System.Threading.Timer? _elapsedTimer;
     // Sends a keepalive to the API every ~30s while the chat window is open so the server
-    // knows the circuit is still live and doesn't idle-kill the pod.
+    // knows the chat window is still open and doesn't idle-kill the pod.
     private System.Threading.Timer? _keepaliveTimer;
 
     // Connect-timeout shown in the counter — the API's, loaded with the profiles.
@@ -201,11 +201,8 @@
             OnProjectSelected();
         }
 
-        // Hub connection is NOT started here intentionally.
-        // OnInitializedAsync runs during Blazor prerender (before the interactive circuit exists),
-        // so calling StartAsync here would produce a 404. The hub is started in StartChat() instead,
-        // which is invoked only from user action (after LaunchChatPod succeeds), post-circuit.
-        // See RunPage.razor for the same pattern (hub start in OnAfterRenderAsync/firstRender).
+        // The hub is not started here: StartChat() registers the chat handlers and starts it once a
+        // chat pod is live (after LaunchChatPod succeeds).
     }
 
     // OnChatResponse: accumulate streaming lines into _streamingContent.
@@ -330,9 +327,7 @@
         _messages.Clear();
         _streamingContent.Clear();
 
-        // Start hub and register push handlers now — after the interactive circuit exists
-        // and a chat pod is live. Starting here (from a user action) avoids the 404 that
-        // occurs when StartAsync is called during OnInitializedAsync (prerender).
+        // Register the push handlers and start the hub now that a chat pod is live.
         // Handlers are registered before StartAsync so no events are missed during connection.
         _chatResponseSub?.Dispose();
         _chatCompletedSub?.Dispose();

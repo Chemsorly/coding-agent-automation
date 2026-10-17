@@ -25,7 +25,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///
 /// Note on live-streaming assertions: testing that output lines appear in the DOM in real
 /// time requires the Blazor page's hub subscription (SubscribeLiveAsync) to complete within
-/// the test window. This subscription is sensitive to Blazor circuit establishment timing
+/// the test window. This subscription is sensitive to when the WebAssembly client starts
 /// and has been observed to be unreliable under CI load (see issue #3108 analysis). Scenarios
 /// 1 and 2 therefore verify the structural and persistence behaviour (panel visibility,
 /// output ordering in the saved tail) rather than real-time DOM updates.
@@ -127,8 +127,8 @@ public sealed partial class AgentOutputTests : E2ETestBase
     ///
     /// Note: live-streaming assertions (lines appearing in the DOM in real time) are intentionally
     /// omitted. The Blazor page subscribes to the hub inside SubscribeLiveAsync which runs in
-    /// OnAfterRenderAsync; this hub subscription is sensitive to Blazor circuit establishment
-    /// timing and has proven unreliable under CI load. The structural and persistence behaviours
+    /// OnAfterRenderAsync; this hub subscription is sensitive to when the WebAssembly client
+    /// starts and has proven unreliable under CI load. The structural and persistence behaviours
     /// tested here are load-independent and provide stable coverage of the same output feature.
     /// </summary>
     [Fact]

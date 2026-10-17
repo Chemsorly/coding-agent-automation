@@ -19,7 +19,7 @@ The Pipeline API (`CodingAgent.Api`, port **8080**) exposes HTTP API endpoints f
 The API has two surfaces, and each accepts one kind of credential:
 
 - **Service surface** — every path except `/api/ui/**`: the agent API keys below (`AgentApiKey`, `OperatorApiKey`).
-- **UI surface** — `/api/ui/**`: a user token (`Authorization: Bearer <token>`) signed by the web host for the signed-in user. See [Authentication and Roles](authentication.md). API keys get `401` there, and user tokens get `401` on the service surface.
+- **UI surface** — `/api/ui/**`: a user token (`Authorization: Bearer <token>`) signed by the web host for the signed-in user. The browser never calls the API itself: the web host forwards its `/api/ui/**` and `/hubs/ui` requests and adds the token ([The web host and the browser client](authentication.md#the-web-host-and-the-browser-client)). API keys get `401` there, and user tokens get `401` on the service surface.
 
 An endpoint without a declared policy is denied (`401` without credentials, `403` with an API key). Only `/healthz` and `/readyz` are anonymous.
 

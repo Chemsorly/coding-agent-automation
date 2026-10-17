@@ -71,7 +71,7 @@ public partial class LayerBoundaryTests
             .ToList();
 
         Assert.True(offenders.Count == 0,
-            "WaitForBlazorAsync only proved that blazor.web.js loaded, not that the circuit was interactive. " +
+            "WaitForBlazorAsync only proved that blazor.web.js loaded, not that the app was interactive. " +
             "Use GotoCockpitPageAsync / WaitForCockpitPageReadyAsync / WaitForInteractiveAsync instead: " +
             string.Join(", ", offenders));
     }

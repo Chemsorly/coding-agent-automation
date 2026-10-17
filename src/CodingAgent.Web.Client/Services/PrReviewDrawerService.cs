@@ -9,7 +9,7 @@ namespace CodingAgent.Web.Services;
 /// label filtering, pagination, and dispatch. The API browses the repository and dispatches
 /// (spec 051 2.3b and 2.3c, <see cref="IUiBrowseClient"/> and <see cref="IUiDispatchClient"/>).
 /// Owns and constructs the underlying DrawerStateService&lt;PullRequestSummary&gt;.
-/// Registered as Scoped (one instance per Blazor circuit).
+/// Registered as Scoped (one instance per browser tab).
 /// </summary>
 public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
 {

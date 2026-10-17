@@ -23,7 +23,7 @@ using Microsoft.Extensions.Hosting;
 namespace CodingAgent.Web.E2ETests.Infrastructure;
 
 /// <summary>
-/// Starts the Blazor Server app on a real Kestrel port with every external dependency replaced
+/// Starts the web host (the BFF that serves the WebAssembly UI) on a real Kestrel port with every external dependency replaced
 /// by an in-memory fake. Paired with <see cref="ApiE2EWebApplicationFactory"/> by
 /// <see cref="E2EFixture"/>; the two share a database name, a configuration store and a run
 /// history service, so a test seeds once and both processes see it.
@@ -196,10 +196,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // loop status and sends Start, Stop and Resume through /api/ui/loop on the API host
             // (spec 051 D11); the Scheduler's watchdog applies them. The web calls no Scheduler.
 
-            // Shutdown timeout: must exceed ChatTerminationGracePeriodSeconds (10s) so that
-            // Blazor circuits calling TerminateChatSessionAsync on dispose (triggered by
-            // E2ETestBase.DisposeAsync closing the browser context at collection cleanup)
-            // have time to complete before the host is forcefully shut down.  Without this,
+            // Shutdown timeout: must exceed ChatTerminationGracePeriodSeconds (10s) so that a
+            // chat termination still in flight at collection cleanup (End Chat, or a chat page
+            // left just before) has time to complete before the host is forcefully shut down.  Without this,
             // the in-flight HTTP call to the API races with IHttpClientFactory disposal,
             // producing [Test Collection Cleanup Failure (E2E)] ObjectDisposedException.
             // 20s gives 10s for the grace period + 10s buffer for the API's WatcherTask.

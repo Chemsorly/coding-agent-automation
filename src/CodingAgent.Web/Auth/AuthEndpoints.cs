@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace CodingAgent.Web.Auth;
 
 /// <summary>
-/// Login and logout endpoints (Spec 049 Req 2, 3, 10). An interactive Blazor circuit cannot set
+/// Login and logout endpoints (Spec 049 Req 2, 3, 10). An interactive Blazor component cannot set
 /// cookies, so the login page posts to these plain HTTP endpoints. All are anonymous; the form
 /// posts are antiforgery-validated.
 /// </summary>

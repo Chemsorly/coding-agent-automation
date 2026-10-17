@@ -293,6 +293,14 @@ They are dropped at two points:
 
 Custom spans come from the `CodingAgent.Pipeline` ActivitySource.
 
+### Web UI Requests
+
+The UI runs in the browser and calls only the web host, which forwards `/api/ui/**` and `/hubs/ui` to the API ([Authentication](authentication.md#the-web-host-and-the-browser-client)).
+
+- **Traces:** each forwarded request has a server span on the web host (`coding-agent-web`, route `/api/ui/{**rest}` or `/hubs/ui`) with the forwarder's client span under it, and the trace continues into the API's server span. With Faro tracing on, the browser's fetch span starts the trace, so one trace covers browser → web host → API. The polls produce no span anywhere (see the noise table above).
+- **Metrics:** the web host has no meter of its own. Its `http.server.request.duration` covers the forwarded traffic under the routes `/api/ui/{**rest}` and `/hubs/ui`; a failed forward shows there as `502` (API unreachable) or `504` (5 minutes without activity). For latency per API route, use `coding-agent-api`: the web host's `/api/ui/{**rest}` row is the same calls plus one hop.
+- **Logs:** the web host's own logs (sign-in, forwarding errors, startup) go to Loki through Serilog, like every host's. The UI's component logs stay in the browser console; only warnings and errors reach Grafana, through Faro.
+
 ### Trace Hierarchy
 
 Each agent run's spans are connected to the API request that created the WorkItem. The linkage is:
@@ -483,7 +491,7 @@ Every host reads `OTEL_SERVICE_NAME` and falls back to a fixed name. `service.ve
 
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
-| `coding-agent-web` | Web service (Blazor UI) | — | `otel.webServiceName` in `values.yaml` (default `coding-agent-web`); fallback when `OTEL_SERVICE_NAME` is unset |
+| `coding-agent-web` | Web host (BFF of the WebAssembly UI) | — | `otel.webServiceName` in `values.yaml` (default `coding-agent-web`); fallback when `OTEL_SERVICE_NAME` is unset |
 | `coding-agent-api` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-api`). Override if you need a different name. |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
@@ -621,12 +629,16 @@ ExecuteConsolidation
 
 ## Frontend Observability (Grafana Faro)
 
-In addition to backend OTLP telemetry, the Orchestrator (Blazor Server app) supports [Grafana Faro](https://grafana.com/oss/faro/) for frontend Real User Monitoring (RUM).
+In addition to backend OTLP telemetry, the browser UI (Blazor WebAssembly) supports [Grafana Faro](https://grafana.com/oss/faro/) for frontend Real User Monitoring (RUM).
 
-When `Faro__CollectorUrl` is set, `faro-init.js` (loaded in `App.razor`) asynchronously loads the Faro Web SDK from the unpkg.com CDN and starts collecting:
-- Page load performance
+When `Faro__CollectorUrl` is set, `faro-init.js` (loaded in `App.razor`) asynchronously loads the Faro Web SDK and its tracing from the unpkg.com CDN and starts collecting:
+- Page load performance and web vitals
 - JavaScript errors and unhandled promise rejections
-- User interactions
+- Console warnings and errors. The lower levels stay in the browser (`consoleInstrumentation.disabledLevels`), so the UI's Information logs never leave it.
+- Fetch spans for the UI's calls, which start the trace that continues into the web host and the API. The polls (`/bff/session`, `/api/ui/health`, `/api/ui/loop/status`) are left out (`ignoreUrls`), as in the server's noise filter.
+- The UI's notifications (`NotificationFaroBridge`): errors as Faro errors, the others as Faro logs
+
+Faro's own session tracking marks when a browser session starts; there are no circuit events.
 
 When the env var is absent or empty, Faro is disabled and the `faroApi` stub no-ops silently — no errors are thrown and there is no page-load impact.
 

@@ -16,6 +16,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 - Private keys never enter an agent pod; agents get short-lived tokens only. ([Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant))
 - No agent pod receives the master key; each Job gets its own derived key, and an agent can resume only its own run. ([Agent keys](#hmac-key-derivation-for-agent-auth--intentional-simplicity))
+- The browser holds only the session cookie: user tokens stay on the web host, which holds no Kubernetes rights, and every UI request carries `X-CSRF: 1`. ([BFF](#web-ui-runs-as-webassembly-behind-a-bff), [Separate BFF](#the-bff-stays-a-separate-process-merging-it-into-the-api-was-rejected), [CSRF](#csrf-a-custom-header-on-every-ui-request-whatever-the-method))
 - Agents can't set human-approval labels such as `agent:epic-approved`. ([Gated labels](#dispatchgatedlabels-extensible-set-for-human-approval-required-label-transitions))
 - The web UI requires a signed-in user, and `admin` is only ever bound globally. ([Sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database), [Project scope](#admin-is-global-only-project-bindings-scope-actions-and-visibility))
 - Clones of a project's other repositories are read-only and never reach the diff or a commit. ([Project review](#project-review-one-project-reviewer-per-project-with-read-only-clones-of-the-projects-other-repositories))
@@ -71,6 +72,22 @@ The rules a plausible change could break. Details are in the linked entries.
 **Why:** The UI must consume the API, not be the source of truth; dispatch and reconciliation need their own leader lease; scheduled maintenance is isolated from both.
 **Not:** a Kubernetes operator with CRDs; one monolith.
 **Revisit when:** a layer needs scaling it can't get, or the JobController and Scheduler should merge back for simplicity.
+
+### Web UI runs as WebAssembly behind a BFF
+<!-- 2026-10-16 (spec 052) -->
+**Rule:** Every page except the login page runs as Blazor WebAssembly in the browser, without prerendering. The web host is the UI's backend-for-frontend: it signs users in, keeps the session cookie, evaluates the role bindings, serves the app and forwards `/api/ui/**` and `/hubs/ui` to the API with a user token it mints. It renders no pages and keeps no page state. The browser's only credential is the session cookie; tokens never reach it.
+**Why:** A server-rendered page lived in one web pod's memory. Several replicas needed sticky sessions, and every web pod restart (a deploy, a node drain, an OOM) cut off every open page on it. In the browser, any replica serves any request, and a restart costs at most a reconnect.
+**Accepting:** about 3.8 MB of compressed client files on the first load; the upgrade to it was a hard cut that reloaded every open tab once; after a new release, an open tab reloads on its next in-app navigation.
+**Not:** `InteractiveAuto` (it keeps circuits, and with them sticky sessions); prerendering (every page would render twice through two DI setups); tokens in the browser; a Helm switch back to Blazor Server.
+**Revisit when:** the first-load size becomes a problem for the people who use the UI.
+
+### The BFF stays a separate process; merging it into the API was rejected
+<!-- 2026-10-16 (spec 052) -->
+**Rule:** The internet-facing web host stays its own process and pod, separate from the Pipeline API. It holds no Kubernetes rights, no database credentials, no Redis access, no master or agent key and no provider credentials.
+**Why:** Privilege separation, not token custody. The API's service account can create Jobs and Secrets, which under Kubernetes RBAC amounts to every Secret in the namespace. A compromised web host is an application takeover; a compromised internet-facing API would be a namespace takeover.
+**Accepting:** one more process and one more hop, against KISS on purpose.
+**Not:** serving the UI and the cookie sign-in from the API; separating the two by ingress path rules alone.
+**Revisit when:** Job and Secret creation has left the API. Even then, a merged host serves the UI on a separate listener port inside the API process, never behind ingress path rules alone.
 
 ### EF migrations start from a baseline that reuses the newest original ID
 <!-- 2026-10-04 -->
@@ -171,6 +188,14 @@ The rules a plausible change could break. Details are in the linked entries.
 **Accepting:** a project team can't pause its own templates; a user bound to several projects switches between them.
 **Not:** project admins; an "All projects" view across a user's projects.
 **Revisit when:** templates stop sharing the global provider credentials.
+
+### CSRF: a custom header on every UI request, whatever the method
+<!-- 2026-10-16 (spec 052) -->
+**Rule:** The session cookie stays `SameSite=Lax`. Every request to the web host's `/api/**`, `/hubs/**` and `/bff/**` paths must carry `X-CSRF: 1` and must not come from another site (`Origin`, `Sec-Fetch-Site`), whatever the method; the hub upgrade checks `Origin`. The web host registers no CORS policy.
+**Why:** Some GETs have effects (`GET /api/ui/settings/models` starts a Job), so a rule that checks only unsafe methods leaves a hole. Without CORS, a page on another site can neither set a custom header nor read an answer.
+**Accepting:** every client call sends the header; a proxy in front of the web host that drops it breaks the UI with `400`s.
+**Not:** checking only POST, PUT, PATCH and DELETE; antiforgery tokens; `SameSite=Strict`, which would make links from other sites (a PR comment, a chat message) open the UI signed out.
+**Revisit when:** never; this is the standard BFF rule.
 
 ## Dispatch and scheduling
 

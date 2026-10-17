@@ -19,7 +19,7 @@ public static class WebClientServiceCollectionExtensions
         services.AddScoped<CurrentAccess>();
         services.AddScoped<IAccessGuard, AccessGuard>();
 
-        // Page-level services, one instance per circuit.
+        // Page-level services, one instance per browser tab.
         services.AddScoped<IFaroService, FaroService>();
         services.AddScoped<NotificationFaroBridge>();
         services.AddScoped<IIssueDrawerService, IssueDrawerService>();
@@ -32,7 +32,7 @@ public static class WebClientServiceCollectionExtensions
         services.AddScoped<CockpitState>();
         services.AddScoped<BlockedIssuesService>();
 
-        // One UI hub connection per circuit (spec 051 D7), with the user's session-long hub token.
+        // One UI hub connection per browser tab (spec 051 D7), with the user's session-long hub token.
         services.AddScoped<IUiHubConnection>(sp => new UiHubConnection(
             new Uri($"{apiBaseUrl.TrimEnd('/')}{CodingAgent.Pipeline.HubRoutes.Ui}"), sp.GetRequiredService<IUiAccessTokenSource>()));
 

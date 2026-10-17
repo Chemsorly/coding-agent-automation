@@ -219,8 +219,8 @@
         // disposed component. InvokeAsync(StateHasChanged) on a disposed component logs an
         // ObjectDisposedException (Blazor swallows it, but it is a latent reliability issue).
         // A disposed-flag guard in HandleLocationChanged would prevent spurious invocations.
-        // Also: NavigationManager is a scoped singleton; if DisposeAsync is never called (circuit
-        // drops abruptly without IAsyncDisposable teardown), the handler keeps the component alive.
+        // Also: NavigationManager is a scoped singleton; if DisposeAsync is never called (the app
+        // stops abruptly without IAsyncDisposable teardown), the handler keeps the component alive.
         // A synchronous IDisposable.Dispose fallback would close that leak path.
         Nav.LocationChanged += HandleLocationChanged;
     }
@@ -286,15 +286,15 @@
         var name = _projects.FirstOrDefault(p => p.Id == id)?.Name;
         State.SetProject(id, name);
         try { await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", id); }
-        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+        catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
         catch (JSException) { /* Browser-side failure is non-fatal here. */ }
-        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
     }
 
     private async Task RefreshAttentionCountAsync()
     {
         // Top-bar Attention count from recent run history, scoped to the selected project.
-        // Runs once on circuit init and re-runs whenever the project scope changes.
+        // Runs once at start and re-runs whenever the project scope changes.
         try
         {
             var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId));
@@ -310,10 +310,10 @@
     // TODO: [WARNING] HandleProjectChanged is declared async void. RefreshAttentionCountAsync wraps its
     // body in a catch-all handler, so today's risk is low. However if RefreshAttentionCountAsync ever
     // rethrows, or if new awaitable work is added outside its try/catch, the exception will escape the
-    // outer ObjectDisposedException guard here and be delivered to the Blazor circuit's unhandled-
-    // exception handler, potentially tearing down the circuit. Consider wrapping the entire body in a
+    // outer ObjectDisposedException guard here and be delivered to the Blazor renderer's unhandled-
+    // exception handler, which shows the error bar and leaves the app unusable. Consider wrapping the entire body in a
     // catch-all handler, or scheduling the refresh as a discarded InvokeAsync task, so Blazor's own
-    // error pipeline handles it. Also note that OperationCanceledException on circuit teardown would
+    // error pipeline handles it. Also note that OperationCanceledException on teardown would
     // also escape the current ObjectDisposedException guard.
     private async void HandleProjectChanged()
     {
@@ -361,7 +361,7 @@
         {
             _sidebarOpen = false;
             // LocationChanged fires on the NavigationManager thread; must marshal to the render thread.
-            // TODO [WARNING]: InvokeAsync return value is not observed. If the circuit is already disposed
+            // TODO [WARNING]: InvokeAsync return value is not observed. If the component is already disposed
             // when LocationChanged fires (user navigates away while the component is tearing down),
             // InvokeAsync may throw ObjectDisposedException as an unobserved faulted task. This is
             // consistent with the existing HandleStateChanged pattern, but LocationChanged is more likely
@@ -386,10 +386,10 @@
 
                 await SyncThemeFromBrowserAsync();
             }
-            catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+            catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
             catch (JSException) { /* Browser-side failure is non-fatal here. */ }
             catch (ObjectDisposedException) { /* Already disposed. */ }
-            catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+            catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
         }
 
         // Flush any notifications added since the last render to Faro (ported from MainLayout).
@@ -469,7 +469,7 @@
         _theme = _theme == "dark" ? "light" : "dark";
         try { await JS.InvokeVoidAsync("setTheme", _theme); }
         catch (JSException) { /* Browser-side failure is non-fatal here. */ }
-        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
     }
 
     public async ValueTask DisposeAsync()
@@ -478,8 +478,8 @@
         State.OnProjectChanged -= HandleProjectChanged;
         Nav.LocationChanged -= HandleLocationChanged;
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
-        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
-        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+        catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
         _dotNetRef?.Dispose();
     }
 }

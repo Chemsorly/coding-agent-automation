@@ -9,7 +9,7 @@ namespace CodingAgent.Web.Services;
 /// label filtering, pagination, and decomposition dispatch. The API browses the epic tracker and
 /// dispatches (spec 051 2.3b and 2.3c, <see cref="IUiBrowseClient"/> and <see cref="IUiDispatchClient"/>).
 /// Owns and constructs the underlying DrawerStateService&lt;IssueSummary&gt; for epic items.
-/// Registered as Scoped (one instance per Blazor circuit).
+/// Registered as Scoped (one instance per browser tab).
 /// </summary>
 public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
 {

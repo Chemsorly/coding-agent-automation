@@ -7,9 +7,34 @@ The Job Controller, the Scheduler and agent pods use the agent API keys describe
 The Pipeline API has two surfaces:
 
 - **Service surface** (`/api/**` except `/api/ui/**`, and `/hubs/agent`): API keys only.
-- **UI surface** (`/api/ui/**` and `/hubs/ui`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls; the UI hub's connect token lasts the session, is marked `use=hub` and is accepted only on `/hubs/ui`, and the hub closes the connection when it expires). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints one token per browser session (circuit) and page request, and only for users with a role; it never calls the UI surface with the master API key.
+- **UI surface** (`/api/ui/**` and `/hubs/ui`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls; the UI hub's connect token lasts the session, is marked `use=hub` and is accepted only on `/hubs/ui`, and the hub closes the connection when it expires). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints a token for each request it forwards (one per hub connection), and only for users with a role. Tokens never reach the browser, and the web host never calls the UI surface with the master API key.
 
 An API endpoint that declares no policy is denied. A credential of one surface is never accepted on the other.
+
+## The web host and the browser client
+
+The UI runs as Blazor WebAssembly in the browser. The web host is its backend-for-frontend (BFF) and the only internet-facing process. It does exactly this:
+
+- signs users in (login page, local admin, OIDC), keeps the session cookie, logs out and rate-limits the login form;
+- evaluates the role bindings into the user's grant;
+- answers `GET /bff/session`: who is signed in, when the session ends, the evaluated grant with the matched bindings, and the OIDC provider's name (build details only for a user with a role). The browser shows what this says; it never evaluates bindings itself;
+- serves the host page and the client's files;
+- forwards `/api/ui/**` and `/hubs/ui` to the Pipeline API, and nothing else, with a user token in place of the cookie;
+- answers `/healthz` and `/readyz`.
+
+It renders no pages, keeps no page state and has no API of its own. The web pod has no service-account token, database credentials, Redis access, master or agent API key, or provider credentials. It holds only the `web-user-token` Secret, the OIDC client secret and the local admin password. When the web host is down, only the UI is affected: the Scheduler, the Job Controller, the API and the agents keep running.
+
+**Forwarding.** The browser's only credential is the session cookie (`SameSite=Lax`). On a forwarded request the web host removes the cookie, any `Authorization` or `X-Api-Key` header and the CSRF header, and adds the user token. It removes `Set-Cookie` from the API's answers and marks them `Cache-Control: no-store` unless the API set a cache policy. It answers `502` when the API cannot be reached and `504` after 5 minutes without activity.
+
+**Request checks.** They run before sign-in on every request to `/api/**`, `/hubs/**` and `/bff/**`, in this order:
+
+1. An encoded slash or backslash (`%2F`, `%5C`) in the path is `400`. An ID that contains `/` (possible only through a config import) therefore cannot be used through the UI.
+2. `/hubs/ui` without a WebSocket upgrade is `400`; an upgrade whose `Origin` is missing or another site's is `403`.
+3. Any other request without `X-CSRF: 1`, with another site's `Origin` or with `Sec-Fetch-Site: cross-site` is `400`, whatever the method. GET is checked too, because some GETs have effects.
+
+The client sends `X-CSRF: 1` on every request. The web host registers no CORS policy, so a page on another site can neither send the header nor read an answer. The own origin is the scheme from `X-Forwarded-Proto` and the `Host` header.
+
+**Session checks.** An open page asks `/bff/session` every 30 seconds, and at once when a forwarded call answers `401`. When the session is gone (expired, logged out in another tab, or a new key), the page goes to the login page.
 
 ## Endpoint protection by host
 
@@ -128,19 +153,19 @@ Every response also carries `X-Content-Type-Options`, `Referrer-Policy`, `Permis
 
 Sessions are encrypted with one key from the `data-protection-key` of the `<release>-coding-agent-automation-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)). Every web replica reads the same key, so a session works on all replicas and survives restarts; the web host needs no Redis.
 
-Several web replicas also need sticky sessions at the ingress. Each open page is a Blazor Server circuit that lives in one pod's memory; its connection and every reconnect must reach that pod. Without stickiness the browser's connection is routed to a pod that does not know it, and the page stays unresponsive. With Traefik, set the annotations on the web Service:
+Sticky sessions are optional. The UI runs in the browser, so any web replica serves its next request, and the UI hub reconnects through any replica. Existing stickiness annotations (Traefik's `traefik.ingress.kubernetes.io/service.sticky.cookie` on `web.service.annotations`, ingress-nginx's `nginx.ingress.kubernetes.io/affinity`) keep working.
+
+With ingress-nginx, the UI's long calls pass through the ingress: chat launch (up to 2 minutes), triage, browse, dispatch and provider calls, and config import. Raise its defaults of 60 seconds and 1 MB:
 
 ```yaml
 web:
-  service:
+  ingress:
     annotations:
-      traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
-      traefik.ingress.kubernetes.io/service.sticky.cookie.name: ca_affinity
-      traefik.ingress.kubernetes.io/service.sticky.cookie.secure: "true"
-      traefik.ingress.kubernetes.io/service.sticky.cookie.httponly: "true"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-body-size: "16m"
 ```
 
-With ingress-nginx, set `nginx.ingress.kubernetes.io/affinity: cookie` in `web.ingress.annotations`.
+Traefik needs no change.
 
 ## Keycloak
 
@@ -164,9 +189,9 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 
 ## Sessions and sign-out
 
-- A session lasts `auth.sessionDuration` from sign-in, without renewal. An open page re-checks its session every 5 minutes and sends the user to the login page once it has expired.
-- Sessions survive web pod restarts when Redis is configured.
-- **Log out** ends the session in the web UI only. The identity provider's session stays, so the next sign-in may not ask for a password. Other open tabs keep their live connection until they reconnect or the session expires.
+- A session lasts `auth.sessionDuration` from sign-in, without renewal. An open page checks its session every 30 seconds and goes to the login page once it has ended.
+- Sessions survive web pod restarts: every replica reads the same key (see [Exposing the UI](#exposing-the-ui)).
+- **Log out** ends the session in the web UI only. The identity provider's session stays, so the next sign-in may not ask for a password. Other open tabs of the same browser go to the login page at their next session check.
 
 ## Troubleshooting
 
@@ -176,5 +201,6 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 | The profile page says a binding "opens nothing: no project has this ID" | The `projectId` value must equal the ID shown on the project's Overview tab (Settings → Projects → project → Overview). |
 | "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client ID, client secret or issuer, a provider it cannot reach, or a clock skew. |
 | Redirect URI uses `http://` behind TLS | The ingress must send `X-Forwarded-Proto: https`. |
-| Signed out on every request with several web replicas | All web pods must read the same `data-protection-key`; restart them after replacing the Secret. Check the sticky-session annotations. |
-| Pages load but stay unresponsive with several web replicas; the browser console shows "No Connection with that ID" | Enable sticky sessions at the ingress (see [Exposing the UI](#exposing-the-ui)). |
+| Signed out on every request with several web replicas | All web pods must read the same `data-protection-key`; restart them after replacing the Secret. |
+| Every UI call fails with `400`, or the live updates never connect (`403` on `/hubs/ui`) | A proxy in front of the web host drops the `X-CSRF` header or changes `Origin` or `Host`. The web host compares `Origin` with the `Host` header and the scheme from `X-Forwarded-Proto`. |
+| Chat launch or config import fails with `504` or `413` behind ingress-nginx | Set `proxy-read-timeout` and `proxy-body-size` on the ingress (see [Exposing the UI](#exposing-the-ui)). |

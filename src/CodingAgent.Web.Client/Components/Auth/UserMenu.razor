@@ -1,7 +1,7 @@
 @implements IDisposable
 @inject CurrentAccess Access
 
-@* Top-bar user menu (Req 9.3). Log out is a plain form post: an interactive circuit cannot clear the cookie. *@
+@* Top-bar user menu (Req 9.3). Log out is a plain form post: an interactive component cannot clear the HttpOnly cookie. *@
 <details class="cockpit-user-menu" data-testid="user-menu">
     <summary title="Signed in as @Access.Username">
         <Icon Name="user" Size="14" />

@@ -505,7 +505,7 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Subscribe to the live run stream once, after the interactive circuit exists (not during prerender).
+        // Subscribe to the live run stream once, after the first render.
         if (_isLive && !_subscribed)
             await SubscribeLiveAsync();
 

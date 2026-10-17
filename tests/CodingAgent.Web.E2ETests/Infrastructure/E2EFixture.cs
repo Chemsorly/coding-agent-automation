@@ -50,7 +50,7 @@ public sealed class E2EFixture : IAsyncLifetime
     private ServiceProvider? _serviceClients;
     private JobControllerE2EWebApplicationFactory? _realJobControllerFactory;
 
-    /// <summary>Blazor Server app — UI navigation and page assertions.</summary>
+    /// <summary>The web host (the BFF that serves the WebAssembly UI): UI navigation and page assertions.</summary>
     public string ServerAddress => Factory.ServerAddress;
 
     /// <summary>
@@ -460,7 +460,7 @@ public sealed class E2EFixture : IAsyncLifetime
         }
         catch (ObjectDisposedException)
         {
-            // Chat-test circuit teardown runs async TerminateChatSessionAsync calls that can still be in
+            // A chat test's last TerminateChatSessionAsync call can still be in
             // flight when a host's DI container disposes its singletons. That race is not a test failure,
             // and reporting it as a collection-cleanup failure would hide real ones (#3181).
         }

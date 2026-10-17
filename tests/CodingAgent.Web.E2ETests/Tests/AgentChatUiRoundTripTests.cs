@@ -21,7 +21,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///   state.</item>
 ///   <item>Pod never connects: launch without connecting → DI-registered dispatcher times out →
 ///   page renders error banner with timeout message.</item>
-///   <item>Idle cleanup: close the browser page → Blazor circuit tears down the component →
+///   <item>Idle cleanup: navigate away from the chat → the router disposes the component →
 ///   TerminateChatSessionAsync is called → CancelChat delivered to agent → job is deleted.</item>
 /// </list>
 /// </summary>
@@ -208,8 +208,8 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
 
             // ── Cleanup: initiate end-chat before the test exits ──────────────
             // Clicking End Chat sets _isChatActive = false in the Blazor component before
-            // any await, so the circuit's DisposeAsync (triggered by E2ETestBase.DisposeAsync
-            // closing the browser context) will not call TerminateChatSessionAsync again.
+            // any await, so a later DisposeAsync of the component will not call
+            // TerminateChatSessionAsync again (closing the browser context runs none in WebAssembly).
             // The actual HTTP call (TerminateChatSessionAsync) completes asynchronously;
             // E2EWebApplicationFactory.ShutdownTimeout is set high enough (20s) to wait for
             // it during collection cleanup so no ObjectDisposedException is thrown.
@@ -358,7 +358,7 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             timeout: TimeSpan.FromSeconds(10));
     }
 
-    // ── Scenario 4: Idle cleanup (page / circuit close) ───────────────────────
+    // ── Scenario 4: Idle cleanup (navigating away) ────────────────────────────
 
     /// <summary>
     /// Scenario 4: the user leaves an active chat for another page of the app. The router disposes
