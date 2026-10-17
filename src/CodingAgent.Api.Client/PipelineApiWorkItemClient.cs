@@ -202,11 +202,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     }
 
     // Internal DTOs for response deserialization
-    /// <summary>Shape of <c>GET /api/work-items/{id}/retry-count</c>. Positional so the
-    /// deserializer assigns through the constructor — an init-only property looks unassigned to
-    /// static analysis, since nothing in this codebase ever writes it.</summary>
-    private sealed record RetryCountResponse(int RetryCount);
-
     private sealed record WorkItemStatusResponse(WorkItemStatus Status);
 
     private sealed record IsDistributedResponse(bool IsDistributed);

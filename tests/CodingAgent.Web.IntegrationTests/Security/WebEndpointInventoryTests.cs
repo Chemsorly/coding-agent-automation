@@ -193,7 +193,7 @@ public sealed partial class WebEndpointInventoryTests : IClassFixture<Production
             return $"{Method} {route} -> {label}" + (Policies.Count > 0 ? ": " + string.Join(", ", Policies) : "");
         }
 
-        public static IReadOnlyList<WebEndpoint> Read(IServiceProvider services) =>
+        public static List<WebEndpoint> Read(IServiceProvider services) =>
             services.GetRequiredService<EndpointDataSource>().Endpoints
                 .OfType<RouteEndpoint>()
                 .SelectMany(endpoint =>
