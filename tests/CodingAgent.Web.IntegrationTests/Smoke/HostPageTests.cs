@@ -29,6 +29,10 @@ public partial class HostPageTests : IClassFixture<CustomWebApplicationFactory>,
     [GeneratedRegex(@"^_framework/blazor\.web(\.[a-z0-9]+)?\.js$")]
     private static partial Regex BlazorScriptPattern();
 
+    // A route parameter of a page template, e.g. {RunId} or {Id:guid}.
+    [GeneratedRegex(@"\{[^}]+\}")]
+    private static partial Regex RouteParameterPattern();
+
     // The _framework URLs of the import map, e.g. "./_framework/dotnet.abc123.js".
     [GeneratedRegex("\"(?:\\./)?(_framework/[^\"]+\\.js)\"")]
     private static partial Regex ImportMapFrameworkPattern();
@@ -64,7 +68,7 @@ public partial class HostPageTests : IClassFixture<CustomWebApplicationFactory>,
                      .Distinct()
                      .Order(StringComparer.Ordinal))
         {
-            data.Add(Regex.Replace(template, "\\{[^}]+\\}", Guid.Empty.ToString()));
+            data.Add(RouteParameterPattern().Replace(template, Guid.Empty.ToString()));
         }
         return data;
     }

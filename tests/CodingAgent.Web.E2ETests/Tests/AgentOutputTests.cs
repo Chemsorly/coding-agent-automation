@@ -32,7 +32,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
-public sealed class AgentOutputTests : E2ETestBase
+public sealed partial class AgentOutputTests : E2ETestBase
 {
     public AgentOutputTests(E2EFixture fixture) : base(fixture) { }
 
@@ -373,7 +373,7 @@ public sealed class AgentOutputTests : E2ETestBase
     public async Task Scenario4_DroppedHubConnection_KeepsThePage_AndResumesLiveOutput()
     {
         var hubSockets = new System.Collections.Concurrent.ConcurrentQueue<Microsoft.Playwright.IWebSocketRoute>();
-        await Page.RouteWebSocketAsync(new System.Text.RegularExpressions.Regex("/hubs/ui"), ws =>
+        await Page.RouteWebSocketAsync(UiHubSocket(), ws =>
         {
             ws.ConnectToServer();
             hubSockets.Enqueue(ws);
@@ -445,7 +445,7 @@ public sealed class AgentOutputTests : E2ETestBase
         // The API ends the connection with SignalR's close message, after which either side may close the
         // socket first; with an OnClose handler set, the route forwards nothing itself.
         var hubClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await Page.RouteWebSocketAsync(new System.Text.RegularExpressions.Regex("/hubs/ui"), ws =>
+        await Page.RouteWebSocketAsync(UiHubSocket(), ws =>
         {
             var server = ws.ConnectToServer();
             server.OnClose((code, reason) =>
@@ -468,6 +468,12 @@ public sealed class AgentOutputTests : E2ETestBase
         Assert.True(await detail.HasLiveOutputPanelAsync(), "the run page subscribes to the live run over the hub");
 
         await hubClosed.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await Page.WaitForURLAsync(new System.Text.RegularExpressions.Regex(@"/login\?returnUrl="), new() { Timeout = 50_000 });
+        await Page.WaitForURLAsync(LoginRedirect(), new() { Timeout = 50_000 });
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex("/hubs/ui")]
+    private static partial System.Text.RegularExpressions.Regex UiHubSocket();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"/login\?returnUrl=")]
+    private static partial System.Text.RegularExpressions.Regex LoginRedirect();
 }

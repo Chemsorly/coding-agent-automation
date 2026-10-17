@@ -12,7 +12,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "IAM")]
 [Collection(E2ECollection.Name)]
-public sealed class AccessControlTests : IAsyncLifetime
+public sealed partial class AccessControlTests : IAsyncLifetime
 {
     private readonly E2EFixture _fixture;
     private IBrowserContext? _context;
@@ -166,8 +166,11 @@ public sealed class AccessControlTests : IAsyncLifetime
         await _context!.ClearCookiesAsync();
         await _page.Locator("a.cockpit-nav-link[href='runs']").First.ClickAsync();
 
-        await _page.WaitForURLAsync(new Regex(@"/login\?returnUrl="), new() { Timeout = 15_000 });
+        await _page.WaitForURLAsync(LoginRedirect(), new() { Timeout = 15_000 });
         Assert.Contains("returnUrl=%2Fruns", _page.Url);
     }
 
+
+    [GeneratedRegex(@"/login\?returnUrl=")]
+    private static partial Regex LoginRedirect();
 }
