@@ -109,7 +109,8 @@ internal static class SecurityHeadersRegistration
 
     private static Task AddHeadersAsync(HttpContext context, RequestDelegate next, string? faroCollectorOrigin)
     {
-        var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
+        // Hex, not Base64: a nonce with no "+", "/" or "=" needs no HTML encoding in the nonce attribute.
+        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         context.Items[CspNonceItem] = nonce;
         var headers = context.Response.Headers;
         headers.ContentSecurityPolicy = ContentSecurityPolicy(nonce, faroCollectorOrigin);

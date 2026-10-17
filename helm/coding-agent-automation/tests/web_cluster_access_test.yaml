@@ -186,11 +186,19 @@ tests:
   - it: carries no database, Redis, API key or provider settings in the web ConfigMap
     template: templates/web-env-configmap.yaml
     asserts:
-      # The 8 keys the template renders (OTEL x3, readiness drain, log level, Faro, base path, HTTPS redirect).
-      # A new key reaches the web pod through envFrom, so it must be added here on purpose.
-      - lengthEqual:
+      # Exactly these keys (with the chart defaults): a new key reaches the web pod through envFrom, so it
+      # must be added here on purpose. lengthEqual counts arrays only, so the whole map is compared.
+      - equal:
           path: data
-          count: 8
+          value:
+            OTEL_EXPORTER_OTLP_ENDPOINT: ""
+            OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
+            OTEL_SERVICE_NAME: "coding-agent-web"
+            READINESS_DRAIN_DELAY_SECONDS: "15"
+            LOG_LEVEL: "Information"
+            Faro__CollectorUrl: ""
+            WebUI__BasePath: "./"
+            WebUI__HttpsRedirect: "false"
       - notExists:
           path: data.Database__Host
       - notExists:
