@@ -88,17 +88,61 @@ tests:
       - lengthEqual:
           path: spec.template.spec.containers[0].env
           count: 11
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_EXPORTER_OTLP_HEADERS }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: UserToken__SigningKey }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: DataProtection__Key }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: Auth__Admin__Password }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: PipelineApi__BaseUrl }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_SERVICE_NAME }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_EXPORTER_OTLP_ENDPOINT }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_EXPORTER_OTLP_PROTOCOL }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: K8S_NAMESPACE_NAME }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: K8S_POD_NAME }, any: true }
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: OTEL_RESOURCE_ATTRIBUTES }, any: true }
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_HEADERS
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UserToken__SigningKey
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DataProtection__Key
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Auth__Admin__Password
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PipelineApi__BaseUrl
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_SERVICE_NAME
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_ENDPOINT
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_PROTOCOL
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_NAMESPACE_NAME
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_POD_NAME
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_RESOURCE_ATTRIBUTES
+          any: true
 
   - it: adds only the OIDC client secret when OIDC is on
     template: templates/web-deployment.yaml
@@ -111,7 +155,11 @@ tests:
       - lengthEqual:
           path: spec.template.spec.containers[0].env
           count: 12
-      - contains: { path: spec.template.spec.containers[0].env, content: { name: Auth__Oidc__ClientSecret }, any: true }
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Auth__Oidc__ClientSecret
+          any: true
 
   - it: mounts only the auth config into the web pod, and takes settings only from its ConfigMap
     template: templates/web-deployment.yaml
@@ -138,9 +186,15 @@ tests:
   - it: carries no database, Redis, API key or provider settings in the web ConfigMap
     template: templates/web-env-configmap.yaml
     asserts:
-      - notExists: { path: data.Database__Host }
-      - notExists: { path: data.Database__Name }
-      - notExists: { path: data.ConnectionStrings__Redis }
-      - notExists: { path: data.SignalR__Redis__ConnectionString }
-      - notExists: { path: data.AGENT_API_KEY }
-      - notExists: { path: data.OperatorApiKey }
+      - notExists:
+          path: data.Database__Host
+      - notExists:
+          path: data.Database__Name
+      - notExists:
+          path: data.ConnectionStrings__Redis
+      - notExists:
+          path: data.SignalR__Redis__ConnectionString
+      - notExists:
+          path: data.AGENT_API_KEY
+      - notExists:
+          path: data.OperatorApiKey
