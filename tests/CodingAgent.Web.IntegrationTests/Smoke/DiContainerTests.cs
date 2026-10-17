@@ -1,8 +1,7 @@
 using System.Reflection;
 using CodingAgent.Orchestration.Registry;
-using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.Services;
+using CodingAgent.Web.Ui;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.IntegrationTests.Smoke;
@@ -17,20 +16,36 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
         _factory = factory;
     }
 
-    // Spec 051 4.1: pages read and act through the API's /api/ui surface and UI hub as the signed-in user.
+    // Spec 052: the BFF's own services (sign-in, permissions, forwarding).
     [Theory]
-    [InlineData(typeof(CodingAgent.Web.Ui.IUiRunClient))]
-    [InlineData(typeof(CodingAgent.Web.Ui.IUiSettingsClient))]
-    [InlineData(typeof(CodingAgent.Web.Ui.IUiHubConnection))]
-    [InlineData(typeof(CodingAgent.Web.Ui.IUiAccessTokenSource))]
-    [InlineData(typeof(AgentCodingPageService))]
+    [InlineData(typeof(CodingAgent.Web.Auth.UserTokenMinter))]
+    [InlineData(typeof(CodingAgent.Web.Auth.IRbacEvaluator))]
+    [InlineData(typeof(CodingAgent.Web.Auth.IAuthUiInfo))]
+    [InlineData(typeof(Yarp.ReverseProxy.Forwarder.IHttpForwarder))]
     public async Task Key_Service_Resolves_Without_Error(Type serviceType)
     {
-        // Async: the UI hub connection is only IAsyncDisposable.
         await using var scope = _factory.Services.CreateAsyncScope();
         var service = scope.ServiceProvider.GetService(serviceType);
 
         Assert.NotNull(service);
+    }
+
+    /// <summary>
+    /// Spec 052 Req 0.2, 8.1: pages run in the browser, so the web host registers none of their
+    /// services: no UI clients, no UI hub connection, no page services, no token source.
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(IUiRunClient))]
+    [InlineData(typeof(IUiSettingsClient))]
+    [InlineData(typeof(IUiHubConnection))]
+    [InlineData(typeof(IUiAccessTokenSource))]
+    [InlineData(typeof(AgentCodingPageService))]
+    [InlineData(typeof(CodingAgent.Web.Auth.CurrentAccess))]
+    public void WebHost_RegistersNoPageService(Type serviceType)
+    {
+        _ = _factory.Services;
+
+        Assert.DoesNotContain(_factory.ProductionServices, d => d.ServiceType == serviceType);
     }
 
     /// <summary>
@@ -64,13 +79,14 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     /// <summary>
-    /// Every service the web host registers under one of its own types, and every service a Razor
-    /// component injects, must be constructible. Factory registrations and <c>@inject</c> are not
-    /// covered by <c>ValidateOnBuild</c>, so a registration removed while a dependency still needs
-    /// it would otherwise only fail when a user opens the page.
+    /// Every service the web host registers under one of its own types, and every service a component
+    /// injects that the web host still renders, must be constructible. Since spec 052 that is the static
+    /// login render: the components of this assembly (App, Login), the client's Routes and AuthLayout.
+    /// Factory registrations and <c>@inject</c> are not covered by <c>ValidateOnBuild</c>. The browser's
+    /// container has its own test (<c>WebClientHostDiTests</c>).
     /// </summary>
     [Fact]
-    public async Task Every_Application_Service_And_Component_Injection_Resolves()
+    public async Task Every_Application_Service_And_Server_Rendered_Injection_Resolves()
     {
         _ = _factory.Services; // builds the host, which fills RegisteredServices
         var applicationServices = _factory.RegisteredServices
@@ -78,14 +94,14 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
                         && !d.ServiceType.IsGenericTypeDefinition
                         && d.ServiceType.Namespace?.StartsWith("CodingAgent", StringComparison.Ordinal) == true)
             .Select(d => d.ServiceType);
-        var componentInjections = new[] { typeof(Program).Assembly, typeof(CodingAgent.Web.Components.Layout.CockpitLayout).Assembly }
-            .SelectMany(a => a.GetTypes())
+        var serverRendered = typeof(Program).Assembly.GetTypes()
             .Where(t => typeof(Microsoft.AspNetCore.Components.ComponentBase).IsAssignableFrom(t))
+            .Concat([typeof(CodingAgent.Web.Components.Routes), typeof(CodingAgent.Web.Components.Auth.AuthLayout)]);
+        var componentInjections = serverRendered
             .SelectMany(t => t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             .Where(p => p.GetCustomAttribute<Microsoft.AspNetCore.Components.InjectAttribute>() is not null)
             .Select(p => p.PropertyType);
 
-        // Async scope: the hub connection (scoped, one per circuit) only implements IAsyncDisposable.
         await using var scope = _factory.Services.CreateAsyncScope();
         var failures = new List<string>();
         foreach (var type in applicationServices.Concat(componentInjections).Distinct())
@@ -102,24 +118,6 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
         }
 
         Assert.Empty(failures);
-    }
-
-    /// <summary>
-    /// The circuit hub accepts messages up to 128 KB. It used to inherit that limit from the global
-    /// SignalR options of the agent-hub setup this host registered; without the explicit setting it
-    /// would fall back to SignalR's 32 KB default and drop larger inputs such as pasted config.
-    /// </summary>
-    [Fact]
-    public void Circuit_Hub_Keeps_The_128KB_Message_Limit()
-    {
-        var componentHub = Type.GetType("Microsoft.AspNetCore.Components.Server.ComponentHub, Microsoft.AspNetCore.Components.Server", throwOnError: true)!;
-        var optionsType = typeof(Microsoft.Extensions.Options.IOptions<>)
-            .MakeGenericType(typeof(Microsoft.AspNetCore.SignalR.HubOptions<>).MakeGenericType(componentHub));
-
-        var hubOptions = (Microsoft.AspNetCore.SignalR.HubOptions)optionsType.GetProperty("Value")!
-            .GetValue(_factory.Services.GetRequiredService(optionsType))!;
-
-        Assert.Equal(128 * 1024, hubOptions.MaximumReceiveMessageSize);
     }
 
     /// <summary>

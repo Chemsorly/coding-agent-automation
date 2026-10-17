@@ -17,6 +17,7 @@
         var basePath = BaseHrefResolver.Resolve(Configuration["WebUI:BasePath"], HttpContext?.Request.Path.Value);
     }
     <base href="@basePath" />
+    <ResourcePreloader />
     @{
         // Faro collector URL injected as a meta tag so faro-init.js can read it without
         // hardcoding it in the static bundle. Empty string → Faro disabled (dev/test).
@@ -33,14 +34,49 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="css/cockpit.css" />
-    <link rel="stylesheet" href="CodingAgent.Web.styles.css" />
+    <link rel="stylesheet" href="@Assets["CodingAgent.Web.styles.css"]" />
+    <ImportMap />
     <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 <body>
+    @* Spec 052 Req 1.4: shown until the client renders a layout (app.css hides it once .cockpit exists). *@
+    <div id="app-loading" role="status" aria-live="polite">
+        <span class="app-loading-name">Coding Agent</span>
+        <span class="app-loading-spinner" aria-hidden="true"></span>
+        <span class="app-loading-text">Loading…</span>
+        <p class="app-loading-error">The app could not load. <a href="" data-testid="app-loading-reload">Reload</a></p>
+    </div>
+
     <Routes @rendermode="PageRenderMode" />
 
-    <script src="_framework/blazor.web.js"></script>
+    @* Spec 052 Req 1.7: Blazor shows this on an unhandled exception in the client. *@
+    <div id="blazor-error-ui" data-nosnippet>
+        An error has occurred. <a href="" class="reload">Reload</a>
+        <span class="dismiss" aria-label="Dismiss">✕</span>
+    </div>
+
     <script>
+        // The loading screen turns into an error with a Reload link when the client cannot start: a
+        // script or download error, a missing fingerprinted file during a rolling update, or a browser
+        // without WebAssembly. After 20 s it keeps the spinner and offers Reload too. Blazor.start()
+        // resolves before WebAssembly starts, so its promise cannot report this.
+        (function () {
+            var box = document.getElementById('app-loading');
+            function started() { return !!document.querySelector('.cockpit'); }
+            function fail() { if (!started()) box.classList.add('app-loading-failed'); }
+            window.addEventListener('error', fail, true);
+            window.addEventListener('unhandledrejection', fail);
+            if (typeof WebAssembly === 'undefined') fail();
+            setTimeout(function () { if (!started()) box.classList.add('app-loading-slow'); }, 20000);
+        })();
+    </script>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script>
+        // Spec 052 Req 5.2: the build this page was served with, which the client compares with X-App-Version.
+        window.getAppVersion = function () {
+            var meta = document.querySelector('meta[name="app-version"]');
+            return meta ? meta.getAttribute('content') : null;
+        };
         window.scrollToBottom = function (elementId) {
             var element = document.getElementById(elementId);
             if (element) {
@@ -129,8 +165,12 @@
     // HttpContext is available here; the request path decides the relative base href.
     [CascadingParameter] private HttpContext? HttpContext { get; set; }
 
+    // Spec 052 D1, D2: every page runs in the browser as WebAssembly, without prerendering. A loading
+    // screen covers the start (Req 1.4) and pages render once, through one DI setup.
+    private static readonly IComponentRenderMode WebAssembly = new InteractiveWebAssemblyRenderMode(prerender: false);
+
     // Spec 049: the login page ([ExcludeFromInteractiveRouting]) renders statically so its form can
-    // post to /auth/login and receive the session cookie; every other page stays interactive.
+    // post to /auth/login and receive the session cookie; every other page is interactive.
     private IComponentRenderMode? PageRenderMode =>
-        HttpContext is null || HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+        HttpContext is null || HttpContext.AcceptsInteractiveRouting() ? WebAssembly : null;
 }

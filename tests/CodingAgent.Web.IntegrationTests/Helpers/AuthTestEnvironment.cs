@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -74,15 +75,36 @@ public static partial class AuthTestEnvironment
     public static async Task<string> GetAntiforgeryTokenAsync(HttpClient client, string path) =>
         ReadAntiforgeryToken(await client.GetStringAsync(path), path);
 
-    /// <summary>Reads the hidden antiforgery field from the HTML of <paramref name="path"/>.</summary>
+    /// <summary>
+    /// Reads the antiforgery request token from the HTML of <paramref name="path"/>: the hidden field of a
+    /// server-rendered form (the login page), or else the token the web host persists into the WebAssembly
+    /// component state of a host page, which the browser's forms post (spec 052 m5, V12).
+    /// </summary>
     public static string ReadAntiforgeryToken(string html, string path)
     {
         var match = AntiforgeryField().Match(html);
-        if (!match.Success)
-            throw new InvalidOperationException($"No antiforgery token on {path}");
-        return WebUtility.HtmlDecode(match.Groups["token"].Value);
+        if (match.Success)
+            return WebUtility.HtmlDecode(match.Groups["token"].Value);
+
+        var state = WebAssemblyComponentState().Match(html);
+        if (state.Success)
+        {
+            var entries = JsonSerializer.Deserialize<Dictionary<string, string>>(Convert.FromBase64String(state.Groups["state"].Value))!;
+            foreach (var entry in entries.Values)
+            {
+                using var value = JsonDocument.Parse(Convert.FromBase64String(entry));
+                if (value.RootElement.ValueKind == JsonValueKind.Object
+                    && value.RootElement.TryGetProperty("formFieldName", out _)
+                    && value.RootElement.TryGetProperty("value", out var token))
+                    return token.GetString()!;
+            }
+        }
+        throw new InvalidOperationException($"No antiforgery token on {path}");
     }
 
     [GeneratedRegex("name=\"__RequestVerificationToken\"[^>]*value=\"(?<token>[^\"]+)\"")]
     private static partial Regex AntiforgeryField();
+
+    [GeneratedRegex("<!--Blazor-WebAssembly-Component-State:(?<state>[A-Za-z0-9+/=]+)-->")]
+    private static partial Regex WebAssemblyComponentState();
 }

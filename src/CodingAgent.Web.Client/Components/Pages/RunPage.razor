@@ -8,6 +8,7 @@
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
 @using Microsoft.AspNetCore.SignalR.Client
+@inject ILogger<RunPage> Logger
 @inject IUiRunClient RunHistory
 @inject IUiWorkItemClient WorkItemActions
 @inject IUiConfigClient UiConfig
@@ -456,7 +457,7 @@
             {
                 try { _triageId = await Triages.FindByRunAsync(_run.RunId, _cts.Token); }
                 catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to look up the triage of run {RunId}", _run.RunId); }
+                catch (Exception ex) { Logger.LogDebug(ex, "RunPage: failed to look up the triage of run {RunId}", _run.RunId); }
             }
             _isLive = _run is not null && IsActive(_run);
 
@@ -471,7 +472,7 @@
                 _maxRetries = config.MaxRetries;
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to load the pipeline settings for MaxRetries; using default"); }
+            catch (Exception ex) { Logger.LogDebug(ex, "RunPage: failed to load the pipeline settings for MaxRetries; using default"); }
 
             if (_run?.FinalStep == PipelineStep.Failed)
             {
@@ -486,7 +487,7 @@
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    Serilog.Log.Warning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
+                    Logger.LogWarning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
                 }
                 _diagnosis = RunDiagnoser.Diagnose(_run, recentFailed);
             }
@@ -591,7 +592,7 @@
         catch (Exception ex)
         {
             // Live trace is best-effort; the post-hoc summary above still stands.
-            Serilog.Log.Warning(ex, "RunPage: failed to subscribe to live run {RunId}", RunId);
+            Logger.LogWarning(ex, "RunPage: failed to subscribe to live run {RunId}", RunId);
         }
     }
 
@@ -696,13 +697,13 @@
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    Serilog.Log.Warning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
+                    Logger.LogWarning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
                 }
                 _diagnosis = RunDiagnoser.Diagnose(_run, recentFailed);
             }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
-        catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
+        catch (Exception ex) { Logger.LogWarning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
     }
 
     // Accumulates incremental chat entries pushed by the hub during an active run.
@@ -743,7 +744,7 @@
         catch (Exception ex)
         {
             _cancelError = ex.Message;
-            Serilog.Log.Warning(ex, "RunPage: failed to cancel run {RunId}", RunId);
+            Logger.LogWarning(ex, "RunPage: failed to cancel run {RunId}", RunId);
         }
         finally
         {
@@ -798,7 +799,7 @@
         catch (Exception ex)
         {
             _redispatchError = ex.Message;
-            Serilog.Log.Warning(ex, "RunPage: failed to re-dispatch run {RunId}", RunId);
+            Logger.LogWarning(ex, "RunPage: failed to re-dispatch run {RunId}", RunId);
         }
         finally
         {

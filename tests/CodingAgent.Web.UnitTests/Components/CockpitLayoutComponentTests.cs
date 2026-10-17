@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Ui;
 using Bunit;
+using Bunit.TestDoubles;
 using CodingAgent.Web.UnitTests.Auth;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Layout;
@@ -53,6 +54,7 @@ public class CockpitLayoutComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
 
         Services.AddSingleton(_state);
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
 
         // Faro frontend observability — no-op mocks (ported into the cockpit shell from MainLayout).
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
@@ -373,6 +375,29 @@ public class CockpitLayoutComponentTests : BunitContext
         // DOM after close. The backdrop is rendered conditionally (@if (_sidebarOpen)), so a regression
         // that leaves it permanently in the DOM (with sidebar closed) would not be caught here.
         // Add: Assert.Throws<ElementNotFoundException>(() => cut.Find(".cockpit-sidebar-backdrop"));
+    }
+
+    /// <summary>
+    /// Spec 052 Req 5.2, D7: once a newer build runs, the next in-app navigation loads the page it
+    /// navigated to from the web host instead of rendering it with the old client.
+    /// </summary>
+    [Fact]
+    public async Task OutdatedClient_NextNavigation_ReloadsThePage()
+    {
+        var cut = Render<CockpitLayout>();
+        var nav = (BunitNavigationManager)Services.GetRequiredService<NavigationManager>();
+        var version = Services.GetRequiredService<VersionWatch>();
+
+        await cut.InvokeAsync(() => nav.NavigateTo("runs"));
+        nav.History.Should().ContainSingle("a current client navigates in the app");
+
+        version.SetBoot("aaaaaaa");
+        version.Report("bbbbbbb");
+        await cut.InvokeAsync(() => nav.NavigateTo("work"));
+
+        var reload = nav.History.First();
+        reload.Uri.Should().EndWith("/work");
+        reload.Options.ForceLoad.Should().BeTrue();
     }
 
     /// <summary>

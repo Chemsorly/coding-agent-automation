@@ -6,6 +6,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
+@inject ILogger<Overview> Logger
 @inject IUiLoopClient LoopClient
 @inject IUiRunClient RunHistory
 @inject IUiAgentClient AgentClient
@@ -32,6 +33,14 @@
         <RefreshBar OnRefresh="RefreshDataAsync" StorageKey="autoRefresh.overview" />
     </div>
 
+    @* Spec 052: no prerendering, so the first render comes before the data; show the loading card
+       (which the E2E ready-wait also waits for) rather than a strip of zeros. *@
+    @if (!_loaded)
+    {
+        <div class="cockpit-empty" style="padding: 24px;">Loading…</div>
+    }
+    else
+    {
     <!-- loop status hero (Spec 049: the loop spans every project, so global roles only) -->
     @if (Access.HasGlobalRead)
     {
@@ -152,6 +161,7 @@
             }
         </div>
     </div>
+    }
 </div>
 
 @code {
@@ -179,7 +189,14 @@
         State.OnProjectChanged += HandleProjectChanged;
     }
 
-    protected override async Task OnInitializedAsync() => await RefreshDataAsync();
+    // Set once the first load has finished (spec 052: no prerendering).
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshDataAsync();
+        _loaded = true;
+    }
 
     // Re-fetch when the top-bar project scope changes.
     private async void HandleProjectChanged()
@@ -247,7 +264,7 @@
             _tokensRecent = items.Sum(r => r.TotalTokens);
             _anyRunHasTokens = items.Any(r => r.TotalTokens > 0);
 
-            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, _cts.Token);
+            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, Logger, _cts.Token);
             var attn = AttentionAggregator.Aggregate(_recentRuns, triages);
             _attnNeedsRefinement = attn.NeedsRefinement.Count;
             _attnFailed = attn.FailedRuns.Count;

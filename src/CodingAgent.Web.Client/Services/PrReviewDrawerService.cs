@@ -1,7 +1,6 @@
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Ui;
-using Serilog;
-using ILogger = Serilog.ILogger;
+using Microsoft.Extensions.Logging;
 
 namespace CodingAgent.Web.Services;
 
@@ -14,15 +13,16 @@ namespace CodingAgent.Web.Services;
 /// </summary>
 public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
 {
-    private static readonly ILogger Logger = Log.ForContext<PrReviewDrawerService>();
+    private readonly ILogger<PrReviewDrawerService> _logger;
 
     private readonly IUiBrowseClient _browse;
     private readonly IUiDispatchClient _dispatch;
 
     private readonly DrawerStateService<PullRequestSummary> _prDrawer;
 
-    public PrReviewDrawerService(IUiBrowseClient browse, IUiDispatchClient dispatch)
+    public PrReviewDrawerService(IUiBrowseClient browse, IUiDispatchClient dispatch, ILogger<PrReviewDrawerService> logger)
     {
+        _logger = logger;
         _browse = browse;
         _dispatch = dispatch;
 
@@ -81,7 +81,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
             _prDrawer.Labels.Clear();
             return null;
         }
-        catch (Exception ex) { Logger.Warning(ex, "Failed to load PR drawer labels"); _prDrawer.Labels.Clear(); return null; }
+        catch (Exception ex) { _logger.LogWarning(ex, "Failed to load PR drawer labels"); _prDrawer.Labels.Clear(); return null; }
     }
 
     public void ClearPrDrawerLabelFilter()

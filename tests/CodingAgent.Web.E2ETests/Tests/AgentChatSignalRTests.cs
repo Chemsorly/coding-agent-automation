@@ -37,15 +37,8 @@ public sealed class AgentChatSignalRTests : E2ETestBase
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();
 
-        // Page should render without a Blazor error UI
-        var blazorError = await Page.QuerySelectorAsync("#blazor-error-ui");
-        if (blazorError is not null)
-        {
-            var errorStyle = await blazorError.GetAttributeAsync("style");
-            Assert.True(
-                errorStyle?.Contains("display: none") == true || errorStyle?.Contains("display:none") == true,
-                "Blazor error UI must not be visible");
-        }
+        // Page should render without the Blazor error UI (spec 052: the host page has the bar, hidden by app.css).
+        Assert.False(await Page.Locator("#blazor-error-ui").IsVisibleAsync(), "Blazor error UI must not be visible");
 
         // Page title should be present
         var title = await Page.TitleAsync();

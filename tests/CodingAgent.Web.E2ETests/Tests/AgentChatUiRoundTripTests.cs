@@ -361,16 +361,15 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     // ── Scenario 4: Idle cleanup (page / circuit close) ───────────────────────
 
     /// <summary>
-    /// Scenario 4: An active chat session has its browser page closed (circuit torn down).
-    /// Blazor calls <c>IAsyncDisposable.DisposeAsync</c> on the component, which calls
-    /// <c>TerminateChatSessionAsync</c>. Verifies that the agent receives a <c>CancelChat</c>
-    /// message and the chat job is deleted.
+    /// Scenario 4: the user leaves an active chat for another page of the app. The router disposes
+    /// the component, whose <c>IAsyncDisposable.DisposeAsync</c> calls <c>TerminateChatSessionAsync</c>.
+    /// Verifies that the agent receives a <c>CancelChat</c> message and the chat job ends.
     ///
-    /// This mirrors the production "idle cleanup" path: when the browser tab is closed or the
-    /// user navigates away, the Blazor circuit tears down and the server cleans up the pod.
+    /// Spec 052 3.9: closing the tab runs no DisposeAsync in WebAssembly; that chat pod idles out
+    /// after ChatIdleTimeoutSeconds instead (covered by the dispatcher's idle tests).
     /// </summary>
     [Fact]
-    public async Task AgentChat_PageClosed_ComponentDisposeTerminatesChat()
+    public async Task AgentChat_NavigatingAway_ComponentDisposeTerminatesChat()
     {
         await SeedChatProfileAsync();
 
@@ -406,10 +405,8 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             // Wait for the chat window to be active.
             await chatPage.WaitForChatHeaderAsync(timeoutMs: 60_000);
 
-            // ── Act: close the page — simulates the user navigating away or closing the tab ──
-            // Closing the Playwright page closes the WebSocket to the Blazor server, which tears
-            // down the server-side Blazor circuit and calls IAsyncDisposable.DisposeAsync on
-            // AgentChat.razor → DisposeK8sChatAsync → TerminateChatSessionAsync.
+            // ── Act: navigate to another page of the app ──
+            // The router disposes AgentChat.razor → DisposeAsync → DisposeK8sChatAsync → TerminateChatSessionAsync.
 
             // [CRITICAL FIX]: Take a screenshot before closing the page so that CI failure artifacts
             // are captured. Page.CloseAsync() makes the page unavailable; E2ETestBase.DisposeAsync
@@ -421,7 +418,7 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
                 var screenshotDir = Path.Combine("TestResults", "screenshots");
                 Directory.CreateDirectory(screenshotDir);
                 var screenshotPath = Path.Combine(screenshotDir,
-                    $"{nameof(AgentChat_PageClosed_ComponentDisposeTerminatesChat)}_pre_close_{DateTime.UtcNow:yyyyMMdd_HHmmss}.png");
+                    $"{nameof(AgentChat_NavigatingAway_ComponentDisposeTerminatesChat)}_pre_close_{DateTime.UtcNow:yyyyMMdd_HHmmss}.png");
                 await Page.ScreenshotAsync(new Microsoft.Playwright.PageScreenshotOptions { Path = screenshotPath, FullPage = true });
             }
             catch
@@ -429,17 +426,11 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
                 // Non-fatal — do not abort the test if the pre-close screenshot fails.
             }
 
-            // Leave the page instead of closing it: both fire pagehide, whose sendBeacon to
-            // _blazor/disconnect disposes the circuit at once. CloseAsync can kill the renderer
-            // before the beacon goes out; the circuit then only counts as disconnected and is kept
-            // for the 3-minute DisconnectedCircuitRetentionPeriod, so DisposeAsync never runs in time.
-            await Page.GotoAsync("about:blank");
+            await Page.Locator("a.cockpit-nav-link[href='overview']").First.ClickAsync();
+            await Page.WaitForURLAsync("**/overview");
 
             // ── Assert: agent receives CancelChat within a short timeout ──────
-            // TODO [WARNING]: DisposeK8sChatAsync only runs when _isChatActive && !string.IsNullOrEmpty
-            // (_selectedAgentId) at Blazor circuit teardown. Circuit teardown is asynchronous after the
-            // WebSocket closes; 20s is generous for a local process but the root cause of a timeout here
-            // (circuit not torn down fast enough vs SignalR delivery lost) is not surfaced in the error message.
+            // DisposeK8sChatAsync only runs when _isChatActive && !string.IsNullOrEmpty(_selectedAgentId).
             await fakeAgent.CancelChatReceived.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
             // ── Simulate real agent exit: pod completes after receiving CancelChat ──────────

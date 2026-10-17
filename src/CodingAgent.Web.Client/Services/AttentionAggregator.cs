@@ -106,7 +106,7 @@ public static class AttentionAggregator
     /// degrades to no triage group when the triage API is unavailable.
     /// </summary>
     public static async Task<IReadOnlyList<TriageListItem>> LoadTriagesNeedingYouAsync(
-        IUiTriageClient client, string? projectId, CancellationToken ct)
+        IUiTriageClient client, string? projectId, ILogger logger, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(client);
         try
@@ -122,7 +122,7 @@ public static class AttentionAggregator
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Serilog.Log.Debug(ex, "Attention: failed to load triages");
+            logger.LogDebug(ex, "Attention: failed to load triages");
             return [];
         }
     }

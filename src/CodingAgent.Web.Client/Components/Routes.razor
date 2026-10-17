@@ -1,7 +1,13 @@
+@{
+#pragma warning disable IL2110, IL2111 // dotnet/aspnetcore#63951: Router and LayoutView parameters, the framework's reflection
+}
 @using CodingAgent.Web.Components.Auth
 @using Microsoft.AspNetCore.Components.Authorization
 
-<Router AppAssembly="typeof(Program).Assembly" AdditionalAssemblies="[ClientAssembly]">
+@* Spec 052 DD3: the router of the browser app. On a full page load the web host renders it with the
+   page from the endpoint's route data, which also renders the static login page of the server
+   assembly; in the browser it routes this assembly's pages. *@
+<Router AppAssembly="typeof(Routes).Assembly">
     <Found Context="routeData">
         @* Spec 049: page policies apply on full page loads (endpoint metadata) and here for in-app navigation. *@
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.CockpitLayout)">
@@ -26,8 +32,3 @@
         </LayoutView>
     </NotFound>
 </Router>
-
-@code {
-    /// <summary>The assembly of the routed pages: <c>CodingAgent.Web.Client</c> (spec 051 D9).</summary>
-    internal static readonly System.Reflection.Assembly ClientAssembly = typeof(Layout.CockpitLayout).Assembly;
-}

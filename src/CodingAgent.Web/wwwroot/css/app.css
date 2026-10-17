@@ -1374,3 +1374,52 @@ select option { background: var(--surface); color: var(--text); }
 .phase-breakdown-header { padding: 8px 14px; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; user-select: none; }
 .phase-breakdown-header:hover { color: var(--text); }
 .phase-breakdown-body { padding: 0 14px 12px; }
+
+/* Spec 052 Req 1.4: the loading screen while the WebAssembly client starts. It disappears once the
+   client has rendered a layout (CockpitLayout and AuthLayout both render .cockpit). */
+#app-loading {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: var(--bg);
+    color: var(--text-muted);
+    font-family: Manrope, system-ui, sans-serif;
+    z-index: 1000;
+}
+body:has(.cockpit) #app-loading { display: none; }
+#app-loading .app-loading-name { color: var(--text); font-size: 18px; font-weight: 700; }
+#app-loading .app-loading-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: app-loading-spin 0.9s linear infinite;
+}
+#app-loading .app-loading-error { display: none; color: var(--text); }
+#app-loading .app-loading-error a, #blazor-error-ui a { color: var(--accent-light); }
+#app-loading.app-loading-failed .app-loading-spinner,
+#app-loading.app-loading-failed .app-loading-text { display: none; }
+#app-loading.app-loading-failed .app-loading-error,
+#app-loading.app-loading-slow .app-loading-error { display: block; }
+@keyframes app-loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #app-loading .app-loading-spinner { animation: none; } }
+
+/* Spec 052 Req 1.7: Blazor shows this bar on an unhandled exception in the client. */
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 10px 16px;
+    background: var(--bg-error);
+    color: var(--text);
+    border-top: 1px solid var(--error);
+    z-index: 1001;
+}
+#blazor-error-ui .dismiss { float: right; cursor: pointer; }

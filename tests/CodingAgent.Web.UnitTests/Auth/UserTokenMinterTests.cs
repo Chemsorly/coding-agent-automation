@@ -143,3 +143,8 @@ public class UserTokenMinterTests
         }
     }
 }
+
+internal sealed class MappedRbacEvaluator(Func<ClaimsPrincipal, AccessGrant> map) : IRbacEvaluator
+{
+    public Task<AccessGrant> EvaluateAsync(ClaimsPrincipal user, CancellationToken ct = default) => Task.FromResult(map(user));
+}

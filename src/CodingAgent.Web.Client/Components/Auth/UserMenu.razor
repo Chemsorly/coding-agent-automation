@@ -1,3 +1,4 @@
+@implements IDisposable
 @inject CurrentAccess Access
 
 @* Top-bar user menu (Req 9.3). Log out is a plain form post: an interactive circuit cannot clear the cookie. *@
@@ -14,3 +15,17 @@
         </form>
     </div>
 </details>
+
+@code {
+    // Spec 052: the menu renders before the session has loaded and, having no parameters, is not
+    // rendered again with the layout; it follows the access itself.
+    protected override async Task OnInitializedAsync()
+    {
+        Access.Changed += OnAccessChanged;
+        await Access.InitializeAsync();
+    }
+
+    private void OnAccessChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Access.Changed -= OnAccessChanged;
+}

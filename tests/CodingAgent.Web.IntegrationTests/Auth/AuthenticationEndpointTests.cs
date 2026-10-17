@@ -225,22 +225,16 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
         response.Headers.Location!.AbsolutePath.Should().Be("/overview");
     }
 
+    /// <summary>Spec 052 Req 1.2: the pages run as WebAssembly; no Blazor Server circuit hub is mapped.</summary>
     [Fact]
-    public async Task BlazorHub_Unauthenticated_IsRejectedWithoutRedirect()
-    {
-        var response = await NoRedirectClient().PostAsync("/_blazor/negotiate?negotiateVersion=1", content: null);
-
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-    }
-
-    [Fact]
-    public async Task BlazorHub_SignedIn_Negotiates()
+    public async Task BlazorServerHub_IsNotMapped()
     {
         var client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory, allowAutoRedirect: false);
 
         var response = await client.PostAsync("/_blazor/negotiate?negotiateVersion=1", content: null);
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        // 405: a GET-only static route matches the path; there is no POST endpoint, so no circuit hub.
+        response.StatusCode.Should().BeOneOf(HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed);
     }
 
     /// <summary>
@@ -280,17 +274,10 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
         schemes.Select(s => s.Name).Should().NotContain("AgentApiKey", "the web host references no AgentGateway and accepts no API key");
     }
 
-    [Fact]
-    public async Task ProfilePage_ShowsTheLocalAdmin()
-    {
-        var client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory, allowAutoRedirect: false);
-
-        var html = await client.GetStringAsync("/user");
-
-        html.Should().Contain("data-testid=\"profile-source\">Local admin<");
-        html.Should().Contain("data-testid=\"profile-global-role\">admin<");
-    }
-
+    /// <summary>
+    /// Spec 052 m5: the profile page renders in the browser now (its content is <c>UserProfileTests</c>);
+    /// its logout form posts the antiforgery token the web host persisted into the host page.
+    /// </summary>
     [Fact]
     public async Task Logout_ClearsTheSession()
     {

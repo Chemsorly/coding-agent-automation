@@ -51,15 +51,8 @@ public class RbacWebApplicationFactory : CustomWebApplicationFactory
             services.RemoveAll<IProjectStore>();
             services.AddSingleton(projects.Object);
             services.AddSingleton<IStartupFilter, TestSignInStartupFilter>();
-
-            // Spec 051: the real UI client and token provider, with the API's /api/ui/me stubbed.
-            services.AddHttpClient<IUiMeClient, UiMeClient>().ConfigurePrimaryHttpMessageHandler(() => MeApi);
         });
     }
-
-    /// <summary>Stands in for the Pipeline API's <c>GET /api/ui/me</c>.</summary>
-    public UiMeApiStub MeApi { get; } = new();
-
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -195,15 +188,18 @@ public class PagePolicyTests : IClassFixture<RbacWebApplicationFactory>
     }
 
     [Fact]
-    public async Task NoAccessUser_SeesItsProfileAndTheNoAccessMessage()
+    public async Task NoAccessUser_OpensItsProfileAndTheNoAccessPage()
     {
+        // Spec 052: both pages render in the browser (their content is bUnit's, CockpitLayoutAccessTests);
+        // the web host serves their host page instead of a redirect, so a no-access user never loops.
         var client = await _factory.SignInAsync("carol", "unbound-group");
 
-        var profile = await client.GetStringAsync("/user");
-        var denied = await client.GetStringAsync("/access-denied");
-
-        profile.Should().Contain("unbound-group");
-        denied.Should().Contain("You have no access yet");
+        foreach (var path in new[] { "/user", "/access-denied" })
+        {
+            var response = await client.GetAsync(path);
+            response.StatusCode.Should().Be(HttpStatusCode.OK, path);
+            (await response.Content.ReadAsStringAsync()).Should().Contain("<!--Blazor:{\"type\":\"webassembly\"", path);
+        }
     }
 
     [Fact]

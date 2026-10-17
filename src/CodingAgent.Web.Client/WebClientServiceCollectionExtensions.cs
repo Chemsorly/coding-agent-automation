@@ -6,13 +6,13 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgent.Web;
 
 /// <summary>
-/// Spec 051 5.2: the services of the pages, registered once for the server host and later for the WebAssembly
-/// host. The host adds what differs between the two: the <see cref="IUiAccessTokenSource"/>, the
-/// <see cref="IRbacEvaluator"/>, the <see cref="IAuthUiInfo"/> and the authentication state.
+/// Spec 051 5.2: the services of the pages. Spec 052: the browser registers them (<see cref="WebClientHost"/>),
+/// adding the <see cref="IUiAccessTokenSource"/>, the <see cref="IRbacEvaluator"/>, the <see cref="IAuthUiInfo"/>
+/// and the authentication state; the API contract tests register the UI clients with a real token.
 /// </summary>
 public static class WebClientServiceCollectionExtensions
 {
-    /// <param name="apiBaseUrl">The Pipeline API (server host) or the web host's API proxy (WebAssembly host).</param>
+    /// <param name="apiBaseUrl">The web host's origin, which forwards to the API (browser), or the Pipeline API itself (contract tests).</param>
     public static IServiceCollection AddWebClientServices(this IServiceCollection services, string apiBaseUrl)
     {
         // The signed-in user's access, for rendering (CurrentAccess) and for checks before an action (IAccessGuard).

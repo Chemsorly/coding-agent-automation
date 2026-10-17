@@ -5,6 +5,7 @@
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
+@inject ILogger<TriageNew> Logger
 @inject IUiTriageClient Triages
 @inject IUiConfigClient UiConfig
 @inject CockpitState State
@@ -321,7 +322,7 @@
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
-            Serilog.Log.Debug(ex, "TriageNew: failed to load the project's templates or history");
+            Logger.LogDebug(ex, "TriageNew: failed to load the project's templates or history");
             _preview ??= new TriagePreview { Problem = "The project's repositories could not be loaded." };
         }
         await LoadSimilarAsync();
@@ -345,7 +346,7 @@
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
-            Serilog.Log.Debug(ex, "TriageNew: failed to load the triage preview");
+            Logger.LogDebug(ex, "TriageNew: failed to load the triage preview");
             _preview = new TriagePreview { Problem = "What the triage would use could not be loaded." };
         }
     }
@@ -364,7 +365,7 @@
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
-            Serilog.Log.Debug(ex, "TriageNew: failed to look up similar triages");
+            Logger.LogDebug(ex, "TriageNew: failed to look up similar triages");
             _similar = [];
         }
     }

@@ -26,7 +26,7 @@ namespace CodingAgent.Web.IntegrationTests.Smoke;
 /// Legacy work-distribution mode; now targets the single K8s-only mode after Spec 041.
 ///
 /// Consuming suites: <see cref="AppStartupTests"/>, <see cref="DiContainerTests"/>,
-/// <see cref="PageSmokeTests"/> — all mode-agnostic and unchanged by Spec 041.
+/// <see cref="HostPageTests"/> — all mode-agnostic and unchanged by Spec 041.
 /// </summary>
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
@@ -157,11 +157,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);
 
-            // The UI hub connection is scoped (one per Blazor circuit). Replace it with a mock so pages
-            // make no SignalR connection attempts to localhost:9999/hubs/ui in tests.
-            services.RemoveAll<IUiHubConnection>();
-            services.AddScoped<IUiHubConnection>(_ => new Mock<IUiHubConnection>().Object);
-
             // Spec 045: IPipelineApiRunHistoryClient is registered by AddPipelineApiClient() and would
             // try to connect to localhost:9999. Replace with a mock to prevent real HTTP calls.
             var runHistoryMock = new Mock<IPipelineApiRunHistoryClient>();
@@ -172,9 +167,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiRunHistoryClient>();
             services.AddSingleton(runHistoryMock.Object);
 
-            // Spec 051: the /api/ui clients call the API as the signed-in user; there is no API here.
-            CodingAgent.Web.IntegrationTests.Helpers.UiClientStubs.Replace(services);
-
+            // Spec 052: pages run in the browser, so the host registers no UI clients to stub.
             RegisteredServices = services.ToList();
         });
     }
