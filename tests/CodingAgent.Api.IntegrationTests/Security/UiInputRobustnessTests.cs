@@ -115,7 +115,7 @@ public sealed class UiInputRobustnessTests(ApiWebApplicationFactory factory)
             .ThenBy(e => e.Method, StringComparer.Ordinal);
 
     /// <summary>The handler's scalar parameters bound from the query: plain ones and the fields of [AsParameters] records.</summary>
-    private static IReadOnlyList<(string Name, Type Type)> QueryParameters(RouteEndpoint endpoint)
+    private static List<(string Name, Type Type)> QueryParameters(RouteEndpoint endpoint)
     {
         if (endpoint.Metadata.GetMetadata<MethodInfo>() is not { } handler)
             return [];

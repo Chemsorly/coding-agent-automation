@@ -24,9 +24,9 @@ fail() {
 allowed() {
     while IFS= read -r pattern || [ -n "$pattern" ]; do
         pattern=${pattern%"$cr"}
-        case "$pattern" in '' | '#'*) continue ;; esac
+        case "$pattern" in '' | '#'*) continue ;; *) ;; esac
         # shellcheck disable=SC2254 # the line is a pattern on purpose
-        case "$1" in $pattern) return 0 ;; esac
+        case "$1" in $pattern) return 0 ;; *) ;; esac
     done < "$allowlist"
     return 1
 }

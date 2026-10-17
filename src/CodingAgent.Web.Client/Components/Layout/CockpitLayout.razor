@@ -360,15 +360,18 @@
         if (_sidebarOpen)
         {
             _sidebarOpen = false;
-            // LocationChanged fires on the NavigationManager thread; must marshal to the render thread.
-            // TODO [WARNING]: InvokeAsync return value is not observed. If the component is already disposed
-            // when LocationChanged fires (user navigates away while the component is tearing down),
-            // InvokeAsync may throw ObjectDisposedException as an unobserved faulted task. This is
-            // consistent with the existing HandleStateChanged pattern, but LocationChanged is more likely
-            // to fire during disposal than OnChange. Consider wrapping with try/catch inside the lambda
-            // passed to InvokeAsync, or guarding with an _isDisposed flag set in DisposeAsync.
-            InvokeAsync(StateHasChanged);
+            _ = RenderAfterNavigationAsync();
         }
+    }
+
+    /// <summary>
+    /// LocationChanged can fire while the layout is being disposed (the user navigates away during
+    /// teardown); the render then has nothing to update, so its ObjectDisposedException is observed here.
+    /// </summary>
+    private async Task RenderAfterNavigationAsync()
+    {
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // Theme follows the app's shared toggle (data-theme + localStorage). App.razor applies the
