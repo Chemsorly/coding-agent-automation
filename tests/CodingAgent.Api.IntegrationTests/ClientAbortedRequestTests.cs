@@ -128,12 +128,19 @@ public sealed class ClientAbortedRequestTests
 
     /// <summary>
     /// The API with an outermost middleware that records how the backlog request ended: its status, and the
-    /// exception that left the API's own pipeline, if any.
+    /// exception that left the API's own pipeline, if any. It runs as Production, like a deployment: in
+    /// Development the developer exception page would turn the aborted request into a 499 itself.
     /// </summary>
     private sealed class OutcomeRecordingFactory : ApiWebApplicationFactory
     {
         public TaskCompletionSource<(int Status, Exception? Error)> Outcome { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            base.ConfigureWebHost(builder);
+            builder.UseEnvironment("Production");
+        }
 
         protected override void ConfigureTestServices(IServiceCollection services) =>
             services.AddSingleton<IStartupFilter>(new RecordingStartupFilter(Outcome));
