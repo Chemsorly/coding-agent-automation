@@ -2798,7 +2798,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [MakeScanIssue("42")],
-                Page = 1, PageSize = 50, HasMore = false
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         _mockIssueProvider
             .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
