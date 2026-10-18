@@ -85,7 +85,8 @@ public static class ApiServiceCollectionExtensions
         // ── WorkItemFallbackTransitionService ───────────────────────────────
         services.AddSingleton<IWorkItemFallbackTransitionService>(sp => new WorkItemFallbackTransitionService(
             sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>()));
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>(),
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // ── IWorkItemTransitionStore (Spec 048 Phase 2 — DB isolation) ──────
         // Postgres-backed WorkItem operations (retry-count, re-queue, provider-config / issue-metadata
