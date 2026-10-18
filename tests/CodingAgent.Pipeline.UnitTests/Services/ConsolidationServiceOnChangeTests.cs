@@ -83,6 +83,6 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
 
         await _sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
 
-        _onChangeLog.Should().NotBeEmpty("SaveHarnessSuggestionsAsync must fire OnChange so Consolidation page refreshes");
+        _onChangeLog.Should().HaveCount(1, "SaveHarnessSuggestionsAsync must fire OnChange exactly once");
     }
 }

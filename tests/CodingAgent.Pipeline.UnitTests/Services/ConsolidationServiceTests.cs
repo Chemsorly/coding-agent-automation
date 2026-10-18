@@ -5,6 +5,8 @@ using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
@@ -446,6 +448,54 @@ public sealed class ConsolidationServiceTests
     }
 
     [Fact]
+    public async Task TriggerAsync_TransientDispatchFailure_LogsWarning_AndReturnsNull()
+    {
+        // AC1: TryDistributeAsync with IWorkDistributor returning IsPermanentFailure = false.
+        // Verifies: return value is null, a Warning log is emitted containing the error message,
+        // and no Error log is emitted (which would indicate a permanent failure instead).
+        //
+        // "No issue-update or label-swap side effects" is structurally guaranteed: ConsolidationService
+        // has no IIssueProvider, label-swapper, or similar dependency — those calls are architecturally
+        // impossible regardless of which branch is taken.
+        //
+        // Uses an inline SUT with a CapturingSink-backed logger (CreateSut() passes the no-op _logger
+        // which discards all events and would make the log assertion silently pass-but-wrong).
+        const string transientErrorMessage = "PVC unavailable — retry after volume is ready";
+
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(
+                Success: false,
+                WorkItemId: null,
+                ErrorMessage: transientErrorMessage,
+                IsPermanentFailure: false));  // explicit: drives the transient-failure else-branch
+
+        var sink = new CapturingSink();
+        var capturingLogger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            capturingLogger,
+            _config,
+            _mockProjectStore.Object,
+            new InMemoryHarnessSuggestionStore(),
+            _mockProviderConfigStore.Object,
+            WorkDistributor: _mockWorkDistributor.Object));
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().BeNull("transient dispatch failure must return null");
+
+        sink.Events.Should().ContainSingle(e =>
+            e.Level == LogEventLevel.Warning &&
+            e.RenderMessage().Contains(transientErrorMessage),
+            "a Warning containing the error message must be emitted for transient failures");
+
+        sink.Events.Should().NotContain(e => e.Level == LogEventLevel.Error,
+            "a transient failure must not emit an Error log (Error is reserved for permanent failures)");
+    }
+
+    [Fact]
     public async Task TriggerAsync_WorkItemId_SetFromDistributor()
     {
         // TriggerAsync must set WorkItemId on the returned result from the distributor result.
@@ -515,6 +565,81 @@ public sealed class ConsolidationServiceTests
 
         await act.Should().NotThrowAsync(
             "SaveHarnessSuggestionsAsync must swallow store exceptions and not propagate them");
+    }
+
+    [Fact]
+    public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_LogsWarning()
+    {
+        // Covers the catch block in SaveHarnessSuggestionsAsync:
+        // verifies that an Error-level log event is emitted and that OnChange is NOT invoked
+        // (the catch block prevents reaching OnChange?.Invoke()).
+        //
+        // NOTE: CreateSut() cannot be used here — it wires in the class-level _logger which
+        // is a no-op logger that discards all events. An inline SUT with a capturing logger
+        // is required.
+        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
+        mockHarnessStore
+            .Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("simulated write failure"));
+
+        var sink = new CapturingSink();
+        var capturingLogger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            capturingLogger,
+            _config,
+            _mockProjectStore.Object,
+            mockHarnessStore.Object,
+            _mockProviderConfigStore.Object));
+
+        var onChangeFired = 0;
+        sut.OnChange += () => onChangeFired++;
+
+        var suggestions = new HarnessSuggestions
+        {
+            GeneratedAtUtc = DateTime.UtcNow,
+            BasedOnRunCount = 1,
+            SuccessRate = 1.0m,
+            Suggestions = []
+        };
+
+        var act = () => sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "SaveHarnessSuggestionsAsync must swallow store exceptions and not propagate them");
+
+        sink.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Warning,
+            "the catch block must emit exactly one Warning-level log event");
+        sink.Events.Single(e => e.Level == LogEventLevel.Warning)
+            .RenderMessage().Should().Contain("Failed to save harness suggestions",
+            "the log message must identify the failing operation");
+
+        onChangeFired.Should().Be(0,
+            "OnChange must not be invoked when SaveAsync throws — the catch block short-circuits before OnChange?.Invoke()");
+    }
+
+    [Fact]
+    public async Task SaveHarnessSuggestionsAsync_OnSuccess_InvokesOnChangeExactlyOnce()
+    {
+        // AC3: SaveHarnessSuggestionsAsync success path — OnChange is invoked exactly once.
+        // Uses a mock store that succeeds so the happy path (try block) is exercised.
+        // Uses CreateSut() (backed by the InMemoryHarnessSuggestionStore) so SaveAsync succeeds.
+        var sut = CreateSut();
+
+        var onChangeFired = 0;
+        sut.OnChange += () => onChangeFired++;
+
+        var suggestions = new HarnessSuggestions
+        {
+            GeneratedAtUtc = DateTime.UtcNow,
+            BasedOnRunCount = 5,
+            SuccessRate = 0.9m,
+            Suggestions = []
+        };
+
+        await sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
+
+        onChangeFired.Should().Be(1,
+            "SaveHarnessSuggestionsAsync must invoke OnChange exactly once on success — not zero times (so the UI refreshes) and not more than once (no double-fire)");
     }
 
     #endregion
@@ -606,4 +731,12 @@ public sealed class ConsolidationServiceTests
     }
 
     #endregion
+
+    /// <summary>Serilog sink that captures log events for assertion.</summary>
+    private sealed class CapturingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+        public IReadOnlyList<LogEvent> Events => _events;
+        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
+    }
 }
