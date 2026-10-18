@@ -15,6 +15,7 @@
     <ProjectReference Include="..\CodingAgent.AgentGateway\CodingAgent.AgentGateway.csproj" />
     <ProjectReference Include="..\CodingAgent.Infrastructure.Providers\CodingAgent.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\CodingAgent.Infrastructure.Persistence\CodingAgent.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\CodingAgent.Kubernetes\CodingAgent.Kubernetes.csproj" />
     <ProjectReference Include="..\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
     <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
     <ProjectReference Include="..\CodingAgent.Pipeline.CodeReview\CodingAgent.Pipeline.CodeReview.csproj" />
