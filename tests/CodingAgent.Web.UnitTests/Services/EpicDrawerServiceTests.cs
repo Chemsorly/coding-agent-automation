@@ -26,7 +26,7 @@ public class EpicDrawerServiceTests
         _mockBrowse.Setup(b => b.GetEpicLabelsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
         _mockDispatch = new Mock<IUiDispatchClient>();
 
-        _service = new EpicDrawerService(_mockBrowse.Object, _mockDispatch.Object);
+        _service = new EpicDrawerService(_mockBrowse.Object, _mockDispatch.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<EpicDrawerService>.Instance);
     }
 
     private static PipelineJobTemplate MakeTemplate(string id = "t-1") =>
@@ -40,7 +40,7 @@ public class EpicDrawerServiceTests
     [Fact]
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
-        var svc = new EpicDrawerService(new Mock<IUiBrowseClient>().Object, new Mock<IUiDispatchClient>().Object);
+        var svc = new EpicDrawerService(new Mock<IUiBrowseClient>().Object, new Mock<IUiDispatchClient>().Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<EpicDrawerService>.Instance);
         Assert.NotNull(svc);
         svc.Dispose();
     }

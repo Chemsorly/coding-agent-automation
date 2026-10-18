@@ -5,7 +5,7 @@
 @using CodingAgent.Pipeline.Interfaces
 @using CodingAgent.Pipeline.Models
 @using Microsoft.AspNetCore.SignalR.Client
-@using Serilog
+@inject ILogger<AgentChat> Logger
 @inject IUiChatClient Chat
 @inject IUiConfigClient UiConfig
 @inject IJSRuntime JS
@@ -166,7 +166,7 @@
     private CancellationTokenSource? _cts;
     private System.Threading.Timer? _elapsedTimer;
     // Sends a keepalive to the API every ~30s while the chat window is open so the server
-    // knows the circuit is still live and doesn't idle-kill the pod.
+    // knows the chat window is still open and doesn't idle-kill the pod.
     private System.Threading.Timer? _keepaliveTimer;
 
     // Connect-timeout shown in the counter — the API's, loaded with the profiles.
@@ -192,7 +192,7 @@
         catch (Exception ex)
         {
             // The page still renders; nothing can be launched until a reload succeeds.
-            Log.Warning(ex, "AgentChat: failed to load the chat profiles or projects");
+            Logger.LogWarning(ex, "AgentChat: failed to load the chat profiles or projects");
             _launchError = "Could not load the agent profiles and projects. Reload the page.";
         }
         if (!Access.HasGlobalOperate && _projects.Count > 0)
@@ -201,11 +201,8 @@
             OnProjectSelected();
         }
 
-        // Hub connection is NOT started here intentionally.
-        // OnInitializedAsync runs during Blazor prerender (before the interactive circuit exists),
-        // so calling StartAsync here would produce a 404. The hub is started in StartChat() instead,
-        // which is invoked only from user action (after LaunchChatPod succeeds), post-circuit.
-        // See RunPage.razor for the same pattern (hub start in OnAfterRenderAsync/firstRender).
+        // The hub is not started here: StartChat() registers the chat handlers and starts it once a
+        // chat pod is live (after LaunchChatPod succeeds).
     }
 
     // OnChatResponse: accumulate streaming lines into _streamingContent.
@@ -308,7 +305,7 @@
         catch (Exception ex)
         {
             _launchError = $"Launch failed: {ex.Message}";
-            Log.Warning(ex, "AgentChat: unexpected error launching chat pod");
+            Logger.LogWarning(ex, "AgentChat: unexpected error launching chat pod");
         }
         finally
         {
@@ -330,9 +327,7 @@
         _messages.Clear();
         _streamingContent.Clear();
 
-        // Start hub and register push handlers now — after the interactive circuit exists
-        // and a chat pod is live. Starting here (from a user action) avoids the 404 that
-        // occurs when StartAsync is called during OnInitializedAsync (prerender).
+        // Register the push handlers and start the hub now that a chat pod is live.
         // Handlers are registered before StartAsync so no events are missed during connection.
         _chatResponseSub?.Dispose();
         _chatCompletedSub?.Dispose();
@@ -355,7 +350,7 @@
                 // on a hub that never connected. If the hub later reconnects via its own reconnect logic,
                 // those stale handlers will fire against an unexpected session. Dispose and null both
                 // subscription fields here so the component is in a clean state after a failed StartAsync.
-                Log.Warning(ex, "AgentChat: hub connection start failed — responses will not stream");
+                Logger.LogWarning(ex, "AgentChat: hub connection start failed — responses will not stream");
             }
         }
 
@@ -383,14 +378,14 @@
     {
         if (!_isChatActive || string.IsNullOrEmpty(_selectedAgentId) || HubConnection.State != HubConnectionState.Connected) return;
         try { await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChat, _selectedAgentId, CancellationToken.None); }
-        catch (Exception ex) { Log.Warning(ex, "AgentChat: joining the chat's hub group failed — responses will not stream"); }
+        catch (Exception ex) { Logger.LogWarning(ex, "AgentChat: joining the chat's hub group failed — responses will not stream"); }
     }
 
     private async Task LeaveChatGroupAsync()
     {
         if (string.IsNullOrEmpty(_selectedAgentId) || HubConnection.State != HubConnectionState.Connected) return;
         try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChat, _selectedAgentId, CancellationToken.None); }
-        catch (Exception ex) { Log.Debug(ex, "AgentChat: leaving the chat's hub group failed"); }
+        catch (Exception ex) { Logger.LogDebug(ex, "AgentChat: leaving the chat's hub group failed"); }
     }
 
     // ── SendPrompt ────────────────────────────────────────────────────────────
@@ -433,7 +428,7 @@
     private async Task SendKeepaliveAsync(string agentId)
     {
         try { await Chat.KeepaliveAsync(agentId); }
-        catch (Exception ex) { Log.Debug(ex, "AgentChat: keepalive failed for agent {AgentId}", agentId); }
+        catch (Exception ex) { Logger.LogDebug(ex, "AgentChat: keepalive failed for agent {AgentId}", agentId); }
     }
 
     // ── EndChat ───────────────────────────────────────────────────────────────
@@ -473,7 +468,7 @@
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "AgentChat: ending the chat failed for agent {AgentId}", _selectedAgentId);
+                Logger.LogWarning(ex, "AgentChat: ending the chat failed for agent {AgentId}", _selectedAgentId);
             }
         }
     }
@@ -492,9 +487,10 @@
     {
         try
         {
-            await JS.InvokeVoidAsync("eval", "document.querySelector('.chat-messages')?.scrollTo(0, document.querySelector('.chat-messages')?.scrollHeight)");
+            // No eval: the Content-Security-Policy allows no 'unsafe-eval' (App.razor defines the helper).
+            await JS.InvokeVoidAsync("scrollElementToBottom", _messagesContainer);
         }
-        catch (Exception ex) { Log.Debug(ex, "Failed to scroll chat to bottom"); }
+        catch (Exception ex) { Logger.LogDebug(ex, "Failed to scroll chat to bottom"); }
     }
 
     private static string GetRoleIconName(ChatRole role) => role switch
@@ -545,7 +541,7 @@
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "AgentChat: ending the chat failed on dispose for agent {AgentId}", _selectedAgentId);
+            Logger.LogWarning(ex, "AgentChat: ending the chat failed on dispose for agent {AgentId}", _selectedAgentId);
         }
     }
 

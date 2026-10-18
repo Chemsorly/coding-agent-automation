@@ -44,8 +44,7 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         // Persist Apply's mutations back to Redis so CompleteRunAsync's RemoveRun
         // deserializes the updated state. Without this, DistributedRunService.RemoveRun
         // re-reads the pre-Apply Redis snapshot and history is persisted with nulls/zeros.
-        // Same pattern as WorkItemEndpoints.ClaimWorkItem — see that file's comment for
-        // a full explanation of why ReplaceRun is required (not just GetRun + mutate).
+        // So ReplaceRun is required, not just GetRun + mutate: in Redis mode GetRun returns a copy.
         // In OrchestratorRunService (in-memory), this is a no-op: the same reference is
         // already in the dictionary, so re-assigning it has no observable effect.
         _facade.ReplaceRun(run);
@@ -60,39 +59,34 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
 
         // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
         // persist history, and mark issue complete in dedup tracker.
-        bool runWasAlive = true;
+        bool outcomeApplied = true;
         try
         {
             var completedRun = await _lifecycleManager.CompleteRunAsync(jobId.Value, workItemStatus, ct,
                 errorMsg, failureEnum);
             if (completedRun is null)
             {
-                // Race: run was removed by another path (e.g. HTTP Failed POST or
-                // RevertFailedDistributionAsync) between GetRun and CompleteRunAsync.
-                // The DB WorkItem transition inside CompleteRunAsync was skipped (it returns early on
-                // null RemoveRun). Attempt direct DB transition — will use infrastructure-failure
-                // recovery fallback if needed. Signal to the caller that the run was already terminated
-                // so it can skip the label swap and preserve whatever label the other path set.
-                // TODO: [WARNING] runWasAlive=false is set here regardless of the WorkItemStatus of the
-                // current payload (Failed, Succeeded, or Cancelled). The skipLabelSwap guard in
-                // AgentJobLifecycleService is only correct when the prior terminal writer was the HTTP
-                // Failed path (which sets an authoritative label). If CompleteRunAsync returns null for
-                // a Succeeded payload (e.g., race with RevertFailedDistributionAsync or double hub
-                // delivery), skipLabelSwap=true will silently suppress the agent:done / agent:next swap,
-                // leaving the issue without a terminal label until OrphanedLabelRecoveryService
-                // corrects it. Consider scoping the null-return handling to Failed payloads only, or
-                // using a more descriptive return type (enum/discriminated union) to distinguish
-                // "already terminated by HTTP Failed" from "race with RevertFailedDistributionAsync".
-                runWasAlive = false;
+                // Race: another path (e.g. HTTP Failed POST or RevertFailedDistributionAsync) terminated
+                // the run first. Either it removed the run between GetRun and CompleteRunAsync, which then
+                // skipped the DB WorkItem transition, or it moved the WorkItem to a different terminal
+                // status, which CompleteRunAsync then labelled. Attempt direct DB transition — will use
+                // infrastructure-failure recovery fallback if needed.
+                // The label follows the WorkItem's status: when the transition is rejected, the other
+                // path's status and label stand and the caller skips its label swap. When it takes
+                // effect (a Succeeded run that outlived a Timeout or InfrastructureFailure, #2146) or the
+                // item is already at this status, the caller applies this payload's label; keeping the
+                // other path's agent:error would contradict the recovered status.
                 _logger.Warning(
-                    "CompleteRunAsync returned null for job {JobId} (race with another terminal path — HTTP Failed or RevertFailedDistributionAsync), attempting direct DB transition",
+                    "CompleteRunAsync returned null for job {JobId} (another terminal path won — HTTP Failed or RevertFailedDistributionAsync), attempting direct DB transition",
                     jobId.Value);
-                await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
+                outcomeApplied = await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
             }
         }
         catch (Exception ex)
         {
-            await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex);
+            // The label follows the defensive transition too: when it is rejected, another path's status and
+            // label stand (#3009: a JobController timeout keeps agent:error).
+            outcomeApplied = await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex);
         }
 
         _logger.Information(
@@ -100,10 +94,10 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
             jobId.Value, payload.FinalStep, LogSanitizer.SanitizeForLog(payload.PullRequestUrl ?? "none"));
 
         _changeNotifier.NotifyChange();
-        return runWasAlive;
+        return outcomeApplied;
     }
 
-    private async Task DefensiveRunCleanupAsync(
+    private async Task<bool> DefensiveRunCleanupAsync(
         JobId jobId, PipelineRun run, JobCompletionPayload payload, WorkItemStatus workItemStatus, Exception outerEx)
     {
         _logger.Warning(outerEx, "CompleteRunAsync failed for job {JobId} (status={Status}), performing defensive cleanup", jobId.Value, workItemStatus);
@@ -121,6 +115,6 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
 
         // intentional: ct may already be cancelled (e.g., during host shutdown — that is exactly when
         // this defensive path fires). Passing ct would short-circuit the transition silently.
-        await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, CancellationToken.None, errorMsg, failureEnum);
+        return await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, CancellationToken.None, errorMsg, failureEnum);
     }
 }

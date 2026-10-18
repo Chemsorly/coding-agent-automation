@@ -100,6 +100,10 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         return await TryInfrastructureRecoveryAsync(workItemId, status, errorMessage, failureReason, ct);
     }
 
+    /// <inheritdoc />
+    public Task<WorkItemStatus?> GetCurrentStatusAsync(Guid workItemId, CancellationToken ct)
+        => _workItemTransition.GetCurrentStatusAsync(workItemId, ct);
+
     private async Task<bool> TryDirectAsync(
         Guid workItemId, WorkItemStatus status,
         string? errorMessage, FailureReason? failureReason,

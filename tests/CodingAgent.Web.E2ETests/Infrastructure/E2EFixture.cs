@@ -50,7 +50,7 @@ public sealed class E2EFixture : IAsyncLifetime
     private ServiceProvider? _serviceClients;
     private JobControllerE2EWebApplicationFactory? _realJobControllerFactory;
 
-    /// <summary>Blazor Server app — UI navigation and page assertions.</summary>
+    /// <summary>The web host (the BFF that serves the WebAssembly UI): UI navigation and page assertions.</summary>
     public string ServerAddress => Factory.ServerAddress;
 
     /// <summary>
@@ -195,7 +195,8 @@ public sealed class E2EFixture : IAsyncLifetime
             Factory.HistoryService,
             Factory.FakeProviders,
             Factory.FakeK8sClient,
-            ApiKey);
+            ApiKey,
+            uiSettings: Factory.ApiConfigClient);
 
         // CreateClient() forces the host to build and Kestrel to bind.
         using (var apiClient = _apiFactory.CreateClient()) { }
@@ -226,7 +227,8 @@ public sealed class E2EFixture : IAsyncLifetime
         _jobController = new FakeJobController(
             WorkItems,
             _apiFactory.AgentRegistry,
-            DbContextFactory);
+            DbContextFactory,
+            _apiFactory.Services);
 
         // Build the real JobController in-process against the API host.
         // Must be built after _apiFactory so ServerAddress is known.
@@ -401,7 +403,6 @@ public sealed class E2EFixture : IAsyncLifetime
             {
                 var browser = await GetBrowserAsync();
                 await using var context = await browser.NewContextAsync();
-                await E2ETestBase.StubExternalFontsAsync(context);
                 var page = await context.NewPageAsync();
                 await SignInAsync(page, ServerAddress);
                 _signedInStorageState = await context.StorageStateAsync();
@@ -458,7 +459,7 @@ public sealed class E2EFixture : IAsyncLifetime
         }
         catch (ObjectDisposedException)
         {
-            // Chat-test circuit teardown runs async TerminateChatSessionAsync calls that can still be in
+            // A chat test's last TerminateChatSessionAsync call can still be in
             // flight when a host's DI container disposes its singletons. That race is not a test failure,
             // and reporting it as a collection-cleanup failure would hide real ones (#3181).
         }

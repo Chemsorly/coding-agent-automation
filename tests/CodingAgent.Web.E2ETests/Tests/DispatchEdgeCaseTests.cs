@@ -139,8 +139,8 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
         // registered the job, so the work item is Running/Dispatched — not merely Pending/Queued)
         // and be non-interactive.
         var issueRow = Page.Locator("[data-testid='issue-row-51']");
-        var hasRunningBadge = await issueRow.Locator("text=Running").CountAsync();
-        Assert.True(hasRunningBadge > 0, "Issue already being processed should show Running badge");
+        // The drawer opens before its rows have loaded (spec 052: no circuit batches them), so wait for the badge.
+        await Microsoft.Playwright.Assertions.Expect(issueRow.Locator("text=Running")).ToBeVisibleAsync(new() { Timeout = 10_000 });
 
         // The row should have reduced opacity (pointer-events: none)
         var opacity = await issueRow.EvaluateAsync<string>("el => getComputedStyle(el).opacity");

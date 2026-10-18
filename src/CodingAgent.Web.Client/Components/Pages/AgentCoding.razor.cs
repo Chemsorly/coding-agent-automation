@@ -106,10 +106,10 @@ public partial class AgentCoding : IDisposable
 
     // OnTemplateChanged is async void because Blazor change event handlers cannot return Task.
     // PersistLastTemplateAsync catches all known exceptions (including OperationCanceledException
-    // from circuit tear-down) to prevent unobserved exceptions from escaping the async void.
+    // from page tear-down) to prevent unobserved exceptions from escaping the async void.
     // TODO: [WARNING] PersistLastTemplateAsync catches a finite list of exception types. If
     // JS.InvokeVoidAsync throws an exception type NOT in that list (e.g. TaskCanceledException,
-    // which is distinct from OperationCanceledException in some older Blazor Server paths), it
+    // which is distinct from OperationCanceledException in some older Blazor paths), it
     // will escape PersistLastTemplateAsync and propagate through this async void, becoming an
     // unobserved exception. Consider adding a bare catch-all Exception handler as a final safety
     // net inside PersistLastTemplateAsync, logging the unexpected type and suppressing it.
@@ -128,25 +128,20 @@ public partial class AgentCoding : IDisposable
 
         _errorMessage = await PageService.InitializeAsync();
         await RefreshLoopAsync();
+        await RestoreTemplateSelectionAsync();
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    /// <summary>
+    /// Spec 052 M7: restores the last-used template, preselects the only enabled one, and opens the issue
+    /// drawer for the <c>?dispatch=issues</c> deep link. It runs at the end of OnInitializedAsync, once the
+    /// templates are loaded: in WebAssembly JS interop is in process, so OnAfterRenderAsync(firstRender)
+    /// could run before they arrived. Without prerendering, JS already works during initialization.
+    /// </summary>
+    private async Task RestoreTemplateSelectionAsync()
     {
-        if (!firstRender) return;
-
-        // Restore the last-used template selection from localStorage.
-        // Called here (not in OnInitializedAsync) so JS interop is always safe — no need
-        // to suppress pre-render JS exceptions.
         await RestoreLastTemplateAsync();
 
-        // After restore, apply single-template auto-preselect if no stored preference exists.
         // Avoids a required manual pick when exactly one enabled template is configured.
-        // TODO: [WARNING] This block only runs on firstRender. If template loading becomes lazy
-        // or streamed in the future (i.e. _templates is populated after the first render cycle),
-        // the preselect will never fire because the if (!firstRender) return guard above
-        // short-circuits all subsequent OnAfterRenderAsync calls. Currently safe because
-        // OnInitializedAsync awaits InitializeAsync() before the first render, but this correctness
-        // depends on initialization ordering that is not enforced locally. (Correctness, issue #2947)
         if (string.IsNullOrEmpty(_manualDispatchTemplateId))
         {
             var enabled = _templates.Where(t => t.Enabled).ToList();
@@ -154,24 +149,10 @@ public partial class AgentCoding : IDisposable
             {
                 _manualDispatchTemplateId = enabled[0].Id;
                 await PersistLastTemplateAsync(_manualDispatchTemplateId);
-                // StateHasChanged() is required: Blazor does NOT automatically re-render after
-                // OnAfterRenderAsync completes. Without it, the <select> binding and the three
-                // browse-button disabled states remain stale until an unrelated render fires.
-                StateHasChanged();
             }
         }
 
-        // Handle ?dispatch=issues deep-link: open the issue drawer automatically.
-        // Runs after first render so the interactive circuit is established (drawers require it).
-        // NOTE: StateHasChanged() is called only inside the conditional branches, not unconditionally
-        // at the end. Blazor does schedule a re-render after an async OnAfterRenderAsync completes,
-        // so skipping an unconditional call avoids one extra render on the non-dispatch path.
-        // On the dispatch=issues path, StateHasChanged() is called explicitly before Blazor's own
-        // scheduled re-render, resulting in two re-renders — acceptable but worth noting.
-        // TODO: [WARNING] The comment previously stated Blazor does NOT schedule a re-render after
-        // async OnAfterRenderAsync — that was inaccurate. Blazor does schedule a re-render when
-        // the returned Task completes. The explicit StateHasChanged() calls in the dispatch=issues
-        // branches are therefore redundant (but harmless). (DotNetSpecialist, issue #2947)
+        // The ?dispatch=issues deep link opens the issue drawer.
         if (string.Equals(DispatchParam, "issues", StringComparison.OrdinalIgnoreCase))
         {
             if (!string.IsNullOrEmpty(_manualDispatchTemplateId))
@@ -179,14 +160,12 @@ public partial class AgentCoding : IDisposable
                 var error = await PageService.OpenIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
                 if (error != null)
                     _errorMessage = error;
-                StateHasChanged();
             }
             else
             {
                 // No template is selected (multiple templates configured, no saved preference).
                 // Surface feedback so the operator knows they need to pick a template first.
                 _errorMessage = "Select a pipeline template to browse and dispatch issues.";
-                StateHasChanged();
             }
         }
     }
@@ -201,17 +180,11 @@ public partial class AgentCoding : IDisposable
             if (!string.IsNullOrEmpty(stored) && _templates.Any(t => t.Id == stored && t.Enabled))
                 _manualDispatchTemplateId = stored;
         }
-        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSDisconnectedException) { /* page torn down, skip */ }
         catch (JSException) { /* JS interop unavailable, skip */ }
         catch (ObjectDisposedException) { /* component disposed, skip */ }
-        catch (OperationCanceledException) { /* circuit torn down, skip */ }
-        // TODO: [WARNING] Unlike PersistLastTemplateAsync, this method does not catch
-        // InvalidOperationException. Currently safe because RestoreLastTemplateAsync is only
-        // called from OnAfterRenderAsync (post-first-render, after pre-rendering is complete).
-        // If this method is ever called earlier (e.g. from OnInitializedAsync), the missing guard
-        // would cause an unhandled exception during server-side pre-rendering. Add
-        // catch (InvalidOperationException) as a precaution if the call site changes.
-        // (DotNetSpecialist, issue #2947)
+        catch (OperationCanceledException) { /* page torn down, skip */ }
+        // Spec 052: no server-side prerendering any more, so JS interop works from OnInitializedAsync.
     }
 
     private async Task PersistLastTemplateAsync(string templateId)
@@ -220,10 +193,10 @@ public partial class AgentCoding : IDisposable
         {
             await JS.InvokeVoidAsync("localStorageSet", TemplateStorageKey, templateId);
         }
-        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSDisconnectedException) { /* page torn down, skip */ }
         catch (JSException) { /* JS interop unavailable, skip */ }
         catch (ObjectDisposedException) { /* component disposed, skip */ }
-        catch (OperationCanceledException) { /* circuit torn down, skip */ }
+        catch (OperationCanceledException) { /* page torn down, skip */ }
         catch (InvalidOperationException) { /* pre-render pass, skip */ }
     }
 

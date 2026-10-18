@@ -1,4 +1,4 @@
-@using Serilog
+@inject ILogger<FirstRunBanner> Logger
 @inject IUiSettingsClient Settings
 @inject NavigationManager Navigation
 @inject IAccessGuard Guard
@@ -34,7 +34,7 @@
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
         {
             // The banner is a hint; an unreachable API must not break the page it sits on.
-            Log.Warning(ex, "FirstRunBanner: failed to load the first-run state");
+            Logger.LogWarning(ex, "FirstRunBanner: failed to load the first-run state");
             _show = false;
             return;
         }
@@ -63,8 +63,8 @@
         }
         catch (Exception ex)
         {
-            // An exception escaping an event handler terminates the circuit; keep the banner and say why.
-            Log.Warning(ex, "FirstRunBanner: failed to save the dismissal");
+            // An exception escaping an event handler breaks the app (the error bar shows); keep the banner and say why.
+            Logger.LogWarning(ex, "FirstRunBanner: failed to save the dismissal");
             _errorMessage = $"Failed to dismiss: {ex.Message}";
             return;
         }

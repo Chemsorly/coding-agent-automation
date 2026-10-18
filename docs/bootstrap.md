@@ -15,7 +15,7 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
      --set scheduler.image.tag=coding-agent-scheduler-<version>
    ```
 
-   Without Redis, set `api.replicas=1` and `web.replicas=1` instead of `signalr.redis.connectionString`.
+   Without Redis, set `api.replicas=1` instead of `signalr.redis.connectionString` (the web UI never needs Redis).
 
    > **`secrets.agentApiKey` is optional.** When omitted, the chart auto-generates a cryptographically secure key on first install via a pre-install hook Job and stores it in the chart-managed Secret. The generated key is preserved across upgrades (the hook is a no-op when the Secret already exists). To use your own key, add `--set secrets.agentApiKey="$(openssl rand -hex 32)"`.
    >

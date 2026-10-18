@@ -6,6 +6,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
+@inject ILogger<Attention> Logger
 @inject IUiRunClient RunHistory
 @inject IUiTriageClient Triages
 @inject BlockedIssuesService BlockedIssues
@@ -254,7 +255,7 @@
             // still technically active (race condition or stale state), it could appear in FailedRuns here.
             // For consistency with Overview.razor, consider applying a client-side IsActive() filter before
             // passing to Aggregate, or document that includeActive: false is the sole guard.
-            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, _cts.Token);
+            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, Logger, _cts.Token);
             var attn = AttentionAggregator.Aggregate(items, triages);
             _triages = attn.TriagesNeedingYou;
 
@@ -286,7 +287,7 @@
     }
 
     // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
-    // root), not the current page URL — this is the correct Blazor Server behaviour.
+    // root), not the current page URL — this is the correct Blazor behaviour.
     private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     public async ValueTask DisposeAsync()

@@ -264,15 +264,14 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
         => (current, target) switch
         {
-            // Pending→Dispatched: used by ClaimWorkItem (POST /api/work-items/{id}/claim).
-            // The Scheduler's WorkItemDispatchLoop uses this endpoint for all task types.
+            // Pending→Dispatched: the dispatch (POST /api/work-items/{id}/dispatch), which the Scheduler's
+            // WorkItemDispatchLoop calls for all task types.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            // Dispatched→Pending: used by RequeueWorkItem (POST /api/work-items/{id}/requeue)
-            // when K8s Job creation fails after a successful claim — the item must be returned to
-            // the Pending queue for retry rather than being stuck in Dispatched state.
+            // Dispatched→Pending: back to the queue for a retry instead of staying Dispatched. Spec 052 deleted
+            // the caller-less POST /api/work-items/{id}/requeue; the transition stays valid in process.
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            // Requeue paths: Failed/Cancelled → Pending (Req 6.1, POST /api/work-items/{id}/requeue)
+            // Requeue paths: Failed/Cancelled → Pending (Req 6.1; the /requeue endpoint is gone, see above)
             (WorkItemStatus.Failed, WorkItemStatus.Pending) => true,
             (WorkItemStatus.Cancelled, WorkItemStatus.Pending) => true,
             _ => false
@@ -290,7 +289,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     /// and retries up to 3 times on DbUpdateConcurrencyException (matching TransitionCoreAsync).
     /// </summary>
     /// <param name="workItemId">The work item to recover.</param>
-    /// <param name="desiredStatus">The target status (Running, Succeeded, Failed, or Cancelled).</param>
+    /// <param name="desiredStatus">The target status (Running, Succeeded or Failed; Cancelled is not recovered).</param>
     /// <param name="mutate">Optional action to set additional fields during recovery.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>True if recovery succeeded, false if not applicable (wrong state, wrong reason, or item not found).</returns>
@@ -375,9 +374,11 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         return false;
     }
 
+    // Not Cancelled: an agent that reports Cancelled after the server gave up was stopped by that
+    // timeout, so the failure stands and the run keeps agent:error (#3009). agent:cancelled would read
+    // as an operator's abandon and block rework.
     private static bool IsRecoverableTargetStatus(WorkItemStatus desiredStatus)
-        => desiredStatus is WorkItemStatus.Running or WorkItemStatus.Succeeded
-            or WorkItemStatus.Failed or WorkItemStatus.Cancelled;
+        => desiredStatus is WorkItemStatus.Running or WorkItemStatus.Succeeded or WorkItemStatus.Failed;
 
     private static bool IsRaceInducedFailure(WorkItemEntity item)
     {

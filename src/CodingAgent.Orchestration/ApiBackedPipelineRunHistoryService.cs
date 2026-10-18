@@ -91,7 +91,11 @@ public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryServ
     public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
         => await _client.GetRunHistoryAsync(new RunHistoryQuery(Page: page, PageSize: pageSize, FeedbackOnly: feedbackOnly), ct);
 
-    /// <inheritdoc />
-    public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
-        => await _client.GetRunAsync(runId, ct);
+    /// <summary>
+    /// Not served through the API key: only the UI's run page reads one run (through <c>/api/ui</c>, in
+    /// the API host), and no Scheduler code does (spec 052 Req 14.10).
+    /// </summary>
+    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+        => Task.FromException<PipelineRunSummary?>(new NotSupportedException(
+            "Reading one run is not served through the API key; no Scheduler code reads it."));
 }

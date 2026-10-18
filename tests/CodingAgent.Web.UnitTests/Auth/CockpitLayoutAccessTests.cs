@@ -50,6 +50,7 @@ public class CockpitLayoutAccessTests : BunitContext
         Services.AddSingleton(_runHistory.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(_state);
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
         Services.AddSingleton<NotificationService>();
         Services.AddSingleton(sp => new NotificationFaroBridge(sp.GetRequiredService<NotificationService>(), sp.GetRequiredService<IFaroService>()));

@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.E2ETests.Infrastructure;
+using System.Text.RegularExpressions;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.Tests;
@@ -11,7 +12,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "IAM")]
 [Collection(E2ECollection.Name)]
-public sealed class AccessControlTests : IAsyncLifetime
+public sealed partial class AccessControlTests : IAsyncLifetime
 {
     private readonly E2EFixture _fixture;
     private IBrowserContext? _context;
@@ -26,7 +27,6 @@ public sealed class AccessControlTests : IAsyncLifetime
         await _fixture.ResetAllAsync();
         var browser = await _fixture.GetBrowserAsync();
         _context = await browser.NewContextAsync();
-        await E2ETestBase.StubExternalFontsAsync(_context);
         _page = await _context.NewPageAsync();
     }
 
@@ -150,4 +150,26 @@ public sealed class AccessControlTests : IAsyncLifetime
         await db.SaveChangesAsync();
         return id;
     }
+
+    /// <summary>
+    /// Spec 052 Req 3.3, 9.5: when the session is gone (here: the cookie deleted, as after a logout in
+    /// another browser), the next call through the BFF gets 401, the client confirms with the session
+    /// endpoint and does a full navigation to the login page, with the page it was on as the return URL.
+    /// </summary>
+    [Fact]
+    public async Task DeletedSession_LeadsToTheLoginPage_OnTheNextCall()
+    {
+        await _page.GotoAsync(E2ETestSignIn.SignInUrl(BaseUrl, E2ETestSignIn.ReaderUser));
+        await _page.GotoCockpitPageAsync($"{BaseUrl}/overview");
+
+        await _context!.ClearCookiesAsync();
+        await _page.Locator("a.cockpit-nav-link[href='runs']").First.ClickAsync();
+
+        await _page.WaitForURLAsync(LoginRedirect(), new() { Timeout = 15_000 });
+        Assert.Contains("returnUrl=%2Fruns", _page.Url);
+    }
+
+
+    [GeneratedRegex(@"/login\?returnUrl=")]
+    private static partial Regex LoginRedirect();
 }

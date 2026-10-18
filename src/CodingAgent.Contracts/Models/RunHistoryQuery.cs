@@ -25,4 +25,8 @@ public sealed record RunHistoryQuery(
     PipelineStep? FinalStep = null,
     string? ProjectId = null,
     DateTimeOffset? Since = null,
-    PipelineRunType? RunType = null);
+    PipelineRunType? RunType = null)
+{
+    /// <summary>The largest page the run-history store serves; the endpoints refuse a larger one with 400.</summary>
+    public const int MaxPageSize = 1000;
+}

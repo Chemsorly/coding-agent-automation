@@ -66,7 +66,7 @@ public class TriageDisplayTests
         var client = new Mock<CodingAgent.Web.Ui.IUiTriageClient>();
         client.Setup(c => c.ListAsync(It.IsAny<TriageListQuery>(), It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("down"));
 
-        (await AttentionAggregator.LoadTriagesNeedingYouAsync(client.Object, "", CancellationToken.None)).Should().BeEmpty();
+        (await AttentionAggregator.LoadTriagesNeedingYouAsync(client.Object, "", Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, CancellationToken.None)).Should().BeEmpty();
         client.Verify(c => c.ListAsync(It.Is<TriageListQuery>(q => q.ProjectId == null && q.Tab == TriageListTab.NeedYou), It.IsAny<CancellationToken>()));
     }
 }

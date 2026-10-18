@@ -26,11 +26,8 @@ web:
   service:
     type: ClusterIP
     port: 8080
-    # Annotations on the web Service. More than one replica needs sticky sessions: each open page
-    # (a Blazor Server circuit) lives in one pod's memory, and its connection and reconnects must
-    # reach that pod. Traefik reads stickiness from the Service:
-    #   traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
-    # ingress-nginx reads it from web.ingress.annotations (nginx.ingress.kubernetes.io/affinity: cookie).
+    # Annotations on the web Service. Sticky sessions are optional: the UI runs in the browser, so
+    # any web replica serves its next request. Existing stickiness annotations keep working.
     annotations: {}
   resources:
     requests:
@@ -82,6 +79,11 @@ web:
   ingress:
     enabled: false
     className: ""
+    # With ingress-nginx, the UI's long calls (chat launch up to 2 min, triage, browse, dispatch,
+    # provider checks, config import) pass through the ingress. Raise its 60 s and 1 MB defaults:
+    #   nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    #   nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+    # Traefik needs no change.
     annotations: {}
     hosts: []
     #  - host: coding-agent.example.com

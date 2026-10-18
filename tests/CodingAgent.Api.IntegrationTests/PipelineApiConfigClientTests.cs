@@ -46,13 +46,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
                 .WithHeader("Content-Type", "application/json")
                 .WithBody(Serialize(body)));
 
-    private void StubPut(string path, int status = 200) =>
-        _server.Given(Request.Create().WithPath(path).UsingPut())
-            .RespondWith(Response.Create()
-                .WithStatusCode(status)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("{}"));
-
     private void StubDelete(string path, int status = 200) =>
         _server.Given(Request.Create().WithPath(path).UsingDelete())
             .RespondWith(Response.Create().WithStatusCode(status));
@@ -63,12 +56,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
                 .WithStatusCode(status)
                 .WithHeader("Content-Type", "application/json")
                 .WithBody("{}"));
-
-    private void StubPutNoContent(string path)
-    {
-        _server.Given(Request.Create().WithPath(path).UsingPut())
-            .RespondWith(Response.Create().WithStatusCode(204));
-    }
 
     private static (IPipelineApiConfigClient Client, StubHandler Handler) CreateWithStubHandler()
     {
@@ -136,38 +123,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
     }
 
     // ── SavePipelineConfigAsync ────────────────────────────────────────────────
-
-    [Fact]
-    public async Task SavePipelineConfigAsync_SendsPutToCorrectPath()
-    {
-        StubPut("/api/config/pipeline");
-
-        var config = new PipelineConfiguration { MaxRetries = 3 };
-        await _client.SavePipelineConfigAsync(config);
-
-        _server.LogEntries.Should().Contain(e =>
-            e.RequestMessage!.Method == "PUT" &&
-            e.RequestMessage.Path == "/api/config/pipeline");
-    }
-
-    [Fact]
-    public async Task SavePipelineConfigAsync_NonSuccessResponse_ThrowsInvalidOperationExceptionWithBody()
-    {
-        const string errorBody = "AgentTimeout must be at least 60 seconds";
-        _server.Given(Request.Create().WithPath("/api/config/pipeline").UsingPut())
-            .RespondWith(Response.Create()
-                .WithStatusCode(400)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(errorBody));
-
-        var config = new PipelineConfiguration { MaxRetries = 3 };
-        var act = () => _client.SavePipelineConfigAsync(config);
-
-        await act.Should().ThrowAsync<InvalidOperationException>(
-            "a non-2xx response must surface as an exception so callers are not silently swallowed")
-            .WithMessage($"*{errorBody}*",
-                "the exception message must include the response body so operators can diagnose the failure");
-    }
 
     // ── GetProviderConfigsAsync ────────────────────────────────────────────────
 
@@ -321,46 +276,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         result[0].Id.Should().Be("proj1");
     }
 
-    [Fact]
-    public async Task GetProjectByIdAsync_NotFound_ReturnsNull()
-    {
-        _server.Given(Request.Create().WithPath("/api/config/projects/nonexistent").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(404));
-
-        var result = await _client.GetProjectByIdAsync("nonexistent");
-
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetProjectByIdAsync_Found_ReturnsProject()
-    {
-        var project = new PipelineProject { Id = "proj-abc", Name = "My Project" };
-        _server.Given(Request.Create().WithPath("/api/config/projects/proj-abc").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(Serialize(project)));
-
-        var result = await _client.GetProjectByIdAsync("proj-abc");
-
-        result.Should().NotBeNull();
-        result!.Id.Should().Be("proj-abc");
-    }
-
-    [Fact]
-    public async Task GetProjectByIdAsync_EncodesIdInPath()
-    {
-        // The stub handler sees the raw request URI; WireMock would match the decoded path whatever the encoding.
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => JsonResponse(new PipelineProject { Id = "id/with/slash", Name = "Encoded" });
-
-        var result = await client.GetProjectByIdAsync("id/with/slash");
-
-        result.Should().NotBeNull();
-        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be("/api/config/projects/id%2Fwith%2Fslash");
-    }
-
     // ── GetAllTemplatesAsync ───────────────────────────────────────────────────
 
     [Fact]
@@ -386,19 +301,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
 
     // ── UpdatePipelineConfigAsync ──────────────
 
-    [Fact]
-    public async Task UpdatePipelineConfigAsync_FetchesThenSaves()
-    {
-        var original = new PipelineConfiguration { WorkspaceBaseDirectory = "/old" };
-        StubGet("/api/config/pipeline", original);
-        StubPutNoContent("/api/config/pipeline");
-
-        await _client.UpdatePipelineConfigAsync(c => c with { WorkspaceBaseDirectory = "/new" });
-
-        // GET then PUT
-        _server.LogEntries.Should().HaveCount(2);
-    }
-
     // ── Templates ────────────────────────────────────────────────────────
 
     [Fact]
@@ -413,29 +315,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         var result = await _client.GetAllTemplatesAsync();
 
         result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task GetTemplatesForProjectAsync_EncodesProjectId()
-    {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => JsonResponse(new List<PipelineJobTemplate>());
-
-        await client.GetTemplatesForProjectAsync("my project");
-
-        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("my%20project");
-    }
-
-    [Fact]
-    public async Task SavePipelineConfigAsync_RefusedWithAJsonString_ThrowsWithTheApiReason()
-    {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => JsonResponse("AgentTimeout must be at least 60 seconds.", HttpStatusCode.BadRequest);
-
-        var act = () => client.SavePipelineConfigAsync(new PipelineConfiguration());
-
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("AgentTimeout must be at least 60 seconds.");
     }
 
     // ── GetQualityGateConfigsAsync / GetReviewerConfigsAsync ─────────────

@@ -85,27 +85,6 @@ public sealed class PipelineApiRemainingClientsTests
     }
 
     [Fact]
-    public async Task RunHistoryClient_GetRunAsync_WhenNotFound_ReturnsNull()
-    {
-        var (client, handler) = Create(h => new PipelineApiRunHistoryClient(h));
-        handler.Respond = _ => Empty(HttpStatusCode.NotFound);
-
-        var result = await client.GetRunAsync(Guid.NewGuid());
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task RunHistoryClient_GetRunAsync_ReturnsRun()
-    {
-        var (client, handler) = Create(h => new PipelineApiRunHistoryClient(h));
-        var summary = MakeSummary(Guid.NewGuid().ToString());
-        handler.Respond = _ => JsonResponse(summary);
-
-        var result = await client.GetRunAsync(Guid.NewGuid());
-        result.Should().NotBeNull();
-    }
-
-    [Fact]
     public async Task RunHistoryClient_AddRunToHistoryAsync_SendsPost()
     {
         var (client, handler) = Create(h => new PipelineApiRunHistoryClient(h));

@@ -29,9 +29,6 @@ public static class PipelineRunEndpoints
         // Paginated history with optional feedbackOnly filter (DB-side filter)
         group.MapGet("/", GetRunHistory);
 
-        // Single run by GUID
-        group.MapGet("/{runId:guid}", GetRunById);
-
         // Create: persists a completed run summary. Called by the orchestrator.
         group.MapPost("/", CreateRunSummary);
 
@@ -68,6 +65,8 @@ public static class PipelineRunEndpoints
         [AsParameters] RunHistoryQuery query,
         CancellationToken ct = default)
     {
+        if (PagingLimits.Validate(query.Page, query.PageSize, RunHistoryQuery.MaxPageSize) is { } invalid)
+            return invalid;
         var result = await history.GetRunHistoryAsync(query, ct);
 
         // Skip the in-flight merge when an outcome filter is set: active runs are non-terminal, so they
@@ -206,32 +205,13 @@ public static class PipelineRunEndpoints
         PipelineStep.Cancelled
     ];
 
-    // ── GET /api/pipeline-runs/{runId} ─────────────────────────────────────
+    // ── One run (the UI's run page, UiRunEndpoints) ───────────────────────
 
     /// <summary>
-    /// GET /api/pipeline-runs/{runId}
-    /// Returns a single pipeline run summary by GUID.
-    /// 200 or 404.
-    ///
-    /// <para>
-    /// Falls back to an in-flight run from <see cref="IOrchestratorRunService"/> when the id is not
-    /// in history, mirroring the <c>includeActive</c> path on the list endpoint above. Both must
-    /// agree: the monitoring page lists active runs from the merged list, and the run-detail modal
-    /// then fetches the clicked run through here. Without the fallback, clicking a running job 404s
-    /// and the modal — which only renders once it has a non-null summary — never opens.
-    /// </para>
+    /// The run from history, or else the in-flight run with that ID; null when neither exists. The
+    /// fallback mirrors the <c>includeActive</c> path on the list endpoint above: a page that lists a
+    /// running job must also be able to open it.
     /// </summary>
-    internal static async Task<IResult> GetRunById(
-        Guid runId,
-        IPipelineRunHistoryService history,
-        IOrchestratorRunService runService,
-        CancellationToken ct = default)
-    {
-        var summary = await FindRunAsync(runId, history, runService, ct);
-        return summary is null ? TypedResults.NotFound() : TypedResults.Ok(summary);
-    }
-
-    /// <summary>The run from history, or else the in-flight run with that ID; null when neither exists.</summary>
     internal static async Task<PipelineRunSummary?> FindRunAsync(
         Guid runId, IPipelineRunHistoryService history, IOrchestratorRunService runService, CancellationToken ct) =>
         await history.GetRunAsync(runId, ct)
@@ -261,6 +241,8 @@ public static class PipelineRunEndpoints
         {
             var p = page ?? 1;
             var ps = pageSize ?? 50;
+            if (PagingLimits.Validate(p, ps, RunHistoryQuery.MaxPageSize) is { } invalid)
+                return invalid;
             var pagedResult = await history.GetRunHistoryAsync(p, ps);
             runs = pagedResult.Items;
         }

@@ -6,7 +6,7 @@
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Services
 @using CodingAgent.Web.Components.Shared
-@using Serilog
+@inject ILogger<Settings> Logger
 @inject IUiSettingsClient SettingsClient
 @inject IUiProviderClient ProviderClient
 @inject NotificationService NotificationService
@@ -263,7 +263,7 @@
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to check agent labels for provider {ProviderId}", config.Id);
+            Logger.LogWarning(ex, "Failed to check agent labels for provider {ProviderId}", config.Id);
         }
 
         if (_cts.IsCancellationRequested) return;

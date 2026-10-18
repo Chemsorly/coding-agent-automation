@@ -15,6 +15,9 @@ namespace CodingAgent.Web.Ui;
 /// </summary>
 public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
 {
+    /// <summary>The reason shown when the web host's forwarder answers 504.</summary>
+    public const string RequestTimedOut = "The request timed out.";
+
     protected async Task<T> GetAsync<T>(string path, JsonTypeInfo<T> type, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
@@ -76,6 +79,9 @@ public abstract class UiApiClient(HttpClient http, IUiAccessTokenSource tokens)
     {
         if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.Conflict or HttpStatusCode.BadGateway)
             throw new InvalidOperationException(await ReadReasonAsync(response, ct));
+        // Spec 052 n3: the web host's forwarder gave up waiting for the API (its activity timeout).
+        if (response.StatusCode == HttpStatusCode.GatewayTimeout)
+            throw new InvalidOperationException(RequestTimedOut);
 
         response.EnsureSuccessStatusCode();
     }

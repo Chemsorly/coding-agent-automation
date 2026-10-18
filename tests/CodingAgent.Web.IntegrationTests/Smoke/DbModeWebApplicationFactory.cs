@@ -150,14 +150,9 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
                 .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
             configClientMock.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-            configClientMock.Setup(s => s.GetTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
             // Replace any existing IPipelineApiConfigClient registration
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);
-
-            // Spec 051: the /api/ui clients call the API as the signed-in user; there is no API here.
-            CodingAgent.Web.IntegrationTests.Helpers.UiClientStubs.Replace(services);
 
             // KubernetesWorkDistributor is now a pure Pipeline API client — its dedup and status
             // reads go through IPipelineApiWorkItemClient, which would otherwise dial the

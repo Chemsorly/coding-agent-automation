@@ -30,21 +30,11 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
     public Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
         => LoadCachedAsync(_cache, _client.GetPipelineConfigAsync, ct);
 
-    public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
-    {
-        await _client.SavePipelineConfigAsync(config, ct);
-        // Populate (not just invalidate) so the next read within the TTL window uses the
-        // value we just saved rather than fetching it back from the API.
-        lock (_cacheLock) { _cache.Set(config, CacheTtlSeconds); }
-    }
+    public Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
+        => SettingsWrites.NotHere("Saving the pipeline configuration");
 
-    public async Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct)
-    {
-        await _client.UpdatePipelineConfigAsync(transform, ct);
-        // Clear is the correct equivalent of the previous `_cached = null`: TtlCache.TryGet
-        // gates on _value is not null first, so a null value causes a miss regardless of _expiry.
-        lock (_cacheLock) { _cache.Clear(); }
-    }
+    public Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct)
+        => SettingsWrites.NotHere("Updating the pipeline configuration");
 
     private Task<T> LoadCachedAsync<T>(TtlCache<T> cache, Func<CancellationToken, Task<T>> fetch, CancellationToken ct)
         where T : class => cache.LoadAsync(_cacheLock, () => CacheTtlSeconds, fetch, ct);
@@ -180,8 +170,8 @@ public sealed class ApiProjectStore : IProjectStore
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
         => LoadCachedAsync(_projectsCache, _client.GetProjectsAsync, ct);
 
-    public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
-        => await _client.GetProjectByIdAsync(id, ct);
+    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
+        => SettingsWrites.NotServed<PipelineProject?>("Reading one project");
 
     public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
         => SettingsWrites.NotHere("Saving a project");
@@ -189,8 +179,8 @@ public sealed class ApiProjectStore : IProjectStore
     public Task DeleteProjectAsync(string id, CancellationToken ct)
         => SettingsWrites.NotHere("Deleting a project");
 
-    public async Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
-        => await _client.GetTemplatesForProjectAsync(projectId, ct);
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+        => SettingsWrites.NotServed<IReadOnlyList<PipelineJobTemplate>>("Reading one project's templates");
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
         => LoadCachedAsync(_templatesCache, _client.GetAllTemplatesAsync, ct);

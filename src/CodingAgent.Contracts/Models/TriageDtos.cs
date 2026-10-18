@@ -72,6 +72,9 @@ public sealed record TriageListQuery
 
     public int Page { get; init; } = 1;
     public int PageSize { get; init; } = 25;
+
+    /// <summary>The largest page the triage store serves; the endpoint refuses a larger one with 400.</summary>
+    public const int MaxPageSize = 200;
 }
 
 /// <summary>

@@ -54,6 +54,9 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     /// </summary>
     private readonly FakeRedisStore? _sharedRedisStore;
 
+    /// <summary>When non-null, <see cref="E2ESettingsShim"/> answers the database-backed settings routes from it.</summary>
+    private readonly InMemoryPipelineApiConfigClient? _uiSettings;
+
     public ApiE2EWebApplicationFactory(
         string dbName,
         InMemoryConfigurationStore configStore,
@@ -61,7 +64,8 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
         FakeProviderFactory fakeProviders,
         FakeKubernetesJobClient fakeK8sClient,
         string apiKey,
-        FakeRedisStore? sharedRedisStore = null)
+        FakeRedisStore? sharedRedisStore = null,
+        InMemoryPipelineApiConfigClient? uiSettings = null)
     {
         _dbName = dbName;
         _configStore = configStore;
@@ -70,6 +74,7 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
         _fakeK8sClient = fakeK8sClient;
         _apiKey = apiKey;
         _sharedRedisStore = sharedRedisStore;
+        _uiSettings = uiSettings;
         UseKestrel(0);
     }
 
@@ -168,6 +173,11 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             // "no Job was created" in every chat assertion.
             services.RemoveAll<IKubernetesJobClient>();
             services.AddSingleton<IKubernetesJobClient>(_fakeK8sClient);
+
+            // Spec 052 V16: the settings routes whose handlers read the database answer from the
+            // harness's configuration; the pages reach every other settings route for real.
+            if (_uiSettings is not null)
+                services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter>(new E2ESettingsShim(_uiSettings));
             E2ETestDefaults.InstallKubernetesStub(services);
 
             // Spec 043 moved JobTemplateStore into the API too.

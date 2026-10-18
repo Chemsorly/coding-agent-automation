@@ -23,7 +23,7 @@ using Microsoft.Extensions.Hosting;
 namespace CodingAgent.Web.E2ETests.Infrastructure;
 
 /// <summary>
-/// Starts the Blazor Server app on a real Kestrel port with every external dependency replaced
+/// Starts the web host (the BFF that serves the WebAssembly UI) on a real Kestrel port with every external dependency replaced
 /// by an in-memory fake. Paired with <see cref="ApiE2EWebApplicationFactory"/> by
 /// <see cref="E2EFixture"/>; the two share a database name, a configuration store and a run
 /// history service, so a test seeds once and both processes see it.
@@ -165,13 +165,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // store. Back the client with the same in-memory store so seeding still reaches the UI
             // (and so startup does not retry against an unreachable API for ten minutes).
             ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
-            // Spec 051: Settings goes through /api/ui/settings. Back it with the same store for the
-            // same reason; the API host's template listing, export and import read its database.
-            services.RemoveAll<CodingAgent.Web.Ui.IUiSettingsClient>();
-            services.AddSingleton<CodingAgent.Web.Ui.IUiSettingsClient>(new CodingAgent.Web.E2ETests.Fakes.InMemoryUiSettingsClient(ApiConfigClient, ConfigStore));
-
-            // Spec 051 2.1c: provider configs and checks go through the real /api/ui/settings client to
-            // the API host, which shares this store and FakeProviders and fakes the GitLab check.
+            // Spec 051/052: Settings goes through the real /api/ui/settings client to the API host, which
+            // shares this store and FakeProviders and fakes the GitLab check. The routes whose handlers
+            // read the database answer from this ApiConfigClient there (E2ESettingsShim).
 
             // Same template set as the API host — see E2ETestDefaults.InstallJobTemplates.
             E2ETestDefaults.InstallJobTemplates(services);
@@ -200,10 +196,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // loop status and sends Start, Stop and Resume through /api/ui/loop on the API host
             // (spec 051 D11); the Scheduler's watchdog applies them. The web calls no Scheduler.
 
-            // Shutdown timeout: must exceed ChatTerminationGracePeriodSeconds (10s) so that
-            // Blazor circuits calling TerminateChatSessionAsync on dispose (triggered by
-            // E2ETestBase.DisposeAsync closing the browser context at collection cleanup)
-            // have time to complete before the host is forcefully shut down.  Without this,
+            // Shutdown timeout: must exceed ChatTerminationGracePeriodSeconds (10s) so that a
+            // chat termination still in flight at collection cleanup (End Chat, or a chat page
+            // left just before) has time to complete before the host is forcefully shut down.  Without this,
             // the in-flight HTTP call to the API races with IHttpClientFactory disposal,
             // producing [Test Collection Cleanup Failure (E2E)] ObjectDisposedException.
             // 20s gives 10s for the grace period + 10s buffer for the API's WatcherTask.

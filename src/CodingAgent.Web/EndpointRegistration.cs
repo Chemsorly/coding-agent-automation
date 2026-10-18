@@ -1,3 +1,4 @@
+using CodingAgent.Web.Bff;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components;
 
@@ -39,6 +40,13 @@ internal static class EndpointRegistration
         app.UseStaticFiles();
         app.MapStaticAssets().AllowAnonymous();
 
+        // Spec 052 DD7: the path, CSRF and hub-origin rules run before authentication, so a refused
+        // request is never forwarded and gets the same status with or without a session (Req 2.11).
+        // The WebSockets middleware makes HttpContext.WebSockets recognise an upgrade (HTTP/1.1 and
+        // HTTP/2) for the guard; YARP still proxies the upgrade itself.
+        app.UseWebSockets();
+        app.UseWhen(context => BffRequestGuard.AppliesTo(context.Request.Path), guarded => guarded.Use(BffRequestGuard.InvokeAsync));
+
         // Spec 049: every other endpoint requires a signed-in user (fallback policy). Order:
         // rate limiter (login), authentication, authorization, then antiforgery for form posts.
         app.UseRateLimiter();
@@ -47,13 +55,17 @@ internal static class EndpointRegistration
         app.UseAntiforgery();
         app.MapAuthEndpoints();
 
+        // Spec 052: the session endpoint and the two forwarders to the Pipeline API.
+        app.MapBffSession();
+        app.MapBffForwarders(app.Configuration.GetValue<string>("PipelineApi:BaseUrl")!);
+
         // Config import/export endpoints now served by CodingAgent.Api.
 
-        // frame-ancestors is part of the policy UseSecurityHeaders sends on every response.
-        // The routed pages live in CodingAgent.Web.Client (spec 051 D9); Login stays in this assembly.
+        // Spec 052: the routed pages run in the browser as WebAssembly (CodingAgent.Web.Client); the static
+        // login page stays in this assembly. frame-ancestors is part of the policy UseSecurityHeaders sends.
         app.MapRazorComponents<App>()
-            .AddInteractiveServerRenderMode(options => options.ContentSecurityFrameAncestorsPolicy = null)
-            .AddAdditionalAssemblies(Components.Routes.ClientAssembly);
+            .AddInteractiveWebAssemblyRenderMode()
+            .AddAdditionalAssemblies(typeof(Routes).Assembly);
 
         return app;
     }

@@ -25,14 +25,14 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///
 /// Note on live-streaming assertions: testing that output lines appear in the DOM in real
 /// time requires the Blazor page's hub subscription (SubscribeLiveAsync) to complete within
-/// the test window. This subscription is sensitive to Blazor circuit establishment timing
+/// the test window. This subscription is sensitive to when the WebAssembly client starts
 /// and has been observed to be unreliable under CI load (see issue #3108 analysis). Scenarios
 /// 1 and 2 therefore verify the structural and persistence behaviour (panel visibility,
 /// output ordering in the saved tail) rather than real-time DOM updates.
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
-public sealed class AgentOutputTests : E2ETestBase
+public sealed partial class AgentOutputTests : E2ETestBase
 {
     public AgentOutputTests(E2EFixture fixture) : base(fixture) { }
 
@@ -127,8 +127,8 @@ public sealed class AgentOutputTests : E2ETestBase
     ///
     /// Note: live-streaming assertions (lines appearing in the DOM in real time) are intentionally
     /// omitted. The Blazor page subscribes to the hub inside SubscribeLiveAsync which runs in
-    /// OnAfterRenderAsync; this hub subscription is sensitive to Blazor circuit establishment
-    /// timing and has proven unreliable under CI load. The structural and persistence behaviours
+    /// OnAfterRenderAsync; this hub subscription is sensitive to when the WebAssembly client
+    /// starts and has proven unreliable under CI load. The structural and persistence behaviours
     /// tested here are load-independent and provide stable coverage of the same output feature.
     /// </summary>
     [Fact]
@@ -361,4 +361,119 @@ public sealed class AgentOutputTests : E2ETestBase
         Assert.False(await detail.IsCancelButtonVisibleAsync(),
             "Cancel Pipeline button should not be visible for a completed run");
     }
+
+    // ── Scenario 4: the hub connection drops and comes back ───────────────────────
+
+    /// <summary>
+    /// Spec 052 Req 4.2, 4.3, 9.5: the page's UI hub WebSocket (through the web host) is cut, as when the
+    /// web pod that carried it stops. The page is not reloaded and keeps its state; SignalR reconnects,
+    /// rejoins the run's group, and live output resumes.
+    /// </summary>
+    [Fact]
+    public async Task Scenario4_DroppedHubConnection_KeepsThePage_AndResumesLiveOutput()
+    {
+        var hubSockets = new System.Collections.Concurrent.ConcurrentQueue<Microsoft.Playwright.IWebSocketRoute>();
+        await Page.RouteWebSocketAsync(UiHubSocket(), ws =>
+        {
+            ws.ConnectToServer();
+            hubSockets.Enqueue(ws);
+        });
+
+        await using var agent = new FakeAgentClient("output-agent-s4", "e2e");
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        var (assignment, runId) = await SeedDispatchAndAcceptAsync(agent, "out-s4");
+        await agent.ReportStepAsync(assignment.JobId, PipelineStep.CloningRepository);
+
+        var detail = new RunDetailPage(Page, BaseUrl);
+        await detail.NavigateAsync(runId);
+        Assert.True(await detail.HasLiveOutputPanelAsync(), "Live output card must be visible while the run is active");
+        var liveLog = Page.Locator("pre.run-live-log");
+
+        await ReportUntilShownAsync(agent, assignment.JobId, liveLog, "s4-before-drop");
+
+        // Page state that a reload would lose.
+        await Page.EvaluateAsync("() => { window.__e2eKept = 'kept'; }");
+
+        var socketsBefore = hubSockets.Count;
+        await hubSockets.Last().CloseAsync(new() { Code = 1006, Reason = "web pod stopped" });
+        await WaitUntilAsync(() => hubSockets.Count > socketsBefore, TimeSpan.FromSeconds(30));
+
+        await ReportUntilShownAsync(agent, assignment.JobId, liveLog, "s4-after-reconnect");
+        Assert.Equal("kept", await Page.EvaluateAsync<string>("() => window.__e2eKept"));
+        Assert.Contains("s4-before-drop", await liveLog.InnerTextAsync());
+    }
+
+    /// <summary>
+    /// Reports a numbered line until one shows in the live log: right after a (re)connect the page may not
+    /// have joined the run's group yet, and a line sent before that is not delivered to it.
+    /// </summary>
+    private static async Task ReportUntilShownAsync(FakeAgentClient agent, string jobId, Microsoft.Playwright.ILocator liveLog, string prefix)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        for (var attempt = 1; DateTime.UtcNow < deadline; attempt++)
+        {
+            await agent.ReportOutputAsync(jobId, $"{prefix}-{attempt}");
+            try
+            {
+                await Microsoft.Playwright.Assertions.Expect(liveLog).ToContainTextAsync(prefix, new() { Timeout = 2_000 });
+                return;
+            }
+            catch (Microsoft.Playwright.PlaywrightException) when (DateTime.UtcNow < deadline)
+            {
+                // Not delivered yet: send the next line.
+            }
+        }
+        throw new TimeoutException($"No '{prefix}' line reached the live log within 30 s.");
+    }
+
+    // ── Scenario 5: the hub connection ends with the session ──────────────────────
+
+    /// <summary>
+    /// Spec 052 Req 3.4, 9.5, 14.3: T5 through the BFF. The run page's hub connection is forwarded with a
+    /// hub token that ends with the session, so the API closes it at expiry (the API side is
+    /// UiHubTests); the page then reaches the login page through the session heartbeat, without any user
+    /// action. The browser is re-signed in as the project's operator with a 10-second session.
+    /// </summary>
+    [Fact]
+    public async Task Scenario5_HubConnection_ClosesAtSessionExpiry_AndThePageReachesTheLoginPage()
+    {
+        await using var agent = new FakeAgentClient("output-agent-s5", "e2e");
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        var (assignment, runId) = await SeedDispatchAndAcceptAsync(agent, "out-s5");
+        await agent.ReportStepAsync(assignment.JobId, PipelineStep.CloningRepository);
+
+        // The API ends the connection with SignalR's close message, after which either side may close the
+        // socket first; with an OnClose handler set, the route forwards nothing itself.
+        var hubClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await Page.RouteWebSocketAsync(UiHubSocket(), ws =>
+        {
+            var server = ws.ConnectToServer();
+            server.OnClose((code, reason) =>
+            {
+                hubClosed.TrySetResult();
+                _ = ws.CloseAsync(new() { Code = code, Reason = reason });
+            });
+            ws.OnClose((code, reason) =>
+            {
+                hubClosed.TrySetResult();
+                _ = server.CloseAsync(new() { Code = code, Reason = reason });
+            });
+        });
+
+        // A request, not a page load: the context's request API shares the browser's cookie jar.
+        var signIn = await Page.Context.APIRequest.GetAsync(E2ETestSignIn.SignInUrl(BaseUrl, "e2e-operator", E2ETestSignIn.TeamGroup) + "&ttl=10");
+        Assert.True(signIn.Ok, $"test sign-in answered {signIn.Status}");
+        var detail = new RunDetailPage(Page, BaseUrl);
+        await detail.NavigateAsync(runId);
+        Assert.True(await detail.HasLiveOutputPanelAsync(), "the run page subscribes to the live run over the hub");
+
+        await hubClosed.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await Page.WaitForURLAsync(LoginRedirect(), new() { Timeout = 50_000 });
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("/hubs/ui")]
+    private static partial System.Text.RegularExpressions.Regex UiHubSocket();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"/login\?returnUrl=")]
+    private static partial System.Text.RegularExpressions.Regex LoginRedirect();
 }

@@ -2,6 +2,9 @@ using System.Collections.Concurrent;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Orchestration.Dispatch;
+using Microsoft.Extensions.DependencyInjection;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
@@ -21,9 +24,9 @@ namespace CodingAgent.Web.E2ETests.Infrastructure;
 /// endpoints:
 /// <list type="number">
 ///   <item>poll <c>GET /api/work-items/pending</c>;</item>
-///   <item>pick an idle registered agent whose labels satisfy the item's selector;</item>
-///   <item><c>POST /api/work-items/{id}/claim</c> with that agent as <c>AssignedAgentId</c>
-///         — the transition to <c>Dispatched</c>;</item>
+///   <item>pick an idle registered agent whose labels satisfy the item's selector, move the item
+///         <c>Pending → Dispatched</c> with that agent as <c>AssignedAgentId</c> (the API's own compare-and-swap,
+///         as <c>POST /dispatch</c> does without the Kubernetes Job) and post <c>agent:in-progress</c>;</item>
 ///   <item>bootstrap the agent the way a pod bootstraps: fetch the assignment over HTTP, then
 ///         re-register on the hub declaring its active job.</item>
 /// </list>
@@ -38,6 +41,8 @@ public sealed class FakeJobController : IAsyncDisposable
     private readonly IPipelineApiWorkItemClient _workItems;
     private readonly AgentRegistryService _registry;
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly WorkItemTransitionService _transitions;
+    private readonly ILabelSwapService _labelSwap;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
 
@@ -77,11 +82,14 @@ public sealed class FakeJobController : IAsyncDisposable
     public FakeJobController(
         IPipelineApiWorkItemClient workItems,
         AgentRegistryService registry,
-        IDbContextFactory<PipelineDbContext> dbFactory)
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IServiceProvider apiServices)
     {
         _workItems = workItems;
         _registry = registry;
         _dbFactory = dbFactory;
+        _transitions = apiServices.GetRequiredService<WorkItemTransitionService>();
+        _labelSwap = apiServices.GetRequiredService<ILabelSwapService>();
         _loop = Task.Run(() => PollAsync(_cts.Token));
     }
 
@@ -124,41 +132,38 @@ public sealed class FakeJobController : IAsyncDisposable
     {
         await ReconcileOnceAsync(ct);
 
-        // ── Legacy path: Pending items (consolidation still uses this) ────────────────────
+        // ── Pending items (consolidation and queued runs) ─────────────────────────────────
+        // In production the Scheduler's WorkItemDispatchLoop calls POST /dispatch, which takes a
+        // Postgres advisory lock, creates the Job, moves the item to Dispatched and posts
+        // agent:in-progress. The harness has neither Postgres nor Kubernetes, so it produces the same
+        // outcome in process: the API's own Pending→Dispatched compare-and-swap and label service.
         var pending = await _workItems.GetPendingAsync(50, ct: ct);
         foreach (var item in pending)
         {
             var agent = FindIdleAgentFor(item.AgentSelector);
             if (agent is null) continue; // no capacity — the item stays Pending, as in production
 
-            var claim = await _workItems.ClaimAsync(
-                item.Id,
-                new ClaimWorkItemRequest
+            var dispatched = await _transitions.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched,
+                entity =>
                 {
-                    AssignedAgentId = agent.AgentId.Value,
-                    DispatchedAt = DateTimeOffset.UtcNow
-                },
-                ct);
-
-            // null means another claimant won the race (409). Leave it alone.
-            if (claim is null) continue;
+                    entity.AssignedAgentId = agent.AgentId.Value;
+                    entity.DispatchedAt = DateTimeOffset.UtcNow;
+                }, ct);
+            if (!dispatched) continue; // another pass won the race
 
             ClaimedWorkItemIds.Add(item.Id);
             _inFlight[item.Id] = agent.AgentId.Value;
 
-            // The in-progress label, exactly as DispatchLoop posts it once the Job exists. It is
-            // the only signal an operator has on the issue tracker that work has started, and the
-            // terminal swap the agent posts later replaces it rather than appending — so a harness
-            // that skips this step shows the issue going straight from untouched to done, and the
-            // epic-decomposition tests that assert on the transition fail on the label they never
-            // saw. Non-fatal here for the same reason it is there: the work is already running.
+            // The in-progress label is the only sign on the tracker that work has started, and the
+            // agent's terminal swap replaces it: the epic-decomposition tests assert on the transition.
+            // Non-fatal, as in production: the work is already running.
             try
             {
-                await _workItems.PostLabelSwapAsync(item.Id, "agent:in-progress", ct);
+                await PostInProgressLabelAsync(item.Id, ct);
             }
-            catch
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Swallowed deliberately — see above.
+                Serilog.Log.Warning(ex, "FakeJobController: in-progress label for WorkItem {WorkItemId} failed", item.Id);
             }
 
             if (FakeAgentClient.TryGetConnected(agent.AgentId.Value, out var fakeAgent))
@@ -166,8 +171,7 @@ public sealed class FakeJobController : IAsyncDisposable
         }
 
         // ── Dispatched items ─────────────────────────────────────────────────────────────
-        // Items that are already Dispatched (seeded so by a test, or claimed elsewhere) never
-        // show up in the Pending poll above.
+        // Items dispatched by the pass above, by a test's seed or by the UI's synchronous dispatch.
         // Poll GetActiveAsync with a large negative olderThanSeconds so the cutoff is far in the
         // future, matching all active items regardless of when they were dispatched.
         var active = await _workItems.GetActiveAsync(olderThanSeconds: -3600, ct: ct);
@@ -212,6 +216,26 @@ public sealed class FakeJobController : IAsyncDisposable
             if (FakeAgentClient.TryGetConnected(agent.AgentId.Value, out var fakeAgent))
                 await fakeAgent.StartAssignedWorkItemAsync(item.Id, ct);
         }
+    }
+
+    /// <summary>
+    /// Swaps the item's issue (a review's pull request) to agent:in-progress, as the dispatch path does.
+    /// A review's label goes through its repository provider, which only the payload names.
+    /// </summary>
+    private async Task PostInProgressLabelAsync(Guid workItemId, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems.AsNoTracking().FirstAsync(w => w.Id == workItemId, ct);
+        var isReview = item.TaskType == WorkItemTaskType.Review;
+        var providerConfigId = item.IssueProviderConfigId;
+        if (isReview && item.Payload is { } payload && System.Text.Json.JsonSerializer.Deserialize<JobDistributionRequest>(
+                payload, CodingAgent.Pipeline.PipelineJsonOptions.Default) is { RepoProviderConfigId: { Length: > 0 } repo })
+        {
+            providerConfigId = repo;
+        }
+
+        await _labelSwap.SwapLabelWithRetryAsync(workItemId, new ProviderConfigId(providerConfigId), new IssueIdentifier(item.IssueIdentifier),
+            isReview ? LabelTargetKind.PullRequest : LabelTargetKind.Issue, ct);
     }
 
     /// <summary>

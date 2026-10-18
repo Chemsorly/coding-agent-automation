@@ -222,64 +222,6 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             }
         }
     }
-
-    /// <summary>
-    /// Posts a label-swap request to the orchestrator for the given work item.
-    /// The API uses the <paramref name="label"/> field for wire compatibility but always swaps to agent:in-progress.
-    /// Transient failures (5xx, network errors) are retried transparently by the resilience handler.
-    /// </summary>
-    /// <returns>True if accepted (200); false if the work item was not found (404).</returns>
-    /// <exception cref="WorkItemLabelSwapException">Thrown when all retries are exhausted.</exception>
-    public async Task<bool> PostLabelSwapAsync(string workItemId, string label, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(workItemId);
-        ArgumentNullException.ThrowIfNull(label);
-
-        HttpResponseMessage response;
-        try
-        {
-            var url = string.IsNullOrEmpty(AgentId)
-                ? $"/api/work-items/{workItemId}/label-swap"
-                : $"/api/work-items/{workItemId}/label-swap?agentId={Uri.EscapeDataString(AgentId)}";
-
-            using var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Content = JsonContent.Create(new { label }, options: JsonOptions);
-            InjectTraceContext(request);
-            response = await _httpClient.SendAsync(request, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Error(ex, "All retries exhausted for POST label-swap for work item {WorkItemId}", workItemId);
-            throw new WorkItemLabelSwapException(
-                $"All retries exhausted for POST label-swap for work item {workItemId}: {ex.Message}", ex);
-        }
-
-        using (response)
-        {
-            switch (response.StatusCode)
-            {
-                case HttpStatusCode.OK:
-                    _logger.Information("Posted label-swap for work item {WorkItemId}", workItemId);
-                    return true;
-
-                case HttpStatusCode.NotFound:
-                    _logger.Warning("Work item {WorkItemId} not found (404) for label-swap POST", workItemId);
-                    return false;
-
-                default:
-                    if ((int)response.StatusCode >= 500)
-                    {
-                        _logger.Error("Server error {StatusCode} from POST label-swap for work item {WorkItemId} (retries exhausted)",
-                            (int)response.StatusCode, workItemId);
-                        throw new WorkItemLabelSwapException(
-                            $"Server error {(int)response.StatusCode} from POST label-swap for work item {workItemId} (retries exhausted)");
-                    }
-                    _logger.Error("Unexpected status {StatusCode} from POST /api/work-items/{WorkItemId}/label-swap",
-                        (int)response.StatusCode, workItemId);
-                    return false;
-            }
-        }
-    }
 }
 
 /// <summary>
@@ -308,13 +250,4 @@ public sealed class WorkItemStatusPostException : Exception
 
     /// <inheritdoc cref="WorkItemFetchException.IsUnreachable"/>
     public bool IsUnreachable => InnerException is not null;
-}
-
-/// <summary>
-/// Thrown when the agent cannot POST a label-swap request after all retries.
-/// </summary>
-public sealed class WorkItemLabelSwapException : Exception
-{
-    public WorkItemLabelSwapException(string message) : base(message) { }
-    public WorkItemLabelSwapException(string message, Exception inner) : base(message, inner) { }
 }

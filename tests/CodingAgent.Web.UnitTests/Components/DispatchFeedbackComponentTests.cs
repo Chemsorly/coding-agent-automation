@@ -76,8 +76,6 @@ public class DispatchFeedbackComponentTests : BunitContext
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
         mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
-        mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         Services.AddSingleton<CodingAgent.Api.Client.IPipelineApiConfigClient>(mockConfigClient.Object);
         Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiConfig(mockConfigClient).Object);
         Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiSettingsClient>().Object);

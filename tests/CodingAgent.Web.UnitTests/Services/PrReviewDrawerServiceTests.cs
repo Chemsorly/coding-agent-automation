@@ -24,7 +24,7 @@ public class PrReviewDrawerServiceTests
         _mockBrowse.Setup(b => b.GetLabelsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<string>());
         _mockDispatch = new Mock<IUiDispatchClient>();
 
-        _service = new PrReviewDrawerService(_mockBrowse.Object, _mockDispatch.Object);
+        _service = new PrReviewDrawerService(_mockBrowse.Object, _mockDispatch.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<PrReviewDrawerService>.Instance);
     }
 
     private static PipelineJobTemplate MakeTemplate(string id = "t-1") =>
@@ -38,7 +38,7 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
-        var svc = new PrReviewDrawerService(new Mock<IUiBrowseClient>().Object, new Mock<IUiDispatchClient>().Object);
+        var svc = new PrReviewDrawerService(new Mock<IUiBrowseClient>().Object, new Mock<IUiDispatchClient>().Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<PrReviewDrawerService>.Instance);
         Assert.NotNull(svc);
         svc.Dispose();
     }

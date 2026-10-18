@@ -45,9 +45,9 @@ Per-invocation detail stays in the trace: `invoke_agent {phase}` spans carry `ag
 
 ## Grafana Faro Frontend Observability
 
-The Orchestrator (Blazor Server) emits frontend Real User Monitoring data to Grafana Faro. Faro is initialized in `wwwroot/js/faro-init.js` via an async CDN bundle load from `unpkg.com`. When `Faro__CollectorUrl` is absent or empty, Faro stays as a no-op stub — no errors, no impact on page load.
+The browser UI (Blazor WebAssembly) emits frontend Real User Monitoring data to Grafana Faro. Faro is initialized in `wwwroot/js/faro-init.js` via an async CDN bundle load from `unpkg.com`. When `Faro__CollectorUrl` is absent or empty, Faro stays as a no-op stub — no errors, no impact on page load.
 
-Data collected includes: page load timing, Blazor circuit errors, unhandled JS exceptions, and custom frontend log events. See [Configuration — Frontend Observability](../configuration.md#frontend-observability-grafana-faro) for setup.
+Data collected includes: page load timing and web vitals, unhandled JS exceptions, console warnings and errors (`consoleInstrumentation.disabledLevels` keeps Trace to Info in the browser), fetch spans that start the browser → web host → API trace (the polls are in `ignoreUrls`), and the UI's notifications. There are no circuit events; Faro's session tracking marks a browser session. See [Observability — Frontend Observability](../observability.md#frontend-observability-grafana-faro) and [Configuration — Frontend Observability](../configuration.md#frontend-observability-grafana-faro) for setup.
 
 ## Work Distribution Metrics
 

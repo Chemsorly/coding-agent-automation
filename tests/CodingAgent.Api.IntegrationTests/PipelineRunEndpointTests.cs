@@ -173,39 +173,24 @@ public sealed class PipelineRunEndpointTests
     }
 
     [Fact]
-    public async Task GetRunById_RoundTripsIssueUrl()
+    public async Task GetRunHistory_RoundTripsIssueUrl()
     {
         const string url = "https://github.com/owner/repo/issues/42";
         var runId = SeedRun(issueUrl: url);
 
-        var response = await _client.GetAsync($"/api/pipeline-runs/{runId}");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var summary = await FindInHistoryAsync(runId);
 
-        var summary = await response.Content.ReadFromJsonAsync<PipelineRunSummary>(PipelineJsonOptions.Default);
         summary.Should().NotBeNull();
         summary!.IssueUrl.Should().Be(url);
     }
 
-    // ── Single run ────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task GetRunById_Returns200_WithCorrectId()
+    /// <summary>The run from the history list; the service surface serves no single-run read (spec 052 Req 14.10).</summary>
+    private async Task<PipelineRunSummary?> FindInHistoryAsync(Guid runId)
     {
-        var runId = SeedRun();
-
-        var response = await _client.GetAsync($"/api/pipeline-runs/{runId}");
+        var response = await _client.GetAsync("/api/pipeline-runs?pageSize=500");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var summary = await response.Content.ReadFromJsonAsync<PipelineRunSummary>(PipelineJsonOptions.Default);
-        summary.Should().NotBeNull();
-        summary!.RunId.Should().Be(runId.ToString());
-    }
-
-    [Fact]
-    public async Task GetRunById_Returns404_WhenNotFound()
-    {
-        var response = await _client.GetAsync($"/api/pipeline-runs/{Guid.NewGuid()}");
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var page = await response.Content.ReadFromJsonAsync<PagedResult<PipelineRunSummary>>(PipelineJsonOptions.Default);
+        return page!.Items.SingleOrDefault(r => r.RunId == runId.ToString());
     }
 
     // ── Export ────────────────────────────────────────────────────────────────────
@@ -310,11 +295,8 @@ public sealed class PipelineRunEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.Created,
             "POST /api/pipeline-runs should return 201 Created when operator-authenticated");
 
-        // Confirm the run is now retrievable
-        var getResponse = await _client.GetAsync($"/api/pipeline-runs/{runId}");
-        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-        var retrieved = await getResponse.Content.ReadFromJsonAsync<PipelineRunSummary>(PipelineJsonOptions.Default);
-        retrieved!.RunId.Should().Be(runId.ToString());
+        // Confirm the run is now in the history
+        (await FindInHistoryAsync(runId)).Should().NotBeNull();
     }
 
     /// <summary>

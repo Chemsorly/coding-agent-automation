@@ -61,6 +61,8 @@ public partial class LayerBoundaryTests
     private static readonly string[] BrowserSafeAspNetCoreAssemblies =
     [
         "Microsoft.AspNetCore.Components", "Microsoft.AspNetCore.Components.Web", "Microsoft.AspNetCore.Components.Forms",
+        // Spec 052: the browser host itself (WebAssemblyHostBuilder); it runs only in the browser.
+        "Microsoft.AspNetCore.Components.WebAssembly",
         "Microsoft.AspNetCore.Components.Authorization", "Microsoft.AspNetCore.Authorization", "Microsoft.AspNetCore.Metadata",
         "Microsoft.AspNetCore.SignalR.Client", "Microsoft.AspNetCore.SignalR.Client.Core", "Microsoft.AspNetCore.SignalR.Common",
         "Microsoft.AspNetCore.SignalR.Protocols.Json", "Microsoft.AspNetCore.Http.Connections.Client",
