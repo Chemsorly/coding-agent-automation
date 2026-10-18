@@ -571,4 +571,62 @@ public class WriteOpenIssueContextLogicTests : IDisposable
 
         markdown.Should().NotContain("status:");
     }
+
+    // ── Security: Path traversal ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task WriteOpenIssueContextAsync_TraversalIdentifier_ThrowsInvalidOperationException()
+    {
+        // Arrange: pre-create the directory that the traversal would target.
+        // outputDir = {workspace}/.agent/open-issues
+        // Path.Combine(outputDir, "../../etc/target.md") resolves to {workspace}/etc/target.md
+        // Without pre-creating {workspace}/etc/, File.WriteAllTextAsync would throw
+        // DirectoryNotFoundException (caught and swallowed) — the vulnerability would be invisible.
+        // Pre-creating the directory ensures the write actually succeeds before the fix, so the
+        // test correctly fails before the fix (no exception thrown) and passes after (exception thrown).
+        var traversalTargetDir = Path.Combine(_workspacePath, "etc");
+        Directory.CreateDirectory(traversalTargetDir);
+
+        _issueOps.Setup(x => x.ListOpenIssuesAsync(1, 30, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Page(false, Summary("../../etc/target")));
+        _issueOps.Setup(x => x.GetIssueAsync("../../etc/target", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Detail("../../etc/target"));
+
+        var writer = new OpenIssueContextWriter(_logger);
+
+        // Act & Assert: after fix, InvalidOperationException propagates out of WriteOpenIssueContextAsync.
+        // Before fix, the write succeeds silently (no exception) and the ThrowAsync assertion fails.
+        var act = () => writer.WriteOpenIssueContextAsync(
+            _issueOps.Object,
+            new WorkspacePath(_workspacePath),
+            maxIssues: 1,
+            ct: CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        // Also verify: no file was written at the traversal target path
+        var traversalFile = Path.Combine(traversalTargetDir, "target.md");
+        File.Exists(traversalFile).Should().BeFalse("no file should be written outside the output directory");
+    }
+
+    [Fact]
+    public async Task WriteOpenIssueContextStep_TraversalIdentifier_ThrowsInvalidOperationException()
+    {
+        // Routes through WriteOpenIssueContextStep (the production code path) to ensure the
+        // security check is not bypassed if the step ever wraps its call in a broad catch block.
+        var traversalTargetDir = Path.Combine(_workspacePath, "etc");
+        Directory.CreateDirectory(traversalTargetDir);
+
+        _issueOps.Setup(x => x.ListOpenIssuesAsync(1, 30, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Page(false, Summary("../../etc/target")));
+        _issueOps.Setup(x => x.GetIssueAsync("../../etc/target", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Detail("../../etc/target"));
+
+        var act = () => RunStep();
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        var traversalFile = Path.Combine(traversalTargetDir, "target.md");
+        File.Exists(traversalFile).Should().BeFalse("no file should be written outside the output directory");
+    }
 }
