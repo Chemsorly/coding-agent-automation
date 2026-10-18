@@ -127,22 +127,34 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
     {
         var writtenCount = 0;
 
+        var resolvedOutputDir = Path.GetFullPath(outputDir);
+
         foreach (var identifier in identifiers)
         {
             ct.ThrowIfCancellationRequested();
 
+            // Containment check: validate BEFORE the try-catch so a traversal attempt propagates to
+            // the caller rather than being swallowed by the per-item exception handler below.
+            // An identifier sourced from an external provider could contain directory-separator
+            // sequences (e.g. "../../etc/passwd") that cause Path.Combine to resolve outside outputDir.
+            var candidatePath = Path.Combine(outputDir, $"{identifier}.md");
+            var resolvedCandidate = Path.GetFullPath(candidatePath);
+            if (!resolvedCandidate.StartsWith(resolvedOutputDir + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            {
+                // Sanitize the identifier before embedding it in the message to prevent log injection
+                // via embedded newline sequences (e.g. "../../x\n[ERROR] fake log entry").
+                var safeIdentifier = identifier.ReplaceLineEndings("\\n");
+                throw new InvalidOperationException(
+                    $"Issue identifier '{safeIdentifier}' resolves to '{resolvedCandidate}' " +
+                    $"which is outside the permitted output directory '{resolvedOutputDir}'.");
+            }
+
             try
             {
                 var detail = await issueOps.GetIssueAsync(identifier, ct);
-                // TODO [WARNING]: Path traversal via unvalidated issue identifier. The identifier originates
-                // from the external API (ListOpenIssuesAsync / ListClosedIssuesAsync) and is used directly
-                // in Path.Combine. An identifier containing directory separators (e.g. "../../etc/passwd")
-                // allows writes outside outputDir. Mitigate by sanitising with Path.GetFileName(identifier)
-                // or by checking that the resolved path starts with outputDir before writing.
-                var filePath = Path.Combine(outputDir, $"{identifier}.md");
                 var content = FormatIssueMarkdown(detail, isClosed);
 
-                await File.WriteAllTextAsync(filePath, content, Encoding.UTF8, ct);
+                await File.WriteAllTextAsync(candidatePath, content, Encoding.UTF8, ct);
                 writtenCount++;
             }
             catch (OperationCanceledException)
