@@ -233,32 +233,7 @@ public sealed partial class PipelineLoopService
         Dictionary<string, List<IssueSummary>> issueQueues,
         IReadOnlyDictionary<string, int>? failuresBefore = null,
         IReadOnlyDictionary<string, ConfigStatusSnapshot>? templateStatuses = null)
-    {
-        var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        foreach (var template in pollableTemplates)
-        {
-            if (!issueQueues.TryGetValue(template.Id, out var issues))
-                continue; // template was not polled this cycle — fail open, omit from map
-
-            // Skip templates that failed (or got rate-limited) during this cycle: their
-            // issueQueues entry was cleared by HandleRateLimitException/HandleGenericPollException
-            // and represents missing data, not a genuine empty queue.
-            // TODO [WARNING]: When templateStatuses contains an entry for a template but
-            // failuresBefore does not (or vice versa), the ConsecutiveFailures check is skipped
-            // and the template is included in the eligibility map with whatever issueQueues holds.
-            // If a template fails during the cycle (ConsecutiveFailures incremented) but its ID
-            // was never recorded in failuresBefore, the stale/empty issue list is treated as a
-            // genuine "zero eligible issues" eligibility set, potentially cancelling WorkItems for
-            // a provider whose poll data is unreliable. In practice failuresBefore is always built
-            // from the same _templateStatuses snapshot before polling, so the two should always be
-            // in sync — but this is not enforced by the type system.
-            if (IsSameEligibilityShouldSkip(template.Id, failuresBefore, templateStatuses))
-                continue;
-
-            AddToEligibilityMap(result, template.IssueProviderId, issues.Select(i => i.Identifier));
-        }
-        return result;
-    }
+        => BuildEligibilityMapCore(pollableTemplates, issueQueues, i => i.Identifier, failuresBefore, templateStatuses);
 
     /// <summary>
     /// Builds a provider-keyed PR eligibility map from the already-polled PR queues.
@@ -288,26 +263,54 @@ public sealed partial class PipelineLoopService
         Dictionary<string, List<PullRequestSummary>> prQueues,
         IReadOnlyDictionary<string, int>? failuresBefore = null,
         IReadOnlyDictionary<string, ConfigStatusSnapshot>? templateStatuses = null)
+        => BuildEligibilityMapCore(pollableTemplates, prQueues, pr => pr.Identifier, failuresBefore, templateStatuses);
+
+    /// <summary>
+    /// Shared loop body for <see cref="BuildEligibilityMap"/> and <see cref="BuildPrEligibilityMap"/>.
+    /// Builds a provider-keyed eligibility map from an already-polled queue dictionary.
+    /// <para>
+    /// <paramref name="getIdentifier"/> extracts the eligible-item identifier from each queue element
+    /// (e.g. <c>i =&gt; i.Identifier</c> for <see cref="IssueSummary"/>,
+    /// <c>pr =&gt; pr.Identifier</c> for <see cref="PullRequestSummary"/>).
+    /// </para>
+    /// <para>
+    /// TODO [WARNING]: When <paramref name="templateStatuses"/> contains an entry for a template but
+    /// <paramref name="failuresBefore"/> does not (or vice versa), the ConsecutiveFailures check inside
+    /// <see cref="IsSameEligibilityShouldSkip"/> is skipped and the template is included in the
+    /// eligibility map with whatever the queue holds. If a template fails during this cycle
+    /// (ConsecutiveFailures incremented) but its ID was never recorded in <paramref name="failuresBefore"/>,
+    /// the stale/empty list is treated as a genuine "zero eligible items" set, potentially cancelling
+    /// WorkItems for a provider whose poll data is unreliable. In practice <paramref name="failuresBefore"/>
+    /// is always built from the same <c>_templateStatuses</c> snapshot before polling, so the two
+    /// dictionaries are always in sync — but this is not enforced by the type system.
+    /// </para>
+    /// <para>
+    /// TODO [WARNING] (PR-specific): The ConsecutiveFailures guard checks the issue-polling failure
+    /// counter. A PR-only polling failure (thrown inside <c>PollPrQueueAsync</c>) does NOT increment
+    /// ConsecutiveFailures — it just omits the queue entry. When called for PR queues, the absent-key
+    /// guard in <see cref="BuildPrEligibilityMap"/> (the <c>TryGetValue</c> check before this method
+    /// is invoked) already handles that case correctly. If issue polling also fails in the same cycle,
+    /// ConsecutiveFailures increases and <see cref="IsSameEligibilityShouldSkip"/> fires too —
+    /// redundant but harmless.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyDictionary<string, HashSet<string>> BuildEligibilityMapCore<T>(
+        IReadOnlyList<PipelineJobTemplate> pollableTemplates,
+        Dictionary<string, List<T>> queues,
+        Func<T, string> getIdentifier,
+        IReadOnlyDictionary<string, int>? failuresBefore,
+        IReadOnlyDictionary<string, ConfigStatusSnapshot>? templateStatuses)
     {
         var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var template in pollableTemplates)
         {
-            if (!prQueues.TryGetValue(template.Id, out var prs))
-                continue; // template not polled for PRs this cycle (e.g. ReviewEnabled=false, or poll threw) — fail open
+            if (!queues.TryGetValue(template.Id, out var items))
+                continue;
 
-            // Same-cycle failure and rate-limit guards — mirrors BuildEligibilityMap exactly.
-            // TODO [WARNING]: The ConsecutiveFailures guard here checks the issue-polling failure counter
-            // (incremented when issue polling fails). A PR-only polling failure (thrown inside
-            // PollPrQueueAsync) does NOT increment ConsecutiveFailures — it just omits the prQueues
-            // entry and logs a Warning. The absent-key guard above (TryGetValue check) correctly handles
-            // that PR-poll-failure case. If issue polling also fails in the same cycle, ConsecutiveFailures
-            // increases and this guard fires too — which is redundant but harmless (still fail-open).
-            // The XML doc comment for this guard should say "issue polling failed this cycle (PR polling
-            // failure is already handled by the absent-key guard above)" rather than just "poll failed".
             if (IsSameEligibilityShouldSkip(template.Id, failuresBefore, templateStatuses))
                 continue;
 
-            AddToEligibilityMap(result, template.IssueProviderId, prs.Select(pr => pr.Identifier));
+            AddToEligibilityMap(result, template.IssueProviderId, items.Select(getIdentifier));
         }
         return result;
     }
@@ -315,7 +318,9 @@ public sealed partial class PipelineLoopService
     /// <summary>
     /// Returns <c>true</c> when a template should be skipped from eligibility maps because
     /// it was rate-limited or failed during the current cycle (poll data is unreliable).
-    /// Shared by <see cref="BuildEligibilityMap"/> and <see cref="BuildPrEligibilityMap"/>.
+    /// Called from <see cref="BuildEligibilityMapCore{T}"/>. See the TODO in
+    /// <c>BuildEligibilityMapCore&lt;T&gt;</c> for the <c>failuresBefore</c>/<c>templateStatuses</c>
+    /// sync caveat.
     /// </summary>
     private static bool IsSameEligibilityShouldSkip(
         string templateId,
