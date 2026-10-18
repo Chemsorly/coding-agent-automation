@@ -21,6 +21,11 @@ namespace CodingAgent.Api.IntegrationTests;
 /// Debug, not as an unhandled <see cref="OperationCanceledException"/> the request log reports as a 500
 /// Warning (<see cref="ClientAbortedRequests"/>).
 /// </summary>
+/// <remarks>
+/// In the shared collection, like the other tests that build their own host: two hosts starting at once race on
+/// Serilog's static bootstrap logger ("The logger is already frozen").
+/// </remarks>
+[Collection(ApiIntegrationTestCollection.Name)]
 public sealed class ClientAbortedRequestTests
 {
     private const string BacklogPath = "/api/ui/backlog";

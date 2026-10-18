@@ -20,8 +20,7 @@ public static class AgentJobPvcs
         return HeldBy(jobs?.Items ?? []);
     }
 
-    /// <summary>The PVCs that the Jobs of <paramref name="jobs"/> that have not ended mount.</summary>
-    public static IReadOnlySet<string> HeldBy(IEnumerable<V1Job> jobs) =>
+    private static HashSet<string> HeldBy(IEnumerable<V1Job> jobs) =>
         jobs.Where(j => !KubernetesJobConditions.IsTerminal(j))
             .SelectMany(j => j.Spec?.Template?.Spec?.Volumes ?? [])
             .Select(v => v.PersistentVolumeClaim?.ClaimName)
