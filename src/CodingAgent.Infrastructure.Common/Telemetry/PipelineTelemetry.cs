@@ -724,26 +724,13 @@ public static class PipelineTelemetry
         // constructor avoids duplicate-instrument warnings if the type is loaded by multiple hosts.
         Meter.CreateObservableGauge(
             "agent.jobs.active",
-            // TODO [WARNING]: This lambda reads _activeJobsCallback without Volatile.Read, so no
-            // acquire fence is issued on the OTel collection thread. RegisterAgentGaugeCallbacks
-            // writes the field with Volatile.Write (release fence), but the paired acquire fence is
-            // missing here. On ARM/AArch64 Kubernetes nodes (weakly ordered memory model) the
-            // collection thread may observe a stale null for one collection cycle after registration
-            // completes at startup, producing an empty measurement for that window.
-            // WorkDistributionTelemetry follows the correct pattern:
-            //   var cb = Volatile.Read(ref _credentialPoolAvailableCallback); return cb is null ? [] : cb();
-            // Fix: replace _activeJobsCallback?.Invoke() with
-            //   Volatile.Read(ref _activeJobsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>()
-            observeValues: () => _activeJobsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            observeValues: () => Volatile.Read(ref _activeJobsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
             unit: "{job}",
             description: "Currently executing agent jobs");
 
         Meter.CreateObservableGauge(
             "agent.connections.total",
-            // TODO [WARNING]: Same missing acquire fence as _activeJobsCallback above.
-            // Fix: replace _totalConnectionsCallback?.Invoke() with
-            //   Volatile.Read(ref _totalConnectionsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>()
-            observeValues: () => _totalConnectionsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            observeValues: () => Volatile.Read(ref _totalConnectionsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
             unit: "{connection}",
             description: "Total registered agents");
     }
