@@ -141,6 +141,8 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 
 `needs_refinement` and `wont_do` both arrive with `FailureReason.GateRejected` (set by `AgentPhaseExecutor`); checking `AnalysisRecommendation` first forces `failure_reason=none` for them.
 
+Hub-completed runs (where the agent's SignalR connection reports terminal status before the HTTP callback) emit only `succeeded`, `failed` (with a `failure_reason` tag), `timeout`, or `cancelled`; PR-specific outcomes (`pr_created`, `draft_pr`, `wont_do`, `needs_refinement`, `conflict_restart`) are available only via the HTTP completion path.
+
 #### Phase normalization
 
 `PipelineTelemetry.NormalizeRunPhase` maps the raw phase key of an agent invocation (the `PhaseBreakdown` key) onto the closed `phase` set. Invocations without a phase key are mapped from their description by `NormalizePhaseDescription`.
