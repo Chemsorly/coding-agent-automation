@@ -349,6 +349,10 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
     /// return. This test directly exercises the <c>observeValues</c> lambdas to confirm that
     /// <see cref="System.Threading.Volatile.Read{T}"/> does not suppress a non-null value written
     /// by the same thread before the gauge is read (acceptance criterion #3).
+    /// The test also reads the gauges while the static callbacks are null (before registration)
+    /// so that both branches of the null-conditional and null-coalescing operators in the lambda
+    /// are covered: null-callback path (returns empty via ??) and non-null-callback path (returns
+    /// the callback's values).
     /// </summary>
     [Fact]
     public void RegisterAgentGaugeCallbacks_WithNonNullCallbacks_CallbacksAreReachedOnCollection()
@@ -366,6 +370,17 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
         // Arrange: start from a clean state regardless of test execution order.
         ResetStaticCallbacks();
 
+        // --- Phase 1: null-callback path ---
+        // With callbacks null, the observeValues lambdas take the null-conditional (?.Invoke()
+        // short-circuits to null) and null-coalescing (?? Enumerable.Empty<>()) branches,
+        // producing no measurements. This covers the null branches of both operators.
+        var activeJobsBefore = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active");
+        var totalConnectionsBefore = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.connections.total");
+
+        activeJobsBefore.Should().BeEmpty("agent.jobs.active must emit nothing when no callback is registered");
+        totalConnectionsBefore.Should().BeEmpty("agent.connections.total must emit nothing when no callback is registered");
+
+        // --- Phase 2: non-null-callback path ---
         var activeJobsMeasurement = new Measurement<long>(7L);
         var totalConnectionsMeasurement = new Measurement<long>(3L);
 
@@ -373,7 +388,7 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
             activeJobsCallback: () => [activeJobsMeasurement],
             totalConnectionsCallback: () => [totalConnectionsMeasurement]);
 
-        // Act: trigger an OTel collection cycle.
+        // Act: trigger an OTel collection cycle with non-null callbacks registered.
         var activeJobs = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active");
         var totalConnections = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.connections.total");
 
