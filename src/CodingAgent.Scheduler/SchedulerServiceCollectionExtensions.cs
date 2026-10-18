@@ -112,7 +112,7 @@ public static class SchedulerServiceCollectionExtensions
         }
 
         // ── Leader election (Scheduler-specific K8s lease) ───────────────────
-        services.AddSingleton<IKubernetes>(_ => CreateKubernetesClient());
+        services.AddSingleton<IKubernetes>(_ => CreateKubernetesClient()!);
 
         services.AddOptions<LeaderElectionOptions>()
             .Configure<IConfiguration>((opts, cfg) =>
@@ -444,27 +444,6 @@ public static class SchedulerServiceCollectionExtensions
             SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
             PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>());
 
-    private static k8s.Kubernetes CreateKubernetesClient()
-    {
-        try
-        {
-            var inCluster = KubernetesClientConfiguration.IsInCluster();
-            var k8sConfig = inCluster
-                ? KubernetesClientConfiguration.InClusterConfig()
-                : KubernetesClientConfiguration.BuildDefaultConfig();
-            if (string.IsNullOrEmpty(k8sConfig.Host) || k8sConfig.Host == "http://localhost:8080")
-            {
-                Log.Warning("Scheduler: Kubernetes client host is empty or localhost — K8s unavailable.");
-                return null!;
-            }
-            Log.Information("Scheduler: Kubernetes client configured ({Source})",
-                inCluster ? "in-cluster" : "kubeconfig");
-            return new k8s.Kubernetes(k8sConfig);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Scheduler: Kubernetes client unavailable — leader election inactive");
-            return null!;
-        }
-    }
+    private static IKubernetes? CreateKubernetesClient() =>
+        KubernetesClientRegistration.TryCreate("Scheduler");
 }

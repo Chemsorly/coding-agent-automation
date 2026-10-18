@@ -47,4 +47,57 @@ public static class KubernetesClientRegistration
 
         return services;
     }
+
+    /// <summary>
+    /// Attempts to create an <see cref="IKubernetes"/> client using the explicit in-cluster-first
+    /// branch. Returns <see langword="null"/> when no usable configuration is found, so the caller
+    /// can degrade gracefully instead of failing fast.
+    /// </summary>
+    /// <param name="callerLabel">
+    /// A short label (e.g. "API" or "Scheduler") prepended to every log message so that
+    /// originating host remains distinguishable in aggregated logs.
+    /// </param>
+    /// <param name="callerNote">
+    /// Optional additional context appended to the catch-path Warning log. Use this to document
+    /// host-specific consequences of K8s being unavailable (e.g. "DatabaseMaintenanceService sweep
+    /// runs ungated."). Pass <see langword="null"/> when no additional context is needed.
+    /// </param>
+    /// <returns>
+    /// A configured <see cref="IKubernetes"/> instance, or <see langword="null"/> when the host
+    /// is empty, equals the <c>http://localhost:8080</c> fallback sentinel, or an exception is
+    /// thrown during configuration resolution.
+    /// </returns>
+    public static IKubernetes? TryCreate(string callerLabel, string? callerNote = null)
+    {
+        ArgumentNullException.ThrowIfNull(callerLabel);
+        try
+        {
+            var inCluster = KubernetesClientConfiguration.IsInCluster();
+            var config = inCluster
+                ? KubernetesClientConfiguration.InClusterConfig()
+                : KubernetesClientConfiguration.BuildDefaultConfig();
+
+            // "http://localhost:8080" is the exact fallback BuildDefaultConfig() returns when
+            // no configuration source is found. Log the warning before returning null so the
+            // Information log is only emitted for usable configurations (mirrors Scheduler semantics).
+            if (string.IsNullOrEmpty(config.Host) || config.Host == "http://localhost:8080")
+            {
+                Log.Warning("{CallerLabel}: Kubernetes client host is empty or localhost — K8s unavailable.",
+                    callerLabel);
+                return null;
+            }
+
+            Log.Information("{CallerLabel}: Kubernetes client configured ({Source}) Host={Host}",
+                callerLabel, inCluster ? "in-cluster" : "kubeconfig", config.Host);
+
+            return new KubernetesClient(config);
+        }
+        catch (Exception ex)
+        {
+            var note = callerNote is not null ? $" {callerNote}" : string.Empty;
+            Log.Warning(ex, "{CallerLabel}: Kubernetes client unavailable — leader election inactive.{Note}",
+                callerLabel, note);
+            return null;
+        }
+    }
 }
