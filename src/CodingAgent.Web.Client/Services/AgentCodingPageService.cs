@@ -22,6 +22,7 @@ public class AgentCodingPageService
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
     private readonly IEpicDrawerService _epicDrawerService;
+    private readonly DrawerStatePresenter _drawerPresenter;
     private readonly CurrentAccess _access;
     private readonly IAccessGuard _guard;
 
@@ -41,6 +42,7 @@ public class AgentCodingPageService
         _issueDrawerService = drawers.Issue;
         _prReviewDrawerService = drawers.PrReview;
         _epicDrawerService = drawers.Epic;
+        _drawerPresenter = new DrawerStatePresenter(drawers);
     }
 
     // ── Configuration state ──
@@ -63,39 +65,39 @@ public class AgentCodingPageService
     public DrawerStateService<PullRequestSummary> PrDrawer => _prReviewDrawerService.DrawerState;
     public DrawerStateService<IssueSummary> EpicDrawer => _epicDrawerService.DrawerState;
 
-    public bool IsIssueDrawerOpen => _issueDrawerService.DrawerState.IsOpen;
-    public bool IsPrDrawerOpen => _prReviewDrawerService.DrawerState.IsOpen;
-    public bool IsEpicDrawerOpen => _epicDrawerService.DrawerState.IsOpen;
-    public PipelineJobTemplate? IssueDrawerTemplate => _issueDrawerService.DrawerState.Template;
-    public PipelineJobTemplate? PrDrawerTemplate => _prReviewDrawerService.DrawerState.Template;
-    public PipelineJobTemplate? EpicDrawerTemplate => _epicDrawerService.DrawerState.Template;
-    public bool IssueDrawerDispatching { get => _issueDrawerService.DrawerState.IsDispatching; set => _issueDrawerService.DrawerState.IsDispatching = value; }
-    public bool PrDrawerDispatching { get => _prReviewDrawerService.DrawerState.IsDispatching; set => _prReviewDrawerService.DrawerState.IsDispatching = value; }
-    public bool EpicDrawerDispatching { get => _epicDrawerService.DrawerState.IsDispatching; set => _epicDrawerService.DrawerState.IsDispatching = value; }
+    public bool IsIssueDrawerOpen => _drawerPresenter.IsIssueDrawerOpen;
+    public bool IsPrDrawerOpen => _drawerPresenter.IsPrDrawerOpen;
+    public bool IsEpicDrawerOpen => _drawerPresenter.IsEpicDrawerOpen;
+    public PipelineJobTemplate? IssueDrawerTemplate => _drawerPresenter.IssueDrawerTemplate;
+    public PipelineJobTemplate? PrDrawerTemplate => _drawerPresenter.PrDrawerTemplate;
+    public PipelineJobTemplate? EpicDrawerTemplate => _drawerPresenter.EpicDrawerTemplate;
+    public bool IssueDrawerDispatching { get => _drawerPresenter.IssueDrawerDispatching; set => _drawerPresenter.IssueDrawerDispatching = value; }
+    public bool PrDrawerDispatching { get => _drawerPresenter.PrDrawerDispatching; set => _drawerPresenter.PrDrawerDispatching = value; }
+    public bool EpicDrawerDispatching { get => _drawerPresenter.EpicDrawerDispatching; set => _drawerPresenter.EpicDrawerDispatching = value; }
 
-    public List<IssueSummary> DrawerIssues => _issueDrawerService.DrawerState.Items;
-    public int DrawerPage => _issueDrawerService.DrawerState.Page;
-    public bool DrawerHasMore => _issueDrawerService.DrawerState.HasMore;
-    public bool DrawerLoading => _issueDrawerService.DrawerState.Loading;
-    public List<string> DrawerLabels => _issueDrawerService.DrawerState.Labels;
-    public List<string> DrawerSelectedLabels => _issueDrawerService.DrawerState.SelectedLabels;
+    public List<IssueSummary> DrawerIssues => _drawerPresenter.DrawerIssues;
+    public int DrawerPage => _drawerPresenter.DrawerPage;
+    public bool DrawerHasMore => _drawerPresenter.DrawerHasMore;
+    public bool DrawerLoading => _drawerPresenter.DrawerLoading;
+    public List<string> DrawerLabels => _drawerPresenter.DrawerLabels;
+    public List<string> DrawerSelectedLabels => _drawerPresenter.DrawerSelectedLabels;
 
-    public List<PullRequestSummary> PrDrawerPrs => _prReviewDrawerService.DrawerState.Items;
-    public int PrDrawerPage => _prReviewDrawerService.DrawerState.Page;
-    public bool PrDrawerHasMore => _prReviewDrawerService.DrawerState.HasMore;
-    public bool PrDrawerLoading => _prReviewDrawerService.DrawerState.Loading;
-    public List<string> PrDrawerLabels => _prReviewDrawerService.DrawerState.Labels;
-    public List<string> PrDrawerSelectedLabels => _prReviewDrawerService.DrawerState.SelectedLabels;
+    public List<PullRequestSummary> PrDrawerPrs => _drawerPresenter.PrDrawerPrs;
+    public int PrDrawerPage => _drawerPresenter.PrDrawerPage;
+    public bool PrDrawerHasMore => _drawerPresenter.PrDrawerHasMore;
+    public bool PrDrawerLoading => _drawerPresenter.PrDrawerLoading;
+    public List<string> PrDrawerLabels => _drawerPresenter.PrDrawerLabels;
+    public List<string> PrDrawerSelectedLabels => _drawerPresenter.PrDrawerSelectedLabels;
 
-    public List<IssueSummary> EpicDrawerIssues => _epicDrawerService.DrawerState.Items;
-    public int EpicDrawerPage => _epicDrawerService.DrawerState.Page;
-    public bool EpicDrawerHasMore => _epicDrawerService.DrawerState.HasMore;
-    public bool EpicDrawerLoading => _epicDrawerService.DrawerState.Loading;
-    public List<string> EpicDrawerLabels => _epicDrawerService.DrawerState.Labels;
-    public List<string> EpicDrawerSelectedLabels => _epicDrawerService.DrawerState.SelectedLabels;
+    public List<IssueSummary> EpicDrawerIssues => _drawerPresenter.EpicDrawerIssues;
+    public int EpicDrawerPage => _drawerPresenter.EpicDrawerPage;
+    public bool EpicDrawerHasMore => _drawerPresenter.EpicDrawerHasMore;
+    public bool EpicDrawerLoading => _drawerPresenter.EpicDrawerLoading;
+    public List<string> EpicDrawerLabels => _drawerPresenter.EpicDrawerLabels;
+    public List<string> EpicDrawerSelectedLabels => _drawerPresenter.EpicDrawerSelectedLabels;
 
     /// <summary>Forwarded to IssueDrawerService — used by the coordinator and all three drawer components.</summary>
-    public Dictionary<string, DependencyCheckResult> DrawerReadiness => _issueDrawerService.DrawerReadiness;
+    public Dictionary<string, DependencyCheckResult> DrawerReadiness => _drawerPresenter.DrawerReadiness;
 
     private const string DrawerTabIssue = "issue";
     private const string DrawerTabPr = "pr";
