@@ -2,6 +2,7 @@ using System.Security.Claims;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Common.Auth;
 using CodingAgent.Web.Auth;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -127,6 +128,16 @@ public class UserTokenMinterTests
         identity.FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be(AuthPrincipals.LocalAdminSubject);
         identity.FindFirst(UserTokenClaimTypes.IdentitySource)!.Value.Should().Be(IdentitySources.Local);
         AccessGrantClaims.FromClaims(identity.Claims).GlobalRole.Should().Be(AccessRole.Admin);
+    }
+
+    /// <summary>Every forwarded call mints a token: at Debug, a web host on Debug logs a line per call.</summary>
+    [Fact]
+    public async Task Minting_IsLoggedAtTrace()
+    {
+        await Minter().MintAsync(User(), hub: false);
+
+        _logger.Collector.GetSnapshot().Should().NotBeEmpty()
+            .And.OnlyContain(record => record.Level == LogLevel.Trace);
     }
 
     [Fact]

@@ -75,7 +75,8 @@ public sealed class AgentAuthorizationFilter : IHubFilter
     /// </summary>
     /// <returns>
     /// <c>true</c> if the hub method should be invoked; <c>false</c> if the call should be
-    /// silently short-circuited (e.g. <c>ReportJobCompleted</c> with no active job after HTTP completion).
+    /// silently short-circuited (e.g. <c>ReportJobCompleted</c> with no active job after HTTP completion,
+    /// or <c>DeregisterAgent</c> from a connection that is not registered).
     /// Throws <see cref="HubException"/> for all genuine authorization failures.
     /// </returns>
     private bool GuardAgentMethod(HubInvocationContext ctx)
@@ -114,6 +115,17 @@ public sealed class AgentAuthorizationFilter : IHubFilter
 
         if (agent is null)
         {
+            // An agent leaving while its connection is not registered (e.g. its session ended in the
+            // reconnect window after an API restart) has nothing to deregister. Skip the call instead of
+            // throwing, which SignalR would log as an Error. Nothing runs, so the guard is not weakened.
+            if (string.Equals(ctx.HubMethodName, nameof(AgentHub.DeregisterAgent), StringComparison.Ordinal))
+            {
+                _logger.Debug(
+                    "DeregisterAgent from connection {ConnectionId} ignored — the connection is not a registered agent",
+                    ctx.Context.ConnectionId);
+                return false;
+            }
+
             // Classify: if the request carries an agentId query param, the agent is likely in the
             // reconnect-race window (connected but RegisterAgent not yet complete). Demote to Debug
             // and tag the counter accordingly. Without the query param we treat it as a true

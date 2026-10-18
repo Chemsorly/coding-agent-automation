@@ -583,7 +583,7 @@ The answer is `200` with the message to show, as a JSON string. The work item is
 | Path | Returns |
 |---|---|
 | `GET /api/ui/agents` | The agent registry, in the same shape as `GET /api/agents`. A global reader gets every agent. A project-scoped user gets only the agents running work of their projects, so idle agents and other projects' runs are not shown to them. |
-| `GET /api/ui/agents/credential-pool` | `{ total, available, claimed }` for the Kiro credential pool. `total` is `0` when pooling is not configured. Needs a global role. |
+| `GET /api/ui/agents/credential-pool` | `{ total, available, claimed }` for the Kiro credential pool. `claimed` counts the PVCs of active work items; a PVC a chat holds is not counted. `total` is `0` when pooling is not configured. Needs a global role. |
 
 ### Agent Chat (operator)
 

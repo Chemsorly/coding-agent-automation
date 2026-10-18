@@ -268,8 +268,12 @@ Scheduler, the Job Controller or Agent pods.
 ## PVC Dispatch Race in Multi-Replica Deployments
 
 Kiro agents mount a credential PVC from the configured pool (`KiroPvcPool`). Every dispatch picks it in
-`DispatchLifecycleService`: `QueryAvailablePvcsAsync` computes the free PVCs from the `ClaimedPvcName` of
-active WorkItems, and `SelectPvcAsync` takes one from that list under `_pvcSelectLock`. `_pvcSelectLock` is
+`DispatchLifecycleService`: `QueryDispatchablePvcsAsync` computes the free PVCs from the `ClaimedPvcName` of
+active WorkItems and leaves out the PVCs that agent Jobs which have not ended mount (`AgentJobPvcs`), which
+covers chats: they have no WorkItem. `SelectPvcAsync` takes one from that list under `_pvcSelectLock`. A chat
+(`ChatJobDispatcher`) takes the first pool PVC that no agent Job which has not ended mounts, so it skips the
+PVCs of pipeline, consolidation and triage runs too. The PVCs are `ReadWriteOnce`: a pod that mounts a PVC
+another node holds stays `Pending` (`FailedAttachVolume`). `_pvcSelectLock` is
 an in-process `SemaphoreSlim`, so it serialises requests within one API pod only. Redis
 (`signalr.redis.connectionString`) makes agent selection and run tracking safe across replicas, but it
 plays no part in PVC selection.

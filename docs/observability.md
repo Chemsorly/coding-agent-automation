@@ -101,7 +101,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 |--------|------|------|-------------|
 | `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, polled from the agent registry by the Scheduler leader |
 | `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
-| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch` |
+| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`. A `DeregisterAgent` from a connection that is not registered is skipped, not rejected |
 | `token_vending.failures` | Counter | — | Token vending failures |
 
 ### Tag Schema
@@ -279,7 +279,7 @@ Four high-volume span categories are kept out of the export (~70% of raw daily s
 
 | Noise | What is dropped |
 |-------|-----------------|
-| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz` and the browser's polls: the loop status `/api/ui/loop/status`, the API health `/api/ui/health` and the session heartbeat `/bff/session`; sub-paths like `/healthz/detail` are kept |
+| Health-probe and polling endpoints | Server spans for the exact paths `/healthz`, `/readyz` and the browser's polls: the loop status `/api/ui/loop/status`, the API health `/api/ui/health`, the sidebar's agent counts `/api/ui/agents` and the session heartbeat `/bff/session`; sub-paths like `/healthz/detail` and `/api/ui/agents/credential-pool` are kept |
 | Static client files | Server spans for the web host's `/_framework/*` (WebAssembly runtime and assemblies) and `/_content/*` files, any `.css`, `.js`, `.wasm` or `.woff2` file (including the `CodingAgent.Web.styles.css` bundle and the fonts), and `/favicon.svg` |
 | Kubernetes API server calls | Client spans to `KUBERNETES_SERVICE_HOST` (in-cluster) or `kubernetes.default.svc`, mostly leader-election leases (~387k spans per day) |
 | Chatty agent-hub spans | Hub methods ending in `/Heartbeat` or `/ReportOutputLines` |
@@ -299,7 +299,7 @@ The UI runs in the browser and calls only the web host, which forwards `/api/ui/
 
 - **Traces:** each forwarded request has a server span on the web host (`coding-agent-web`, route `/api/ui/{**rest}` or `/hubs/ui`) with the forwarder's client span under it, and the trace continues into the API's server span. With Faro tracing on, the browser's fetch span starts the trace, so one trace covers browser → web host → API. The polls produce no span anywhere (see the noise table above).
 - **Metrics:** the web host has no meter of its own. Its `http.server.request.duration` covers the forwarded traffic under the routes `/api/ui/{**rest}` and `/hubs/ui`; a failed forward shows there as `502` (API unreachable) or `504` (5 minutes without activity). For latency per API route, use `coding-agent-api`: the web host's `/api/ui/{**rest}` row is the same calls plus one hop.
-- **Logs:** the web host's own logs (sign-in, forwarding errors, startup) go to Loki through Serilog, like every host's. The UI's component logs stay in the browser console; only warnings and errors reach Grafana, through Faro.
+- **Logs:** the web host's own logs (sign-in, forwarding errors, startup) go to Loki through Serilog, like every host's. The forwarder (`Yarp`) logs from Warning up: a failed forward (`502`, `504`) is logged, a call that succeeds or that the browser cancels is not. On the API, a call the browser aborts (it navigated away) ends as `499` and its request log line is Debug, not a `500` Warning. The UI's component logs stay in the browser console; only warnings and errors reach Grafana, through Faro.
 
 ### Trace Hierarchy
 
@@ -635,7 +635,7 @@ When `Faro__CollectorUrl` is set, `faro-init.js` (loaded in `App.razor`) asynchr
 - Page load performance and web vitals
 - JavaScript errors and unhandled promise rejections
 - Console warnings and errors. The lower levels stay in the browser (`consoleInstrumentation.disabledLevels`), so the UI's Information logs never leave it.
-- Fetch spans for the UI's calls, which start the trace that continues into the web host and the API. The polls (`/bff/session`, `/api/ui/health`, `/api/ui/loop/status`) are left out (`ignoreUrls`), as in the server's noise filter.
+- Fetch spans for the UI's calls, which start the trace that continues into the web host and the API. The polls (`/bff/session`, `/api/ui/health`, `/api/ui/loop/status`, `/api/ui/agents`) are left out (`ignoreUrls`), as in the server's noise filter.
 - The UI's notifications (`NotificationFaroBridge`): errors as Faro errors, the others as Faro logs
 
 Faro's own session tracking marks when a browser session starts; there are no circuit events.
