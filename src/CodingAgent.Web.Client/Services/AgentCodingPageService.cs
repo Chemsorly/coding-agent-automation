@@ -14,7 +14,7 @@ namespace CodingAgent.Web.Services;
 /// (readable projects only, secrets masked), template changes go through the admin settings surface
 /// (<see cref="IUiSettingsClient"/>), the loop through <see cref="IUiLoopClient"/>, and dispatch runs in the API (2.3c).
 /// </summary>
-public class AgentCodingPageService
+public class AgentCodingPageService : DrawerStateAccessorBase
 {
     private readonly IUiLoopClient _loopClient;
     private readonly IUiConfigClient _uiConfig;
@@ -22,7 +22,6 @@ public class AgentCodingPageService
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
     private readonly IEpicDrawerService _epicDrawerService;
-    private readonly DrawerStatePresenter _drawerPresenter;
     private readonly CurrentAccess _access;
     private readonly IAccessGuard _guard;
 
@@ -32,7 +31,7 @@ public class AgentCodingPageService
         IUiSettingsClient settings,
         DispatchDrawers drawers,
         CurrentAccess access,
-        IAccessGuard guard)
+        IAccessGuard guard) : base(drawers)
     {
         _access = access;
         _guard = guard;
@@ -42,7 +41,6 @@ public class AgentCodingPageService
         _issueDrawerService = drawers.Issue;
         _prReviewDrawerService = drawers.PrReview;
         _epicDrawerService = drawers.Epic;
-        _drawerPresenter = new DrawerStatePresenter(drawers);
     }
 
     // ── Configuration state ──
@@ -65,39 +63,9 @@ public class AgentCodingPageService
     public DrawerStateService<PullRequestSummary> PrDrawer => _prReviewDrawerService.DrawerState;
     public DrawerStateService<IssueSummary> EpicDrawer => _epicDrawerService.DrawerState;
 
-    public bool IsIssueDrawerOpen => _drawerPresenter.IsIssueDrawerOpen;
-    public bool IsPrDrawerOpen => _drawerPresenter.IsPrDrawerOpen;
-    public bool IsEpicDrawerOpen => _drawerPresenter.IsEpicDrawerOpen;
-    public PipelineJobTemplate? IssueDrawerTemplate => _drawerPresenter.IssueDrawerTemplate;
-    public PipelineJobTemplate? PrDrawerTemplate => _drawerPresenter.PrDrawerTemplate;
-    public PipelineJobTemplate? EpicDrawerTemplate => _drawerPresenter.EpicDrawerTemplate;
-    public bool IssueDrawerDispatching { get => _drawerPresenter.IssueDrawerDispatching; set => _drawerPresenter.IssueDrawerDispatching = value; }
-    public bool PrDrawerDispatching { get => _drawerPresenter.PrDrawerDispatching; set => _drawerPresenter.PrDrawerDispatching = value; }
-    public bool EpicDrawerDispatching { get => _drawerPresenter.EpicDrawerDispatching; set => _drawerPresenter.EpicDrawerDispatching = value; }
-
-    public List<IssueSummary> DrawerIssues => _drawerPresenter.DrawerIssues;
-    public int DrawerPage => _drawerPresenter.DrawerPage;
-    public bool DrawerHasMore => _drawerPresenter.DrawerHasMore;
-    public bool DrawerLoading => _drawerPresenter.DrawerLoading;
-    public List<string> DrawerLabels => _drawerPresenter.DrawerLabels;
-    public List<string> DrawerSelectedLabels => _drawerPresenter.DrawerSelectedLabels;
-
-    public List<PullRequestSummary> PrDrawerPrs => _drawerPresenter.PrDrawerPrs;
-    public int PrDrawerPage => _drawerPresenter.PrDrawerPage;
-    public bool PrDrawerHasMore => _drawerPresenter.PrDrawerHasMore;
-    public bool PrDrawerLoading => _drawerPresenter.PrDrawerLoading;
-    public List<string> PrDrawerLabels => _drawerPresenter.PrDrawerLabels;
-    public List<string> PrDrawerSelectedLabels => _drawerPresenter.PrDrawerSelectedLabels;
-
-    public List<IssueSummary> EpicDrawerIssues => _drawerPresenter.EpicDrawerIssues;
-    public int EpicDrawerPage => _drawerPresenter.EpicDrawerPage;
-    public bool EpicDrawerHasMore => _drawerPresenter.EpicDrawerHasMore;
-    public bool EpicDrawerLoading => _drawerPresenter.EpicDrawerLoading;
-    public List<string> EpicDrawerLabels => _drawerPresenter.EpicDrawerLabels;
-    public List<string> EpicDrawerSelectedLabels => _drawerPresenter.EpicDrawerSelectedLabels;
-
-    /// <summary>Forwarded to IssueDrawerService — used by the coordinator and all three drawer components.</summary>
-    public Dictionary<string, DependencyCheckResult> DrawerReadiness => _drawerPresenter.DrawerReadiness;
+    // All 28 shared drawer state accessors (IsIssueDrawerOpen, IsPrDrawerOpen, IsEpicDrawerOpen,
+    // IssueDrawerTemplate, IssueDrawerDispatching, DrawerIssues, DrawerReadiness etc.)
+    // are inherited from DrawerStateAccessorBase.
 
     private const string DrawerTabIssue = "issue";
     private const string DrawerTabPr = "pr";
