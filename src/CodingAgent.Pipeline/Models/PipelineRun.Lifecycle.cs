@@ -43,6 +43,26 @@ public sealed partial class PipelineRun
     }
 
     /// <summary>
+    /// Sets the run's completion time from the agent's final report, replacing an earlier stamp
+    /// such as the one taken when the pull request was finalized.
+    /// </summary>
+    // TODO [WARNING] (DotNetSpecialist): Same sequential dual-field write as MarkCompleted — no lock guards
+    // the pair (CompletedAt, CompletedAtOffset). If two threads call SetCompletedAt concurrently (e.g. an
+    // agent retransmits its completion payload), the interleave can leave CompletedAt from one writer paired
+    // with CompletedAtOffset from another, causing the two fields to disagree. Unlike MarkCompleted whose
+    // first-write-wins guard narrows the race window, SetCompletedAt has no guard at all, so the window is
+    // wider. ResetStartedAt guards the equivalent StartedAt/StartedAtOffset pair with _startedAtLock;
+    // consider adding _completedAtLock mirroring that pattern. Not defective on the current single-hub-
+    // dispatch path, but will become a risk if SetCompletedAt is called from additional concurrent sites.
+    public void SetCompletedAt(DateTimeOffset timestamp)
+    {
+#pragma warning disable CS0618
+        CompletedAt = timestamp.UtcDateTime;
+#pragma warning restore CS0618
+        CompletedAtOffset = timestamp;
+    }
+
+    /// <summary>
     /// Resets StartedAt to the actual agent dispatch time. Called when a queued
     /// WorkItem transitions Pending→Dispatched, replacing the preparation-time
     /// timestamp with the true agent start time.
