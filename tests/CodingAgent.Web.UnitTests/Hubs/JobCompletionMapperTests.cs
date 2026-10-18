@@ -291,4 +291,29 @@ public sealed class JobCompletionMapperTests
         run2.FailureCategory.Should().Be(FailureReason.ExitCodeFailure,
             "Apply must not overwrite run.FailureCategory when payload.FailureCategory is null");
     }
+
+    /// <summary>
+    /// Regression test for issue #3730: when the API-side run already has a CompletedAtOffset
+    /// (e.g. deserialized from Redis with an earlier stamp), Apply must overwrite it with the
+    /// agent's authoritative completion time from the payload.
+    /// </summary>
+    [Fact]
+    public void Apply_UsesThePayloadCompletionTime_EvenWhenTheRunWasStampedEarlier()
+    {
+        var t1 = new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
+        var t2 = new DateTimeOffset(2026, 1, 1, 12, 30, 0, TimeSpan.Zero);
+        var run = CreateRun();
+        run.MarkCompleted(t1);
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = t2
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.CompletedAtOffset.Should().Be(t2,
+            "Apply must overwrite an earlier stamp with the agent's authoritative completion time");
+    }
 }

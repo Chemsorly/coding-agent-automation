@@ -80,6 +80,22 @@ public class PipelineRunMarkCompletedTests
     }
 
     [Fact]
+    public void SetCompletedAt_OverwritesAnEarlierStamp()
+    {
+        var run = CreateRun();
+        var t1 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var t2 = new DateTimeOffset(2026, 1, 1, 14, 30, 0, TimeSpan.Zero);
+
+        run.MarkCompleted(t1);
+        run.SetCompletedAt(t2);
+
+#pragma warning disable CS0618
+        run.CompletedAt.Should().Be(t2.UtcDateTime);
+#pragma warning restore CS0618
+        run.CompletedAtOffset.Should().Be(t2);
+    }
+
+    [Fact]
     public async Task MarkCompleted_CalledTwice_DoesNotChangeTimestamp()
     {
         // Wait until the system clock has visibly advanced past the first timestamp, so the

@@ -517,7 +517,9 @@ public class LocalPipelineExecutorTests : IDisposable
         run.BlacklistedFilesDetected = ["secret.env"];
         run.CodeReviewAgentsRun = ["Correctness"];
 
+        var before = DateTimeOffset.UtcNow;
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+        var after = DateTimeOffset.UtcNow;
 
         payload.FinalStep.Should().Be(PipelineStep.Completed);
         payload.PullRequestUrl.Should().Be("https://github.com/owner/repo/pull/42");
@@ -534,7 +536,8 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.AnalysisBlockingIssues.Should().ContainSingle().Which.Should().Be("blocker-1");
         payload.BlacklistedFilesDetected.Should().ContainSingle().Which.Should().Be("secret.env");
         payload.CodeReviewAgentsRun.Should().ContainSingle().Which.Should().Be("Correctness");
-        payload.CompletedAt.Should().Be(new DateTimeOffset(2026, 5, 15, 12, 0, 0, TimeSpan.Zero));
+        // Issue #3730: CompletedAt is DateTimeOffset.UtcNow at payload-build time, not run.CompletedAtOffset.
+        payload.CompletedAt.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
         payload.FinalLabel.Should().Be(AgentLabels.Done);
     }
 
