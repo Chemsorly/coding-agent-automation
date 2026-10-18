@@ -550,6 +550,31 @@ public static class PipelineTelemetry
     {
         public const string PrePr = "pre_pr";
         public const string PostPr = "post_pr";
+        public static readonly string[] All = [PrePr, PostPr];
+
+        /// <summary>
+        /// Maps an agent-reported CI wait stage to the closed set, or <c>null</c> when unknown,
+        /// so a misbehaving agent cannot inflate label cardinality.
+        /// </summary>
+        public static string? Normalize(string? stage) =>
+            All.FirstOrDefault(s => s.Equals(stage, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Closed-set result values for <c>pipeline.run.ci.wait</c> result tag.
+    /// </summary>
+    public static class CiWaitResults
+    {
+        public const string Pass = "pass";
+        public const string Fail = "fail";
+        public static readonly string[] All = [Pass, Fail];
+
+        /// <summary>
+        /// Maps an agent-reported CI wait result to the closed set, or <c>null</c> when unknown,
+        /// so a misbehaving agent cannot inflate label cardinality.
+        /// </summary>
+        public static string? Normalize(string? result) =>
+            All.FirstOrDefault(r => r.Equals(result, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

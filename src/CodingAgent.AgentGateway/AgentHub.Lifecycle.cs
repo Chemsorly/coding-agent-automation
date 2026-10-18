@@ -248,12 +248,15 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(report);
 
         var run = _facade.GetRun(jobId);
-        // TODO [WARNING]: When _facade.GetRun returns null (race between job completion and event arrival),
-        // runType defaults to PipelineRunType.Implementation, silently mis-attributing metrics for any
-        // non-implementation run type. [RequiresActiveJob] makes this unlikely but not impossible.
-        // Consider logging a Warning when run is null (consistent with how other hub methods handle this),
-        // or skipping the metric recording entirely when the run cannot be resolved. (DotNetSpecialist #2979)
-        var runType = run?.RunType ?? PipelineRunType.Implementation;
+        if (run is null)
+        {
+            _logger.Warning(
+                "ReportPipelineRunEvent: job {JobId} run not found — skipping metric recording (run may have completed or expired)",
+                jobId.Value);
+            return Task.CompletedTask;
+        }
+
+        var runType = run.RunType;
 
         switch (report.Kind)
         {
@@ -266,17 +269,21 @@ public sealed partial class AgentHub
             case PipelineRunEventKind.CiWait:
                 if (report.DurationSeconds.HasValue && report.Stage is not null && report.Result is not null)
                 {
-                    // TODO [WARNING]: report.Stage and report.Result are forwarded directly from the agent
-                    // payload without normalization against the closed sets (PipelineTelemetry.CiWaitStages,
-                    // PipelineTelemetry.AgentStallKinds). A compromised or buggy agent pod could send arbitrary
-                    // strings, inflating label cardinality on the metrics backend. Consider validating against
-                    // the closed sets and logging+skipping unknown values. (SecurityReviewer #2979)
+                    var ciStage = PipelineTelemetry.CiWaitStages.Normalize(report.Stage);
+                    var ciResult = PipelineTelemetry.CiWaitResults.Normalize(report.Result);
+                    if (ciStage is null || ciResult is null)
+                    {
+                        _logger.Warning(
+                            "Job {JobId} CiWait event has unrecognized Stage={Stage} or Result={Result} — skipped",
+                            jobId.Value, report.Stage, report.Result);
+                        break;
+                    }
                     PipelineTelemetry.RunCiWait.Record(report.DurationSeconds.Value,
                         PipelineTelemetry.RunTypeTag(runType),
-                        new KeyValuePair<string, object?>("stage", report.Stage),
-                        new KeyValuePair<string, object?>("result", report.Result));
+                        new KeyValuePair<string, object?>("stage", ciStage),
+                        new KeyValuePair<string, object?>("result", ciResult));
                     _logger.Debug("Job {JobId} CI wait recorded: stage={Stage} result={Result} duration={Duration:F1}s",
-                        jobId.Value, report.Stage, report.Result, report.DurationSeconds.Value);
+                        jobId.Value, ciStage, ciResult, report.DurationSeconds.Value);
                 }
                 else
                 {

@@ -1009,7 +1009,7 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
 
-    private AgentHub CreateHub()
+    private AgentHub CreateHub(Serilog.ILogger? logger = null)
     {
         var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
@@ -1019,7 +1019,7 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<Serilog.ILogger>(),
+            logger ?? Mock.Of<Serilog.ILogger>(),
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));
 
@@ -1297,43 +1297,51 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
     }
 
     /// <summary>
-    /// When <see cref="IAgentHubFacade.GetRun"/> returns null (run evicted between
-    /// [RequiresActiveJob] and the hub body), the runType must default to Implementation
-    /// and the counter must still be incremented without throwing.
-    /// Covers the null-run fallback path (AgentHub.Lifecycle.cs lines 203-215).
+    /// When <see cref="IAgentHubFacade.GetRun"/> returns null (race between job completion
+    /// and event arrival), ReportPipelineRunEvent must skip all metric recording and emit a
+    /// Warning log containing the jobId. Recording with a fabricated runType would corrupt
+    /// run-type dashboards (issue #3733, Bug A).
     /// </summary>
     [Fact]
-    public async Task WhenRunIsNull_DefaultsToImplementationRunType_AndStillRecordsMetric()
+    public async Task WhenGetRunReturnsNull_ReportPipelineRunEvent_LogsWarningAndRecordsNoMetric()
     {
-        var counterHit = false;
+        // Arrange: observe all pipeline.run counters to confirm none fires.
+        var metricsRecorded = 0;
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
             if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
-                && instrument.Name == "pipeline.run.ci.not_started_retriggers")
+                && (instrument.Name == "pipeline.run.ci.not_started_retriggers"
+                    || instrument.Name == "pipeline.run.ci.wait"
+                    || instrument.Name == "pipeline.run.agent_stalls"))
                 l.EnableMeasurementEvents(instrument);
         };
-        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
-        {
-            // run_type must be "implementation" — the fallback when run is null
-            foreach (var tag in tags)
-                if (tag.Key == "run_type" && tag.Value?.ToString() == "implementation")
-                    counterHit = true;
-        });
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => Interlocked.Increment(ref metricsRecorded));
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) => Interlocked.Increment(ref metricsRecorded));
         listener.Start();
 
-        // GetRun returns null to exercise the fallback path
+        var mockLogger = new Mock<Serilog.ILogger>();
         _mockFacade.Setup(f => f.GetRun("job-null-run-1")).Returns((PipelineRun?)null);
-        var hub = CreateHub();
+        var hub = CreateHub(mockLogger.Object);
 
+        // Act
         await hub.ReportPipelineRunEvent("job-null-run-1", new PipelineRunEventReport
         {
             Kind = PipelineRunEventKind.CiNotStartedRetrigger
         });
         listener.RecordObservableInstruments();
 
-        counterHit.Should().BeTrue(
-            "when GetRun returns null, the metric must still be recorded with run_type=implementation");
+        // Assert: no metric must be recorded when the run context cannot be resolved.
+        metricsRecorded.Should().Be(0,
+            "no metric must be recorded when GetRun returns null — a fabricated runType would corrupt dashboards");
+
+        // Assert: a Warning log containing the jobId must be emitted.
+        mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<string>(),
+                It.Is<string>(s => s.Contains("job-null-run-1"))),
+            Times.AtLeastOnce,
+            "a Warning containing the jobId must be emitted when the run cannot be resolved");
     }
 
     /// <summary>
@@ -1424,5 +1432,102 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
         });
 
         await act.Should().NotThrowAsync("unknown PipelineRunEventKind values must be silently ignored");
+    }
+
+    /// <summary>
+    /// A CiWait event with an arbitrary unrecognized Stage string must produce no OTel metric
+    /// recording and emit a Warning log. An agent (or a misbehaving/compromised one) must not
+    /// be able to inject arbitrary label values into the metrics backend (issue #3733, Bug B).
+    /// </summary>
+    [Fact]
+    public async Task CiWait_WithUnrecognizedStage_LogsWarningAndRecordsNoMetric()
+    {
+        // Arrange: observe pipeline.run.ci.wait to confirm it does NOT fire.
+        var ciWaitHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (ReferenceEquals(instrument, CodingAgent.Pipeline.Telemetry.PipelineTelemetry.RunCiWait))
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) => ciWaitHit = true);
+        listener.Start();
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        _mockFacade.Setup(f => f.GetRun("job-ciwait-rogue-1")).Returns(CreateRun("job-ciwait-rogue-1"));
+        var hub = CreateHub(mockLogger.Object);
+
+        // Act: send a CiWait event with an arbitrary unrecognized Stage value.
+        await hub.ReportPipelineRunEvent("job-ciwait-rogue-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.CiWait,
+            DurationSeconds = 300.0,
+            Stage = "totally_unknown_stage",
+            Result = "pass"
+        });
+        listener.RecordObservableInstruments();
+
+        // Assert: no histogram observation must be recorded.
+        ciWaitHit.Should().BeFalse(
+            "a CiWait event with an unrecognized Stage must not be recorded — it would inflate OTel label cardinality");
+
+        // Assert: a Warning log must be emitted (the jobId must be part of the log call).
+        mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<string>(),
+                It.Is<string>(s => s.Contains("job-ciwait-rogue-1")),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce,
+            "a Warning containing the jobId must be emitted when CiWait has an unrecognized Stage");
+    }
+
+    /// <summary>
+    /// A CiWait event with a valid Stage but an unrecognized Result must produce no OTel metric
+    /// recording and emit a Warning log. Covers the <c>ciResult == null</c> branch of the
+    /// normalize guard in the CiWait arm (issue #3733, Bug B — symmetric to
+    /// <see cref="CiWait_WithUnrecognizedStage_LogsWarningAndRecordsNoMetric"/>).
+    /// </summary>
+    [Fact]
+    public async Task CiWait_WithUnrecognizedResult_LogsWarningAndRecordsNoMetric()
+    {
+        // Arrange: observe pipeline.run.ci.wait to confirm it does NOT fire.
+        var ciWaitHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (ReferenceEquals(instrument, CodingAgent.Pipeline.Telemetry.PipelineTelemetry.RunCiWait))
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) => ciWaitHit = true);
+        listener.Start();
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        _mockFacade.Setup(f => f.GetRun("job-ciwait-rogue-2")).Returns(CreateRun("job-ciwait-rogue-2"));
+        var hub = CreateHub(mockLogger.Object);
+
+        // Act: send a CiWait event with a valid Stage but an arbitrary unrecognized Result.
+        await hub.ReportPipelineRunEvent("job-ciwait-rogue-2", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.CiWait,
+            DurationSeconds = 300.0,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.CiWaitStages.PrePr,
+            Result = "totally_unknown_result"
+        });
+        listener.RecordObservableInstruments();
+
+        // Assert: no histogram observation must be recorded.
+        ciWaitHit.Should().BeFalse(
+            "a CiWait event with an unrecognized Result must not be recorded — it would inflate OTel label cardinality");
+
+        // Assert: a Warning log must be emitted (the jobId must be part of the log call).
+        mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<string>(),
+                It.Is<string>(s => s.Contains("job-ciwait-rogue-2")),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce,
+            "a Warning containing the jobId must be emitted when CiWait has an unrecognized Result");
     }
 }
