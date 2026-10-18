@@ -606,6 +606,9 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
 ]
 ```
 
+Always write this file. If the steps above drop every finding, write an empty array: `[]`.
+A missing file fails the scan.
+
 ### Field Definitions
 
 - **category** (required) — the category of the finding the proposal comes from, exactly as listed in the schema above.

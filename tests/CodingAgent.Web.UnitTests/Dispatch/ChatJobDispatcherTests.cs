@@ -318,34 +318,18 @@ public class ChatJobDispatcherTests
     [Fact]
     public async Task DispatchChatPodAsync_NoPvcAvailable_ThrowsNoPvcAvailableException()
     {
-        var existingJob1 = new V1Job
+        var existingJob1 = JobMountingPvc("caa-chat-existing1", "pvc-0", new Dictionary<string, string>
         {
-            Metadata = new V1ObjectMeta
-            {
-                Name = "caa-chat-existing1",
-                Labels = new Dictionary<string, string>
-                {
-                    ["caa/chat-session-id"] = Guid.NewGuid().ToString(),
-                    ["caa/chat-selector"] = "dotnet_kiro",
-                    ["caa/claimed-pvc"] = "pvc-0"
-                }
-            },
-            Status = new V1JobStatus { Conditions = [] }
-        };
-        var existingJob2 = new V1Job
+            ["caa/chat-session-id"] = Guid.NewGuid().ToString(),
+            ["caa/chat-selector"] = "dotnet_kiro",
+            ["caa/claimed-pvc"] = "pvc-0"
+        });
+        var existingJob2 = JobMountingPvc("caa-chat-existing2", "pvc-1", new Dictionary<string, string>
         {
-            Metadata = new V1ObjectMeta
-            {
-                Name = "caa-chat-existing2",
-                Labels = new Dictionary<string, string>
-                {
-                    ["caa/chat-session-id"] = Guid.NewGuid().ToString(),
-                    ["caa/chat-selector"] = "kiro_python",
-                    ["caa/claimed-pvc"] = "pvc-1"
-                }
-            },
-            Status = new V1JobStatus { Conditions = [] }
-        };
+            ["caa/chat-session-id"] = Guid.NewGuid().ToString(),
+            ["caa/chat-selector"] = "kiro_python",
+            ["caa/claimed-pvc"] = "pvc-1"
+        });
 
         var jobClientMock = CreateJobClientMock(new V1JobList { Items = [existingJob1, existingJob2] });
 
@@ -361,6 +345,63 @@ public class ChatJobDispatcherTests
         var act = () => dispatcher.DispatchChatPodAsync("kiro,node", null, null, CancellationToken.None);
         await act.Should().ThrowAsync<NoPvcAvailableException>();
     }
+
+    /// <summary>
+    /// A pipeline, consolidation or triage Job gets its PVC from the work-item dispatch and carries no chat label.
+    /// The PVC is ReadWriteOnce: a chat pod that mounts it while that Job runs stays Pending (FailedAttachVolume).
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_SkipsThePvcARunningPipelineJobMounts()
+    {
+        var pipelineJob = JobMountingPvc("caa-6cbd8b5c", "pvc-0", new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/component"] = "agent-job",
+            ["caa/work-item-id"] = Guid.NewGuid().ToString()
+        });
+        var finishedPipelineJob = JobMountingPvc("caa-0f0f0f0f", "pvc-1", new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/component"] = "agent-job"
+        });
+        finishedPipelineJob.Status = new V1JobStatus
+        {
+            Conditions = [new V1JobCondition { Type = KubernetesJobConditions.JobPhaseComplete, Status = KubernetesJobConditions.ConditionTrue }]
+        };
+        var jobClientMock = CreateJobClientMock(new V1JobList { Items = [pipelineJob, finishedPipelineJob] });
+        var registry = CreateRegistry();
+        V1Job? createdJob = null;
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJob = j;
+                RegisterChatAgent(registry, "agent-kiro", j.Metadata.Labels["caa/chat-session-id"]);
+            })
+            .Returns(Task.CompletedTask);
+
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        createdJob!.Metadata.Labels["caa/claimed-pvc"].Should().Be("pvc-1",
+            "pvc-0 is mounted by a running pipeline Job; the finished Job no longer holds pvc-1");
+        jobClientMock.Verify(c => c.ListJobsAsync(TestNamespace, AgentJobPvcs.AgentJobSelector, It.IsAny<CancellationToken>()),
+            "every agent Job counts, not only chat Jobs");
+    }
+
+    private static V1Job JobMountingPvc(string name, string pvc, Dictionary<string, string> labels) => new()
+    {
+        Metadata = new V1ObjectMeta { Name = name, Labels = labels },
+        Spec = new V1JobSpec
+        {
+            Template = new V1PodTemplateSpec
+            {
+                Spec = new V1PodSpec
+                {
+                    Containers = [],
+                    Volumes = [new V1Volume { Name = "kiro-cli-data", PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = pvc } }]
+                }
+            }
+        },
+        Status = new V1JobStatus { Conditions = [] }
+    };
 
     // ─── 7. DispatchChatPodAsync — BackoffLimit=0 ────────────────────────────
 

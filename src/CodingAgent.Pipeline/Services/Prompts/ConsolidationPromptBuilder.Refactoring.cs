@@ -718,6 +718,9 @@ $"""
         sb.AppendLine("]");
         sb.AppendLine("```");
         sb.AppendLine();
+        sb.AppendLine("Always write this file. If the steps above drop every finding, write an empty array: `[]`.");
+        sb.AppendLine("A missing file fails the scan.");
+        sb.AppendLine();
         sb.AppendLine("### Field Definitions");
         sb.AppendLine();
         sb.AppendLine("- **category** (required) — the category of the finding the proposal comes from, exactly as listed in the schema above.");

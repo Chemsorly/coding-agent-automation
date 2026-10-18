@@ -123,6 +123,9 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// </summary>
     internal const string GeneratedIssueFooter = RefactoringScanIssues.Footer;
 
+    /// <summary>The run's failure reason when the aggregation step wrote no proposals file, not even <c>[]</c>.</summary>
+    internal const string MissingProposalsFileMessage = "The aggregation step wrote no refactoring-proposals.json";
+
     /// <summary>The number of open issues read for duplicate checks: the providers' maximum page size.</summary>
     private const int OpenIssueContextLimit = 100;
 
@@ -454,6 +457,15 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         CancellationToken ct)
     {
         var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringProposalsFilePath);
+
+        // The aggregation writes [] when it drops every finding, so a missing file means it broke
+        // off, not that the scan found nothing.
+        if (!File.Exists(proposalsFilePath))
+        {
+            Logger.Warning("No refactoring proposals file found at {Path} after aggregation in run {RunId}", proposalsFilePath, job.JobId);
+            return CreateFailureResult(job.JobId, MissingProposalsFileMessage);
+        }
+
         var proposals = await ParseProposalsAsync(proposalsFilePath, ct);
 
         if (proposals is null)
@@ -502,7 +514,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             var refinedProposals = await ParseProposalsAsync(proposalsFilePath, ct);
             if (refinedProposals is null)
             {
-                Logger.Warning("Refined proposals file is malformed in run {RunId}, keeping original proposals", job.JobId);
+                Logger.Warning("Refined proposals file is missing or malformed in run {RunId}, keeping original proposals", job.JobId);
             }
             else
             {
@@ -765,8 +777,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     {
         if (!File.Exists(filePath))
         {
-            Logger.Information("No refactoring proposals file found at {Path}, treating as no proposals", filePath);
-            return Array.Empty<RefactoringProposal>();
+            Logger.Warning("No refactoring proposals file found at {Path}", filePath);
+            return null;
         }
 
         try

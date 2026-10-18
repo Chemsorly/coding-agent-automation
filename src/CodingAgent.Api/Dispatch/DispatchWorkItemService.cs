@@ -155,8 +155,7 @@ internal sealed class DispatchWorkItemService
     ///
     /// <para>
     /// Composes <see cref="BuildConcurrencySnapshotAsync"/> with
-    /// <see cref="DispatchLifecycleService.GetPvcPool"/> and
-    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/> into a single call,
+    /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/> into a single call,
     /// eliminating the three-line preamble that was duplicated in both handlers.
     /// </para>
     ///
@@ -181,15 +180,14 @@ internal sealed class DispatchWorkItemService
     /// <returns>
     /// A tuple of the concurrency snapshot (from <see cref="BuildConcurrencySnapshotAsync"/>)
     /// and the PVC availability result (from
-    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/>).
+    /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/>).
     /// </returns>
     internal async Task<(Dictionary<string, int> concurrencyBySelector, PvcAvailabilityResult pvcResult)>
         BuildDispatchPreambleAsync(
             PipelineDbContext db, DispatchLifecycleService lifecycle, DispatchTemplateResolver templateResolver, CancellationToken ct)
     {
         var concurrencyBySelector = await BuildConcurrencySnapshotAsync(db, templateResolver, ct);
-        var pvcPool = lifecycle.GetPvcPool();
-        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
+        var pvcResult = await lifecycle.QueryDispatchablePvcsAsync(db, ct);
         return (concurrencyBySelector, pvcResult);
     }
 
@@ -423,7 +421,7 @@ internal sealed class DispatchWorkItemService
     ///     ordering cannot be replicated inside this method.
     ///   </item>
     ///   <item>
-    ///     Call <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/> and pass the
+    ///     Call <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/> and pass the
     ///     result as <see cref="ResolvedDispatchRequest.PvcResult"/>.
     ///   </item>
     ///   <item>
@@ -936,7 +934,7 @@ internal sealed record ResolvedDispatchRequest
 
     /// <summary>
     /// PVC availability snapshot produced by the caller via
-    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/>.
+    /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/>.
     /// </summary>
     public required PvcAvailabilityResult PvcResult { get; init; }
 

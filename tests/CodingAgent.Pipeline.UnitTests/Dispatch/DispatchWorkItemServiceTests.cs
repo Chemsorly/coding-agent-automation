@@ -98,7 +98,7 @@ public sealed class DispatchWorkItemServiceTests
     // the test currently passes correctly — but the isolation between the two factories
     // creates a latent confusion that could mask a regression if the plumbing changes.
     // The lifecycle service's private dbFactory is dead weight here.
-    private DispatchLifecycleService CreateLifecycleService(IReadOnlyList<string>? pvcPool = null)
+    private DispatchLifecycleService CreateLifecycleService(IReadOnlyList<string>? pvcPool = null, IKubernetesJobClient? kubeClient = null)
     {
         var dbFactory = CreateDbFactory();
         var transitionSvc = new WorkItemTransitionService(
@@ -113,7 +113,7 @@ public sealed class DispatchWorkItemServiceTests
             KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
         };
         return new DispatchLifecycleService(
-            Mock.Of<IKubernetesJobClient>(),
+            kubeClient ?? Mock.Of<IKubernetesJobClient>(),
             transitionSvc,
             opts);
     }
@@ -462,6 +462,58 @@ public sealed class DispatchWorkItemServiceTests
             "pvc-0 is claimed; only pvc-1 is available");
         pvcResult.AvailablePvcs.Should().Contain("pvc-1");
         pvcResult.ClaimedCount.Should().Be(1, "one PVC (pvc-0) is claimed");
+    }
+
+    /// <summary>
+    /// A chat has no WorkItem, so the WorkItem claims miss its PVC. A pipeline pod that mounts it while the chat
+    /// runs stays Pending (the PVC is ReadWriteOnce), so the preamble leaves out what agent Jobs mount too.
+    /// </summary>
+    [Fact]
+    public async Task BuildDispatchPreambleAsync_LeavesOutThePvcARunningChatJobMounts()
+    {
+        var chatJob = new k8s.Models.V1Job
+        {
+            Metadata = new k8s.Models.V1ObjectMeta { Name = "caa-chat-1a2b3c4d" },
+            Spec = new k8s.Models.V1JobSpec
+            {
+                Template = new k8s.Models.V1PodTemplateSpec
+                {
+                    Spec = new k8s.Models.V1PodSpec
+                    {
+                        Containers = [],
+                        Volumes = [new k8s.Models.V1Volume
+                        {
+                            Name = "kiro-cli-data",
+                            PersistentVolumeClaim = new k8s.Models.V1PersistentVolumeClaimVolumeSource { ClaimName = "pvc-0" }
+                        }]
+                    }
+                }
+            },
+            Status = new k8s.Models.V1JobStatus()
+        };
+        var kube = new Mock<IKubernetesJobClient>();
+        kube.Setup(k => k.ListJobsAsync("test", AgentJobPvcs.AgentJobSelector, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new k8s.Models.V1JobList { Items = [chatJob] });
+        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
+        await using var db = await CreateDbFactory().CreateDbContextAsync();
+
+        var (_, pvcResult) = await CreateService().BuildDispatchPreambleAsync(db, lifecycle, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+
+        pvcResult.AvailablePvcs.Should().Equal(["pvc-1"], "a running chat Job mounts pvc-0");
+    }
+
+    [Fact]
+    public async Task BuildDispatchPreambleAsync_JobsCannotBeRead_UsesTheWorkItemClaims()
+    {
+        var kube = new Mock<IKubernetesJobClient>();
+        kube.Setup(k => k.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API server unreachable"));
+        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
+        await using var db = await CreateDbFactory().CreateDbContextAsync();
+
+        var (_, pvcResult) = await CreateService().BuildDispatchPreambleAsync(db, lifecycle, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+
+        pvcResult.AvailablePvcs.Should().Equal(["pvc-0", "pvc-1"]);
     }
 
     // ── BuildProjectionFromQuickCheck ─────────────────────────────────────────
