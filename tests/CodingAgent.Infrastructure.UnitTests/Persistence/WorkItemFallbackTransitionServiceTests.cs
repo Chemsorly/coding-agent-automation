@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -28,6 +31,11 @@ namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 /// only handles Failed/InfrastructureFailure). To cover this, a custom WorkItemTransitionService
 /// test double is needed that rejects the terminal-step transition while allowing the intermediate one.
 /// </remarks>
+// [Collection("Metrics")] serialises this class against other metric-using classes in the assembly
+// (WorkDistributionTelemetryDispatchAttemptsTests, WorkDistributionTelemetryCredentialPoolGaugeTests)
+// so that the MeterListener installed by SetupOutcomesListener does not race with their listeners
+// on the process-global pipeline.run.outcomes counter.
+[Collection("Metrics")]
 public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
@@ -350,14 +358,18 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TryFallbackChainAsync_AlreadyAtTarget_ReturnsTrue_Idempotent()
+    public async Task TryFallbackChainAsync_AlreadyAtTarget_ReturnsFalse_Idempotent()
     {
-        // TransitionAsync returns true for already-at-target (idempotent per WorkItemTransitionService)
+        // The new Succeeded→Succeeded symmetric guard returns false before the chain runs.
+        // WorkItemTransitionService.TransitionAsync would return true for already-at-target
+        // (idempotent API), so without this guard a second hub completion for the same item
+        // would incorrectly record a duplicate metric. The guard prevents this by returning
+        // false early — no metric is emitted, no fallback steps are executed.
         var id = await SeedWorkItem(WorkItemStatus.Succeeded);
 
         var result = await _sut.TryFallbackChainAsync(id, WorkItemStatus.Succeeded, null, null, CancellationToken.None);
 
-        result.Should().BeTrue("already at target is treated as idempotent success by WorkItemTransitionService");
+        result.Should().BeFalse("Succeeded→Succeeded is a no-op guarded by the symmetric idempotent-return guard");
     }
 
     // ── Test infrastructure ───────────────────────────────────────────────
@@ -587,5 +599,119 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         public PipelineDbContext CreateDbContext() => new InMemoryPipelineDbContext(_options);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
             => Task.FromResult(CreateDbContext());
+    }
+
+    // ── Outcome telemetry (hub path, issue #3729) ────────────────────────
+    // These tests use the dbFactory-enabled SUT so RecordOutcomeAsync fires.
+    // Tests without dbFactory (the default _sut) emit no metrics — existing tests are unaffected.
+
+    /// <summary>
+    /// Creates a <see cref="WorkItemFallbackTransitionService"/> with the in-memory
+    /// <see cref="IDbContextFactory{PipelineDbContext}"/> wired in so <c>RecordOutcomeAsync</c>
+    /// actually records measurements.
+    /// </summary>
+    private WorkItemFallbackTransitionService CreateSutWithTelemetry()
+        => new(_transitionService,
+               NullLogger<WorkItemFallbackTransitionService>.Instance,
+               _dbFactory);
+
+    /// <summary>
+    /// Sets up a <see cref="MeterListener"/> that captures
+    /// (outcome, failure_reason, run_type) triples from <c>pipeline.run.outcomes</c>
+    /// measurements. Each test creates and disposes its own listener instance to prevent
+    /// cross-test interference.
+    /// </summary>
+    private static (MeterListener Listener, ConcurrentBag<(string Outcome, string FailureReason, string RunType)> Bag)
+        SetupOutcomesListener()
+    {
+        var bag = new ConcurrentBag<(string, string, string)>();
+        var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return; // skip pre-init Add(0)
+            string outcome = "", failureReason = "", runType = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome") outcome = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "failure_reason") failureReason = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "run_type") runType = tag.Value?.ToString() ?? "";
+            }
+            bag.Add((outcome, failureReason, runType));
+        });
+        listener.Start();
+        return (listener, bag);
+    }
+
+    [Fact]
+    public async Task TerminalTransition_RecordsOneOutcome()
+    {
+        // A Running WorkItem of a consolidation run transitions to Succeeded via the hub path.
+        // Expect exactly one pipeline.run.outcomes measurement with run_type=consolidation, outcome=succeeded.
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        // Seed a PipelineRunEntity so ResolveRunContextAsync resolves run_type = consolidation.
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                WorkItemId = id,
+                RunType = PipelineRunType.Consolidation,
+                IssueIdentifier = "org/repo#1",
+                FinalStep = PipelineStep.Created,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSutWithTelemetry();
+        var (listener, bag) = SetupOutcomesListener();
+        using var _ = listener;
+
+        var result = await sut.TryFallbackChainAsync(id, WorkItemStatus.Succeeded, null, null, CancellationToken.None);
+
+        result.Should().BeTrue();
+        bag.Should().HaveCount(1, "exactly one outcome must be recorded for a successful terminal transition");
+        bag.Should().Contain(r => r.RunType == "consolidation" && r.Outcome == "succeeded",
+            "run_type must be 'consolidation' (from PipelineRunEntity) and outcome must be 'succeeded'");
+    }
+
+    [Fact]
+    public async Task RejectedTransition_RecordsNothing()
+    {
+        // The WorkItem is already Succeeded. The Succeeded→Succeeded symmetric guard fires,
+        // returning false before any chain step runs. No metric must be recorded.
+        var id = await SeedWorkItem(WorkItemStatus.Succeeded);
+
+        var sut = CreateSutWithTelemetry();
+        var (listener, bag) = SetupOutcomesListener();
+        using var _ = listener;
+
+        var result = await sut.TryFallbackChainAsync(id, WorkItemStatus.Succeeded, null, null, CancellationToken.None);
+
+        result.Should().BeFalse("the symmetric guard returns false for an already-terminal item");
+        bag.Should().BeEmpty("a rejected (no-op) transition must not record any metric");
+    }
+
+    [Fact]
+    public async Task NonTerminalTransition_RecordsNothing()
+    {
+        // Dispatched → Running is not a terminal status.
+        // RecordOutcomeAsync must be skipped entirely (not even called).
+        var id = await SeedWorkItem(WorkItemStatus.Dispatched);
+
+        var sut = CreateSutWithTelemetry();
+        var (listener, bag) = SetupOutcomesListener();
+        using var _ = listener;
+
+        await sut.TryFallbackChainAsync(id, WorkItemStatus.Running, null, null, CancellationToken.None);
+
+        bag.Should().BeEmpty("non-terminal transitions (Running) must not record any outcome metric");
     }
 }
