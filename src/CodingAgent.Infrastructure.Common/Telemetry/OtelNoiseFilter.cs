@@ -44,10 +44,10 @@ public static class OtelNoiseFilter
 
     private static bool IsNoiseOrStaticAssetPath(string? path) => IsNoisePath(path) || IsStaticAssetPath(path);
 
-    // Probes and the browser's polling calls (spec 052 Req 13.3): the loop status, the API health
-    // and the web host's session heartbeat.
+    // Probes and the browser's polling calls (spec 052 Req 13.3): the loop status, the API health,
+    // the sidebar's agent counts and the web host's session heartbeat.
     private static bool IsNoisePath(string? path) =>
-        path is "/healthz" or "/readyz" or "/api/ui/loop/status" or "/api/ui/health" or "/bff/session";
+        path is "/healthz" or "/readyz" or "/api/ui/loop/status" or "/api/ui/health" or "/api/ui/agents" or "/bff/session";
 
     // The web host's static client files: the WebAssembly runtime and assemblies, library assets,
     // stylesheets (including the root CodingAgent.Web.styles.css bundle), scripts, fonts and the favicon.

@@ -43,8 +43,9 @@ internal sealed class UserTokenMinter(
         var tokenSubject = new UserTokenSubject(
             subject, AuthPrincipals.GetUsername(user), user.FindFirst(AuthClaimTypes.IdentitySource)?.Value);
         var token = UserTokens.Create(tokenSubject, grant, now, expires, signingKey.Key, hub ? UserTokenClaimTypes.HubUse : null);
-        if (logger.IsEnabled(LogLevel.Debug))
-            logger.LogDebug("Minted a user token valid until {Expires:O}", expires);
+        // Every forwarded call mints one, so Trace: Debug would log each call.
+        if (logger.IsEnabled(LogLevel.Trace))
+            logger.LogTrace("Minted a user token valid until {Expires:O}", expires);
         return new MintedUserToken(token, expires);
     }
 }

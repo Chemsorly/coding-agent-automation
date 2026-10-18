@@ -26,7 +26,7 @@ public sealed class AccessDeniedException(string action)
     public string Action { get; } = action;
 }
 
-/// <summary>Re-evaluates the circuit principal's grant on every check, so it never acts on a stale render.</summary>
+/// <summary>Re-evaluates the signed-in principal's grant on every check, so it never acts on a stale render.</summary>
 public sealed class AccessGuard(CurrentAccess access, IRbacEvaluator rbac, ILogger<AccessGuard> logger) : IAccessGuard
 {
     public async Task DemandAsync(AccessRole minRole, string? projectId = null, [CallerMemberName] string action = "")

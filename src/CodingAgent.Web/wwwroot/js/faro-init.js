@@ -90,7 +90,7 @@
                 // The polling calls, as in the server's noise filter (OtelNoiseFilter): no fetch span,
                 // so no traceparent. The fetch transport adds these to its own collector URL, and
                 // tracing ignores that list.
-                ignoreUrls: [/\/bff\/session(\?|$)/, /\/api\/ui\/health(\?|$)/, /\/api\/ui\/loop\/status(\?|$)/]
+                ignoreUrls: [/\/bff\/session(\?|$)/, /\/api\/ui\/health(\?|$)/, /\/api\/ui\/loop\/status(\?|$)/, /\/api\/ui\/agents(\?|$)/]
                 // Default instrumentations: errors, web vitals, performance, console, xhr/fetch
             });
 

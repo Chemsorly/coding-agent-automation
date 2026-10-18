@@ -128,10 +128,7 @@ app.MapApiHealthEndpoints();
 // that would otherwise be invisible because Microsoft.AspNetCore is overridden to Warning.
 app.UseSerilogRequestLogging(opts =>
 {
-    opts.GetLevel = (ctx, _, ex) =>
-        ex is not null || ctx.Response.StatusCode >= 400
-            ? Serilog.Events.LogEventLevel.Warning
-            : Serilog.Events.LogEventLevel.Debug;
+    opts.GetLevel = (ctx, _, ex) => ClientAbortedRequests.GetRequestLogLevel(ctx, ex);
     opts.EnrichDiagnosticContext = (diag, ctx) =>
     {
         diag.Set("RequestHost", ctx.Request.Host.Value);
@@ -140,6 +137,9 @@ app.UseSerilogRequestLogging(opts =>
             diag.Set("ResponseStatusCode", ctx.Response.StatusCode);
     };
 });
+
+// A request the client aborted ends as 499 at Debug, not as an unhandled exception logged as a 500.
+app.UseClientAbortedRequests();
 
 app.UseAuthentication();
 app.UseAuthorization();

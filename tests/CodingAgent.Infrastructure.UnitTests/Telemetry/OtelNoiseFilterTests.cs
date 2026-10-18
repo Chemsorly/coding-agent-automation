@@ -38,6 +38,7 @@ public class OtelNoiseFilterTests : IDisposable
     [InlineData("/readyz")]
     [InlineData("/api/ui/loop/status")]
     [InlineData("/api/ui/health")]
+    [InlineData("/api/ui/agents")]
     [InlineData("/bff/session")]
     public void FilterAspNetCoreRequest_NoisePaths_ReturnsFalse(string path)
     {
@@ -71,6 +72,7 @@ public class OtelNoiseFilterTests : IDisposable
     [InlineData("/api/ui/loop/status/full")]   // sub-path of a noise path — must be kept
     [InlineData("/readyz/extra")]       // sub-path of a noise path — must be kept
     [InlineData("/bff/session/extra")]  // sub-path of a noise path — must be kept
+    [InlineData("/api/ui/agents/credential-pool")]  // sub-path of a noise path — must be kept
     [InlineData("/api/ui/runs")]
     [InlineData("/runs/00000000-0000-0000-0000-000000000000")]
     [InlineData("/")]
@@ -100,7 +102,7 @@ public class OtelNoiseFilterTests : IDisposable
     [Property]
     public Property FilterAspNetCoreRequest_AnyPathOtherThanNoiseIsKept()
     {
-        var noisePaths = new HashSet<string> { "/healthz", "/readyz", "/api/ui/loop/status", "/api/ui/health", "/bff/session" };
+        var noisePaths = new HashSet<string> { "/healthz", "/readyz", "/api/ui/loop/status", "/api/ui/health", "/api/ui/agents", "/bff/session" };
 
         // TODO: [WARNING] Gen.Elements cycles over only 7 fixed strings — FsCheck provides no real randomised
         // coverage. A regression dropping an arbitrary path would never be caught. Replace with
@@ -248,6 +250,7 @@ public class OtelNoiseFilterTests : IDisposable
     [InlineData("/readyz")]
     [InlineData("/api/ui/loop/status")]
     [InlineData("/api/ui/health")]
+    [InlineData("/api/ui/agents")]
     [InlineData("/bff/session")]
     [InlineData("/_framework/dotnet.native.wasm")]
     [InlineData("/CodingAgent.Web.styles.css")]
@@ -265,6 +268,7 @@ public class OtelNoiseFilterTests : IDisposable
     [Theory]
     [InlineData("/api/work-items/pending")]
     [InlineData("/healthz/detail")]
+    [InlineData("/api/ui/agents/credential-pool")]
     public void Processor_OnEnd_KeepsOtherServerSpans(string path)
     {
         using var activity = StartRecordedActivity("Microsoft.AspNetCore", $"GET {path}", ActivityKind.Server);

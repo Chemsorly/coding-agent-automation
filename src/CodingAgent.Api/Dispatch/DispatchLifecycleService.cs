@@ -42,11 +42,6 @@ internal sealed class DispatchLifecycleService : IDisposable
     }
 
     /// <summary>
-    /// Returns the configured Kiro PVC pool, for the PVC availability check before a dispatch.
-    /// </summary>
-    public IReadOnlyList<string> GetPvcPool() => _options.KiroPvcPool;
-
-    /// <summary>
     /// Queries the database for claimed PVCs, excludes inflight claims, and returns available PVCs
     /// from the given pool. Used by DispatchService.
     /// </summary>
@@ -71,6 +66,32 @@ internal sealed class DispatchLifecycleService : IDisposable
             .ToList();
 
         return new PvcAvailabilityResult(availablePvcs, claimedPvcs.Count);
+    }
+
+    /// <summary>
+    /// The PVCs of the pool a dispatch can take: not claimed by an active WorkItem
+    /// (<see cref="QueryAvailablePvcsAsync"/>), and not mounted by an agent Job that has not ended
+    /// (<see cref="AgentJobPvcs"/>). The second covers chats, which have no WorkItem. When the Jobs cannot
+    /// be read, the WorkItem claims alone decide, as before.
+    /// </summary>
+    public async Task<PvcAvailabilityResult> QueryDispatchablePvcsAsync(PipelineDbContext db, CancellationToken ct)
+    {
+        var result = await QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+        if (result.AvailablePvcs.Count == 0)
+            return result;
+
+        IReadOnlySet<string> heldByJobs;
+        try
+        {
+            heldByJobs = await AgentJobPvcs.ListHeldAsync(_kubeClient, _options.Namespace, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Warning(ex, "DispatchLifecycleService: could not list the agent Jobs, so the PVCs chats hold are not left out");
+            return result;
+        }
+
+        return result with { AvailablePvcs = [.. result.AvailablePvcs.Where(p => !heldByJobs.Contains(p))] };
     }
 
 

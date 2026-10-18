@@ -1,3 +1,5 @@
+using k8s.Models;
+
 namespace CodingAgent.Kubernetes;
 
 /// <summary>
@@ -14,4 +16,9 @@ public static class KubernetesJobConditions
 
     /// <summary>Condition status value indicating the condition is active/true.</summary>
     public const string ConditionTrue = "True";
+
+    /// <summary>Whether the Job has ended: it carries a true <c>Complete</c> or <c>Failed</c> condition.</summary>
+    public static bool IsTerminal(V1Job job)
+        => job.Status?.Conditions?.Any(c =>
+               (c.Type == JobPhaseComplete || c.Type == JobPhaseFailed) && c.Status == ConditionTrue) == true;
 }

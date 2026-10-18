@@ -354,6 +354,66 @@ public class AgentAuthorizationFilterObservabilityTests
             "non-ReportJobCompleted methods with no active job must still throw HubException");
     }
 
+    // ── DeregisterAgent from an unregistered connection ──────────────────
+
+    /// <summary>
+    /// An agent whose session ends in the reconnect window after an API restart deregisters on a connection
+    /// that is not registered yet. There is nothing to deregister: the call is skipped, not rejected with a
+    /// HubException that SignalR logs as an Error.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DeregisterAgent_FromUnregisteredConnection_IsSkippedWithoutError(bool withAgentIdQuery)
+    {
+        _registryMock.Setup(r => r.GetByConnectionId(It.IsAny<string>())).Returns((AgentEntry?)null);
+
+        var hub = CreateHub("conn-leaving");
+        var ctx = withAgentIdQuery ? MakeContextWithAgentIdQuery("conn-leaving", "agent-leaving") : MakeContext("conn-leaving");
+        hub.Context = ctx;
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.DeregisterAgent))!;
+        var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, [new AgentId("agent-leaving")]);
+        var nextInvoked = false;
+
+        await _filter.InvokeMethodAsync(invCtx, _ =>
+        {
+            nextInvoked = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextInvoked.Should().BeFalse("an unregistered connection has nothing to deregister");
+    }
+
+    [Fact]
+    public async Task DeregisterAgent_FromRegisteredConnection_IsInvoked()
+    {
+        const string connectionId = "conn-registered";
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns(new AgentEntry
+        {
+            AgentId = new AgentId("agent-registered"),
+            ConnectionId = connectionId,
+            Hostname = "h",
+            Labels = [],
+            Status = AgentStatus.Idle,
+            RegisteredAt = DateTimeOffset.UtcNow,
+        });
+
+        var hub = CreateHub(connectionId);
+        var ctx = MakeContext(connectionId);
+        hub.Context = ctx;
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.DeregisterAgent))!;
+        var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, [new AgentId("agent-registered")]);
+        var nextInvoked = false;
+
+        await _filter.InvokeMethodAsync(invCtx, _ =>
+        {
+            nextInvoked = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextInvoked.Should().BeTrue();
+    }
+
     // ── Reason constants match expected string values ─────────────────────
 
     // TODO [WARNING]: No test verifies that true unregistered connections log at Warning

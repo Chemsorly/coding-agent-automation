@@ -191,13 +191,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var (normalized, selectorLabelValue) = NormalizeSelector(agentSelector);
         activity?.SetTag(TagAgentSelector, normalized);
 
-        // Query all active chat jobs — used for PVC availability.
-        var allChatJobs = await _jobClient.ListJobsAsync(
-            _options.Namespace, LabelChatSessionId, cancellationToken);
-
-        var activeChatJobs = allChatJobs.Items?
-            .Where(j => !IsTerminal(j))
-            .ToList() ?? [];
+        // The PVCs that agent Jobs which have not ended mount — chats and pipeline runs alike.
+        var heldPvcs = await AgentJobPvcs.ListHeldAsync(_jobClient, _options.Namespace, cancellationToken);
 
         var template = _templateStore.Resolve(normalized)
             ?? throw new InvalidOperationException($"No template for selector '{normalized}'");
@@ -206,7 +201,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var dispatchId = Guid.NewGuid();
         var dispatchStart = DateTimeOffset.UtcNow;
 
-        var claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, activeChatJobs);
+        var claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, heldPvcs);
         // TODO [WARNING]: poolName derives from template.ProviderType whenever claimedPvc is non-null.
         // Today ClaimPvcForKiroAgent only returns non-null for Kiro providers, so poolName is always
         // "kiro" or null. If a future provider introduces its own PVC pool (i.e. ClaimPvcForKiroAgent
@@ -246,21 +241,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         return (normalized, selectorLabelValue);
     }
 
-    private string? ClaimPvcForKiroAgent(string providerType, List<V1Job> activeChatJobs)
+    private string? ClaimPvcForKiroAgent(string providerType, IReadOnlySet<string> heldPvcs)
     {
         if (!JobTemplateProviderType.IsKiro(providerType))
             return null;
 
-        var claimedByActiveJobs = activeChatJobs
-            .Select(j =>
-            {
-                var labels = j.Metadata?.Labels;
-                return labels is not null && labels.TryGetValue("caa/claimed-pvc", out var p) ? p : null;
-            })
-            .Where(p => p is not null)
-            .ToHashSet(StringComparer.Ordinal)!;
-
-        var claimedPvc = _options.KiroPvcPool.FirstOrDefault(p => !claimedByActiveJobs.Contains(p));
+        var claimedPvc = _options.KiroPvcPool.FirstOrDefault(p => !heldPvcs.Contains(p));
         if (claimedPvc is null)
             throw new NoPvcAvailableException();
 
@@ -744,9 +730,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
            || ex.Message.Contains("404", StringComparison.Ordinal)
            || ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase);
 
-    internal static bool IsTerminal(V1Job job)
-        => job.Status?.Conditions?.Any(c =>
-               (c.Type == KubernetesJobConditions.JobPhaseComplete || c.Type == KubernetesJobConditions.JobPhaseFailed) && c.Status == KubernetesJobConditions.ConditionTrue) == true;
+    internal static bool IsTerminal(V1Job job) => KubernetesJobConditions.IsTerminal(job);
 
     // ─── Test helpers (internal) ──────────────────────────────────────────────
 

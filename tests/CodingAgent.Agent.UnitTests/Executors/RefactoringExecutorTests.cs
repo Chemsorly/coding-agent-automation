@@ -67,12 +67,12 @@ public class RefactoringExecutorTests : IDisposable
         var executor = CreateExecutor();
         var job = CreateJob();
 
-        // Setup clone to create the workspace directory structure
+        // The aggregation dropped every finding and wrote an empty array
         _mockRepoProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
             .Returns(Task.CompletedTask);
 
-        // Agent succeeds but produces no proposals file
         _mockAgentProvider
             .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(new AgentResult
@@ -90,6 +90,34 @@ public class RefactoringExecutorTests : IDisposable
         result.Summary.Should().Contain("No refactoring opportunities identified");
 
         // Should never call CreateIssueAsync
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// The aggregation read the findings, filtered them and stopped without writing the proposals file.
+    /// That is a broken step, not a scan that found nothing.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_AggregationWritesNoProposalsFile_Fails()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Wrote the analysis log."] });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Be("The aggregation step wrote no refactoring-proposals.json");
+        CompletionOutcomeResolver.Resolve(PipelineStep.Failed, result.ErrorMessage, result.FailureCategory, "fallback")
+            .FailureReason.Should().Be(FailureReason.AgentError, "the agent broke off, the platform did not");
         _mockIssueProvider.Verify(
             x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -355,6 +383,7 @@ public class RefactoringExecutorTests : IDisposable
 
         _mockRepoProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
             .Returns(Task.CompletedTask);
 
         _mockAgentProvider
@@ -413,6 +442,7 @@ public class RefactoringExecutorTests : IDisposable
 
         _mockRepoProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
             .Returns(Task.CompletedTask);
 
         _mockIssueProvider
@@ -427,7 +457,7 @@ public class RefactoringExecutorTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Should succeed (graceful degradation) — no proposals file means "no proposals"
+        // Should succeed (graceful degradation) — the aggregation wrote [] (no proposals)
         result.Success.Should().BeTrue();
         result.Summary.Should().Contain("No refactoring opportunities identified");
     }
