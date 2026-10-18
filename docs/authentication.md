@@ -145,7 +145,7 @@ Register this redirect URI with the identity provider:
 https://<web host>/signin-oidc
 ```
 
-The web host reads the client's scheme from `X-Forwarded-Proto`, so TLS can end at the ingress. It does not trust `X-Forwarded-Host`; the ingress must pass the original `Host` header (the default for ingress-nginx and Traefik).
+The web host reads the client's scheme from `X-Forwarded-Proto`, so TLS can end at the ingress. It reads `wss` and `ws`, which Traefik sends for the `/hubs/ui` WebSocket upgrade, as `https` and `http`. It does not trust `X-Forwarded-Host`; the ingress must pass the original `Host` header (the default for ingress-nginx and Traefik).
 
 With a `tls` section on the Ingress, the web host also sends clients that reached the ingress over plain HTTP (`X-Forwarded-Proto: http`) to the same URL over HTTPS, so the login form never posts a password unencrypted. Requests without `X-Forwarded-Proto` (`kubectl port-forward`, probes) are served as they are. When TLS ends in front of the ingress and the ingress itself sees only HTTP, set `web.ingress.httpsRedirect: false`; otherwise every request is redirected. HTTPS responses carry HSTS (`Strict-Transport-Security`), so a browser that once opened the UI over HTTPS keeps using HTTPS.
 

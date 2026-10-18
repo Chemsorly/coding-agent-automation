@@ -17,6 +17,7 @@ internal static class EndpointRegistration
     {
         // First, so the OIDC redirect URI and the Secure cookie flag see the client's https.
         app.UseForwardedHeaders();
+        app.Use(UseHttpSchemeForWebSockets);
 
         // HTTPS redirect, HSTS and security headers: before static files, so every response has them.
         app.UseSecurityHeaders();
@@ -68,5 +69,21 @@ internal static class EndpointRegistration
             .AddAdditionalAssemblies(typeof(Routes).Assembly);
 
         return app;
+    }
+
+    /// <summary>
+    /// Traefik forwards a WebSocket upgrade with <c>X-Forwarded-Proto: wss</c> (<c>ws</c> without TLS), which
+    /// <c>UseForwardedHeaders</c> copies into the scheme. The client's page scheme is https (http): without this
+    /// the HTTPS redirect answers the <c>/hubs/ui</c> upgrade with a 307 to itself, and the hub's Origin check
+    /// compares the page's https Origin with wss.
+    /// </summary>
+    internal static Task UseHttpSchemeForWebSockets(HttpContext context, RequestDelegate next)
+    {
+        var request = context.Request;
+        if (string.Equals(request.Scheme, "wss", StringComparison.OrdinalIgnoreCase))
+            request.Scheme = Uri.UriSchemeHttps;
+        else if (string.Equals(request.Scheme, "ws", StringComparison.OrdinalIgnoreCase))
+            request.Scheme = Uri.UriSchemeHttp;
+        return next(context);
     }
 }

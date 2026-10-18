@@ -245,13 +245,16 @@ public class BffForwardingTests : IClassFixture<BffWebApplicationFactory>
         forwarded.Should().BeEmpty();
     }
 
-    private async Task<(WebSocketState State, HttpStatusCode? Status, string? Received)> ConnectHubAsync(BffClient client, string? origin)
+    private async Task<(WebSocketState State, HttpStatusCode? Status, string? Received)> ConnectHubAsync(
+        BffClient client, string? origin, string? forwardedProto = null)
     {
         using var socket = new ClientWebSocket();
         socket.Options.Cookies = client.Cookies;
         socket.Options.CollectHttpResponseDetails = true;
         if (origin is not null)
             socket.Options.SetRequestHeader("Origin", origin);
+        if (forwardedProto is not null)
+            socket.Options.SetRequestHeader("X-Forwarded-Proto", forwardedProto);
         var url = new UriBuilder(_factory.ServerAddress) { Scheme = "ws", Path = "/hubs/ui" }.Uri;
         try
         {
@@ -283,6 +286,20 @@ public class BffForwardingTests : IClassFixture<BffWebApplicationFactory>
         var identity = await ValidateAsync(upstream.Headers["Authorization"]);
         identity.FindFirst(UserTokenClaimTypes.Subject)!.Value.Should().Be("sub-reader");
         identity.FindFirst(UserTokenClaimTypes.Use)?.Value.Should().Be(UserTokenClaimTypes.HubUse);
+    }
+
+    [Fact]
+    public async Task HubUpgrade_ThroughTraefik_WithForwardedProtoWss_IsForwarded()
+    {
+        // Traefik forwards the upgrade with X-Forwarded-Proto: wss while the page's Origin is https.
+        using var client = await _factory.SignInClientAsync("reader");
+        var httpsOrigin = new UriBuilder(_factory.ServerAddress) { Scheme = Uri.UriSchemeHttps }.Uri.GetLeftPart(UriPartial.Authority);
+
+        var ((_, status, received), forwarded) = await ObserveAsync(() => ConnectHubAsync(client, httpsOrigin, "wss"));
+
+        status.Should().Be(HttpStatusCode.SwitchingProtocols);
+        received.Should().Be(StubPipelineApi.HubGreeting);
+        forwarded.Should().ContainSingle().Which.WebSocket.Should().BeTrue();
     }
 
     [Theory]
