@@ -2726,4 +2726,125 @@ public class RefactoringExecutorTests : IDisposable
         // Success=false), catching regressions that merely swallow the write failure silently.
         result.Should().NotBeNull();
     }
+
+    // ── AC2 (#3756): Git log returns no file changes → hotspot early exit (L308) ───────────────────────
+
+    /// <summary>
+    /// When the workspace is a real git repo but all commits are empty (no file changes),
+    /// ParseHotspotOutput returns null, L308 fires, and the hotspot output file is not written.
+    /// Covers <c>WriteHotspotAnalysisAsync</c> L308.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_GitLogHasNoFileChanges_HotspotFileNotWrittenAndNoHistoryLogged()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+
+        // Use .Returns<T1,T2>(async …) — NOT .Callback + .Returns(Task.CompletedTask) —
+        // so the returned Task is not resolved until the git commands inside complete.
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns<WorkspacePath, CancellationToken>(async (path, ct) =>
+            {
+                await RefactoringExecutor.RunGitCommandAsync(path, "init", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.email test@example.com", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.name Test", ct);
+                // Empty commit: git log succeeds but produces no file-path lines.
+                // ParseHotspotOutput will find no entries and return null, triggering L308.
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit --allow-empty -m initial", ct);
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act — result.Success will be false (no proposals file written by the mock); that is unrelated to this criterion
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — L308: Logger.Information("No git history found within lookback window for hotspot analysis")
+        _mockLogger.Verify(
+            l => l.Information(It.Is<string>(s => s.Contains("No git history found"))),
+            Times.Once);
+
+        // The hotspot file must not exist: the early return at L308 skips File.WriteAllTextAsync
+        File.Exists(Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath))
+            .Should().BeFalse("git log produced no file-change lines so no hotspot file should be written");
+    }
+
+    // ── AC3 (#3756): scanIssueRefs exclusion path (L581-L613) ───────────────────────────────────────────
+
+    /// <summary>
+    /// When scanIssueRefs is non-empty and a commit's subject contains a matching reference,
+    /// that commit's files are excluded from the hotspot output and the exclusion count is logged.
+    /// Covers <c>WriteHotspotAnalysisAsync</c> L581-L613: isExcludedCommit lambda, CountExcludedCommits,
+    /// and Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits…").
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_ScanIssueRefMatchesCommitSubject_FileExcludedAndExclusionCountLogged()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+
+        // Open scan issue #42 — FormatIssueReference returns "#42" so scanIssueRefs = {"#42"}.
+        // The isExcludedCommit predicate checks subject.Contains("(#42)") (L584-L589).
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [MakeScanIssue("42")],
+                Page = 1, PageSize = 50, HasMore = false
+            });
+        _mockIssueProvider
+            .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
+            .Returns<IssueIdentifier>(id => $"#{id.Value}");
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns<WorkspacePath, CancellationToken>(async (path, ct) =>
+            {
+                await RefactoringExecutor.RunGitCommandAsync(path, "init", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.email test@example.com", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.name Test", ct);
+
+                // Commit A — subject contains "(#42)" → matched by isExcludedCommit → files skipped
+                Directory.CreateDirectory(Path.Combine(path, "src"));
+                File.WriteAllText(Path.Combine(path, "src", "Excluded.cs"), "// test");
+                await RefactoringExecutor.RunGitCommandAsync(path, "add .", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit -m \"feat: refactoring (#42)\"", ct);
+
+                // Commit B — no scan issue ref → not excluded; contributes src/Kept.cs to the hotspot
+                File.WriteAllText(Path.Combine(path, "src", "Kept.cs"), "// test");
+                await RefactoringExecutor.RunGitCommandAsync(path, "add .", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit -m \"feat: something else\"", ct);
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act — result.Success will be false (no proposals file written by the mock); that is unrelated to this criterion
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — L607: Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits…", 1)
+        // It.Is<int>(n => n == 1) selects the Information<int>(string, int) overload and verifies the exact count.
+        _mockLogger.Verify(
+            l => l.Information(
+                It.Is<string>(s => s.Contains("left out")),
+                It.Is<int>(n => n == 1)),
+            Times.Once);
+
+        // The hotspot file must have been written (Commit B contributed src/Kept.cs)
+        var hotspotPath = Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath);
+        File.Exists(hotspotPath).Should().BeTrue("Commit B contributed src/Kept.cs to the hotspot analysis");
+        var hotspotContent = File.ReadAllText(hotspotPath);
+        hotspotContent.Should().Contain("src/Kept.cs");
+        hotspotContent.Should().NotContain("src/Excluded.cs", "Commit A was excluded because its subject contains (#42)");
+    }
 }
