@@ -71,7 +71,7 @@ public static class HealthEndpoints
     {
         // Liveness: Is the process alive? Never check dependencies here.
         // If this fails, Kubernetes restarts the container.
-        endpoints.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
+        endpoints.MapGet("/healthz", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
 
         // Readiness: Can this pod handle work? Check orchestrator connection.
         // If this fails, Kubernetes stops routing traffic but does NOT restart.
@@ -83,7 +83,7 @@ public static class HealthEndpoints
             return Results.Json(
                 new { status = "not_ready", connected = false },
                 statusCode: StatusCodes.Status503ServiceUnavailable);
-        });
+        }).AllowAnonymous();
 
         // Startup: Has the app finished initializing? Used to gate liveness/readiness probes.
         // Prevents premature restarts during slow startup (e.g., waiting for first connection).
@@ -95,7 +95,7 @@ public static class HealthEndpoints
             return Results.Json(
                 new { status = "starting" },
                 statusCode: StatusCodes.Status503ServiceUnavailable);
-        });
+        }).AllowAnonymous();
 
         return endpoints;
     }

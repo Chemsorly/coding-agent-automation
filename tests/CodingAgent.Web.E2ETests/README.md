@@ -86,14 +86,15 @@ and names the hung test.
 
 ## Navigating in browser tests
 
-Cockpit pages are prerendered. Until the Blazor Server circuit has rendered the page, clicks and
-`<select>` changes are dropped, and reads can see prerendered or "Loading…" markup. Load every
-cockpit page with `Page.GotoCockpitPageAsync(url)` and reload it with
+Cockpit pages run as Blazor WebAssembly and are not prerendered. Until the client has started and
+rendered the page, there is nothing to click, and its first renders show "Loading…" placeholders.
+Load every cockpit page with `Page.GotoCockpitPageAsync(url)` and reload it with
 `Page.ReloadCockpitPageAsync()` (`Infrastructure/BlazorPageExtensions.cs`). Both return when
 CockpitLayout's theme toggle has its Blazor event handler and no `.auth-authorizing` or
 `.cockpit-empty` "Loading…" placeholder is left. Otherwise they throw a `TimeoutException` that
-names the URL and the missing condition. Before you change a prerendered control outside the
-layout, wait for its handler with `WaitForInteractiveAsync(selector)`.
+names the URL and the missing condition. Before you use a control outside the layout that renders
+later (a drawer, a dialog, a form after its data loads), wait for its handler with
+`WaitForInteractiveAsync(selector)`.
 `LayerBoundaryTests.E2E_BrowserNavigations_UseCockpitReadyHelpers` in
 `tests/CodingAgent.Pipeline.UnitTests` fails when `PageObjects/` or `Tests/` call `GotoAsync`
 or `ReloadAsync` directly. The only exceptions are `Page.GotoAsync("about:blank")` and

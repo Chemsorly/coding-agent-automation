@@ -118,10 +118,12 @@ public class BasepathNavigationTests : BunitContext
 
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<CodingAgent.Web.Ui.IUiLoopClient>(new CodingAgent.Web.UnitTests.TestUtilities.FakeUiLoopClient());
         Services.AddSingleton(new CockpitState());
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
@@ -160,6 +162,7 @@ public class BasepathNavigationTests : BunitContext
             b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()) == Task.FromResult(new BacklogResult(Array.Empty<BacklogIssue>(), false))));
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
@@ -200,6 +203,7 @@ public class BasepathNavigationTests : BunitContext
             b.GetBacklogAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()) == Task.FromResult(new BacklogResult(Array.Empty<BacklogIssue>(), false))));
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
         // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
         Services.AddSingleton(Mock.Of<IJSRuntime>());
 
@@ -257,6 +261,7 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiConfigClient>());
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(new CockpitState());
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
 
         var cut = Render<RunPage>(ps =>
             ps.Add(p => p.RunId, "test-run-id"));
@@ -299,6 +304,7 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(mockRunHistory.Object);
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiTriageClient>());
         Services.AddSingleton(new CockpitState());
+        Services.AddSingleton(new CodingAgent.Web.Services.VersionWatch());
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
         Services.AddSingleton<NotificationService>();
         Services.AddSingleton(sp => new NotificationFaroBridge(

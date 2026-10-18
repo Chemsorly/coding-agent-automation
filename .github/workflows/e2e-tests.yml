@@ -12,9 +12,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The suite runs one test at a time (the factories share process-global environment
-  # variables), so it is split across separate jobs instead: each shard is its own process with
-  # its own hosts on free ports. The shard count is the length of the matrix.
+  # A test process runs one test at a time (the factories share process-global environment
+  # variables), so the suite is split across separate jobs, and each job runs two test processes
+  # side by side: every process has its own hosts on free ports and its own temp folder. The shard
+  # count is the length of the matrix; a second process per shard uses the runner's idle cores
+  # without paying the job's fixed setup (container, SDK, restore, build) again (spec 052 V7).
   e2e-shard:
     name: e2e (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
@@ -48,8 +50,13 @@ jobs:
       # -p:IsTestProject=true so the test host and adapters are copied to the output. The csproj
       # keeps the property false so ci.yml's solution-wide `dotnet test` does not pick this
       # project up and fail on "no tests match Category!=E2E". See the csproj for the full note.
+      #
+      # Faster than the defaults, which suit a dev machine: the compiler server (Directory.Build.props
+      # turns it off so no VBCSCompiler outlives a local build; the job container is thrown away) and no
+      # analyzers (ci.yml's Release build enforces them with TreatWarningsAsErrors). About a third less
+      # build time per shard, measured locally (spec 052 V7).
       - name: Build
-        run: dotnet build tests/CodingAgent.Web.E2ETests/ -c Debug -p:IsTestProject=true
+        run: dotnet build tests/CodingAgent.Web.E2ETests/ -c Debug -p:IsTestProject=true -p:UseSharedCompilation=true -p:RunAnalyzers=false
 
       # The sorted list of E2E test methods is dealt round-robin across the shards, so browser
       # and headless tests spread evenly and a new test class needs no shard assignment. Every
@@ -68,7 +75,11 @@ jobs:
             exit 1
           fi
           echo "Shard ${{ matrix.shard }}/${{ strategy.job-total }}: ${SELECTED} of ${ALL} E2E test methods"
-          echo "E2E_FILTER=Category=E2E&($(sed 's/^/FullyQualifiedName=/' "$RUNNER_TEMP/e2e-shard.txt" | paste -sd '|' -))" >> "$GITHUB_ENV"
+          # Each shard's list is dealt round-robin into the two parallel test processes.
+          for part in 0 1; do
+            awk -v part="$part" '(NR - 1) % 2 == part' "$RUNNER_TEMP/e2e-shard.txt" > "$RUNNER_TEMP/e2e-part$part.txt"
+            echo "E2E_FILTER_$part=Category=E2E&($(sed 's/^/FullyQualifiedName=/' "$RUNNER_TEMP/e2e-part$part.txt" | paste -sd '|' -))" >> "$GITHUB_ENV"
+          done
 
       # vstest against the built DLL, not `dotnet test` on the project: with IsTestProject=false
       # the VSTest MSBuild target is a no-op and `dotnet test` exits 0 having discovered zero
@@ -78,8 +89,27 @@ jobs:
       # names it ("The test running when the crash occurred: ..."). Without it a hung test
       # runs silently into timeout-minutes, GitHub reports the job as cancelled with no test
       # name, and agents fixing E2E tests get nothing to work from.
+      #
+      # Two processes in parallel, each prefixing its log lines with [0] or [1]. Each gets its own
+      # TMPDIR, because the harness writes fixed paths under the temp folder (agent workspaces, MCP
+      # config). The step fails if either process fails.
       - name: Run E2E Tests
-        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"$E2E_FILTER" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:TestResults
+        shell: bash
+        run: |
+          set -o pipefail
+          run_part() {
+            local part=$1 filter=$2
+            mkdir -p "$RUNNER_TEMP/tmp-$part"
+            TMPDIR="$RUNNER_TEMP/tmp-$part" dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"$filter" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:"TestResults/part$part" 2>&1 | sed -u "s/^/[$part] /"
+          }
+          run_part 0 "$E2E_FILTER_0" &
+          first=$!
+          run_part 1 "$E2E_FILTER_1" &
+          second=$!
+          status=0
+          wait "$first" || status=1
+          wait "$second" || status=1
+          exit "$status"
         env:
           ASPNETCORE_ENVIRONMENT: Development
 

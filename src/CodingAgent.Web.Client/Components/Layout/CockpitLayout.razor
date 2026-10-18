@@ -3,15 +3,15 @@
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
-@using Serilog
+@inject ILogger<CockpitLayout> Logger
 @inject IUiConfigClient UiConfig
 @inject IUiRunClient RunHistory
 @inject IUiTriageClient Triages
 @inject CockpitState State
-@inject IFaroService Faro
 @inject NotificationFaroBridge FaroBridge
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject VersionWatch Version
 @inject CurrentAccess Access
 
 @*
@@ -156,6 +156,7 @@
         </div>
 
         <div class="cockpit-body">
+            <NewVersionBanner />
             @if (Access.IsAdmin)
             {
                 <FirstRunBanner />
@@ -198,6 +199,9 @@
     // Mobile sidebar overlay state.
     private bool _sidebarOpen;
 
+    // Spec 052 Req 5.2: set when an outdated client has started its reload.
+    private bool _reloading;
+
     // Global keyboard help (ported from the retired MainLayout — the '?' overlay + Escape).
     private DotNetObjectReference<CockpitLayout>? _dotNetRef;
     private bool _showShortcutHelp;
@@ -215,8 +219,8 @@
         // disposed component. InvokeAsync(StateHasChanged) on a disposed component logs an
         // ObjectDisposedException (Blazor swallows it, but it is a latent reliability issue).
         // A disposed-flag guard in HandleLocationChanged would prevent spurious invocations.
-        // Also: NavigationManager is a scoped singleton; if DisposeAsync is never called (circuit
-        // drops abruptly without IAsyncDisposable teardown), the handler keeps the component alive.
+        // Also: NavigationManager is a scoped singleton; if DisposeAsync is never called (the app
+        // stops abruptly without IAsyncDisposable teardown), the handler keeps the component alive.
         // A synchronous IDisposable.Dispose fallback would close that leak path.
         Nav.LocationChanged += HandleLocationChanged;
     }
@@ -237,7 +241,7 @@
         catch (Exception ex)
         {
             // The config API can be unavailable in some run modes — degrade to "All projects".
-            Log.Warning(ex, "CockpitLayout: failed to load projects for the scope switcher");
+            Logger.LogWarning(ex, "CockpitLayout: failed to load projects for the scope switcher");
             _projects = [];
         }
 
@@ -251,6 +255,15 @@
                 _noReadableProject = true;
             else
                 State.SetProject(first.Id, first.Name);
+        }
+
+        // Spec 052 M7: restore the saved scope here, before any page renders. In WebAssembly JS interop is
+        // in process, so OnAfterRenderAsync(firstRender) ran before the projects above had loaded and
+        // skipped the restore; without prerendering, JS already works during initialization.
+        if (!_noReadableProject)
+        {
+            try { await RestoreSavedProjectScopeAsync(); }
+            catch (JSException ex) { Logger.LogWarning(ex, "CockpitLayout: could not read the saved project scope"); }
         }
 
         _accessReady = true;
@@ -273,34 +286,34 @@
         var name = _projects.FirstOrDefault(p => p.Id == id)?.Name;
         State.SetProject(id, name);
         try { await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", id); }
-        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+        catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
         catch (JSException) { /* Browser-side failure is non-fatal here. */ }
-        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
     }
 
     private async Task RefreshAttentionCountAsync()
     {
         // Top-bar Attention count from recent run history, scoped to the selected project.
-        // Runs once on circuit init and re-runs whenever the project scope changes.
+        // Runs once at start and re-runs whenever the project scope changes.
         try
         {
             var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId));
-            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, CancellationToken.None);
+            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, Logger, CancellationToken.None);
             State.SetAttentionCount(AttentionAggregator.Aggregate(runs.Items, triages).TotalCount);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "CockpitLayout: failed to compute attention count");
+            Logger.LogWarning(ex, "CockpitLayout: failed to compute attention count");
         }
     }
 
     // TODO: [WARNING] HandleProjectChanged is declared async void. RefreshAttentionCountAsync wraps its
     // body in a catch-all handler, so today's risk is low. However if RefreshAttentionCountAsync ever
     // rethrows, or if new awaitable work is added outside its try/catch, the exception will escape the
-    // outer ObjectDisposedException guard here and be delivered to the Blazor circuit's unhandled-
-    // exception handler, potentially tearing down the circuit. Consider wrapping the entire body in a
+    // outer ObjectDisposedException guard here and be delivered to the Blazor renderer's unhandled-
+    // exception handler, which shows the error bar and leaves the app unusable. Consider wrapping the entire body in a
     // catch-all handler, or scheduling the refresh as a discarded InvokeAsync task, so Blazor's own
-    // error pipeline handles it. Also note that OperationCanceledException on circuit teardown would
+    // error pipeline handles it. Also note that OperationCanceledException on teardown would
     // also escape the current ObjectDisposedException guard.
     private async void HandleProjectChanged()
     {
@@ -331,18 +344,34 @@
     /// </summary>
     private void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
+        // Spec 052 Req 5.2, D7: a newer build is running, so the page just navigated to loads from it.
+        // Refresh runs no location-changing handlers, and an in-app navigation means nobody is typing.
+        if (Version.IsOutdated)
+        {
+            // Once: the reload unloads the page, so nothing should navigate again meanwhile.
+            if (!_reloading)
+            {
+                _reloading = true;
+                Nav.Refresh(forceReload: true);
+            }
+            return;
+        }
+
         if (_sidebarOpen)
         {
             _sidebarOpen = false;
-            // LocationChanged fires on the NavigationManager thread; must marshal to the render thread.
-            // TODO [WARNING]: InvokeAsync return value is not observed. If the circuit is already disposed
-            // when LocationChanged fires (user navigates away while the component is tearing down),
-            // InvokeAsync may throw ObjectDisposedException as an unobserved faulted task. This is
-            // consistent with the existing HandleStateChanged pattern, but LocationChanged is more likely
-            // to fire during disposal than OnChange. Consider wrapping with try/catch inside the lambda
-            // passed to InvokeAsync, or guarding with an _isDisposed flag set in DisposeAsync.
-            InvokeAsync(StateHasChanged);
+            _ = RenderAfterNavigationAsync();
         }
+    }
+
+    /// <summary>
+    /// LocationChanged can fire while the layout is being disposed (the user navigates away during
+    /// teardown); the render then has nothing to update, so its ObjectDisposedException is observed here.
+    /// </summary>
+    private async Task RenderAfterNavigationAsync()
+    {
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // Theme follows the app's shared toggle (data-theme + localStorage). App.razor applies the
@@ -359,18 +388,11 @@
                 await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
 
                 await SyncThemeFromBrowserAsync();
-
-                // Restore persisted project scope. Must run after OnInitializedAsync so _projects
-                // is populated. null = key absent (first visit); "" = "All projects" explicitly saved.
-                await RestoreSavedProjectScopeAsync();
-
-                // Signal to Faro that the Blazor circuit connected successfully (ported from MainLayout).
-                await Faro.PushEventAsync("blazor.circuit.connected");
             }
-            catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+            catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
             catch (JSException) { /* Browser-side failure is non-fatal here. */ }
             catch (ObjectDisposedException) { /* Already disposed. */ }
-            catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+            catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
         }
 
         // Flush any notifications added since the last render to Faro (ported from MainLayout).
@@ -387,10 +409,14 @@
         }
     }
 
+    /// <summary>
+    /// Restores the persisted project scope: null = key absent (first visit); "" = "All projects"
+    /// explicitly saved. Runs at the end of OnInitializedAsync, once the readable projects are known.
+    /// </summary>
     private async Task RestoreSavedProjectScopeAsync()
     {
         var savedProjectId = await JS.InvokeAsync<string?>("localStorageGet", "cockpit.selectedProjectId");
-        if (savedProjectId is null || !_accessReady || _noReadableProject || !Access.Grant.HasAnyAccess)
+        if (savedProjectId is null || _noReadableProject || !Access.Grant.HasAnyAccess)
             return;
 
         if (string.IsNullOrEmpty(savedProjectId))
@@ -446,7 +472,7 @@
         _theme = _theme == "dark" ? "light" : "dark";
         try { await JS.InvokeVoidAsync("setTheme", _theme); }
         catch (JSException) { /* Browser-side failure is non-fatal here. */ }
-        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
     }
 
     public async ValueTask DisposeAsync()
@@ -454,11 +480,9 @@
         State.OnChange -= HandleStateChanged;
         State.OnProjectChanged -= HandleProjectChanged;
         Nav.LocationChanged -= HandleLocationChanged;
-        // Push disconnect while JS is still available (ported from MainLayout; FaroService swallows a dead circuit).
-        await Faro.PushEventAsync("blazor.circuit.disconnected");
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
-        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
-        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
+        catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable: nothing to update. */ }
         _dotNetRef?.Dispose();
     }
 }

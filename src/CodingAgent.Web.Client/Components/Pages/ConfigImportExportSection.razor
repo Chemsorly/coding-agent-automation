@@ -131,10 +131,10 @@
                 return;
             }
 
-            // Read the file content (Blazor Server — file streams from browser to server)
+            // Read the chosen file in the browser (WebAssembly) and send it through the web host
             using var stream = _selectedFile.OpenReadStream(maxAllowedSize: MaxImportFileSizeBytes);
 
-            // POST /api/config/import on the Pipeline API — multipart/form-data, file field "file".
+            // POST /api/ui/settings/import, forwarded to the Pipeline API — multipart/form-data, file field "file".
             // Import is DESTRUCTIVE: the server clears all existing config before importing.
             await ConfigClient.ImportConfigAsync(stream, _selectedFile.Name, CancellationToken.None);
 

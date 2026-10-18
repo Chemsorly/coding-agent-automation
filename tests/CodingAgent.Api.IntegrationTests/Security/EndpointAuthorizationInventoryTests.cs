@@ -65,5 +65,20 @@ public sealed class EndpointAuthorizationInventoryTests(ApiWebApplicationFactory
             .Should().BeEmpty("a user token is only accepted under /api/ui and /hubs/ui");
     }
 
+    /// <summary>
+    /// Spec 052 Req 14.10: each <c>/api/ui</c> endpoint carries the surface policy (<see cref="UiPolicies.AnyAccess"/>,
+    /// set on the group) and at most one role policy, so its required role is one entry in the snapshot.
+    /// </summary>
+    [Fact]
+    public void EveryUiApiEndpoint_HasTheSurfacePolicy_AndAtMostOneRolePolicy()
+    {
+        var ui = Endpoints.Where(e => e.Route.StartsWith(UiEndpoints.Prefix + "/", StringComparison.Ordinal)).ToList();
+
+        ui.Should().NotBeEmpty();
+        ui.Where(e => !e.Policies.Contains(UiPolicies.AnyAccess) || e.Policies.Count(p => p != UiPolicies.AnyAccess) > 1)
+            .Select(e => e.Describe())
+            .Should().BeEmpty();
+    }
+
     private static string SourceDirectory([CallerFilePath] string path = "") => Path.GetDirectoryName(path)!;
 }

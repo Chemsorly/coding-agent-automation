@@ -35,11 +35,12 @@ internal interface IJobCompletionStrategy
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
-    /// <c>true</c> if the run was alive and processed by this call; <c>false</c> if the run had
-    /// already been terminated by another path (e.g. the HTTP <c>Failed</c> POST) before this
-    /// strategy executed, meaning <see cref="Pipeline.Interfaces.IRunLifecycleManager.CompleteRunAsync"/>
-    /// returned <c>null</c>. The caller uses this to skip the label swap in
-    /// post-completion bookkeeping so the HTTP path's label is preserved.
+    /// <c>true</c> if this payload's outcome is the work item's status: the run was alive and processed
+    /// by this call, or another path had terminated it but this call's transition still took effect
+    /// (infrastructure-failure recovery). <c>false</c> if another path (e.g. the HTTP <c>Failed</c> POST)
+    /// had already terminated the run, meaning <see cref="Pipeline.Interfaces.IRunLifecycleManager.CompleteRunAsync"/>
+    /// returned <c>null</c>, and the work item kept that path's status. The caller uses this to skip the
+    /// label swap in post-completion bookkeeping so the other path's label is preserved.
     /// </returns>
     Task<bool> ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
                             Activity? activity, CancellationToken ct);

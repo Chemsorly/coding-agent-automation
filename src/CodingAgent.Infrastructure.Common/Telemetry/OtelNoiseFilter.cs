@@ -10,10 +10,11 @@ namespace CodingAgent.Infrastructure.Telemetry;
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
-///   <item><see cref="FilterAspNetCoreRequest"/> — drops health-probe and polling endpoints when the
-///         request starts, so spans the request creates underneath are not recorded either.</item>
+///   <item><see cref="FilterAspNetCoreRequest"/> — drops health-probe and polling endpoints and static
+///         client files when the request starts, so spans the request creates underneath are not
+///         recorded either.</item>
 ///   <item><see cref="FilterHttpClientRequest"/> — drops Kubernetes API server lease calls when they start.</item>
-///   <item><see cref="ShouldDropSpan"/> — name predicate for chatty SignalR / Blazor circuit spans.</item>
+///   <item><see cref="ShouldDropSpan"/> — name predicate for chatty agent-hub spans.</item>
 ///   <item><see cref="IsNoise"/> and <see cref="NameClientSpanByHost"/> — the end-of-span checks
 ///         <see cref="OtelNoiseSpanProcessor"/> applies to the finished span.</item>
 /// </list>
@@ -27,18 +28,39 @@ public static class OtelNoiseFilter
 
     /// <summary>
     /// Returns <c>false</c> (drop) for health-probe and polling request paths that produce
-    /// no diagnostic value and account for hundreds of thousands of spans per day.
+    /// no diagnostic value and account for hundreds of thousands of spans per day, and for the
+    /// web host's static client files.
     /// </summary>
     /// <remarks>
     /// Intended for <c>AspNetCoreTraceInstrumentationOptions.Filter</c>.
-    /// Uses exact path matching — sub-paths such as <c>/healthz/detail</c> are kept.
+    /// Noise paths match exactly — sub-paths such as <c>/healthz/detail</c> are kept.
+    /// Dropping the server span when the request starts also leaves its children unrecorded: the
+    /// web host's forwarder span, and through the <c>traceparent</c> flags the API's server span.
     /// </remarks>
     /// <param name="context">The <see cref="Microsoft.AspNetCore.Http.HttpContext"/> for the incoming request.</param>
     /// <returns><c>true</c> to keep the span; <c>false</c> to drop it.</returns>
     public static bool FilterAspNetCoreRequest(Microsoft.AspNetCore.Http.HttpContext context) =>
-        !IsNoisePath(context.Request.Path.Value);
+        !IsNoiseOrStaticAssetPath(context.Request.Path.Value);
 
-    private static bool IsNoisePath(string? path) => path is "/healthz" or "/readyz" or "/api/ui/loop/status";
+    private static bool IsNoiseOrStaticAssetPath(string? path) => IsNoisePath(path) || IsStaticAssetPath(path);
+
+    // Probes and the browser's polling calls (spec 052 Req 13.3): the loop status, the API health
+    // and the web host's session heartbeat.
+    private static bool IsNoisePath(string? path) =>
+        path is "/healthz" or "/readyz" or "/api/ui/loop/status" or "/api/ui/health" or "/bff/session";
+
+    // The web host's static client files: the WebAssembly runtime and assemblies, library assets,
+    // stylesheets (including the root CodingAgent.Web.styles.css bundle), scripts, fonts and the favicon.
+    // No API route ends in these extensions.
+    private static bool IsStaticAssetPath(string? path) =>
+        path is not null
+        && (path.StartsWith("/_framework/", StringComparison.Ordinal)
+            || path.StartsWith("/_content/", StringComparison.Ordinal)
+            || path.EndsWith(".css", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".wasm", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".woff2", StringComparison.OrdinalIgnoreCase)
+            || path == "/favicon.svg");
 
     // ── HttpClient request filter ─────────────────────────────────────────────
 
@@ -68,13 +90,8 @@ public static class OtelNoiseFilter
     /// Returns <c>true</c> when the span name alone marks it as pure noise.
     /// </summary>
     /// <remarks>
-    /// Dropped patterns:
-    /// <list type="bullet">
-    ///   <item>SignalR hub methods: <c>*/Heartbeat</c>, <c>*/ReportOutputLines</c>, <c>*/OnRenderCompleted</c></item>
-    ///   <item>Blazor circuit lifecycle: spans starting with <c>"Circuit "</c></item>
-    ///   <item>Blazor event callbacks: spans starting with <c>"Event "</c> and containing <c>" -> "</c></item>
-    /// </list>
-    /// Explicitly kept: Blazor route spans starting with <c>"Route "</c>.
+    /// Dropped patterns: the agent hub's chatty methods, <c>*/Heartbeat</c> and <c>*/ReportOutputLines</c>.
+    /// The UI renders in the browser (spec 052), so no host produces Blazor circuit spans any more.
     /// </remarks>
     /// <param name="activity">The <see cref="Activity"/> being evaluated.</param>
     /// <returns><c>true</c> to drop the span; <c>false</c> to keep it.</returns>
@@ -83,24 +100,14 @@ public static class OtelNoiseFilter
         var name = activity.DisplayName;
         if (name is null) return false;
 
-        // SignalR hub method noise
-        if (name.EndsWith("/Heartbeat", StringComparison.Ordinal)) return true;
-        if (name.EndsWith("/ReportOutputLines", StringComparison.Ordinal)) return true;
-        if (name.EndsWith("/OnRenderCompleted", StringComparison.Ordinal)) return true;
-
-        // Blazor circuit lifecycle (high-cardinality IDs in the name)
-        if (name.StartsWith("Circuit ", StringComparison.Ordinal)) return true;
-
-        // Blazor event callbacks (e.g. "Event onclick -> Component<BuildRenderTree>b__0_12")
-        if (name.StartsWith("Event ", StringComparison.Ordinal) && name.Contains(" -> ", StringComparison.Ordinal))
-            return true;
-
-        return false;
+        return name.EndsWith("/Heartbeat", StringComparison.Ordinal)
+            || name.EndsWith("/ReportOutputLines", StringComparison.Ordinal);
     }
 
     /// <summary>
     /// Returns <c>true</c> when a finished span is noise: a noise name (<see cref="ShouldDropSpan"/>),
-    /// a server span for a probe or polling path, or a client span to the Kubernetes API server.
+    /// a server span for a probe or polling path or a static client file, or a client span to the
+    /// Kubernetes API server.
     /// </summary>
     /// <remarks>
     /// Works on the span's final name and tags, so it catches noise whatever the instrumentation
@@ -110,7 +117,7 @@ public static class OtelNoiseFilter
     /// <param name="kubernetesServiceHost">The Kubernetes API server host (<c>KUBERNETES_SERVICE_HOST</c>), if any.</param>
     public static bool IsNoise(Activity activity, string? kubernetesServiceHost) =>
         ShouldDropSpan(activity)
-        || (activity.Kind == ActivityKind.Server && IsNoisePath(activity.GetTagItem("url.path") as string))
+        || (activity.Kind == ActivityKind.Server && IsNoiseOrStaticAssetPath(activity.GetTagItem("url.path") as string))
         || (activity.Kind == ActivityKind.Client
             && IsKubernetesApiHost(activity.GetTagItem("server.address") as string, kubernetesServiceHost));
 

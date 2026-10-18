@@ -1,3 +1,4 @@
+using CodingAgent.Web.Bff;
 using CodingAgent.Web;
 using CodingAgent.Infrastructure.Common.Auth;
 using CodingAgent.Infrastructure.Telemetry;
@@ -8,7 +9,6 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.IdentityModel.Tokens;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -31,15 +31,10 @@ builder.Configuration
     .AddJsonFile(builder.Configuration[AuthOptions.ConfigPathKey] ?? AuthOptions.DefaultConfigPath, optional: true, reloadOnChange: false)
     .AddEnvironmentVariables();
 
-// Register services. The circuit hub keeps the 128 KB message limit it inherited from the
-// agent-hub SignalR setup this host used to register (large pastes, e.g. config import).
+// Spec 052: the pages run in the browser as WebAssembly; this host renders only the static login
+// page and the host page that loads the client.
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents()
-    .AddHubOptions(options =>
-    {
-        options.MaximumReceiveMessageSize = 128 * 1024;
-        options.EnableDetailedErrors = builder.Environment.IsDevelopment();
-    });
+    .AddInteractiveWebAssemblyComponents();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(BuildInfoLoader.Load());
 
@@ -77,7 +72,10 @@ catch (InvalidOperationException ex)
     return;
 }
 
-builder.Services.AddUiClients(apiBaseUrl, userTokenSigningKey);
+// Spec 052: the BFF forwards /api/ui/** and /hubs/ui to the API with a user token it mints per request.
+builder.Services.AddSingleton(new UserTokenSigningKey(userTokenSigningKey));
+builder.Services.AddSingleton<UserTokenMinter>();
+builder.Services.AddBffForwarding();
 
 // Spec 051 D10: the login cookie and antiforgery tokens are protected with one fixed key from the
 // same Secret, so every replica and every restart accepts them. No Redis, nothing written.

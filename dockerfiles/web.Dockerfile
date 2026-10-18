@@ -1,7 +1,8 @@
 # =============================================================================
 # CodingAgent.Web Dockerfile
-# Runs the Blazor Server web UI. It calls the Pipeline API as the signed-in user (/api/ui, /hubs/ui)
-# and references no server project (spec 051), so it holds no agent API key and no provider client.
+# Serves the Blazor WebAssembly UI and is its BFF (spec 052): it signs the user in with a cookie and
+# forwards /api/ui and /hubs/ui to the Pipeline API with the user's token. It references no server
+# project (spec 051), so it holds no agent API key and no provider client.
 # The web service does NOT run Kiro CLI, dotnet build/test, or quality gates.
 # Those responsibilities belong to agent containers (see agent-*.Dockerfile).
 # =============================================================================
@@ -29,8 +30,12 @@ COPY . .
 RUN dotnet publish src/CodingAgent.Web/CodingAgent.Web.csproj \
     -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
+# What the browser downloads: at most 4 MB of brotli under _framework, only the assemblies on
+# dockerfiles/web-bundle-allowlist.txt, and no appsettings*.json (spec 052 DD11, design 6.0).
+RUN sh dockerfiles/web-bundle-check.sh /app/publish/wwwroot dockerfiles/web-bundle-allowlist.txt
+
 # Stage 2: Runtime (ASP.NET only — no SDK, no Kiro CLI, no Node.js)
-# The web service only serves the Blazor UI.
+# The web service serves the UI's files and the BFF endpoints.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
 # Install curl for docker-compose/Kubernetes healthcheck, and pre-create the app
@@ -53,9 +58,6 @@ RUN test ! -e /home/ubuntu/.kube/config && \
 
 # Configure ASP.NET to listen on port 8080
 ENV ASPNETCORE_URLS=http://+:8080
-
-# Agent API key for authenticating agent SignalR connections
-ENV AGENT_API_KEY=""
 
 EXPOSE 8080
 

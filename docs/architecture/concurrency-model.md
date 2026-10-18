@@ -14,12 +14,14 @@ After Spec 045 the system runs as **five distinct processes** (web UI, Pipeline 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Web UI  (CodingAgent.Web)                                                  │
 │  ───────                                                                    │
-│  Blazor Server UI                                                           │
-│  Reads loop status and agents from /api/ui with the user's token            │
-│  No leader election, no Kubernetes API access, no SignalR hub of its own   │
+│  BFF for the Blazor WebAssembly UI, which runs in the browser               │
+│  Stateless: no circuits, no page state; any replica serves any request      │
+│  Forwards /api/ui/** and /hubs/ui to the API with the user's token          │
+│  No leader election, no Kubernetes API access, no SignalR hub of its own    │
 │                                                                             │
 │  No EF Core. No AgentHub. Live run output and chat replies come from the    │
-│  API's UI hub (IUiHubConnection, one per circuit, user token).              │
+│  API's UI hub (IUiHubConnection in the browser, one per tab, user token),   │
+│  which reconnects through any web replica.                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
          │  REST calls (HTTP) + SignalR UI hub subscribe (/hubs/ui, user token)
          ▼
@@ -72,7 +74,7 @@ After Spec 045 the system runs as **five distinct processes** (web UI, Pipeline 
 
 ### Where the Locking-Critical Singletons Live
 
-The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The web host holds none of them (spec 051): it reads agents and runs from the API's `/api/ui` surface and live updates from its UI hub. The Redis-backed `DistributedAgentRegistryService` and `DistributedRunService` are used only by the Pipeline API.
+The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The web host holds none of them (specs 051, 052): it keeps no state of its own, and the browser client reads agents and runs from the API's `/api/ui` surface and live updates from its UI hub, both through the web host. The Redis-backed `DistributedAgentRegistryService` and `DistributedRunService` are used only by the Pipeline API.
 
 The Job Controller and Agent pods do **not** hold these singletons. This is important: the guarantee that `AgentEntry.SyncRoot` prevents races on the authoritative dispatch path holds only because all authoritative instances are in the same Pipeline API process.
 
@@ -252,8 +254,8 @@ The five processes communicate strictly via defined interfaces:
 
 | From | To | Mechanism |
 |------|----|-----------|
-| Web UI | Pipeline API | REST on `/api/ui/**` as the signed-in user (the `IUi*Client`s in `CodingAgent.Web.Client`, with a user token the web host signs) |
-| Web UI | Pipeline API | SignalR UI hub `/hubs/ui` (`IUiHubConnection`, one per Blazor circuit, with the user's session-long token) |
+| Web UI | Pipeline API | REST on `/api/ui/**` as the signed-in user: the `IUi*Client`s of `CodingAgent.Web.Client` run in the browser and call the web host, which forwards each call with a user token it signs |
+| Web UI | Pipeline API | SignalR UI hub `/hubs/ui` (`IUiHubConnection` in the browser, one per tab), forwarded by the web host with the user's session-long token. A dropped connection reconnects through any web replica |
 | Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, `PUT /api/scheduler/loop-status` (leader only), among others |
 | Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |

@@ -1,6 +1,5 @@
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Ui;
-using Serilog;
 
 namespace CodingAgent.Web.Services;
 
@@ -10,7 +9,7 @@ namespace CodingAgent.Web.Services;
 /// with its dispatch readiness. This is a live query — call it off the render path so it never blocks
 /// the page. It degrades to an empty list when the API cannot be reached rather than throwing.
 /// </summary>
-public sealed class BlockedIssuesService(IUiBrowseClient browse)
+public sealed class BlockedIssuesService(IUiBrowseClient browse, ILogger<BlockedIssuesService> logger)
 {
     /// <summary>
     /// Returns open issues blocked by still-open dependencies, across the enabled templates' issue
@@ -32,7 +31,7 @@ public sealed class BlockedIssuesService(IUiBrowseClient browse)
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            Log.Warning(ex, "BlockedIssuesService: failed to load the backlog");
+            logger.LogWarning(ex, "BlockedIssuesService: failed to load the backlog");
             return new BacklogResult([], IsTruncated: false);
         }
     }

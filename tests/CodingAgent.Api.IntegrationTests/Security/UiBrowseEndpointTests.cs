@@ -42,6 +42,7 @@ public sealed class UiBrowseEndpointTests(ApiWebApplicationFactory factory)
         return client;
     }
 
+    [IdorCase("GET /api/ui/backlog")]
     [Fact]
     public async Task Backlog_WithoutAProject_NeedsGlobalRead_AndAnotherProjectIsNotFound()
     {
@@ -131,6 +132,13 @@ public sealed class UiBrowseEndpointTests(ApiWebApplicationFactory factory)
         return issues;
     }
 
+    [IdorCase("GET /api/ui/templates/{templateId}/issues")]
+    [IdorCase("GET /api/ui/templates/{templateId}/issues/readiness")]
+    [IdorCase("GET /api/ui/templates/{templateId}/labels")]
+    [IdorCase("GET /api/ui/templates/{templateId}/pull-requests")]
+    [IdorCase("GET /api/ui/templates/{templateId}/epics")]
+    [IdorCase("GET /api/ui/templates/{templateId}/epic-labels")]
+    [IdorCase("GET /api/ui/templates/{templateId}/active-issues")]
     [Fact]
     public async Task TemplateBrowse_NeedsReadOnTheTemplatesProject()
     {

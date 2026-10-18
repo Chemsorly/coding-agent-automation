@@ -51,14 +51,16 @@ internal static class E2EInMemoryDatabase
             var options = new DbContextOptionsBuilder<PipelineDbContext>()
                 .UseInMemoryDatabase(_dbName)
                 .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+                .AddInterceptors(RowVersionInterceptor.Instance)
                 .Options;
             return new TestPipelineDbContext(options);
         }
     }
 
     /// <summary>
-    /// <see cref="PipelineDbContext"/> subclass that drops the Postgres-only model features
-    /// (xmin RowVersion concurrency tokens, filtered unique indexes) InMemory cannot honour.
+    /// <see cref="PipelineDbContext"/> subclass that adapts the Postgres-only model features for InMemory:
+    /// the xmin <c>RowVersion</c> stays a concurrency token but is written by <see cref="RowVersionInterceptor"/>,
+    /// and the filtered unique indexes, which InMemory cannot honour, are dropped.
     /// </summary>
     private sealed class TestPipelineDbContext : PipelineDbContext
     {
@@ -73,12 +75,50 @@ internal static class E2EInMemoryDatabase
                 var rowVersionProp = entityType.FindProperty("RowVersion");
                 if (rowVersionProp is not null)
                 {
-                    rowVersionProp.IsConcurrencyToken = false;
+                    rowVersionProp.IsConcurrencyToken = true;
                     rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
                 }
 
                 foreach (var index in entityType.GetIndexes().Where(i => i.GetFilter() is not null).ToList())
                     entityType.RemoveIndex(index);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Does what Postgres does with xmin: every update of a row changes its <c>RowVersion</c>, so a writer
+    /// that read the row before another writer saved gets <see cref="DbUpdateConcurrencyException"/>
+    /// (InMemory checks concurrency tokens against the stored row). Without it InMemory keeps the last
+    /// write, and a race Postgres rejects, such as two terminal transitions of one WorkItem, ends with the
+    /// status of one writer and the label of the other.
+    /// </summary>
+    private sealed class RowVersionInterceptor : SaveChangesInterceptor
+    {
+        public static readonly RowVersionInterceptor Instance = new();
+
+        public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
+        {
+            BumpRowVersions(eventData.Context);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            BumpRowVersions(eventData.Context);
+            return ValueTask.FromResult(result);
+        }
+
+        private static void BumpRowVersions(DbContext? context)
+        {
+            if (context is null)
+                return;
+            foreach (var entry in context.ChangeTracker.Entries().Where(e => e.State == EntityState.Modified))
+            {
+                if (entry.Metadata.FindProperty("RowVersion")?.ClrType != typeof(uint))
+                    continue;
+                var rowVersion = entry.Property("RowVersion");
+                rowVersion.CurrentValue = (uint)rowVersion.OriginalValue! + 1;
             }
         }
     }

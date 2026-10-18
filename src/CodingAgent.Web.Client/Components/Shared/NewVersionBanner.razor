@@ -1,0 +1,24 @@
+@using CodingAgent.Web.Services
+@implements IDisposable
+@inject VersionWatch Version
+@inject NavigationManager Nav
+
+@* Spec 052 Req 5.2, D7: the web host runs a newer build. Non-blocking: the page keeps working and
+   reloads on the next in-app navigation (CockpitLayout), or now with the button. *@
+@if (Version.IsOutdated)
+{
+    <div class="cockpit-banner new-version-banner" role="status" data-testid="new-version-banner">
+        <span>A new version is available.</span>
+        <button type="button" class="btn-save" data-testid="new-version-reload" @onclick="Reload">Reload</button>
+    </div>
+}
+
+@code {
+    protected override void OnInitialized() => Version.Changed += OnVersionChanged;
+
+    private void OnVersionChanged() => InvokeAsync(StateHasChanged);
+
+    private void Reload() => Nav.Refresh(forceReload: true);
+
+    public void Dispose() => Version.Changed -= OnVersionChanged;
+}

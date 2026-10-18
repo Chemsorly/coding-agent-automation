@@ -75,6 +75,7 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
         }, CancellationToken.None);
     }
 
+    [IdorCase("GET /api/ui/consolidation/templates/{templateId}/refactoring-scan")]
     [Fact]
     public async Task Reading_NeedsGlobalRead_AProjectRoleIsNotEnough()
     {

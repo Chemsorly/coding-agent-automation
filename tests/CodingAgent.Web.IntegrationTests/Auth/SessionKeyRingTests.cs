@@ -28,7 +28,7 @@ public class SessionKeyRingTests
         var response = await GetProfileAsync(second, session);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        (await response.Content.ReadAsStringAsync()).Should().Contain("data-testid=\"profile-username\"");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("<!--Blazor:{\"type\":\"webassembly\"", "the signed-in user gets the host page, not the login redirect");
     }
 
     [Fact]

@@ -228,8 +228,8 @@ public sealed class ReconciliationLoop
     /// <summary>
     /// Short-circuit sweep: marks Dispatched items older than
     /// <see cref="DispatchServiceOptions.ChatPodConnectTimeoutSeconds"/> as Failed
-    /// when no K8s Job exists for them. This recovers items where ClaimAsync succeeded
-    /// but Job creation failed AND RequeueAsync also failed.
+    /// when no K8s Job exists for them. This recovers items that the dispatch moved to Dispatched
+    /// but whose Job was never created.
     /// </summary>
     public async Task EnforceDispatchedTimeoutAsync(CancellationToken ct)
     {

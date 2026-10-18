@@ -730,11 +730,11 @@ public sealed class AgentJobLifecycleServiceCompletionTests
                 "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
                 It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
-        // TransitionWorkItemAsync is called as fallback by RegularJobCompletionStrategy
+        // The fallback TransitionWorkItemAsync is rejected: the HTTP path already moved the item to Failed
         _facade.Setup(f => f.TransitionWorkItemAsync(
             "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>()))
-            .Returns(Task.FromResult(true));
+            .Returns(Task.FromResult(false));
 
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
@@ -794,7 +794,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         _facade.Setup(f => f.TransitionWorkItemAsync(
             "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>()))
-            .Returns(Task.FromResult(true));
+            .Returns(Task.FromResult(false));
 
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
@@ -810,6 +810,39 @@ public sealed class AgentJobLifecycleServiceCompletionTests
             "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>()),
             Times.AtLeast(1));
+    }
+
+    /// <summary>
+    /// #2146: the JobController's timeout Failed removed the run and set agent:error, but the agent
+    /// succeeded and its fallback transition recovered the work item to Succeeded. The label must
+    /// follow the recovered status.
+    /// </summary>
+    [Fact]
+    public async Task Regular_CompleteRunAsyncReturnsNull_FallbackTransitionTookEffect_AppliesPayloadLabel()
+    {
+        var run = MakeRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(
+                "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+        _facade.Setup(f => f.TransitionWorkItemAsync(
+            "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Returns(Task.FromResult(true));
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(i => i.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>

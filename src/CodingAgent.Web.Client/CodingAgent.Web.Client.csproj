@@ -1,8 +1,9 @@
-<Project Sdk="Microsoft.NET.Sdk.Razor">
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
   <!--
-    Spec 051 D9: the browser-safe part of the web UI. It references Contracts only, never a server
-    project or Api.Client, so the same code can later run as WebAssembly. RootNamespace keeps the
-    CodingAgent.Web namespaces of the code that moves here.
+    Spec 051 D9, spec 052 DD1: the web UI, run in the browser as WebAssembly. It references
+    Contracts only, never a server project or Api.Client. CodingAgent.Web serves it and hosts the
+    static login page. RootNamespace keeps the CodingAgent.Web namespaces of the code that moved
+    here in 051.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -11,11 +12,20 @@
     <RootNamespace>CodingAgent.Web</RootNamespace>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <!-- Number and date formatting stay invariant and no ICU data ships; ToLocalTime() keeps the
+         browser's time zone (D6, DD10). -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- As in the .NET 10 Blazor Web App template: the server project serves this app's files. -->
+    <NoDefaultLaunchSettingsFile>true</NoDefaultLaunchSettingsFile>
+    <StaticWebAssetProjectMode>Default</StaticWebAssetProjectMode>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- The platform analyzer flags APIs that do not work in the browser. -->
     <SupportedPlatform Include="browser" />
+    <!-- Only the router names the pages, by reflection; without this root the trimmed publish
+         drops Routes and every page (spec 052 B1). -->
+    <TrimmerRootAssembly Include="CodingAgent.Web.Client" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,15 +36,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Components and their authorization. No FrameworkReference to ASP.NET Core: that is server-only. -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Web" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" />
     <!-- IHttpClientFactory for the typed UI clients; it also works in the browser. -->
     <PackageReference Include="Microsoft.Extensions.Http" />
     <!-- The UI hub (spec 051 D7). The .NET SignalR client also runs in the browser. -->
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
-    <!-- Components log through Serilog's static logger; a browser host would route it to the console. -->
-    <PackageReference Include="Serilog" />
   </ItemGroup>
 
   <ItemGroup>

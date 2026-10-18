@@ -28,27 +28,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             "GET /api/config/pipeline returned null — the API returned a non-JSON or empty response.");
     }
 
-    public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct = default)
-    {
-        var response = await _http.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default, ct);
-        // A 400 names the settings outside their range; the message is shown as is on the settings pages.
-        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
-            await EnsureAcceptedAsync(response, ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            throw new InvalidOperationException(
-                $"SavePipelineConfig failed ({(int)response.StatusCode}): {body}");
-        }
-    }
-
-    public async Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct = default)
-    {
-        var current = await GetPipelineConfigAsync(ct);
-        var updated = transform(current);
-        await SavePipelineConfigAsync(updated, ct);
-    }
-
     public Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsAsync(
         ProviderKind kind, CancellationToken ct = default)
         => FetchProviderConfigsAsync(kind, includeSecrets: false, ct);
@@ -103,15 +82,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         return result ?? [];
     }
 
-    public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct = default)
-    {
-        var response = await _http.GetAsync($"/api/config/projects/{Uri.EscapeDataString(id)}", ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            return null;
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<PipelineProject>(PipelineJsonOptions.Default, ct);
-    }
-
     public async Task<IReadOnlyList<PipelineJobTemplate>> GetAllTemplatesAsync(CancellationToken ct = default)
     {
         var result = await _http.GetFromJsonAsync<List<PipelineJobTemplate>>(
@@ -119,31 +89,5 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             PipelineJsonOptions.Default,
             ct);
         return result ?? [];
-    }
-
-    public async Task<IReadOnlyList<PipelineJobTemplate>> GetTemplatesForProjectAsync(string projectId, CancellationToken ct = default)
-    {
-        var result = await _http.GetFromJsonAsync<List<PipelineJobTemplate>>(
-            $"/api/config/projects/{Uri.EscapeDataString(projectId)}/templates",
-            PipelineJsonOptions.Default,
-            ct);
-        return result ?? [];
-    }
-
-    /// <summary>
-    /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/>, but when the API refuses the request
-    /// (400 or 404), the exception message is the API's reason, for example a setting outside its range,
-    /// so the UI can show it.
-    /// </summary>
-    private static async Task EnsureAcceptedAsync(HttpResponseMessage response, CancellationToken ct)
-    {
-        if (response.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound)
-        {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            var reason = body.StartsWith('"') ? System.Text.Json.JsonSerializer.Deserialize<string>(body) : body;
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(reason) ? $"The API returned {(int)response.StatusCode}." : reason);
-        }
-
-        response.EnsureSuccessStatusCode();
     }
 }

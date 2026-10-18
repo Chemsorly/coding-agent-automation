@@ -15,7 +15,6 @@ public interface IPipelineApiRunHistoryClient
     /// <param name="query">Paging and filter options; <c>new RunHistoryQuery()</c> gives the endpoint defaults.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(RunHistoryQuery query, CancellationToken ct = default);
-    Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
 
     /// <summary>
     /// Persists a completed run summary. The API stores the summary in the PipelineRuns table.

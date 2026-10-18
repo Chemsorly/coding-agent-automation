@@ -3,8 +3,8 @@ namespace CodingAgent.Pipeline.UnitTests.Architecture;
 /// <summary>
 /// Source-scan guards for E2E navigation patterns.
 ///
-/// Cockpit pages are prerendered by Blazor Server. Until the circuit has rendered
-/// <c>CockpitLayout</c>, event handlers are absent and reads may see prerendered
+/// Cockpit pages render in the browser (WebAssembly, spec 052). Until the client has rendered
+/// <c>CockpitLayout</c>, event handlers are absent and reads may see the loading screen
 /// or "Loading…" markup. Every cockpit page load must go through
 /// <c>GotoCockpitPageAsync</c> or <c>ReloadCockpitPageAsync</c> from
 /// <c>BlazorPageExtensions</c>, not a raw <c>GotoAsync</c>/<c>ReloadAsync</c>.
@@ -52,8 +52,8 @@ public partial class LayerBoundaryTests
         }
 
         Assert.True(offenders.Count == 0,
-            "Cockpit pages are prerendered; a raw GotoAsync/ReloadAsync lets the test act before the Blazor circuit is " +
-            "interactive. Use Page.GotoCockpitPageAsync(url) / Page.ReloadCockpitPageAsync() from BlazorPageExtensions:\n" +
+            "A raw GotoAsync/ReloadAsync lets the test act before the WebAssembly client has rendered the page " +
+            "interactively. Use Page.GotoCockpitPageAsync(url) / Page.ReloadCockpitPageAsync() from BlazorPageExtensions:\n" +
             string.Join("\n", offenders));
         Assert.True(helperCalls > 0,
             "Positive control: no GotoCockpitPageAsync/ReloadCockpitPageAsync call found — the scan is not seeing the E2E sources.");
@@ -71,7 +71,7 @@ public partial class LayerBoundaryTests
             .ToList();
 
         Assert.True(offenders.Count == 0,
-            "WaitForBlazorAsync only proved that blazor.web.js loaded, not that the circuit was interactive. " +
+            "WaitForBlazorAsync only proved that blazor.web.js loaded, not that the app was interactive. " +
             "Use GotoCockpitPageAsync / WaitForCockpitPageReadyAsync / WaitForInteractiveAsync instead: " +
             string.Join(", ", offenders));
     }

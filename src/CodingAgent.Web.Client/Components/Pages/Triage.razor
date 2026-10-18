@@ -6,6 +6,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
+@inject ILogger<Triage> Logger
 @inject IUiTriageClient Triages
 @inject IUiConfigClient UiConfig
 @inject CockpitState State
@@ -193,7 +194,7 @@
             _retentionDays = (await UiConfig.GetPipelineSettingsAsync(_cts.Token)).TriageRetentionDays;
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
-        catch (Exception ex) { Serilog.Log.Debug(ex, "Triage: failed to load the retention setting"); }
+        catch (Exception ex) { Logger.LogDebug(ex, "Triage: failed to load the retention setting"); }
     }
 
     private async void HandleProjectChanged()

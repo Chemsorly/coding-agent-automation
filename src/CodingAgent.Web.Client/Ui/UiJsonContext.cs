@@ -71,4 +71,5 @@ namespace CodingAgent.Web.Ui;
 [JsonSerializable(typeof(DismissTriageRequest))]
 [JsonSerializable(typeof(PipelineJobTemplate))]
 [JsonSerializable(typeof(UiPipelinesPage))]
+[JsonSerializable(typeof(CodingAgent.Web.Auth.BffSession))]
 internal sealed partial class UiJsonContext : JsonSerializerContext;

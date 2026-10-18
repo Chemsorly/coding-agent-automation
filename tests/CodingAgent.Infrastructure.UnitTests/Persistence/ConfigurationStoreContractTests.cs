@@ -48,7 +48,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     }
 
     [Fact]
-    public async Task PipelineConfig_SaveThenLoad_RoundTrips()
+    public virtual async Task PipelineConfig_SaveThenLoad_RoundTrips()
     {
         var store = CreateStore();
         var original = new PipelineConfiguration
@@ -69,7 +69,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     }
 
     [Fact]
-    public async Task PipelineConfig_SaveOverwrites_PreviousValue()
+    public virtual async Task PipelineConfig_SaveOverwrites_PreviousValue()
     {
         var store = CreateStore();
 
@@ -87,7 +87,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     }
 
     [Fact]
-    public async Task PipelineConfig_Update_AppliesTransform()
+    public virtual async Task PipelineConfig_Update_AppliesTransform()
     {
         var store = CreateStore();
         await store.SavePipelineConfigAsync(
@@ -341,27 +341,40 @@ public sealed class ApiConfigurationStoreContractTests : ConfigurationStoreContr
         (await store.GetProviderConfigByIdAsync(config.Id, ProviderKind.Repository, CancellationToken.None)).Should().NotBeNull();
     }
 
+    /// <summary>Spec 052 Req 14.10: the API-backed store does not write the pipeline configuration.</summary>
+    [Fact]
+    public override async Task PipelineConfig_SaveThenLoad_RoundTrips()
+    {
+        var store = CreateStore();
+        var save = () => store.SavePipelineConfigAsync(new PipelineConfiguration { MaxRetries = 7 }, CancellationToken.None);
+
+        await save.Should().ThrowAsync<NotSupportedException>().WithMessage("*/api/ui/settings*");
+        (await store.LoadPipelineConfigAsync(CancellationToken.None)).MaxRetries.Should().Be(3, "nothing was written");
+    }
+
+    /// <summary>Covered by <see cref="PipelineConfig_SaveThenLoad_RoundTrips"/>: every save is refused.</summary>
+    [Fact]
+    public override async Task PipelineConfig_SaveOverwrites_PreviousValue() =>
+        await PipelineConfig_SaveThenLoad_RoundTrips();
+
+    [Fact]
+    public override async Task PipelineConfig_Update_AppliesTransform()
+    {
+        var store = CreateStore();
+        var update = () => store.UpdatePipelineConfigAsync(c => c with { MaxRetries = 7 }, CancellationToken.None);
+
+        await update.Should().ThrowAsync<NotSupportedException>().WithMessage("*/api/ui/settings*");
+    }
+
     // ── Mock client that simulates real in-memory persistence ────────────────
 
     private Mock<IPipelineApiConfigClient> BuildClient()
     {
         var mock = new Mock<IPipelineApiConfigClient>();
 
-        // Pipeline config — read/write/update
+        // Pipeline config — read only
         mock.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => _pipelineConfig);
-
-        mock.Setup(c => c.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
-            .Callback<PipelineConfiguration, CancellationToken>((cfg, _) => _pipelineConfig = cfg)
-            .Returns(Task.CompletedTask);
-
-        // UpdatePipelineConfigAsync: read-modify-write delegated client-side (calls Get then Save)
-        mock.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .Returns<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>((transform, _) =>
-            {
-                _pipelineConfig = transform(_pipelineConfig);
-                return Task.CompletedTask;
-            });
 
         // Provider configs — store by composite key (id+kind)
         mock.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))

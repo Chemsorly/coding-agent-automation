@@ -219,7 +219,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // was not found at all — orphan path has its own handling). false only when
         // RegularJobCompletionStrategy.ExecuteAsync signals that CompleteRunAsync returned null,
         // meaning another path (HTTP Failed POST or RevertFailedDistributionAsync) already
-        // terminated the run. In that case we skip the label swap to preserve the other path's label.
+        // terminated the run, and that the work item kept that path's status. In that case we skip
+        // the label swap to preserve the other path's label.
         bool runWasAlive = true;
 
         if (run is not null)
@@ -279,20 +280,11 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             PipelineTelemetry.RunBrainUpdates.Add(1,
                 new KeyValuePair<string, object?>("result", run.BrainUpdatesPushed ? "pushed" : "none"));
 
-            // skipLabelSwap=true when the run was already terminated by another path (HTTP Failed POST).
-            // In that case the HTTP path already set the correct label (e.g. agent:needs-refinement),
-            // and we must not overwrite it. The outbox enqueue and feedback comment still run.
-            // TODO: [WARNING] skipLabelSwap is derived from !runWasAlive, which is set to false whenever
-            // CompleteRunAsync returns null — regardless of the payload's WorkItemStatus. The timeout
-            // acceptance criterion (agent:cancelled suppressed after JobController sets agent:error) is
-            // satisfied incidentally by this same mechanism, but for a Succeeded or Cancelled payload
-            // where CompleteRunAsync returns null (e.g. race with RevertFailedDistributionAsync or double
-            // hub delivery), skipLabelSwap=true will silently suppress agent:done/agent:next, leaving
-            // the issue without a terminal label until OrphanedLabelRecoveryService corrects it.
-            // Consider scoping the null-return guard to Failed payloads only (workItemStatus == Failed),
-            // or using a richer return type from RegularJobCompletionStrategy to distinguish
-            // "already terminated by HTTP Failed" from "race with RevertFailed/double delivery".
-            // See review findings [WARNING] #4 (Correctness) and [WARNING] #1 (DotNetSpecialist).
+            // skipLabelSwap=true when another path (HTTP Failed POST) terminated the run first and the
+            // work item kept that path's status. That path set the label (e.g. agent:needs-refinement,
+            // or agent:error for a JobController timeout, #3009) and we must not overwrite it. When this
+            // payload's status took effect after all (timeout recovery, a repeated report), the strategy
+            // returns true and the label follows it. The outbox enqueue and feedback comment still run.
             await PostCompletionBookkeepingAsync(jobId, run, payload, skipLabelSwap: !runWasAlive, ct);
         }
     }

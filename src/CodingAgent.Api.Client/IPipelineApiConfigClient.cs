@@ -12,13 +12,6 @@ public interface IPipelineApiConfigClient
 {
     // Pipeline config
     Task<PipelineConfiguration> GetPipelineConfigAsync(CancellationToken ct = default);
-    Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct = default);
-
-    /// <summary>
-    /// Atomically loads, transforms, and saves the pipeline configuration.
-    /// Client-side read-modify-write: calls GetPipelineConfigAsync, applies transform, then SavePipelineConfigAsync.
-    /// </summary>
-    Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct = default);
 
     // Provider configs
     /// <summary>
@@ -53,9 +46,7 @@ public interface IPipelineApiConfigClient
 
     // Projects
     Task<IReadOnlyList<PipelineProject>> GetProjectsAsync(CancellationToken ct = default);
-    Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct = default);
 
     // Templates
     Task<IReadOnlyList<PipelineJobTemplate>> GetAllTemplatesAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<PipelineJobTemplate>> GetTemplatesForProjectAsync(string projectId, CancellationToken ct = default);
 }

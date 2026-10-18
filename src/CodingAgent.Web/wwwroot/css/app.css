@@ -1,4 +1,40 @@
 /* Kiro Web UI Styles */
+
+/* Spec 052: the fonts come from the web image (Content-Security-Policy font-src 'self'), not from Google.
+   Variable fonts from fontsource 5.3.0, latin and latin-ext subsets; licenses in fonts/OFL-*.txt. */
+@font-face {
+    font-family: 'Manrope';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url('../fonts/manrope-latin-ext-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+    font-family: 'Manrope';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url('../fonts/manrope-latin-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 800;
+    src: url('../fonts/jetbrains-mono-latin-ext-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 800;
+    src: url('../fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -1374,3 +1410,52 @@ select option { background: var(--surface); color: var(--text); }
 .phase-breakdown-header { padding: 8px 14px; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; user-select: none; }
 .phase-breakdown-header:hover { color: var(--text); }
 .phase-breakdown-body { padding: 0 14px 12px; }
+
+/* Spec 052 Req 1.4: the loading screen while the WebAssembly client starts. It disappears once the
+   client has rendered a layout (CockpitLayout and AuthLayout both render .cockpit). */
+#app-loading {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: var(--bg);
+    color: var(--text-muted);
+    font-family: Manrope, system-ui, sans-serif;
+    z-index: 1000;
+}
+body:has(.cockpit) #app-loading { display: none; }
+#app-loading .app-loading-name { color: var(--text); font-size: 18px; font-weight: 700; }
+#app-loading .app-loading-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: app-loading-spin 0.9s linear infinite;
+}
+#app-loading .app-loading-error { display: none; color: var(--text); }
+#app-loading .app-loading-error a, #blazor-error-ui a { color: var(--accent-light); }
+#app-loading.app-loading-failed .app-loading-spinner,
+#app-loading.app-loading-failed .app-loading-text { display: none; }
+#app-loading.app-loading-failed .app-loading-error,
+#app-loading.app-loading-slow .app-loading-error { display: block; }
+@keyframes app-loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #app-loading .app-loading-spinner { animation: none; } }
+
+/* Spec 052 Req 1.7: Blazor shows this bar on an unhandled exception in the client. */
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 10px 16px;
+    background: var(--bg-error);
+    color: var(--text);
+    border-top: 1px solid var(--error);
+    z-index: 1001;
+}
+#blazor-error-ui .dismiss { float: right; cursor: pointer; }

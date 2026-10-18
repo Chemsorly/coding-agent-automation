@@ -3,7 +3,7 @@ using Microsoft.Playwright;
 namespace CodingAgent.Web.E2ETests.Infrastructure;
 
 /// <summary>
-/// Playwright extension methods for Blazor Server E2E testing.
+/// Playwright extension methods for Blazor E2E testing, for Blazor Server and WebAssembly alike (spec 052 V9).
 /// Based on the official ASP.NET Core testing patterns from
 /// https://github.com/dotnet/aspnetcore/blob/main/src/Components/Testing/src/Infrastructure/PlaywrightExtensions.cs
 /// </summary>
@@ -13,7 +13,8 @@ public static class BlazorPageExtensions
     /// Waits for a Blazor component to become interactive by detecting event handler
     /// registrations on the element matching the CSS selector. Blazor's EventDelegator
     /// stores handler info as an expando property (<c>_blazorEvents_{id}</c>) on DOM
-    /// elements when <c>@onclick</c>, <c>@onchange</c>, <c>@bind</c>, etc. are registered.
+    /// elements when <c>@onclick</c>, <c>@onchange</c>, <c>@bind</c>, etc. are registered. The same
+    /// <c>blazor.web.js</c> does this for a circuit and for the WebAssembly runtime.
     /// </summary>
     /// <param name="page">The page to wait on.</param>
     /// <param name="selector">CSS selector identifying the element to check.</param>
@@ -34,10 +35,11 @@ public static class BlazorPageExtensions
         "![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.trim().startsWith('Loading'))";
 
     /// <summary>
-    /// Waits until a cockpit page is interactive and has finished its first data load. Cockpit pages are
-    /// prerendered; prerendered elements have no Blazor event handlers, and the circuit's first renders show
-    /// CockpitLayout's ".auth-authorizing" placeholder and then the page's ".cockpit-empty" "Loading…" card.
-    /// Ready means: the layout's theme toggle has a Blazor event handler (the circuit rendered CockpitLayout),
+    /// Waits until a cockpit page is interactive and has finished its first data load. A prerendered element
+    /// has no Blazor event handlers (Blazor Server), and a WebAssembly page has no elements until the client
+    /// renders; either way the first interactive renders show CockpitLayout's ".auth-authorizing" placeholder
+    /// and then the page's ".cockpit-empty" "Loading…" card.
+    /// Ready means: the layout's theme toggle has a Blazor event handler (the app rendered CockpitLayout),
     /// no ".auth-authorizing" element is left, and no ".cockpit-empty" whose text starts with "Loading" is left.
     /// </summary>
     /// <param name="page">The page to wait on.</param>
@@ -53,7 +55,7 @@ public static class BlazorPageExtensions
         {
             throw new TimeoutException(
                 $"Cockpit page {page.Url} was not interactive after {timeoutMs} ms: '.cockpit-theme-toggle' has no " +
-                "Blazor event handler, so the Blazor Server circuit has not rendered CockpitLayout.", ex);
+                "Blazor event handler, so the Blazor app has not rendered CockpitLayout interactively.", ex);
         }
 
         try

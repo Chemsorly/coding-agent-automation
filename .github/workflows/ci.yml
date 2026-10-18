@@ -35,8 +35,11 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore --verbosity quiet
 
+      # The compiler server: Directory.Build.props turns it off so no VBCSCompiler outlives a local
+      # build, but the job container is thrown away, and one warm compiler for every project is
+      # markedly faster (spec 052 V7). Analyzers stay on: this build enforces them.
       - name: Build
-        run: dotnet build --no-restore --configuration Release --verbosity quiet
+        run: dotnet build --no-restore --configuration Release --verbosity quiet -p:UseSharedCompilation=true
 
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E&Category!=Integration" --collect:"XPlat Code Coverage"
