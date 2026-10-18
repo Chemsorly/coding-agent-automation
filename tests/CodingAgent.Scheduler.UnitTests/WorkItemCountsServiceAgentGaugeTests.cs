@@ -344,6 +344,62 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
     }
 
     /// <summary>
+    /// Calling <see cref="PipelineTelemetry.RegisterAgentGaugeCallbacks"/> with non-null callbacks
+    /// and then triggering a collection cycle must reach those callbacks and emit the values they
+    /// return. This test directly exercises the <c>observeValues</c> lambdas to confirm that
+    /// <see cref="System.Threading.Volatile.Read{T}"/> does not suppress a non-null value written
+    /// by the same thread before the gauge is read (acceptance criterion #3).
+    /// The test also reads the gauges while the static callbacks are null (before registration)
+    /// so that both branches of the null-conditional and null-coalescing operators in the lambda
+    /// are covered: null-callback path (returns empty via ??) and non-null-callback path (returns
+    /// the callback's values).
+    /// </summary>
+    [Fact]
+    public void RegisterAgentGaugeCallbacks_WithNonNullCallbacks_CallbacksAreReachedOnCollection()
+    {
+        // TODO [WARNING]: This test verifies that the gauge wiring is correct end-to-end (callbacks
+        // are registered and reached on a collection cycle), but it does not serve as a regression
+        // guard for the Volatile.Read fix specifically. Because registration and collection run on
+        // the same thread, the C# memory model guarantees the thread always observes its own prior
+        // writes regardless of volatile semantics — the test would also pass if both Volatile.Read
+        // calls in PipelineTelemetry.cs were reverted to bare field access. The ARM/AArch64
+        // acquire/release ordering cannot be reproduced on x86-64 test runners; the true guard
+        // against this class of regression is a code review that checks Volatile.Read is present
+        // in the observeValues lambdas whenever Volatile.Write is used for registration.
+
+        // Arrange: start from a clean state regardless of test execution order.
+        ResetStaticCallbacks();
+
+        // --- Phase 1: null-callback path ---
+        // With callbacks null, the observeValues lambdas take the null-conditional (?.Invoke()
+        // short-circuits to null) and null-coalescing (?? Enumerable.Empty<>()) branches,
+        // producing no measurements. This covers the null branches of both operators.
+        var activeJobsBefore = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active");
+        var totalConnectionsBefore = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.connections.total");
+
+        activeJobsBefore.Should().BeEmpty("agent.jobs.active must emit nothing when no callback is registered");
+        totalConnectionsBefore.Should().BeEmpty("agent.connections.total must emit nothing when no callback is registered");
+
+        // --- Phase 2: non-null-callback path ---
+        var activeJobsMeasurement = new Measurement<long>(7L);
+        var totalConnectionsMeasurement = new Measurement<long>(3L);
+
+        PipelineTelemetry.RegisterAgentGaugeCallbacks(
+            activeJobsCallback: () => [activeJobsMeasurement],
+            totalConnectionsCallback: () => [totalConnectionsMeasurement]);
+
+        // Act: trigger an OTel collection cycle with non-null callbacks registered.
+        var activeJobs = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active");
+        var totalConnections = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.connections.total");
+
+        // Assert: the callbacks were reached and emitted the expected values.
+        activeJobs.Should().ContainSingle("the activeJobsCallback must be reached by RecordObservableInstruments")
+            .Which.Should().Be(7L);
+        totalConnections.Should().ContainSingle("the totalConnectionsCallback must be reached by RecordObservableInstruments")
+            .Which.Should().Be(3L);
+    }
+
+    /// <summary>
     /// After a failed poll (API throws), all four gauges must reset to empty — no stale values.
     /// </summary>
     [Fact]

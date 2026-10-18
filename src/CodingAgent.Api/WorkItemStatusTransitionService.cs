@@ -161,11 +161,6 @@ public sealed partial class WorkItemStatusTransitionService
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
 
-    // S1192: shared literal for the fallback run_type / project_name tag value.
-    // "unknown" appears in ResolveRunContextAsync (2× early-exit returns + 1× fallback assignment)
-    // and in RecordRunOutcomeMetrics (project_name fallback) — 4 uses across this class.
-    private const string UnknownTag = "unknown";
-    private const string RunTypeTag = "run_type";
     private const string PhaseTag = "phase";
     private const string ProviderTag = "provider";
 
@@ -269,13 +264,13 @@ public sealed partial class WorkItemStatusTransitionService
         try
         {
             var (duration, runTypeTag, _, projectName) =
-                await ResolveRunContextAsync(id, dbFactory, ct);
+                await RunOutcomeTelemetry.ResolveRunContextAsync(id, dbFactory, ct);
 
             var (payload, failureReason) = ResolvePayloadAndFailureReason(request);
 
-            var (outcome, failureReasonTag) = DeriveOutcome(request.Status, payload, failureReason);
+            var (outcome, failureReasonTag) = RunOutcomeTelemetry.DeriveOutcome(request.Status, payload, failureReason);
 
-            RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
+            RunOutcomeTelemetry.RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
 
             // Record per-phase LLM usage metrics from the completion payload
             if (payload?.PhaseBreakdown is { Count: > 0 })
@@ -286,7 +281,7 @@ public sealed partial class WorkItemStatusTransitionService
 
             Serilog.Log.Information(
                 "WorkItem terminal: {WorkItemId} → {Status}, duration={DurationSeconds:F1}s, agent={AgentId}, reason={FailureReason}",
-                id, request.Status, duration?.TotalSeconds ?? -1, request.AgentId ?? UnknownTag,
+                id, request.Status, duration?.TotalSeconds ?? -1, request.AgentId ?? RunOutcomeTelemetry.UnknownTag,
                 failureReason?.ToString() ?? "none");
         }
         catch (Exception ex)
@@ -317,7 +312,7 @@ public sealed partial class WorkItemStatusTransitionService
             if (usage.Tokens > 0)
             {
                 PipelineTelemetry.RunTokens.Add(usage.Tokens,
-                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
                     new KeyValuePair<string, object?>(ProviderTag, provider));
             }
@@ -325,7 +320,7 @@ public sealed partial class WorkItemStatusTransitionService
             if (usage.Cost is { } cost && cost > 0)
             {
                 PipelineTelemetry.RunCostUsd.Add((double)cost,
-                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
                     new KeyValuePair<string, object?>(ProviderTag, provider));
             }
@@ -333,16 +328,16 @@ public sealed partial class WorkItemStatusTransitionService
             if (usage.SessionCount > 0)
             {
                 PipelineTelemetry.RunAgentSessions.Add(usage.SessionCount,
-                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
                     new KeyValuePair<string, object?>(ProviderTag, provider),
-                    new KeyValuePair<string, object?>("model", usage.Model ?? UnknownTag));
+                    new KeyValuePair<string, object?>("model", usage.Model ?? RunOutcomeTelemetry.UnknownTag));
             }
 
             if (usage.AgentTimeSeconds > 0)
             {
                 PipelineTelemetry.RunAgentTime.Add(usage.AgentTimeSeconds,
-                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
                     new KeyValuePair<string, object?>(ProviderTag, provider));
             }
@@ -355,7 +350,7 @@ public sealed partial class WorkItemStatusTransitionService
     /// </summary>
     private static void RecordUsageDetailMetrics(string runTypeTag, string provider, PhaseUsagePayload usage)
     {
-        var runTypeTagPair = new KeyValuePair<string, object?>(RunTypeTag, runTypeTag);
+        var runTypeTagPair = new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag);
         var providerTagPair = new KeyValuePair<string, object?>(ProviderTag, provider);
 
         (string Type, long Count)[] tokenCounts =
@@ -409,84 +404,6 @@ public sealed partial class WorkItemStatusTransitionService
     }
 
     /// <summary>
-    /// Queries the DB for the WorkItem's dispatch/completion timestamps, run type, and project context.
-    /// </summary>
-    private static async Task<(TimeSpan? Duration, string RunTypeTag, string? ProjectId, string? ProjectName)>
-        ResolveRunContextAsync(Guid id, IDbContextFactory<PipelineDbContext>? dbFactory, CancellationToken ct)
-    {
-        if (dbFactory is null)
-            return (null, UnknownTag, null, null);
-
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-        // LEFT JOIN WorkItems → PipelineRuns to get run type and project context.
-        // PipelineRunEntity.WorkItemId is nullable — the join may yield null.
-        // ProjectId and ProjectName come from PipelineRunEntity (string?) when the row exists;
-        // otherwise from WorkItemEntity.ProjectId and the Projects table (below).
-        // TODO: [WARNING] If a WorkItem has multiple PipelineRunEntity rows (e.g. a retry scenario
-        // where the agent creates a second PipelineRun for the same WorkItem), this query returns
-        // an arbitrary row because there is no ORDER BY. The resolved run_type and project context
-        // may come from an earlier run, not the most recent one. Fix by adding
-        // .OrderByDescending(pr => pr.CreatedAt) (or StartedAt) inside the DefaultIfEmpty projection
-        // before FirstOrDefaultAsync. Low risk today since retries typically reuse the same RunType,
-        // but could diverge for future retry-chain scenarios.
-        var row = await db.WorkItems.AsNoTracking()
-            .Where(w => w.Id == id)
-            .GroupJoin(
-                db.PipelineRuns.AsNoTracking(),
-                w => w.Id,
-                pr => pr.WorkItemId,
-                (w, runs) => new { w, runs })
-            .SelectMany(
-                x => x.runs.DefaultIfEmpty(),
-                (x, pr) => new
-                {
-                    x.w.DispatchedAt,
-                    x.w.CompletedAt,
-                    x.w.TaskType,
-                    WorkItemProjectId = x.w.ProjectId,
-                    RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
-                    ProjectId = pr != null ? pr.ProjectId : null,
-                    ProjectName = pr != null ? pr.ProjectName : null
-                })
-            .FirstOrDefaultAsync(ct);
-
-        if (row is null)
-            return (null, UnknownTag, null, null);
-
-        // The PipelineRuns row is often not written yet when the terminal status arrives, so fall back
-        // to the project the WorkItem was dispatched for; without it most runs are tagged "unknown".
-        var projectId = row.ProjectId ?? row.WorkItemProjectId?.ToString();
-        var projectName = row.ProjectName;
-        if (projectName is null && row.WorkItemProjectId is { } workItemProjectId)
-        {
-            projectName = await db.Projects.AsNoTracking()
-                .Where(p => p.Id == workItemProjectId)
-                .Select(p => p.Name)
-                .FirstOrDefaultAsync(ct);
-        }
-
-        // TODO: [WARNING] This reads row.CompletedAt from the DB. CompletedAt is set by
-        // ApplyStatusMutation (synchronously, before the DB commit) and EmitTerminalStatusTelemetryAsync
-        // runs after that commit, so the DB read will always see the committed value under
-        // PostgreSQL's default READ COMMITTED isolation. This assumption holds for the current
-        // architecture. If the isolation level changes or the telemetry task is moved to run
-        // before the commit, this read may return null and the duration will be omitted silently.
-        TimeSpan? duration = (row.DispatchedAt is not null && row.CompletedAt is not null)
-            ? row.CompletedAt.Value - row.DispatchedAt.Value
-            : null;
-
-        // Safe fallback: use ToDefaultRunTypeOrNull() which returns null for unknown values
-        // rather than ToDefaultRunType() which throws UnreachableException.
-        var resolvedRunType = row.RunType ?? row.TaskType.ToDefaultRunTypeOrNull();
-        var runTypeTag = resolvedRunType.HasValue
-            ? resolvedRunType.Value.ToString().ToLowerInvariant()
-            : UnknownTag;
-
-        return (duration, runTypeTag, projectId, projectName);
-    }
-
-    /// <summary>
     /// Deserializes the completion payload from the request result and resolves the failure reason.
     /// </summary>
     private static (JobCompletionPayload? Payload, FailureReason? FailureReason)
@@ -537,98 +454,6 @@ public sealed partial class WorkItemStatusTransitionService
         }
 
         return (payload, failureReason);
-    }
-
-    /// <summary>
-    /// Derives the outcome label and failure_reason tag from the request and completion payload.
-    /// Ordering is critical: AnalysisRecommendation checks come before status/failure-reason checks
-    /// because wont_do and needs_refinement both carry FailureReason.GateRejected in the request —
-    /// the outcome must be identified first so failure_reason can be forced to "none" for those paths.
-    /// </summary>
-    private static (string Outcome, string FailureReasonTag) DeriveOutcome(
-        WorkItemStatus status,
-        JobCompletionPayload? payload,
-        FailureReason? failureReason)
-    {
-        // 1. Cancelled — no payload content relevant.
-        if (status == WorkItemStatus.Cancelled)
-            return ("cancelled", "none");
-
-        // 2. ConflictRestart — agent signals via FinalStep.
-        // TODO: [WARNING] Priority 2 (ConflictRestart) comes before priorities 3–4 (AnalysisRecommendation).
-        // A payload with FinalStep=ConflictRestart AND AnalysisRecommendation=WontDo/NotReady would produce
-        // outcome='conflict_restart' (not 'wont_do'/'needs_refinement'). This combination should never occur
-        // in practice. If issue #2956 introduces new FinalStep values that overlap with analysis gate outcomes,
-        // review this ordering to ensure the intended outcome is produced.
-        if (payload?.FinalStep == PipelineStep.ConflictRestart)
-            return ("conflict_restart", "none");
-
-        // 3. WontDo gate — arrives as Succeeded + FailureReason.GateRejected; use AnalysisRecommendation.
-        if (payload?.AnalysisRecommendation == AnalysisGateResult.WontDo)
-            return ("wont_do", "none");
-
-        // 4. NeedsRefinement gate — arrives as Failed + FailureReason.GateRejected; use AnalysisRecommendation.
-        if (payload?.AnalysisRecommendation == AnalysisGateResult.NotReady)
-            return ("needs_refinement", "none");
-
-        // 5. PR created (non-draft).
-        if (!string.IsNullOrEmpty(payload?.PullRequestUrl) && !payload.IsDraftPr)
-            return ("pr_created", "none");
-
-        // 6. Draft PR.
-        // TODO: [WARNING] This check does not verify that PullRequestUrl is non-empty before
-        // emitting 'draft_pr'. A payload where IsDraftPr=true but PullRequestUrl is null/empty
-        // (e.g. a pre-PR step that sets IsDraftPr=true by accident) will produce outcome='draft_pr'
-        // rather than falling through to 'succeeded' or 'failed'. Fix: guard with
-        // !string.IsNullOrEmpty(payload?.PullRequestUrl), mirroring priority 5.
-        if (payload?.IsDraftPr == true)
-            return ("draft_pr", "none");
-
-        // 7. Timeout failure.
-        if (failureReason == FailureReason.Timeout)
-            return ("timeout", "timeout");
-
-        // 8. Any other Succeeded run (review, decomposition, consolidation).
-        if (status == WorkItemStatus.Succeeded)
-            return ("succeeded", "none");
-
-        // 9. Fallthrough — failed with a specific reason.
-        var tag = failureReason.HasValue
-            ? PascalToSnakeCaseTag(failureReason.Value.ToString())
-            : "none";
-        return ("failed", tag);
-    }
-
-    /// <summary>
-    /// Records pipeline.run.outcomes (counter) and pipeline.run.duration (histogram) for a
-    /// single terminal transition.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>Tag set for pipeline.run.outcomes:</strong> <c>run_type</c>, <c>outcome</c>,
-    /// <c>failure_reason</c>, and <c>pipeline.project_name</c> (Requirement 1).
-    /// </para>
-    /// </remarks>
-    private static void RecordRunOutcomeMetrics(
-        string runTypeTag,
-        string outcome,
-        string failureReasonTag,
-        string? projectName,
-        TimeSpan? duration)
-    {
-        // 4-tag label set per Requirement 1: run_type, outcome, failure_reason, pipeline.project_name.
-        PipelineTelemetry.RunOutcomes.Add(1,
-            new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
-            new KeyValuePair<string, object?>("outcome", outcome),
-            new KeyValuePair<string, object?>("failure_reason", failureReasonTag),
-            new KeyValuePair<string, object?>("pipeline.project_name", projectName ?? UnknownTag));
-
-        if (duration.HasValue && duration.Value.TotalSeconds >= 0)
-        {
-            PipelineTelemetry.RunDuration.Record(duration.Value.TotalSeconds,
-                new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
-                new KeyValuePair<string, object?>("outcome", outcome));
-        }
     }
 
     /// <summary>
@@ -687,13 +512,6 @@ public sealed partial class WorkItemStatusTransitionService
     }
 
     /// <summary>
-    /// Converts a PascalCase enum member name to snake_case lowercase.
-    /// E.g. <c>QualityGateExhausted</c> → <c>"quality_gate_exhausted"</c>.
-    /// </summary>
-    private static string PascalToSnakeCaseTag(string pascalCase) =>
-        PascalCaseBoundaryRegex().Replace(pascalCase, "_$1").ToLowerInvariant();
-
-    /// <summary>
     /// Parses a failure reason string into a typed <see cref="FailureReason"/> enum value.
     /// Returns null when the value is null, empty, or does not correspond to a defined member.
     /// </summary>
@@ -747,7 +565,4 @@ public sealed partial class WorkItemStatusTransitionService
 
     [GeneratedRegex(@"\bgh[pousr]_[A-Za-z0-9]{20,}", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex GitHubTokenRegex();
-
-    [System.Text.RegularExpressions.GeneratedRegex("(?<=[a-z0-9])([A-Z])", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex PascalCaseBoundaryRegex();
 }
