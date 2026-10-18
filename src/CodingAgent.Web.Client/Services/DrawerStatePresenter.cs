@@ -25,14 +25,14 @@ public class DrawerStatePresenter
     // ── IsOpen ──
 
     public bool IsIssueDrawerOpen => _issueDrawerService.DrawerState.IsOpen;
-    public bool IsPrDrawerOpen    => _prReviewDrawerService.DrawerState.IsOpen;
-    public bool IsEpicDrawerOpen  => _epicDrawerService.DrawerState.IsOpen;
+    public bool IsPrDrawerOpen => _prReviewDrawerService.DrawerState.IsOpen;
+    public bool IsEpicDrawerOpen => _epicDrawerService.DrawerState.IsOpen;
 
     // ── Templates ──
 
     public PipelineJobTemplate? IssueDrawerTemplate => _issueDrawerService.DrawerState.Template;
-    public PipelineJobTemplate? PrDrawerTemplate    => _prReviewDrawerService.DrawerState.Template;
-    public PipelineJobTemplate? EpicDrawerTemplate  => _epicDrawerService.DrawerState.Template;
+    public PipelineJobTemplate? PrDrawerTemplate => _prReviewDrawerService.DrawerState.Template;
+    public PipelineJobTemplate? EpicDrawerTemplate => _epicDrawerService.DrawerState.Template;
 
     // ── IsDispatching (get + set) ──
 
@@ -56,31 +56,31 @@ public class DrawerStatePresenter
 
     // ── Issue drawer items ──
 
-    public List<IssueSummary> DrawerIssues          => _issueDrawerService.DrawerState.Items;
-    public int DrawerPage                            => _issueDrawerService.DrawerState.Page;
-    public bool DrawerHasMore                        => _issueDrawerService.DrawerState.HasMore;
-    public bool DrawerLoading                        => _issueDrawerService.DrawerState.Loading;
-    public List<string> DrawerLabels                 => _issueDrawerService.DrawerState.Labels;
-    public List<string> DrawerSelectedLabels         => _issueDrawerService.DrawerState.SelectedLabels;
+    public List<IssueSummary> DrawerIssues => _issueDrawerService.DrawerState.Items;
+    public int DrawerPage => _issueDrawerService.DrawerState.Page;
+    public bool DrawerHasMore => _issueDrawerService.DrawerState.HasMore;
+    public bool DrawerLoading => _issueDrawerService.DrawerState.Loading;
+    public List<string> DrawerLabels => _issueDrawerService.DrawerState.Labels;
+    public List<string> DrawerSelectedLabels => _issueDrawerService.DrawerState.SelectedLabels;
 
     /// <summary>Dependency-readiness map from <see cref="IIssueDrawerService.DrawerReadiness"/>.</summary>
     public Dictionary<string, DependencyCheckResult> DrawerReadiness => _issueDrawerService.DrawerReadiness;
 
     // ── PR drawer items ──
 
-    public List<PullRequestSummary> PrDrawerPrs      => _prReviewDrawerService.DrawerState.Items;
-    public int PrDrawerPage                          => _prReviewDrawerService.DrawerState.Page;
-    public bool PrDrawerHasMore                      => _prReviewDrawerService.DrawerState.HasMore;
-    public bool PrDrawerLoading                      => _prReviewDrawerService.DrawerState.Loading;
-    public List<string> PrDrawerLabels               => _prReviewDrawerService.DrawerState.Labels;
-    public List<string> PrDrawerSelectedLabels       => _prReviewDrawerService.DrawerState.SelectedLabels;
+    public List<PullRequestSummary> PrDrawerPrs => _prReviewDrawerService.DrawerState.Items;
+    public int PrDrawerPage => _prReviewDrawerService.DrawerState.Page;
+    public bool PrDrawerHasMore => _prReviewDrawerService.DrawerState.HasMore;
+    public bool PrDrawerLoading => _prReviewDrawerService.DrawerState.Loading;
+    public List<string> PrDrawerLabels => _prReviewDrawerService.DrawerState.Labels;
+    public List<string> PrDrawerSelectedLabels => _prReviewDrawerService.DrawerState.SelectedLabels;
 
     // ── Epic drawer items ──
 
-    public List<IssueSummary> EpicDrawerIssues       => _epicDrawerService.DrawerState.Items;
-    public int EpicDrawerPage                        => _epicDrawerService.DrawerState.Page;
-    public bool EpicDrawerHasMore                    => _epicDrawerService.DrawerState.HasMore;
-    public bool EpicDrawerLoading                    => _epicDrawerService.DrawerState.Loading;
-    public List<string> EpicDrawerLabels             => _epicDrawerService.DrawerState.Labels;
-    public List<string> EpicDrawerSelectedLabels     => _epicDrawerService.DrawerState.SelectedLabels;
+    public List<IssueSummary> EpicDrawerIssues => _epicDrawerService.DrawerState.Items;
+    public int EpicDrawerPage => _epicDrawerService.DrawerState.Page;
+    public bool EpicDrawerHasMore => _epicDrawerService.DrawerState.HasMore;
+    public bool EpicDrawerLoading => _epicDrawerService.DrawerState.Loading;
+    public List<string> EpicDrawerLabels => _epicDrawerService.DrawerState.Labels;
+    public List<string> EpicDrawerSelectedLabels => _epicDrawerService.DrawerState.SelectedLabels;
 }
