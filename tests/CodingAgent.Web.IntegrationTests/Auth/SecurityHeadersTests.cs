@@ -194,6 +194,15 @@ public class HttpsRedirectTests : IClassFixture<HttpsRedirectWebApplicationFacto
     }
 
     [Fact]
+    public async Task WebSocketSchemeThroughTraefik_IsServed()
+    {
+        // Traefik sends wss for a WebSocket upgrade over TLS; a 307 broke every /hubs/ui connection.
+        var response = await Client("http://coding-agent.example", ("X-Forwarded-Proto", "wss")).GetAsync("/login");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task RequestWithoutForwardedScheme_IsServed()
     {
         // kubectl port-forward, probes and in-cluster calls reach the pod without the ingress.
