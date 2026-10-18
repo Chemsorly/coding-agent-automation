@@ -550,6 +550,31 @@ public static class PipelineTelemetry
     {
         public const string PrePr = "pre_pr";
         public const string PostPr = "post_pr";
+        public static readonly string[] All = [PrePr, PostPr];
+
+        /// <summary>
+        /// Maps an agent-reported CI wait stage to the closed set, or <c>null</c> when unknown,
+        /// so a misbehaving agent cannot inflate label cardinality.
+        /// </summary>
+        public static string? Normalize(string? stage) =>
+            All.FirstOrDefault(s => s.Equals(stage, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Closed-set result values for <c>pipeline.run.ci.wait</c> result tag.
+    /// </summary>
+    public static class CiWaitResults
+    {
+        public const string Pass = "pass";
+        public const string Fail = "fail";
+        public static readonly string[] All = [Pass, Fail];
+
+        /// <summary>
+        /// Maps an agent-reported CI wait result to the closed set, or <c>null</c> when unknown,
+        /// so a misbehaving agent cannot inflate label cardinality.
+        /// </summary>
+        public static string? Normalize(string? result) =>
+            All.FirstOrDefault(r => r.Equals(result, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -724,26 +749,13 @@ public static class PipelineTelemetry
         // constructor avoids duplicate-instrument warnings if the type is loaded by multiple hosts.
         Meter.CreateObservableGauge(
             "agent.jobs.active",
-            // TODO [WARNING]: This lambda reads _activeJobsCallback without Volatile.Read, so no
-            // acquire fence is issued on the OTel collection thread. RegisterAgentGaugeCallbacks
-            // writes the field with Volatile.Write (release fence), but the paired acquire fence is
-            // missing here. On ARM/AArch64 Kubernetes nodes (weakly ordered memory model) the
-            // collection thread may observe a stale null for one collection cycle after registration
-            // completes at startup, producing an empty measurement for that window.
-            // WorkDistributionTelemetry follows the correct pattern:
-            //   var cb = Volatile.Read(ref _credentialPoolAvailableCallback); return cb is null ? [] : cb();
-            // Fix: replace _activeJobsCallback?.Invoke() with
-            //   Volatile.Read(ref _activeJobsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>()
-            observeValues: () => _activeJobsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            observeValues: () => Volatile.Read(ref _activeJobsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
             unit: "{job}",
             description: "Currently executing agent jobs");
 
         Meter.CreateObservableGauge(
             "agent.connections.total",
-            // TODO [WARNING]: Same missing acquire fence as _activeJobsCallback above.
-            // Fix: replace _totalConnectionsCallback?.Invoke() with
-            //   Volatile.Read(ref _totalConnectionsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>()
-            observeValues: () => _totalConnectionsCallback?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            observeValues: () => Volatile.Read(ref _totalConnectionsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
             unit: "{connection}",
             description: "Total registered agents");
     }

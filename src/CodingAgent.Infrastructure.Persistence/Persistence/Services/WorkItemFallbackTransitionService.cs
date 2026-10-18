@@ -1,5 +1,6 @@
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace CodingAgent.Infrastructure.Persistence.Services;
@@ -21,15 +22,18 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
 {
     private readonly WorkItemTransitionService _workItemTransition;
     private readonly ILogger<WorkItemFallbackTransitionService> _logger;
+    private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
 
     public WorkItemFallbackTransitionService(
         WorkItemTransitionService workItemTransition,
-        ILogger<WorkItemFallbackTransitionService> logger)
+        ILogger<WorkItemFallbackTransitionService> logger,
+        IDbContextFactory<PipelineDbContext>? dbFactory = null)
     {
         ArgumentNullException.ThrowIfNull(workItemTransition);
         ArgumentNullException.ThrowIfNull(logger);
         _workItemTransition = workItemTransition;
         _logger = logger;
+        _dbFactory = dbFactory;
     }
 
     /// <inheritdoc />
@@ -43,9 +47,13 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         // rejected immediately, generating spurious "Invalid transition" Warning logs.
         //
         // Covered cases:
-        //   • Succeeded or Cancelled → any different target: no recovery path (3B-001 fix).
         //   • Failed → Failed: a no-op; the item is already at the target state. Returns false
         //     (no transition was performed) without executing any fallback steps (issue #2139 fix).
+        //   • Succeeded → Succeeded: WorkItemTransitionService.TransitionAsync is idempotent —
+        //     it returns true for already-at-target transitions. Without this guard the telemetry
+        //     block would fire a second time when the hub echoes a status already set by HTTP.
+        //   • Cancelled → Cancelled: same reasoning as Succeeded → Succeeded.
+        //   • Succeeded or Cancelled → any different target: no recovery path (3B-001 fix).
         //
         // NOT covered (falls through to the fallback chain):
         //   • Failed → Running: legitimate infra-failure recovery path via TryInfrastructureRecoveryAsync.
@@ -61,12 +69,28 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
             return false;
         }
 
-        // TODO: The condition below uses `currentStatus != status` rather than the symmetric form
-        // used by the Failed→Failed guard above. This means Succeeded→Succeeded and
-        // Cancelled→Cancelled calls fall through both guards and execute the full fallback chain,
-        // still emitting three "Invalid transition" warnings (same warning spam that issue #2139
-        // was filed to eliminate for Failed→Failed). Consider adding dedicated symmetric guards
-        // for Succeeded→Succeeded and Cancelled→Cancelled to close this gap.
+        // Symmetric idempotent-return guards: WorkItemTransitionService.TransitionAsync returns true
+        // for already-at-target transitions (idempotent API), so without these guards a
+        // Succeeded→Succeeded or Cancelled→Cancelled call would reach TryDirectAsync, return true,
+        // and incorrectly record a metric for a transition that was not actually a state change.
+        if (currentStatus is WorkItemStatus.Succeeded && status is WorkItemStatus.Succeeded)
+        {
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
+                    "WorkItem {WorkItemId} already in Succeeded state, skipping fallback chain (Succeeded→Succeeded no-op)",
+                    workItemId);
+            return false;
+        }
+
+        if (currentStatus is WorkItemStatus.Cancelled && status is WorkItemStatus.Cancelled)
+        {
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
+                    "WorkItem {WorkItemId} already in Cancelled state, skipping fallback chain (Cancelled→Cancelled no-op)",
+                    workItemId);
+            return false;
+        }
+
         if (currentStatus is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
             && currentStatus != status)
         {
@@ -81,7 +105,10 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
 
         // Step 1: direct transition
         if (await TryDirectAsync(workItemId, status, errorMessage, failureReason, ct))
+        {
+            await RecordOutcomeAsync(workItemId, status, failureReason);
             return true;
+        }
 
         // Step 2: two-step via Running (Dispatched → Running → terminal)
         // TODO: Including Failed here is a behavioral expansion relative to the original AgentHubFacade
@@ -91,13 +118,21 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         // Running → Failed path will activate. Verify this is intentional before any state-machine changes.
         if (status is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled or WorkItemStatus.Failed)
         {
-            var twoStepResult = await TryTwoStepAsync(workItemId, status, errorMessage, failureReason, ct);
-            if (twoStepResult)
+            if (await TryTwoStepAsync(workItemId, status, errorMessage, failureReason, ct))
+            {
+                await RecordOutcomeAsync(workItemId, status, failureReason);
                 return true;
+            }
         }
 
         // Step 3: infrastructure-failure recovery (last resort)
-        return await TryInfrastructureRecoveryAsync(workItemId, status, errorMessage, failureReason, ct);
+        if (await TryInfrastructureRecoveryAsync(workItemId, status, errorMessage, failureReason, ct))
+        {
+            await RecordOutcomeAsync(workItemId, status, failureReason);
+            return true;
+        }
+
+        return false;
     }
 
     /// <inheritdoc />
@@ -175,6 +210,33 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         }
 
         return recovered;
+    }
+
+    /// <summary>
+    /// Records <c>pipeline.run.outcomes</c> for a terminal transition that actually changed state.
+    /// No-op when <see cref="_dbFactory"/> is null (test and E2E constructions that omit the factory)
+    /// or when <paramref name="status"/> is not a terminal status.
+    /// Telemetry failures are caught and logged at Warning; they never propagate to the caller.
+    /// </summary>
+    private async Task RecordOutcomeAsync(Guid workItemId, WorkItemStatus status, FailureReason? failureReason)
+    {
+        if (_dbFactory is null) return;
+        if (status is not (WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)) return;
+
+        try
+        {
+            var (duration, runTypeTag, _, projectName) =
+                await RunOutcomeTelemetry.ResolveRunContextAsync(workItemId, _dbFactory, CancellationToken.None);
+            var (outcome, failureReasonTag) =
+                RunOutcomeTelemetry.DeriveOutcome(status, payload: null, failureReason);
+            RunOutcomeTelemetry.RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "WorkItemFallbackTransitionService: outcome telemetry for WorkItem {WorkItemId} failed (non-fatal)",
+                workItemId);
+        }
     }
 
     private static Action<WorkItemEntity> BuildMutationAction(
