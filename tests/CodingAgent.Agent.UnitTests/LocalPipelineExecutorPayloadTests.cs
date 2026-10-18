@@ -330,15 +330,22 @@ public class LocalPipelineExecutorPayloadTests
     }
 
     [Fact]
-    public void BuildCompletionPayload_CompletedAtOffset_UsedWhenSet()
+    public void BuildCompletionPayload_CompletedAt_UsesUtcNow_NotRunCompletedAtOffset()
     {
+        // Issue #3730: BuildCompletionPayload must stamp the payload with DateTimeOffset.UtcNow
+        // (the time the final report is built, after any post-PR CI wait), not with the earlier
+        // run.CompletedAtOffset (which is set when the PR is finalized, before the CI wait).
         var run = MakeRun();
-        var expectedTime = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
-        run.CompletedAtOffset = expectedTime;
+        var earlierStamp = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+        run.CompletedAtOffset = earlierStamp;
+        var before = DateTimeOffset.UtcNow;
 
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
 
-        payload.CompletedAt.Should().Be(expectedTime);
+        var after = DateTimeOffset.UtcNow;
+        payload.CompletedAt.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+        payload.CompletedAt.Should().NotBe(earlierStamp,
+            "BuildCompletionPayload must not forward the earlier run.CompletedAtOffset to the payload");
     }
 
     // ── BuildFailurePayload — additional field coverage ───────────────────────
@@ -494,5 +501,24 @@ public class LocalPipelineExecutorPayloadTests
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
 
         payload.AnalysisBlockingIssues.Should().BeEquivalentTo(s_BlockAB);
+    }
+
+    /// <summary>
+    /// Regression test for issue #3730: BuildCompletionPayload must use DateTimeOffset.UtcNow,
+    /// not the earlier run.CompletedAtOffset (which is set before the post-PR CI wait).
+    /// LocalPipelineExecutor does not take a TimeProvider, so we assert BeOnOrAfter an
+    /// earlierStamp set 30 minutes ago rather than using a fake clock.
+    /// </summary>
+    [Fact]
+    public void BuildCompletionPayload_CompletedAt_IsOnOrAfterAnyEarlierRunStamp()
+    {
+        var run = MakeRun();
+        var earlierStamp = DateTimeOffset.UtcNow.AddMinutes(-30);
+        run.CompletedAtOffset = earlierStamp;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.CompletedAt.Should().BeAfter(earlierStamp,
+            "BuildCompletionPayload must use DateTimeOffset.UtcNow, not the earlier run.CompletedAtOffset");
     }
 }

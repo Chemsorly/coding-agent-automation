@@ -332,7 +332,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         PullRequestUrl = run.PullRequestUrl,
         PullRequestNumber = run.PullRequestNumber,
         IsDraftPr = run.IsDraftPr,
-        CompletedAt = run.CompletedAtOffset ?? DateTimeOffset.UtcNow,
+        CompletedAt = DateTimeOffset.UtcNow,
         BrainUpdatesPushed = run.BrainUpdatesPushed,
         AnalysisRecommendation = run.AnalysisRecommendation,
         // BranchName is populated in the payload so that K8s mode (HttpPrimaryCompletionReporter)
