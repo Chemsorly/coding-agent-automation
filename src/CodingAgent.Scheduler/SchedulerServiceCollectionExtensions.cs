@@ -4,6 +4,7 @@ using CodingAgent.Infrastructure;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using System.Diagnostics.CodeAnalysis;
+using System.Net.Http.Headers;
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
@@ -53,33 +54,26 @@ public static class SchedulerServiceCollectionExtensions
         // CircuitBreaker.MinimumThroughput tuned to 10 (down from the default 100) so the
         // breaker can trip after ~10 failures in 30s. Without this, low-traffic clients
         // stall for the full 3×10s = 30s during a pod blip.
-        services.AddHttpClient<IPipelineApiConfigClient, PipelineApiConfigClient>(c =>
+        Action<HttpClient> configurePipelineApiClient = c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
-        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+                new AuthenticationHeaderValue(BearerScheme, agentApiKey);
+        };
+        Action<HttpStandardResilienceOptions> configureResilienceOptions =
+            o => o.CircuitBreaker.MinimumThroughput = 10;
 
-        services.AddHttpClient<IPipelineApiWorkItemClient, PipelineApiWorkItemClient>(c =>
-        {
-            c.BaseAddress = new Uri(pipelineApiBaseUrl);
-            c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
-        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+        services.AddHttpClient<IPipelineApiConfigClient, PipelineApiConfigClient>(configurePipelineApiClient)
+            .AddStandardResilienceHandler(configureResilienceOptions);
 
-        services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(c =>
-        {
-            c.BaseAddress = new Uri(pipelineApiBaseUrl);
-            c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
-        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+        services.AddHttpClient<IPipelineApiWorkItemClient, PipelineApiWorkItemClient>(configurePipelineApiClient)
+            .AddStandardResilienceHandler(configureResilienceOptions);
 
-        services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(c =>
-        {
-            c.BaseAddress = new Uri(pipelineApiBaseUrl);
-            c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
-        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+        services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(configurePipelineApiClient)
+            .AddStandardResilienceHandler(configureResilienceOptions);
+
+        services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(configurePipelineApiClient)
+            .AddStandardResilienceHandler(configureResilienceOptions);
 
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
@@ -279,12 +273,8 @@ public static class SchedulerServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<OrphanedLabelRecoveryService>());
 
         // ── FeedbackCommentRelayService ───────────────────────────────────────
-        services.AddHttpClient<IPipelineApiFeedbackCommentOutboxClient, PipelineApiFeedbackCommentOutboxClient>(c =>
-        {
-            c.BaseAddress = new Uri(pipelineApiBaseUrl);
-            c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
-        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+        services.AddHttpClient<IPipelineApiFeedbackCommentOutboxClient, PipelineApiFeedbackCommentOutboxClient>(configurePipelineApiClient)
+            .AddStandardResilienceHandler(configureResilienceOptions);
 
         // Registered as a named singleton (in addition to IHostedService) so that
         // SchedulerE2EWebApplicationFactory can resolve it by concrete type for test hooks
@@ -326,9 +316,7 @@ public static class SchedulerServiceCollectionExtensions
             // Register an HttpClient pointing to the Pipeline API base URL.
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             var httpClient = factory.CreateClient("SchedulerToApi");
-            httpClient.BaseAddress = new Uri(pipelineApiBaseUrl);
-            httpClient.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
+            configurePipelineApiClient(httpClient);
             return new HttpSchedulerApiClient(httpClient);
         });
 
