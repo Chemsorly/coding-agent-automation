@@ -19,7 +19,7 @@ internal static class JobCompletionMapper
         ArgumentNullException.ThrowIfNull(payload);
 
         run.CurrentStep = payload.FinalStep;
-        run.MarkCompleted(payload.CompletedAt);
+        run.SetCompletedAt(payload.CompletedAt);
         run.FailureReason = payload.FailureReason;
         if (payload.FailureCategory is not null)
             run.FailureCategory = payload.FailureCategory;
