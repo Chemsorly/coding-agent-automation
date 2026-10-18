@@ -576,33 +576,10 @@ public static class ApiServiceCollectionExtensions
     {
         // ── IKubernetes ──────────────────────────────────────────────────────────────────────
         // Required by IKubernetesJobClient (ModelFetchJobService, ChatJobDispatcher).
-        services.AddSingleton<IKubernetes>(sp =>
-        {
-            try
-            {
-                var inCluster = KubernetesClientConfiguration.IsInCluster();
-                var config = inCluster
-                    ? KubernetesClientConfiguration.InClusterConfig()
-                    : KubernetesClientConfiguration.BuildDefaultConfig();
-
-                Log.Information("Kubernetes client configured (API): Source={Source} Host={Host}",
-                    inCluster ? "in-cluster" : "kubeconfig", config.Host);
-
-                if (string.IsNullOrEmpty(config.Host) || config.Host == "http://localhost:8080")
-                {
-                    Log.Warning("API: Kubernetes client host is empty or localhost — K8s unavailable.");
-                    return null!;
-                }
-
-                return new k8s.Kubernetes(config);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "API: Kubernetes client unavailable — leader election inactive. " +
-                                "DatabaseMaintenanceService sweep runs ungated.");
-                return null!;
-            }
-        });
+        services.AddSingleton<IKubernetes>(_ =>
+            KubernetesClientRegistration.TryCreate(
+                callerLabel: "API",
+                callerNote: "DatabaseMaintenanceService sweep runs ungated.")!);
 
         // IKubernetesJobClient wraps IKubernetes. Use GetService (nullable) so the factory
         // returns a no-op stub when K8s is unavailable, instead of passing null to
