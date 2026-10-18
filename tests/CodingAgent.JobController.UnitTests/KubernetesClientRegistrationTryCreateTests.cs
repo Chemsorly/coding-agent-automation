@@ -71,7 +71,7 @@ public sealed class KubernetesClientRegistrationTryCreateTests
     public void TryCreate_WithCallerNote_DoesNotAffectNullReturn_InNonK8sEnvironment()
     {
         // callerNote is only used in the catch-path log message; it must not alter the return value.
-        var withNote    = KubernetesClientRegistration.TryCreate("Test", "Some diagnostic note.");
+        var withNote = KubernetesClientRegistration.TryCreate("Test", "Some diagnostic note.");
         var withoutNote = KubernetesClientRegistration.TryCreate("Test");
 
         withNote.Should().BeNull("callerNote must not change the null-return behavior");
