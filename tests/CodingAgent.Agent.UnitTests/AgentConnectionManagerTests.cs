@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -402,6 +403,187 @@ public class AgentConnectionManagerTests
             m.DisposeCallCount.Should().Be(1, "each failed manager must be disposed exactly once"));
 
         await manager.DisposeAsync();
+    }
+
+    // ── InvokeAsync<T> — generic overload propagates return value ────────────
+
+    /// <summary>
+    /// Verifies that InvokeAsync&lt;T&gt; captures the value produced by the action (via the
+    /// <c>T result = default!;</c> local assigned inside the Polly ExecuteAsync lambda) and
+    /// returns it to the caller.  The non-generic overload is already exercised in gate tests;
+    /// this test targets the distinct result-capture path in the generic overload (L163–175).
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_Generic_PropagatesReturnValue()
+    {
+        // The action ignores the HubConnection argument, so the default FakeHubConnectionManager
+        // (unstarted real HubConnection) is safe: InvokeCoreAsync is never triggered.
+        var (manager, _) = CreateManagerWithFakeHub();
+
+        var result = await manager.InvokeAsync<string>(
+            (conn, ct) => Task.FromResult("sentinel-42"),
+            CancellationToken.None);
+
+        result.Should().Be("sentinel-42",
+            "InvokeAsync<T> must return the value produced by the action");
+    }
+
+    // ── StopHeartbeatAsync — concurrent callers do not throw ObjectDisposedException ──
+
+    /// <summary>
+    /// Verifies that calling StopHeartbeatAsync twice concurrently (via DisposeAsync and
+    /// ForceDisconnect — both paths that call StopHeartbeatAsync internally) does not throw
+    /// ObjectDisposedException.  The Interlocked.Exchange in StopHeartbeatAsync ensures only
+    /// one caller claims the CancellationTokenSource; the second caller receives null and exits
+    /// without touching the already-cancelled/disposed CTS.
+    ///
+    /// ConnectAndRegisterAsync must succeed to set _heartbeatCts — requires RecordingHubConnection
+    /// so the RegisterAgent hub invocation does not throw on an unstarted connection.
+    /// Note: RecordingHubConnection.InvokeCoreAsync always returns success (null), so the Polly
+    /// _signalRPipeline stays on the fast path and TestRetryDelayOverride is not needed here.
+    ///
+    /// TODO: True interleaving within Interlocked.Exchange is not deterministic from test code.
+    /// A regression replacing Interlocked.Exchange with a plain read-then-null-assign could still
+    /// pass this test if the OS scheduler never interleaves the two Task.Run threads inside
+    /// StopHeartbeatAsync.  Fully deterministic coverage would require a synchronization hook
+    /// (e.g. a ManualResetEventSlim) injected into the production path, which would require a
+    /// production code change.  This test is best understood as a smoke/no-throw guard.
+    /// </summary>
+    [Fact]
+    public async Task StopHeartbeatAsync_CalledTwiceConcurrently_DoesNotThrowObjectDisposedException()
+    {
+        var recording = new RecordingHubConnection();
+        var fakeHub = new FakeHubConnectionManager(recording);
+        var factory = new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager());
+        var manager = new AgentConnectionManager(
+            fakeHub, factory, new AgentId("agent-1"),
+            Mock.Of<Serilog.ILogger>());
+
+        // ConnectAndRegisterAsync sets _heartbeatCts and starts _heartbeatTask (30 s timer).
+        // The heartbeat task completes within milliseconds once the CTS is cancelled.
+        await manager.ConnectAndRegisterAsync(DefaultRegistration, CancellationToken.None);
+
+        // Both Task.Run wrappers give each caller a separate thread-pool thread, maximising
+        // the chance of concurrent execution inside StopHeartbeatAsync.
+        // DisposeAsync and SimulateForceDisconnectAsync both call StopHeartbeatAsync internally.
+        var t1 = Task.Run(() => manager.DisposeAsync().AsTask());
+        var t2 = Task.Run(() => fakeHub.SimulateForceDisconnectAsync());
+
+        var act = async () => await Task.WhenAll(t1, t2);
+        await act.Should().NotThrowAsync<ObjectDisposedException>(
+            "Interlocked.Exchange must prevent the second caller from double-cancelling the CTS");
+    }
+
+    // ── RunHeartbeatLoopAsync — tick, transient exception, cancellation ───────
+
+    /// <summary>
+    /// AC#1a — Verifies that RunHeartbeatLoopAsync sends a heartbeat on each timer tick and
+    /// populates it with the correct AgentId, CurrentStep, and a non-negative MemoryUsageMb.
+    ///
+    /// The loop is invoked directly (not via ConnectAndRegisterAsync) to avoid starting the
+    /// background 30 s loop stored in _heartbeatTask. _coordinator.CurrentManager is already set
+    /// at construction, so the loop can read it without ConnectAndRegisterAsync being called first.
+    /// The directly-invoked task is NOT stored in _heartbeatTask; it must be explicitly awaited.
+    ///
+    /// RecordingHubConnection is required: the loop calls
+    ///   await manager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct)
+    /// which routes to RecordingHubConnection.InvokeCoreAsync (records and returns null).
+    ///
+    /// Note: RunHeartbeatLoopAsync is internal (with InternalsVisibleTo for this project) solely
+    /// to allow injecting a short interval for tests. The production call site passes no interval
+    /// (30 s default preserved). See the PR description for the AC#4 deviation rationale.
+    /// </summary>
+    [Fact]
+    public async Task RunHeartbeatLoopAsync_OnTick_SendsHeartbeatWithCorrectParameters()
+    {
+        var recording = new RecordingHubConnection();
+        var fakeHub = new FakeHubConnectionManager(recording);
+        var factory = new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager());
+        var manager = new AgentConnectionManager(
+            fakeHub, factory, new AgentId("test-agent"),
+            Mock.Of<Serilog.ILogger>());
+        manager.UpdateCurrentStep(PipelineStep.GeneratingCode);
+
+        using var cts = new CancellationTokenSource();
+        // Direct call with a 50 ms tick period so assertions do not wait 30 s.
+        // This task is NOT stored in _heartbeatTask; DisposeAsync does not await it — we must.
+        var loopTask = manager.RunHeartbeatLoopAsync(cts.Token, TimeSpan.FromMilliseconds(50));
+        await Task.Delay(200); // allow ≥2 ticks at 50 ms
+
+        await cts.CancelAsync();
+        await loopTask; // required: not awaited by DisposeAsync
+
+        var heartbeats = recording.Invocations
+            .Where(i => i.MethodName == HubMethodNames.Heartbeat)
+            .ToList();
+
+        heartbeats.Should().NotBeEmpty("at least one heartbeat must be sent per timer tick");
+        var msg = (HeartbeatMessage)heartbeats[0].Args[0]!; // Args[0] is object? — explicit cast
+        msg.AgentId.Value.Should().Be("test-agent");
+        msg.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+        msg.MemoryUsageMb.Should().BeGreaterThanOrEqualTo(0,
+            "MemoryUsageMb is a live process metric — any non-negative value is valid");
+    }
+
+    /// <summary>
+    /// AC#1b — Verifies that a transient exception on one tick does not stop the heartbeat loop:
+    /// the inner catch logs a warning and the loop continues, sending heartbeats on subsequent ticks.
+    ///
+    /// InvokeExceptionQueue is used to throw on the first heartbeat call only; subsequent calls
+    /// return null (queue drained, InvokeException is null).
+    ///
+    /// The assertion verifies loop continuation (≥2 invocations recorded) rather than the warning
+    /// log itself, because Serilog's generic Warning overloads are fragile under Moq verification.
+    /// The AC states "loop continues after a warning log" — the continuation is the verifiable part.
+    /// </summary>
+    [Fact]
+    public async Task RunHeartbeatLoopAsync_OnTransientException_LoopContinuesOnNextTick()
+    {
+        var recording = new RecordingHubConnection();
+        // First heartbeat throws a transient exception; subsequent ticks succeed (queue drained).
+        recording.InvokeExceptionQueue.Enqueue(new IOException("transient network glitch"));
+
+        var fakeHub = new FakeHubConnectionManager(recording);
+        var factory = new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager());
+        var manager = new AgentConnectionManager(
+            fakeHub, factory, new AgentId("test-agent"),
+            Mock.Of<Serilog.ILogger>());
+
+        using var cts = new CancellationTokenSource();
+        var loopTask = manager.RunHeartbeatLoopAsync(cts.Token, TimeSpan.FromMilliseconds(50));
+        await Task.Delay(300); // allow ≥3 ticks: first fails, subsequent succeed
+
+        await cts.CancelAsync();
+        await loopTask;
+
+        var heartbeatCalls = recording.Invocations
+            .Where(i => i.MethodName == HubMethodNames.Heartbeat)
+            .ToList();
+        heartbeatCalls.Should().HaveCountGreaterThanOrEqualTo(2,
+            "loop must continue after a transient exception — at least one successful tick must follow the failed one");
+    }
+
+    /// <summary>
+    /// Verifies that cancelling the token causes RunHeartbeatLoopAsync to exit cleanly
+    /// without propagating OperationCanceledException to the caller.
+    /// The outer catch in the loop body swallows the expected cancellation exception.
+    /// </summary>
+    [Fact]
+    public async Task RunHeartbeatLoopAsync_OnCancellation_ExitsCleanlyWithoutException()
+    {
+        var fakeHub = new FakeHubConnectionManager(new RecordingHubConnection());
+        var factory = new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager());
+        var manager = new AgentConnectionManager(
+            fakeHub, factory, new AgentId("test-agent"),
+            Mock.Of<Serilog.ILogger>());
+
+        using var cts = new CancellationTokenSource();
+        var loopTask = manager.RunHeartbeatLoopAsync(cts.Token, TimeSpan.FromMilliseconds(50));
+
+        await cts.CancelAsync();
+        var act = async () => await loopTask;
+        await act.Should().NotThrowAsync<OperationCanceledException>(
+            "cancellation is handled internally and must not propagate to the caller");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
