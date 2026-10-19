@@ -1058,6 +1058,43 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     // SweepPendingWorkItemsAsync_WhenGetPendingThrowsOperationCanceledException_Propagates for
     // the dispatch phase).
 
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenPostStatusThrowsOperationCanceledException_Propagates()
+    {
+        // Verifies that DispatchPendingItemAsync's `case DispatchExceptionKind.Cancellation: throw;`
+        // actually re-throws rather than swallowing the exception. If that `throw;` were changed to
+        // `break;`, a shutdown signal thrown from PostStatusAsync would be silently dropped and the
+        // sweep would continue — leaving the pipeline unaware of cancellation.
+        //
+        // Setup: one item is ineligible (issue "42" not in the eligibility set for "ip-1"), so the
+        // sweep routes it through DispatchPendingItemAsync and calls PostStatusAsync. PostStatusAsync
+        // throws OperationCanceledException. ClassifyDispatchException maps OCE → Cancellation,
+        // which hits the bare `throw;` and re-propagates the exception out of SweepPendingWorkItemsAsync.
+        var item = MakePendingItem("42", "ip-1");
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _sweepClientMock
+            .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("simulated shutdown signal"));
+
+        var svc = CreateService(_sweepClientMock.Object);
+        // Issue "42" is NOT in the eligibility set → item routed to DispatchPendingItemAsync
+        var issueEligibility = EligibilityMap("ip-1", "99");
+
+        var act = () => svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "OperationCanceledException from PostStatusAsync must propagate — the Cancellation arm uses bare throw; not break;");
+
+        // PostStatusAsync threw before _queueSweepCancelled.Add(1) was reached
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0,
+            "cancelled counter must not increment when PostStatusAsync throws before the increment line");
+        // The Cancellation branch re-throws and does not call _queueSweepFailed.Add(1)
+        CounterValue("pipeline.queue_sweep.failed").Should().Be(0,
+            "failed counter must not increment on the Cancellation arm — only UnexpectedFailure increments it");
+    }
+
     [Theory]
     [InlineData(System.Net.HttpStatusCode.BadRequest)]
     [InlineData(System.Net.HttpStatusCode.NotFound)]
