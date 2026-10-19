@@ -54,22 +54,22 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
 
         if (intervalElapsed)
         {
-            // TODO: The timestamp is committed before RunBranchCleanupAsync completes. If the
-            // cleanup is cancelled mid-way (via ct), the next call will treat the pass as
-            // completed even though it did not finish. This matches the pre-extraction behaviour
-            // in HousekeepingService.RunStaleBranchCleanupIfDueAsync and is therefore a
-            // pre-existing trade-off, not a regression. To fix, commit the timestamp only after
-            // RunBranchCleanupAsync returns successfully.
-            // TODO [WARNING]: When wasInputTruncated=true, RunBranchCleanupAsync returns
-            // immediately after the truncation guard (no work is done), but _lastCleanupAt is
-            // already stamped here — advancing the cadence clock even though cleanup was skipped.
-            // An operator who raises ClosedLoopMaxPagesToFetch to fix the truncation will still
-            // have to wait a full HousekeepingBranchCleanupIntervalMinutes before cleanup runs.
-            // Fix: stamp _lastCleanupAt only after a non-skipped cleanup completes, or at minimum
-            // after the truncation guard inside RunBranchCleanupAsync passes.
-            _lastCleanupAt[repoProviderId] = now;
             await RunBranchCleanupAsync(request.RepoProvider, request.IssueProvider, request.AgentDonePrs,
                 request.WasInputTruncated, request.RepoTag, ct);
+
+            // Only advance the cadence clock when cleanup actually ran (wasInputTruncated=false).
+            // When wasInputTruncated=true, RunBranchCleanupAsync returns immediately at the
+            // truncation guard without deleting any branches. Leaving the clock unstamped lets
+            // the next housekeeping cycle retry cleanup immediately rather than waiting a full
+            // HousekeepingBranchCleanupIntervalMinutes interval.
+            // NOTE: If ct is cancelled mid-cleanup, RunBranchCleanupAsync still returns normally
+            // (its internal catch blocks absorb OperationCanceledException), so the clock is
+            // stamped even for a partially-completed cleanup pass. This is the pre-existing
+            // cancellation trade-off documented in the original TODO and is unchanged by this fix.
+            if (!request.WasInputTruncated)
+            {
+                _lastCleanupAt[repoProviderId] = now;
+            }
         }
     }
 
