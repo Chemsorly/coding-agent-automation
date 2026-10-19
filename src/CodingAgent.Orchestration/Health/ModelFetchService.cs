@@ -37,12 +37,26 @@ public sealed class ModelFetchService : IModelFetchReceiver
     private readonly ConcurrentDictionary<string, TaskCompletionSource<FetchModelsResponse>> _pending = new();
     private IReadOnlyList<AgentModelInfo>? _cachedModels;
 
+    /// <summary>
+    /// Factory used to create the per-request timeout <see cref="CancellationTokenSource"/>
+    /// inside <see cref="SendFetchRequestAsync"/>. Defaults to
+    /// <see cref="CancellationTokenSource.CreateLinkedTokenSource(CancellationToken)"/>.
+    /// Exposed as a constructor parameter so unit tests can inject a factory that
+    /// pre-registers callbacks on the token (e.g. a blocking callback that verifies the
+    /// <c>await CancelAsync()</c> path does not deadlock — see issue #3794).
+    /// The factory MUST return a CTS whose token propagates cancellation from
+    /// the outer request token; the default <see cref="CancellationTokenSource.CreateLinkedTokenSource"/>
+    /// satisfies this contract.
+    /// </summary>
+    private readonly Func<CancellationToken, CancellationTokenSource> _timeoutCtsFactory;
+
     public ModelFetchService(
         IAgentRegistryService registry,
         IAgentCommunication agentComm,
         ILogger logger,
         IRedisStore? redis = null,
-        TimeSpan? responseTimeout = null)
+        TimeSpan? responseTimeout = null,
+        Func<CancellationToken, CancellationTokenSource>? timeoutCtsFactory = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(agentComm);
@@ -53,6 +67,8 @@ public sealed class ModelFetchService : IModelFetchReceiver
         _logger = logger;
         _redis = redis;
         _responseTimeout = responseTimeout ?? TimeSpan.FromSeconds(30);
+        _timeoutCtsFactory = timeoutCtsFactory
+            ?? (ct => CancellationTokenSource.CreateLinkedTokenSource(ct));
     }
 
     /// <summary>
@@ -144,7 +160,7 @@ public sealed class ModelFetchService : IModelFetchReceiver
             await _agentComm.RequestFetchModelsAsync(
                 agent.ConnectionId, new FetchModelsRequest { RequestId = requestId }, ct);
 
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            using var timeoutCts = _timeoutCtsFactory(ct);
             timeoutCts.CancelAfter(_responseTimeout);
             // NOTE (issue #3550): Passing the outer `ct` to TrySetCanceled is non-standard; standard pattern
             // is to pass `timeoutCts.Token` so the CancellationToken on the resulting OCE matches the
@@ -166,7 +182,10 @@ public sealed class ModelFetchService : IModelFetchReceiver
 
                 // Cancel the timeout CTS to stop the loser task promptly, then drain it
                 // (suppressing OperationCanceledException) so it does not leak.
-                timeoutCts.Cancel();
+                // CancelAsync() dispatches callbacks to the thread pool instead of invoking
+                // them synchronously on the calling thread, preventing deadlocks when
+                // infrastructure code (e.g. SignalR) registers async-blocking callbacks.
+                await timeoutCts.CancelAsync().ConfigureAwait(false);
                 // NOTE (issue #3550): The drain only suppresses OperationCanceledException. If PollRedisAsync
                 // throws a non-OCE (e.g. JsonException from a malformed Redis value, or a Redis fault)
                 // while it is the loser, that exception escapes here and fails an otherwise-successful

@@ -975,4 +975,78 @@ public sealed class HubConsolidationOperationsTests
         removed!.TotalTokens.Should().Be(999,
             "when result.TotalTokens == 0, the stored run's existing TotalTokens must not be overwritten");
     }
+
+    /// <summary>
+    /// Verifies that <see cref="HubConsolidationOperations.HandleConsolidationCompleteAsync"/>
+    /// writes <c>RefactoringScanOutcome</c> from the result onto the in-memory run via <c>ReplaceRun</c>,
+    /// so the value is present on the run that <c>RemoveRun</c> returns inside
+    /// <c>CompleteRunAsync</c>/<c>FailRunAsync</c>.
+    /// Uses a real <see cref="DistributedRunService"/> backed by <see cref="CodingAgent.Web.TestUtilities.FakeRedisStore"/>
+    /// to exercise Redis copy semantics.
+    /// </summary>
+    [Fact]
+    public async Task HandleConsolidationComplete_RedisRunService_ScanOutcomeReachesTheRun()
+    {
+        // Arrange
+        PipelineRun? removed = null;
+
+        var runService = new DistributedRunService(
+            new CodingAgent.Web.TestUtilities.FakeRedisStore(),
+            (_, _, _) => Task.FromResult(false),
+            Mock.Of<ILogger>());
+
+        var jobId = Guid.NewGuid().ToString();
+        runService.AddRun(new PipelineRun
+        {
+            RunId = jobId,
+            IssueIdentifier = new IssueIdentifier("RefactoringDetection:tpl-1"),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-1"
+        });
+
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync(new RunId(jobId), WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Callback(() => removed = runService.RemoveRun(new RunId(jobId)))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var sut = new HubConsolidationOperations(
+            CreateModelFetchService(),
+            _mockConsolidation.Object,
+            _badgeService,
+            _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
+            runService,
+            _mockLogger.Object);
+
+        var scanOutcome = new RefactoringScanOutcome
+        {
+            ProposalCount = 2,
+            CreatedIssues = [new CreatedIssueInfo { Identifier = "10", Title = "Fix it", Url = "https://example.com/10", Category = "duplication" }],
+            Detectors = [new RefactoringDetectorOutcome { Name = "Structural debt", Succeeded = true, FindingCount = 3 }],
+            MaxIssues = 3,
+            HotspotLookbackDays = 90,
+            ReviewEnabled = true,
+            AutoDispatch = false
+        };
+
+        var result = new ConsolidationJobResult
+        {
+            JobId = jobId,
+            Success = true,
+            Summary = "Created 1 refactoring issue(s): #10",
+            ScanOutcome = scanOutcome
+        };
+
+        // Act
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        // Assert: the run claimed by RemoveRun must carry the ScanOutcome that was set before CompleteRunAsync
+        removed.Should().NotBeNull("RemoveRun must have been called by the lifecycle manager mock callback");
+        removed!.RefactoringScanOutcome.Should().NotBeNull(
+            "RefactoringScanOutcome must be written back to the store via ReplaceRun before CompleteRunAsync calls RemoveRun");
+        removed.RefactoringScanOutcome.Should().BeEquivalentTo(scanOutcome,
+            "ScanOutcome must survive the ReplaceRun/RemoveRun round-trip");
+    }
 }
