@@ -36,6 +36,13 @@ internal sealed class RecordingHubConnection : HubConnection
     /// <summary>When set, every invocation fails with this exception.</summary>
     public Exception? InvokeException { get; set; }
 
+    /// <summary>
+    /// Per-call exception queue. When non-empty, each invocation dequeues and throws the next
+    /// entry (null = succeed). Falls back to <see cref="InvokeException"/> once the queue is drained.
+    /// Use this to script "throw once, succeed thereafter" scenarios.
+    /// </summary>
+    public Queue<Exception?> InvokeExceptionQueue { get; } = new();
+
     /// <summary>Snapshot of the invocations recorded so far, in call order.</summary>
     public IReadOnlyList<HubInvocation> Invocations
     {
@@ -49,11 +56,18 @@ internal sealed class RecordingHubConnection : HubConnection
     public override Task<object?> InvokeCoreAsync(
         string methodName, Type returnType, object?[] args, CancellationToken cancellationToken = default)
     {
+        Exception? ex;
         lock (_invocations)
+        {
             _invocations.Add(new HubInvocation(methodName, args));
+            // Drain queue first; fall back to InvokeException when queue is empty
+            ex = InvokeExceptionQueue.Count > 0
+                ? InvokeExceptionQueue.Dequeue()
+                : InvokeException;
+        }
 
-        return InvokeException is null
+        return ex is null
             ? Task.FromResult<object?>(null)
-            : Task.FromException<object?>(InvokeException);
+            : Task.FromException<object?>(ex);
     }
 }
