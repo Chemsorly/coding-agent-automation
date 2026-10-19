@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Reflection;
 using AwesomeAssertions;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
@@ -31,6 +32,23 @@ public sealed class WorkItemsByStatusLeaderGateTests : IDisposable
     private readonly Mock<ILeaderGate> _mockLeaderGate;
     private readonly Mock<ILogger> _mockLogger;
 
+    // Reflection handles to reset the agent gauge callback fields after each test.
+    // WorkItemCountsService.ctor registers these via PipelineTelemetry.RegisterAgentGaugeCallbacks,
+    // which now uses Interlocked.CompareExchange (first-wins). Without teardown, stale callbacks
+    // from this class's service instances would block subsequent tests in [Collection("Metrics")]
+    // from registering their own callbacks.
+    private static readonly FieldInfo ActiveJobsCallbackField =
+        typeof(PipelineTelemetry)
+            .GetField("_activeJobsCallback", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException(
+            "_activeJobsCallback field not found on PipelineTelemetry — was it renamed?");
+
+    private static readonly FieldInfo TotalConnectionsCallbackField =
+        typeof(PipelineTelemetry)
+            .GetField("_totalConnectionsCallback", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException(
+            "_totalConnectionsCallback field not found on PipelineTelemetry — was it renamed?");
+
     public WorkItemsByStatusLeaderGateTests()
     {
         _mockClient = new Mock<ISchedulerApiClient>();
@@ -42,7 +60,16 @@ public sealed class WorkItemsByStatusLeaderGateTests : IDisposable
             .Returns(_mockLogger.Object);
     }
 
-    public void Dispose() { }
+    /// <summary>
+    /// Resets the agent gauge callback fields so the CAS guard in
+    /// <see cref="PipelineTelemetry.RegisterAgentGaugeCallbacks"/> does not block subsequent
+    /// tests in <c>[Collection("Metrics")]</c> from registering their own callbacks.
+    /// </summary>
+    public void Dispose()
+    {
+        ActiveJobsCallbackField.SetValue(null, null);
+        TotalConnectionsCallbackField.SetValue(null, null);
+    }
 
     /// <summary>
     /// When a replica was the leader (populated cache), then loses leadership, the gauge

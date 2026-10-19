@@ -14,7 +14,7 @@ namespace CodingAgent.Web.Services;
 /// (readable projects only, secrets masked), template changes go through the admin settings surface
 /// (<see cref="IUiSettingsClient"/>), the loop through <see cref="IUiLoopClient"/>, and dispatch runs in the API (2.3c).
 /// </summary>
-public class AgentCodingPageService
+public class AgentCodingPageService : DrawerStateAccessorBase
 {
     private readonly IUiLoopClient _loopClient;
     private readonly IUiConfigClient _uiConfig;
@@ -31,7 +31,7 @@ public class AgentCodingPageService
         IUiSettingsClient settings,
         DispatchDrawers drawers,
         CurrentAccess access,
-        IAccessGuard guard)
+        IAccessGuard guard) : base(drawers)
     {
         _access = access;
         _guard = guard;
@@ -63,39 +63,9 @@ public class AgentCodingPageService
     public DrawerStateService<PullRequestSummary> PrDrawer => _prReviewDrawerService.DrawerState;
     public DrawerStateService<IssueSummary> EpicDrawer => _epicDrawerService.DrawerState;
 
-    public bool IsIssueDrawerOpen => _issueDrawerService.DrawerState.IsOpen;
-    public bool IsPrDrawerOpen => _prReviewDrawerService.DrawerState.IsOpen;
-    public bool IsEpicDrawerOpen => _epicDrawerService.DrawerState.IsOpen;
-    public PipelineJobTemplate? IssueDrawerTemplate => _issueDrawerService.DrawerState.Template;
-    public PipelineJobTemplate? PrDrawerTemplate => _prReviewDrawerService.DrawerState.Template;
-    public PipelineJobTemplate? EpicDrawerTemplate => _epicDrawerService.DrawerState.Template;
-    public bool IssueDrawerDispatching { get => _issueDrawerService.DrawerState.IsDispatching; set => _issueDrawerService.DrawerState.IsDispatching = value; }
-    public bool PrDrawerDispatching { get => _prReviewDrawerService.DrawerState.IsDispatching; set => _prReviewDrawerService.DrawerState.IsDispatching = value; }
-    public bool EpicDrawerDispatching { get => _epicDrawerService.DrawerState.IsDispatching; set => _epicDrawerService.DrawerState.IsDispatching = value; }
-
-    public List<IssueSummary> DrawerIssues => _issueDrawerService.DrawerState.Items;
-    public int DrawerPage => _issueDrawerService.DrawerState.Page;
-    public bool DrawerHasMore => _issueDrawerService.DrawerState.HasMore;
-    public bool DrawerLoading => _issueDrawerService.DrawerState.Loading;
-    public List<string> DrawerLabels => _issueDrawerService.DrawerState.Labels;
-    public List<string> DrawerSelectedLabels => _issueDrawerService.DrawerState.SelectedLabels;
-
-    public List<PullRequestSummary> PrDrawerPrs => _prReviewDrawerService.DrawerState.Items;
-    public int PrDrawerPage => _prReviewDrawerService.DrawerState.Page;
-    public bool PrDrawerHasMore => _prReviewDrawerService.DrawerState.HasMore;
-    public bool PrDrawerLoading => _prReviewDrawerService.DrawerState.Loading;
-    public List<string> PrDrawerLabels => _prReviewDrawerService.DrawerState.Labels;
-    public List<string> PrDrawerSelectedLabels => _prReviewDrawerService.DrawerState.SelectedLabels;
-
-    public List<IssueSummary> EpicDrawerIssues => _epicDrawerService.DrawerState.Items;
-    public int EpicDrawerPage => _epicDrawerService.DrawerState.Page;
-    public bool EpicDrawerHasMore => _epicDrawerService.DrawerState.HasMore;
-    public bool EpicDrawerLoading => _epicDrawerService.DrawerState.Loading;
-    public List<string> EpicDrawerLabels => _epicDrawerService.DrawerState.Labels;
-    public List<string> EpicDrawerSelectedLabels => _epicDrawerService.DrawerState.SelectedLabels;
-
-    /// <summary>Forwarded to IssueDrawerService — used by the coordinator and all three drawer components.</summary>
-    public Dictionary<string, DependencyCheckResult> DrawerReadiness => _issueDrawerService.DrawerReadiness;
+    // All 28 shared drawer state accessors (IsIssueDrawerOpen, IsPrDrawerOpen, IsEpicDrawerOpen,
+    // IssueDrawerTemplate, IssueDrawerDispatching, DrawerIssues, DrawerReadiness etc.)
+    // are inherited from DrawerStateAccessorBase.
 
     private const string DrawerTabIssue = "issue";
     private const string DrawerTabPr = "pr";

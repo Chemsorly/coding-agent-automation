@@ -358,6 +358,19 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
     ///
     /// The Warning log assertion (contains "transient API failure mid-cycle") definitively
     /// proves the IsTransientApiFailure catch body was reached, not just inferred from CycleCount.
+    ///
+    /// TODO: [WARNING — DotNetSpecialist review] A dispatch-injection test (making
+    /// IDispatchOrchestrationService.PrepareDistributionRequestAsync throw BrokenCircuitException
+    /// to verify AC1 specifically via the DispatchFairRoundRobinAsync path) is architecturally
+    /// infeasible: DispatchScheduler.DispatchRoundAsync wraps every tryDispatchOne invocation in
+    /// a catch (Exception ex) that logs at Error and continues — exceptions from
+    /// IDispatchOrchestrationService never escape DispatchFairRoundRobinAsync to reach the
+    /// IsTransientApiFailure guard at RunMultiTemplateLoopAsync:58. Coverage of that guard via the
+    /// dispatch path would require a code change in DispatchRoundAsync (e.g., not catching
+    /// BrokenCircuitException there), which is a production design decision beyond this issue's scope.
+    /// The housekeeping-injection path reaches the same catch block and the Warning assertion here
+    /// is definitive proof that lines 53–56 were executed. This TODO documents the known gap in
+    /// dispatch-specific injection, not an absence of guard coverage.
     /// </summary>
     [Fact]
     public async Task WhenBrokenCircuitExceptionEscapesExecuteCycle_IsTransientApiFailureGuardFires()

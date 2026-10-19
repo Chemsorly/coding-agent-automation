@@ -766,6 +766,8 @@ public static class PipelineTelemetry
     /// Called once at startup by <c>WorkItemCountsService</c> on the Scheduler leader.
     /// The callbacks are invoked on every OTel collection cycle; they should return an empty
     /// enumerable when the leader has no data yet (before first poll) or is not the leader.
+    /// Logs a warning if called more than once (e.g. from a misconfigured DI container or
+    /// parallel test runs) — the first registration wins and subsequent calls are ignored.
     /// </summary>
     public static void RegisterAgentGaugeCallbacks(
         Func<IEnumerable<Measurement<long>>> activeJobsCallback,
@@ -774,15 +776,22 @@ public static class PipelineTelemetry
         ArgumentNullException.ThrowIfNull(activeJobsCallback);
         ArgumentNullException.ThrowIfNull(totalConnectionsCallback);
 
-        // NOTE (issue #3555): Unlike RegisterWorkItemsByStatusCallback (which uses Interlocked.CompareExchange
-        // and logs a warning on double-registration), this method unconditionally overwrites the callbacks.
-        // A second call from a misconfigured DI container or a test running in the same process silently
-        // replaces the active callbacks without any diagnostic. Consider using Interlocked.CompareExchange
-        // and emitting a Serilog.Log.Warning on double-registration, matching the pattern in
-        // WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback.
+        // Use Interlocked.CompareExchange so the first registration wins and a second call
+        // cannot silently replace the live gauge callbacks. The guards are applied independently
+        // to each field (matching the issue's guidance); cross-field atomicity is not needed
+        // because there is exactly one production call site (WorkItemCountsService constructor).
+        var priorActiveJobs = Interlocked.CompareExchange(ref _activeJobsCallback, activeJobsCallback, null);
+        var priorTotalConns = Interlocked.CompareExchange(ref _totalConnectionsCallback, totalConnectionsCallback, null);
 
-        // Use volatile writes so the collection thread sees the callbacks immediately.
-        Volatile.Write(ref _activeJobsCallback, activeJobsCallback);
-        Volatile.Write(ref _totalConnectionsCallback, totalConnectionsCallback);
+        if (priorActiveJobs is not null || priorTotalConns is not null)
+        {
+            Serilog.Log.Warning(
+                "PipelineTelemetry: RegisterAgentGaugeCallbacks called more than once — " +
+                "previous callbacks remain active. This indicates a DI misconfiguration or parallel test run.");
+            // First registration wins in the common case (both fields null on entry).
+            // In the pathological partial-state (one field null, one non-null from an interrupted
+            // prior call), the CAS for the null field will succeed and replace it — but this
+            // scenario is unreachable in production (single call site, single DI instance).
+        }
     }
 }
