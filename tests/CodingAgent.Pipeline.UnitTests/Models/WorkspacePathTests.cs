@@ -68,6 +68,30 @@ public class WorkspacePathTests
     }
 
     [Fact]
+    public void Constructor_WithNull_ThrowsArgumentNullException()
+    {
+        var act = () => new WorkspacePath(null!);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_WithEmpty_ThrowsArgumentException()
+    {
+        var act = () => new WorkspacePath(string.Empty);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void ImplicitConversion_FromDefault_ThrowsArgumentException()
+    {
+        var act = () => { string _ = default(WorkspacePath); };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void Default_HasNullValue()
     {
         var path = default(WorkspacePath);
