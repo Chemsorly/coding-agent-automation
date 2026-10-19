@@ -36,20 +36,6 @@ public sealed class LabelServiceTests
     private static ProviderConfig MakeConfig(string id = "cfg-1", ProviderKind kind = ProviderKind.Issue) =>
         new() { Id = id, Kind = kind, DisplayName = "T", ProviderType = "GitHub" };
 
-    private static PipelineRun MakeRun() =>
-        PipelineRun.CreateImplementation(new PipelineRunCreationParams
-        {
-            RunId = "r1",
-            IssueIdentifier = "GH-1",
-            IssueTitle = "T",
-            IssueProviderConfigId = "github",
-            RepoProviderConfigId = "repo",
-            AgentId = "a1",
-            AgentProviderConfigId = "kiro",
-            InitiatedBy = "test",
-            StartedAt = DateTimeOffset.UtcNow
-        });
-
     // ── Constructor guards ────────────────────────────────────────────────
 
     [Fact]
