@@ -1,3 +1,4 @@
+using System.Reflection;
 using AwesomeAssertions;
 using CodingAgent.Agent;
 using CodingAgent.Pipeline;
@@ -293,6 +294,298 @@ public class HubConnectionManagerTests : IAsyncDisposable
         // The event should be subscribable without error.
         // Actual invocation requires a live SignalR connection (covered by E2E tests).
         invoked.Should().BeFalse("event should not fire until ForceDisconnect message is received");
+    }
+
+    // ── InfiniteRetryPolicy tests ──────────────────────────────────────────
+    //
+    // InfiniteRetryPolicy is a private sealed nested class inside HubConnectionManager.
+    // It is accessed via reflection — update the nested type name below if it is renamed.
+    // Formula: delay = min(2^min(count, 7), 120) s + jitter [0, 1000) ms.
+
+    private static IRetryPolicy CreateInfiniteRetryPolicy()
+    {
+        var policyType = typeof(HubConnectionManager)
+            .GetNestedType("InfiniteRetryPolicy", BindingFlags.NonPublic);
+        policyType.Should().NotBeNull(
+            "InfiniteRetryPolicy nested type must exist on HubConnectionManager — update the name if it was renamed");
+        return (IRetryPolicy)Activator.CreateInstance(policyType!)!;
+    }
+
+    private static RetryContext MakeRetryContext(int previousRetryCount) =>
+        new() { PreviousRetryCount = previousRetryCount, ElapsedTime = TimeSpan.Zero, RetryReason = null };
+
+    [Fact]
+    public void NextRetryDelay_AnyRetryCount_NeverReturnsNull()
+    {
+        // CRITICAL: returning null causes SignalR to enter the terminal Closed state permanently.
+        var policy = CreateInfiniteRetryPolicy();
+        foreach (var count in new[] { 0, 1, 5, 7, 8, 100, int.MaxValue })
+            policy.NextRetryDelay(MakeRetryContext(count))
+                .Should().NotBeNull($"policy must never give up (retryCount={count})");
+    }
+
+    [Theory]
+    [InlineData(0, 1)]    // 2^0 = 1 s
+    [InlineData(1, 2)]    // 2^1 = 2 s
+    [InlineData(2, 4)]    // 2^2 = 4 s
+    [InlineData(3, 8)]    // 2^3 = 8 s
+    [InlineData(4, 16)]   // 2^4 = 16 s
+    [InlineData(5, 32)]   // 2^5 = 32 s
+    [InlineData(6, 64)]   // 2^6 = 64 s
+    [InlineData(7, 128)]  // 2^7 = 128 s base → capped to 120 s before jitter is added
+    [InlineData(8, 128)]  // exponent clamped at 7 → same as above
+    [InlineData(100, 128)]
+    public void NextRetryDelay_RetryCount_YieldsExpectedBase(int retryCount, int expectedBaseSeconds)
+    {
+        var policy = CreateInfiniteRetryPolicy();
+        var delay = policy.NextRetryDelay(MakeRetryContext(retryCount))!.Value;
+
+        // Base is capped at 120 s before jitter is added. Jitter is [0, 1000) ms.
+        var effectiveBase = Math.Min(expectedBaseSeconds * 1000, 120_000);
+        delay.TotalMilliseconds.Should().BeGreaterThanOrEqualTo(effectiveBase,
+            $"retryCount={retryCount}: delay must be >= effective-base {effectiveBase / 1000}s");
+        delay.TotalMilliseconds.Should().BeLessThanOrEqualTo(effectiveBase + 1000,
+            $"retryCount={retryCount}: delay must be <= effective-base + 1s jitter");
+    }
+
+    [Theory]
+    [InlineData(7)]
+    [InlineData(10)]
+    [InlineData(50)]
+    [InlineData(1000)]
+    public void NextRetryDelay_HighRetryCount_NeverExceeds121Seconds(int retryCount)
+    {
+        var policy = CreateInfiniteRetryPolicy();
+        var delay = policy.NextRetryDelay(MakeRetryContext(retryCount))!.Value;
+        delay.Should().BeLessThanOrEqualTo(TimeSpan.FromMilliseconds(121_000),
+            $"retryCount={retryCount}: cap (120 s) + max jitter (1 s) must not exceed 121 s");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(6)]
+    public void NextRetryDelay_Jitter_IsAlwaysNonNegative(int retryCount)
+    {
+        var policy = CreateInfiniteRetryPolicy();
+        var delay = policy.NextRetryDelay(MakeRetryContext(retryCount))!.Value;
+        var baseSeconds = Math.Pow(2, Math.Min(retryCount, 7));
+        delay.TotalSeconds.Should().BeGreaterThanOrEqualTo(baseSeconds,
+            $"retryCount={retryCount}: jitter must be non-negative (delay must be >= base {baseSeconds}s)");
+    }
+
+    [Property(MaxTest = 20)]
+    public bool ForAllRetryCount_DelayWithinExpectedBounds(int rawCount)
+    {
+        var policy = CreateInfiniteRetryPolicy();
+        var retryCount = Math.Abs(rawCount % 1000);
+        var delay = policy.NextRetryDelay(MakeRetryContext(retryCount))!.Value;
+        var baseMs = Math.Min(Math.Pow(2, Math.Min(retryCount, 7)) * 1000, 120_000);
+        return delay.TotalMilliseconds >= baseMs
+            && delay.TotalMilliseconds <= baseMs + 1_000.0;
+    }
+
+    // ── Client handler tests ──────────────────────────────────────────────
+    //
+    // Each private handler is invoked directly via reflection.
+    // If a method is renamed, update the string literal — the .NotBeNull() assertion below
+    // will surface a descriptive failure rather than a NullReferenceException.
+
+    private static async Task InvokePrivateHandlerAsync(HubConnectionManager manager, string methodName, params object?[] args)
+    {
+        var method = typeof(HubConnectionManager)
+            .GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance);
+        method.Should().NotBeNull($"private method '{methodName}' must exist on HubConnectionManager");
+        await (Task)method!.Invoke(manager, args)!;
+    }
+
+    [Fact]
+    public async Task HandleCancelJob_FiresOnCancelJobEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        string? received = null;
+        manager.OnCancelJob += jobId => { received = jobId; return Task.CompletedTask; };
+
+        await InvokePrivateHandlerAsync(manager, "HandleCancelJobAsync", new JobId("test-job-1"));
+
+        received.Should().Be("test-job-1");
+    }
+
+    [Fact]
+    public async Task HandleAssignChatPrompt_FiresOnAssignChatPromptEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        ChatPromptMessage? received = null;
+        manager.OnAssignChatPrompt += msg => { received = msg; return Task.CompletedTask; };
+
+        var message = new ChatPromptMessage { SessionId = "s1", Prompt = "hi" };
+        await InvokePrivateHandlerAsync(manager, "HandleAssignChatPromptAsync", message);
+
+        received.Should().NotBeNull();
+        received!.SessionId.Should().Be("s1");
+        received.Prompt.Should().Be("hi");
+    }
+
+    [Fact]
+    public async Task HandleCancelChat_FiresOnCancelChatEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        string? received = null;
+        manager.OnCancelChat += sessionId => { received = sessionId; return Task.CompletedTask; };
+
+        await InvokePrivateHandlerAsync(manager, "HandleCancelChatAsync", "session-1");
+
+        received.Should().Be("session-1");
+    }
+
+    [Fact]
+    public async Task HandleRequestFetchModels_FiresOnFetchModelsEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        FetchModelsRequest? received = null;
+        manager.OnFetchModels += req => { received = req; return Task.CompletedTask; };
+
+        var request = new FetchModelsRequest { RequestId = "req-1" };
+        await InvokePrivateHandlerAsync(manager, "HandleRequestFetchModelsAsync", request);
+
+        received.Should().NotBeNull();
+        received!.RequestId.Should().Be("req-1");
+    }
+
+    [Fact]
+    public async Task HandleForceDisconnect_FiresEventAndCompletesWithoutThrowing()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var fired = false;
+        manager.OnForceDisconnect += () => { fired = true; return Task.CompletedTask; };
+
+        // StopAsync on a disconnected HubConnection is wrapped in try/catch in production code.
+        await InvokePrivateHandlerAsync(manager, "HandleForceDisconnectAsync");
+
+        fired.Should().BeTrue("OnForceDisconnect must fire when the ForceDisconnect handler is invoked");
+    }
+
+    [Fact]
+    public async Task HandleForceDisconnect_NoSubscribers_CompletesWithoutThrowing()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        // No subscribers — the null guard (if (OnForceDisconnect is not null)) must prevent NRE
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleForceDisconnectAsync");
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleForceDisconnect_SubscriberThrows_ExceptionIsSwallowed()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        manager.OnForceDisconnect += () => throw new InvalidOperationException("subscriber boom");
+
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleForceDisconnectAsync");
+        await act.Should().NotThrowAsync(
+            "subscriber exceptions must be swallowed by the catch block in HandleForceDisconnectAsync");
+    }
+
+    // ── Lifecycle event tests ─────────────────────────────────────────────
+    //
+    // The lifecycle lambdas are retrieved from HubConnection via backing-field reflection.
+    // TODO: If a test here fails with NullReferenceException after a SignalR upgrade, check for
+    // renamed backing fields in HubConnection. Field names confirmed for
+    // Microsoft.AspNetCore.SignalR.Client 10.0.13: Closed, Reconnected, Reconnecting.
+    // This uses the same reflection pattern as Constructor_TransportOptions_SkipNegotiationAndWebSocketsAreSet.
+
+    private static T GetHubConnectionEventDelegate<T>(HubConnection connection, string eventFieldName)
+        where T : Delegate
+    {
+        var field = typeof(HubConnection)
+            .GetField(eventFieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+        field.Should().NotBeNull(
+            $"HubConnection must have a '{eventFieldName}' backing field — update after a SignalR upgrade");
+        var del = (T?)field!.GetValue(connection);
+        del.Should().NotBeNull(
+            $"'{eventFieldName}' backing field must be non-null after HubConnectionManager construction");
+        return del!;
+    }
+
+    /// <summary>
+    /// Note: <see cref="IHubConnectionManager"/> has no <c>OnReconnecting</c> public event.
+    /// The Reconnecting lambda only logs. This test covers the lambda body for code coverage
+    /// without asserting a public event. See PR description for the AC gap.
+    /// </summary>
+    /// <remarks>
+    /// TODO: The acceptance criterion states "asserting the public event fires" for all three
+    /// lifecycle events. This test cannot satisfy that requirement for Reconnecting because
+    /// <see cref="IHubConnectionManager"/> does not declare an <c>OnReconnecting</c> event —
+    /// adding one would require a production interface change (prohibited by the issue AC).
+    /// To fully satisfy AC1 for Reconnecting, a follow-up issue should add <c>OnReconnecting</c>
+    /// to <see cref="IHubConnectionManager"/>, wire it in <see cref="HubConnectionManager"/>,
+    /// and update this test to assert the event fires.
+    /// </remarks>
+    [Fact]
+    public async Task LifecycleReconnecting_WhenFired_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var reconnecting = GetHubConnectionEventDelegate<Func<Exception?, Task>>(
+            manager.Connection, "Reconnecting");
+
+        var act = async () => await reconnecting(new InvalidOperationException("test disconnect"));
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task LifecycleClosed_WhenFiredWithNullError_FiresOnClosedEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var fired = false;
+        Exception? receivedError = new Exception("sentinel"); // non-null sentinel: distinguishes "not fired" from "fired with null"
+        manager.OnClosed += ex => { fired = true; receivedError = ex; return Task.CompletedTask; };
+
+        var closed = GetHubConnectionEventDelegate<Func<Exception?, Task>>(manager.Connection, "Closed");
+        await closed(null);
+
+        fired.Should().BeTrue("OnClosed must fire when the Closed event is triggered");
+        receivedError.Should().BeNull("error argument must be null for a clean closure");
+    }
+
+    [Fact]
+    public async Task LifecycleClosed_WhenFiredWithError_FiresOnClosedEventWithError()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        Exception? receivedError = null;
+        var error = new InvalidOperationException("server gone");
+        manager.OnClosed += ex => { receivedError = ex; return Task.CompletedTask; };
+
+        var closed = GetHubConnectionEventDelegate<Func<Exception?, Task>>(manager.Connection, "Closed");
+        await closed(error);
+
+        receivedError.Should().BeSameAs(error,
+            "OnClosed must receive the exact exception passed to the Closed event");
+    }
+
+    [Fact]
+    public async Task LifecycleClosed_SubscriberThrows_ExceptionIsSwallowed()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        manager.OnClosed += _ => throw new InvalidOperationException("subscriber boom");
+
+        var closed = GetHubConnectionEventDelegate<Func<Exception?, Task>>(manager.Connection, "Closed");
+        var act = async () => await closed(null);
+        await act.Should().NotThrowAsync(
+            "subscriber exceptions must be swallowed by the try/catch in the Closed lambda");
+    }
+
+    [Fact]
+    public async Task LifecycleReconnected_WhenFired_FiresOnReconnectedEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        string? receivedConnectionId = null;
+        manager.OnReconnected += connId => { receivedConnectionId = connId; return Task.CompletedTask; };
+
+        var reconnected = GetHubConnectionEventDelegate<Func<string?, Task>>(
+            manager.Connection, "Reconnected");
+        await reconnected("new-conn-123");
+
+        receivedConnectionId.Should().Be("new-conn-123");
     }
 
     /// <summary>
