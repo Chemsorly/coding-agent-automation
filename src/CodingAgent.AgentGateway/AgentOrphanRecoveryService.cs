@@ -39,7 +39,7 @@ public sealed class AgentOrphanRecoveryService(
         // but the agent registered without an active job, restore the ActiveJobId on the
         // registry entry. This avoids immediately failing runs when an agent has a brief network blip.
         // The ReconciliationService (JobController) enforces work-item timeouts.
-        var entry = _facade.GetByAgentId(agentId);
+        var entry = await _facade.GetByAgentIdAsync(agentId, ct);
         if (entry is { ActiveJobId: null })
         {
             await DetectAndRestoreOrphans(agentId, entry, ct);
@@ -88,7 +88,7 @@ public sealed class AgentOrphanRecoveryService(
             return null;
         }
 
-        return LinkAgentToExistingRun(existingRun, agentId, activeJob);
+        return await LinkAgentToExistingRunAsync(existingRun, agentId, activeJob, ct);
     }
 
     /// <summary>
@@ -137,7 +137,7 @@ public sealed class AgentOrphanRecoveryService(
 
         if (!inHistory)
         {
-            await RestoreNewRunAsync(agentId, activeJob, identity);
+            await RestoreNewRunAsync(agentId, activeJob, identity, ct);
         }
         else
         {
@@ -147,23 +147,22 @@ public sealed class AgentOrphanRecoveryService(
         }
     }
 
-    private Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity)
+    private async Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
     {
         // Skip restoration for consolidation runs — they have their own
         // completion path (ReportConsolidationComplete) and should not
         // enter pipeline run tracking or history.
         if (identity.IsConsolidation)
         {
-            RestoreConsolidationTracking(agentId, activeJob);
+            await RestoreConsolidationTrackingAsync(agentId, activeJob, ct);
         }
         else
         {
-            RestorePipelineRun(agentId, activeJob, identity);
+            await RestorePipelineRunAsync(agentId, activeJob, identity, ct);
         }
-        return Task.CompletedTask;
     }
 
-    private void RestoreConsolidationTracking(AgentId agentId, ActiveJobState activeJob)
+    private async Task RestoreConsolidationTrackingAsync(AgentId agentId, ActiveJobState activeJob, CancellationToken ct)
     {
         _logger.Information(
             "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
@@ -172,7 +171,7 @@ public sealed class AgentOrphanRecoveryService(
         // Still mark agent as busy with this job so it's tracked correctly.
         // The write is unconditional: this path only runs when the agent self-reported a
         // consolidation job, so the ActiveJobId assignment is always authoritative.
-        var consolEntry = _facade.GetByAgentId(agentId);
+        var consolEntry = await _facade.GetByAgentIdAsync(agentId, ct);
         if (consolEntry is not null)
         {
             if (ActivateAgentJob(consolEntry, agentId, activeJob.RunId, guardAgainstConcurrentAssignment: false, "RestoreConsolidationTracking"))
@@ -193,7 +192,7 @@ public sealed class AgentOrphanRecoveryService(
         _changeNotifier.NotifyChange();
     }
 
-    private void RestorePipelineRun(AgentId agentId, ActiveJobState activeJob, RunIdentity identity)
+    private async Task RestorePipelineRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
     {
         var restoredRun = CreateRestoredPipelineRun(agentId.Value, activeJob, identity);
         restoredRun.CurrentStep = activeJob.CurrentStep;
@@ -209,7 +208,7 @@ public sealed class AgentOrphanRecoveryService(
         // Set agent as busy with this job. The write is unconditional: this path only runs
         // when we have just created a restored run, so the ActiveJobId assignment is always
         // authoritative.
-        var restoredEntry = _facade.GetByAgentId(agentId);
+        var restoredEntry = await _facade.GetByAgentIdAsync(agentId, ct);
         if (restoredEntry is not null)
         {
             if (ActivateAgentJob(restoredEntry, agentId, activeJob.RunId, guardAgainstConcurrentAssignment: false, "RestorePipelineRun"))
@@ -323,8 +322,8 @@ public sealed class AgentOrphanRecoveryService(
     }
 
     /// <returns>The run when the agent was just recorded on it as its first agent, otherwise null.</returns>
-    private PipelineRun? LinkAgentToExistingRun(
-        PipelineRun existingRun, AgentId agentId, ActiveJobState activeJob)
+    private async Task<PipelineRun?> LinkAgentToExistingRunAsync(
+        PipelineRun existingRun, AgentId agentId, ActiveJobState activeJob, CancellationToken ct)
     {
         // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
         // Ensure the agent is linked to it and transitioned to Busy.
@@ -367,7 +366,7 @@ public sealed class AgentOrphanRecoveryService(
         // Agent tracking: always run when the run belongs to this agent.
         // This covers: first pickup (AgentId just set above), pod replacement (AgentId just updated),
         // and same-agent reconnect (AgentId already matched, tracking still needed if entry lost state).
-        TrackLinkedActiveJob(agentId, activeJob);
+        await TrackLinkedActiveJobAsync(agentId, activeJob, ct);
 
         _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",
             agentId, activeJob.RunId);
@@ -375,9 +374,9 @@ public sealed class AgentOrphanRecoveryService(
         return agentChanged && string.IsNullOrEmpty(previousAgentId) ? existingRun : null;
     }
 
-    private void TrackLinkedActiveJob(AgentId agentId, ActiveJobState activeJob)
+    private async Task TrackLinkedActiveJobAsync(AgentId agentId, ActiveJobState activeJob, CancellationToken ct)
     {
-        var trackedEntry = _facade.GetByAgentId(agentId);
+        var trackedEntry = await _facade.GetByAgentIdAsync(agentId, ct);
         if (trackedEntry is null)
             return;
 
