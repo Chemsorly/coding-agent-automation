@@ -34,11 +34,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
     public AgentJobLifecycleService(AgentJobLifecycleServiceDependencies deps)
     {
-        // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(deps) here to produce a clear
-        // ArgumentNullException instead of a NullReferenceException when deps is null.
-        // Consistent with the ThrowIfNull pattern used in other public constructors in this assembly
-        // (e.g. AgentHubFacade, AgentHub). Constructor is public so callers outside the assembly
-        // can reach it. (DotNetSpecialist review finding.)
+        ArgumentNullException.ThrowIfNull(deps);
         _facade = deps.Facade;
         _labelService = deps.LabelService;
         _issueOps = deps.IssueOps;

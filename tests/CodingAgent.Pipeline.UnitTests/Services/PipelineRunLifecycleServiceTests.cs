@@ -88,7 +88,7 @@ public class PipelineRunLifecycleServiceTests
     // ── FailRunAsync exception resilience ────────────────────────────────
 
     [Fact]
-    public async Task FailRunAsync_WhenAddRunToHistoryThrowsOperationCanceledException_CompletesNormally()
+    public async Task FailRunAsync_WhenAddRunToHistoryThrowsOperationCanceledException_PropagatesOce()
     {
         // Arrange
         _mockHistory
@@ -98,17 +98,14 @@ public class PipelineRunLifecycleServiceTests
         var service = CreateService();
         var run = CreateRun();
 
-        // Act — must not throw even though history write throws OCE
-        await service.FailRunAsync(run, "test reason");
+        // Act — OCE must propagate with the when filter in place
+        Func<Task> act = () => service.FailRunAsync(run, "test reason");
 
-        // Assert — state transitions completed before the history call
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // State transitions still occur before AddRunToHistoryAsync is called
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("test reason");
-        // TODO: [WARNING] This test does not assert that _mockLogger.Warning(...) was called when
-        // AddRunToHistoryAsync throws. The acceptance criteria require "logs Warning on failure". An empty
-        // catch block or missing logger call would leave this test green. Add a Verify on _mockLogger for the
-        // Warning call with run.RunId to validate the logging requirement. See review finding:
-        // Correctness [WARNING] and TestQualityReviewer [WARNING] — issue #2470.
     }
 
     [Fact]
@@ -117,25 +114,46 @@ public class PipelineRunLifecycleServiceTests
         // Arrange
         _mockHistory
             .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            // TODO: [WARNING] InvalidOperationException is used as a proxy for a DB exception (e.g. NpgsqlException,
-            // DbException). The production catch block currently catches all Exception types so this correctly
-            // exercises the guard. However, if the catch filter is ever narrowed (e.g. `when (ex is DbException)`),
-            // this test will become a false-negative: it passes but a real NpgsqlException would propagate uncaught.
-            // Consider using a DbException subclass (e.g. a mock or stub of DbException) to make the intent explicit.
-            // See review finding: TestQualityReviewer [WARNING] — issue #2470.
             .ThrowsAsync(new InvalidOperationException("DB connection lost"));
 
         var service = CreateService();
         var run = CreateRun();
 
-        // Act — must not throw even though history write throws a DB-style exception
+        // Act — non-OCE must still be swallowed
         await service.FailRunAsync(run, "test reason");
 
         // Assert — state transitions completed before the history call
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("test reason");
-        // TODO: [WARNING] This test does not assert that _mockLogger.Warning(...) was called. See TODO above in
-        // FailRunAsync_WhenAddRunToHistoryThrowsOperationCanceledException_CompletesNormally for details.
+
+        // Warning must be logged — PipelineRun.RunId is a plain string so the third argument
+        // type must be string to match the generic overload Warning<string>(Exception, string, string).
+        // Match run.RunId specifically so a regression logging the wrong run ID is caught.
+        _mockLogger.Verify(l => l.Warning(
+            It.IsAny<Exception>(),
+            It.IsAny<string>(),
+            It.Is<string>(s => s == run.RunId)),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task FailRunAsync_WithPreCancelledToken_PropagatesOperationCanceledException()
+    {
+        // Arrange — pre-cancelled token; AddRunToHistoryAsync throws OCE
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        _mockHistory
+            .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var service = CreateService();
+        var run = CreateRun();
+
+        // Act — OCE must propagate to the caller
+        Func<Task> act = () => service.FailRunAsync(run, "cancellation test", cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     // ── CancelPipelineAsync exception resilience ──────────────────────────

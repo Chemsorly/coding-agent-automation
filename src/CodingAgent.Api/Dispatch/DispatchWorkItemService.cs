@@ -744,9 +744,11 @@ internal sealed class DispatchWorkItemService
         // The TimeoutException catch above is intentionally outside this scope — it fires before
         // acquiredLock is assigned and is unaffected by this change.
         //
-        // The caller-ownership return path (Pending item → return (acquiredLock, null)) is a
-        // normal return; catch does not fire on normal returns, so the caller's await using holds
-        // sole disposal responsibility for that path.
+        // lockTransferred guards against double-dispose: the non-Pending path calls
+        // acquiredLock.DisposeAsync() inside the try block and then returns. If that disposal
+        // throws, the catch fires. Without the flag the catch would call DisposeAsync() a second
+        // time, violating the IAsyncDisposable contract (issue #3795).
+        bool lockTransferred = false;
         try
         {
             // Post-lock status re-read: close the TOCTOU window.
@@ -775,25 +777,21 @@ internal sealed class DispatchWorkItemService
                     "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 200/deferred",
                     id, postLockCheck?.Status);
                 WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, NotPendingReason);
+                // Set lockTransferred before calling DisposeAsync: if the disposal throws the
+                // catch block will see lockTransferred = true and will not attempt a second
+                // disposal, preventing the double-dispose SonarQube S3966 flagged (issue #3795).
+                lockTransferred = true;
                 await acquiredLock.DisposeAsync();
                 return (null, TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason)));
             }
 
+            lockTransferred = true;
             return (acquiredLock, null);
         }
         catch
         {
-            // TODO [WARNING]: Double-dispose risk — the non-Pending path at line 779 already calls
-            // acquiredLock.DisposeAsync() inside this try block. If that call throws (e.g., the
-            // PostgreSQL connection drops at the exact moment of lock release), this catch fires and
-            // calls DisposeAsync() a second time. IAsyncDisposable does not guarantee idempotent
-            // disposal. The correct fix is a `bool lockTransferred` flag defaulting to false, set
-            // to true immediately before `return (acquiredLock, null)`, checked here before calling
-            // DisposeAsync() — dispose only when !lockTransferred. The existing PostgreSQL advisory
-            // lock implementation is idempotent (double-unlock on a session lock is a no-op), so
-            // this is low-risk in practice but is a latent correctness issue.
-            // (DotNetSpecialist review finding, issue #3701)
-            await acquiredLock.DisposeAsync();
+            if (!lockTransferred)
+                await acquiredLock.DisposeAsync();
             throw;
         }
     }

@@ -148,6 +148,8 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
                     inMemoryRun.CacheReadTokens = result.CacheReadTokens;
                     inMemoryRun.CacheWriteTokens = result.CacheWriteTokens;
                 }
+                if (result.ScanOutcome is not null)
+                    inMemoryRun.RefactoringScanOutcome = result.ScanOutcome;
                 _runService.ReplaceRun(inMemoryRun);
             }
             else
