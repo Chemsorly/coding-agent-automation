@@ -145,6 +145,7 @@ public static class PipelineRunHashExtensions
             F("consolidationTemplateId",        run.ConsolidationTemplateId ?? ""),
             F("consolidationResultSummary",     run.ConsolidationResultSummary ?? ""),
             F("consolidationTemplateName",      run.ConsolidationTemplateName ?? ""),
+            J("refactoringScanOutcome",         run.RefactoringScanOutcome),
         ];
     }
 
@@ -201,6 +202,7 @@ public static class PipelineRunHashExtensions
         run.ConsolidationTemplateId = r.OptionalString("consolidationTemplateId");
         run.ConsolidationResultSummary = r.OptionalString("consolidationResultSummary");
         run.ConsolidationTemplateName = r.OptionalString("consolidationTemplateName");
+        run.RefactoringScanOutcome = r.Json<RefactoringScanOutcome>("refactoringScanOutcome");
 
         return run;
     }
