@@ -1,6 +1,8 @@
 using AwesomeAssertions;
+using System.Reflection;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Scheduler.Services;
 using Moq;
 using Xunit;
@@ -13,11 +15,27 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// Uses a fast tick interval (1ms) so the service fires within the test window.
 /// </summary>
 [Collection("Metrics")]
-public sealed class WorkItemCountsServiceTests
+public sealed class WorkItemCountsServiceTests : IDisposable
 {
     private readonly Mock<ISchedulerApiClient> _mockClient;
     private readonly Mock<ILeaderGate> _mockLeaderGate;
     private readonly Mock<ILogger> _mockLogger;
+
+    // Reflection handles to reset the agent gauge callback fields after each test.
+    // WorkItemCountsService.ctor registers these via PipelineTelemetry.RegisterAgentGaugeCallbacks,
+    // which uses Interlocked.CompareExchange (first-wins). Without teardown, stale callbacks
+    // from this class's service instances block subsequent tests in [Collection("Metrics")].
+    private static readonly FieldInfo ActiveJobsCallbackField =
+        typeof(PipelineTelemetry)
+            .GetField("_activeJobsCallback", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException(
+            "_activeJobsCallback field not found on PipelineTelemetry — was it renamed?");
+
+    private static readonly FieldInfo TotalConnectionsCallbackField =
+        typeof(PipelineTelemetry)
+            .GetField("_totalConnectionsCallback", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException(
+            "_totalConnectionsCallback field not found on PipelineTelemetry — was it renamed?");
 
     public WorkItemCountsServiceTests()
     {
@@ -28,6 +46,17 @@ public sealed class WorkItemCountsServiceTests
             .Returns(_mockLogger.Object);
         _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
             .Returns(_mockLogger.Object);
+    }
+
+    /// <summary>
+    /// Resets the agent gauge callback fields so the CAS guard in
+    /// <see cref="PipelineTelemetry.RegisterAgentGaugeCallbacks"/> does not block subsequent
+    /// tests in <c>[Collection("Metrics")]</c> from registering their own callbacks.
+    /// </summary>
+    public void Dispose()
+    {
+        ActiveJobsCallbackField.SetValue(null, null);
+        TotalConnectionsCallbackField.SetValue(null, null);
     }
 
     private WorkItemCountsService CreatePoller()
