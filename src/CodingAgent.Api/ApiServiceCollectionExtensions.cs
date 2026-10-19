@@ -406,23 +406,16 @@ public static class ApiServiceCollectionExtensions
         });
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-        services.AddSingleton<TokenVendingService>(sp =>
-            new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
-        services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
-        services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
+        services.AddTokenVendingCore();
     }
 
     /// <summary>
-    /// Registers label services: <see cref="ILabelService"/> and <see cref="ILabelSwapService"/>.
+    /// Registers label services: <see cref="ILabelSwapService"/>.
+    /// <see cref="ILabelService"/> is registered by <see cref="AddTokenVending"/> via
+    /// <see cref="TokenVendingServiceCollectionExtensions.AddTokenVendingCore"/>.
     /// </summary>
     private static void AddLabelServices(IServiceCollection services)
     {
-        // ── ILabelService ────────────────────────────────────────────────────
-        services.AddSingleton<ILabelService>(sp => new LabelService(
-            sp.GetRequiredService<IProviderConfigStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            Log.Logger));
-
         // ── ILabelSwapService ─────────────────────────────────────────────────
         // Registered conditionally so the API degrades gracefully when ILabelService is unconfigured.
         // LabelSwapService is internal sealed — accessed here through the same assembly.

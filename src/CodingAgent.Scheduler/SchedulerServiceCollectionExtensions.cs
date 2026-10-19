@@ -131,15 +131,7 @@ public static class SchedulerServiceCollectionExtensions
             new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
         // ── Token vending + label services ────────────────────────────────────
-        services.AddSingleton<TokenVendingService>(sp =>
-            new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
-        services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
-        services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
-
-        services.AddSingleton<ILabelService>(sp => new LabelService(
-            sp.GetRequiredService<IProviderConfigStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            Log.Logger));
+        services.AddTokenVendingCore();
 
         // ── Dispatch resolution ───────────────────────────────────────────────
         services.AddDispatchResolutionServices(includeWorkItemClient: true);
