@@ -395,6 +395,63 @@ public abstract class AgentRegistryServiceContractTests
         result.Should().HaveCount(1,
             "label matching must be case-insensitive (Pool=A matches pool=a)");
     }
+
+    // ── RemoveFromConnectionIndex ──────────────────────────────────────────────
+
+    /// <summary>
+    /// After a mid-run reconnect, conn-A is preserved in the index by
+    /// <c>preserveExistingConnectionId=true</c>. Calling <c>RemoveFromConnectionIndex("conn-A")</c>
+    /// after conn-A closes must remove it from the index while leaving conn-B intact.
+    /// This covers acceptance criteria 1 and 2 of issue #3775.
+    /// </summary>
+    [Fact]
+    public void RemoveFromConnectionIndex_AfterPreserveReconnect_RemovesStaleConnection()
+    {
+        var registry = CreateRegistry();
+        registry.Register(Msg("agent-1"), "conn-A");
+        registry.Register(Msg("agent-1"), "conn-B", preserveExistingConnectionId: true);
+
+        // Precondition: conn-A is still resolvable during the reconnect window (criterion #1).
+        registry.GetByConnectionId("conn-A").Should().NotBeNull(
+            "conn-A must still be present in the index before RemoveFromConnectionIndex is called " +
+            "(in-flight hub calls on conn-A must continue to pass authorization)");
+
+        // Simulate conn-A transport closing: AgentHub.OnDisconnectedAsync calls this.
+        registry.RemoveFromConnectionIndex("conn-A");
+
+        // conn-A must now be gone (criterion #2): stale key reclaimed at connection-close time.
+        registry.GetByConnectionId("conn-A").Should().BeNull(
+            "RemoveFromConnectionIndex must evict the stale conn-A key so it is no longer " +
+            "resolvable after the superseded connection closes (issue #3775)");
+
+        // conn-B (the primary connection) must be unaffected.
+        registry.GetByConnectionId("conn-B").Should().NotBeNull(
+            "the primary connection conn-B must remain in the index after removing only conn-A");
+
+        // The agent itself must still be resolvable by agent ID — RemoveFromConnectionIndex must NOT
+        // evict the agent from the main agent store (e.g. _agents or the Redis hash). A buggy
+        // implementation that looked up the entry's AgentId and removed it from the store would pass
+        // the conn-B assertion above yet leave the agent invisible to GetByAgentId callers.
+        registry.GetByAgentId(new AgentId("agent-1")).Should().NotBeNull(
+            "RemoveFromConnectionIndex must only remove the connection index entry — it must not " +
+            "evict the agent from the main agent store (issue #3775)");
+    }
+
+    /// <summary>
+    /// Calling <c>RemoveFromConnectionIndex</c> for a connection ID that was never registered
+    /// must be a no-op — no exception, no corruption.
+    /// </summary>
+    [Fact]
+    public void RemoveFromConnectionIndex_UnknownConnectionId_IsNoOp()
+    {
+        var registry = CreateRegistry();
+
+        // Must not throw for a connection ID that was never registered.
+        var act = () => registry.RemoveFromConnectionIndex("conn-unknown");
+        act.Should().NotThrow(
+            "ConcurrentDictionary.TryRemove is safe for missing keys — RemoveFromConnectionIndex " +
+            "must be a silent no-op when the connection ID is not in the index");
+    }
 }
 
 /// <summary>
