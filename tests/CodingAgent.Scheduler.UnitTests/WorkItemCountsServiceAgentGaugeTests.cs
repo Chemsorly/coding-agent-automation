@@ -7,6 +7,8 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Scheduler.Services;
 using Moq;
+using Serilog;
+using Serilog.Events;
 using Xunit;
 using ILogger = Serilog.ILogger;
 
@@ -22,7 +24,7 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// in this assembly, preventing cross-talk through the process-global static meters.
 /// </summary>
 [Collection("Metrics")]
-public sealed class WorkItemCountsServiceAgentGaugeTests
+public sealed class WorkItemCountsServiceAgentGaugeTests : IDisposable
 {
     private readonly Mock<ISchedulerApiClient> _mockClient;
     private readonly Mock<ILeaderGate> _mockLeaderGate;
@@ -65,6 +67,16 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
         CredentialPoolAvailableCallbackField.SetValue(null, null);
         CredentialPoolClaimedCallbackField.SetValue(null, null);
     }
+
+    /// <summary>
+    /// Resets all static callback fields after each test so that the CAS guard in
+    /// <see cref="PipelineTelemetry.RegisterAgentGaugeCallbacks"/> does not prevent
+    /// the next test's service instance from registering its own callbacks.
+    /// Without this, any test that calls <see cref="CreateService"/> would leave non-null
+    /// callbacks from its service's closures in the static fields, causing subsequent tests
+    /// to silently use the wrong leader-gate lambda.
+    /// </summary>
+    public void Dispose() => ResetStaticCallbacks();
 
     public WorkItemCountsServiceAgentGaugeTests()
     {
@@ -466,5 +478,74 @@ public sealed class WorkItemCountsServiceAgentGaugeTests
         totalConnections.Should().BeEmpty("agent.connections.total must emit nothing after a failed poll");
         poolAvailable.Should().BeEmpty("credential_pool_available must emit nothing after a failed poll");
         poolClaimed.Should().BeEmpty("credential_pool_claimed must emit nothing after a failed poll");
+    }
+
+    /// <summary>
+    /// A second call to <see cref="PipelineTelemetry.RegisterAgentGaugeCallbacks"/> must not
+    /// replace the first registered callbacks. The original callbacks remain active, and a
+    /// Warning-level log event is emitted indicating the double-registration attempt.
+    /// This matches the first-wins guard required by acceptance criteria AC1 and AC2 of issue #3762.
+    /// </summary>
+    [Fact]
+    public void RegisterAgentGaugeCallbacks_CalledTwice_FirstCallbacksKeptAndWarningLogged()
+    {
+        // Arrange: start from a clean state regardless of test execution order.
+        ResetStaticCallbacks();
+
+        // Register first callbacks — CAS succeeds, fields go from null → first lambdas.
+        PipelineTelemetry.RegisterAgentGaugeCallbacks(
+            activeJobsCallback: () => [new Measurement<long>(42L)],
+            totalConnectionsCallback: () => [new Measurement<long>(99L)]);
+
+        // Capture any Serilog.Log.Warning calls emitted during the second registration attempt.
+        // CaptureSink (defined in OrphanedLabelRecoveryServiceTests.cs in this assembly) is
+        // parameterless — it owns its internal ConcurrentQueue; events are read via sink.Events.
+        // The try/finally guarantees the global logger is restored even on assertion failure.
+        //
+        // TODO [WARNING]: This swaps the process-global Serilog.Log.Logger. [Collection("Metrics")]
+        // serialises tests within this collection, but tests in other collections (e.g.
+        // SchedulerRunQueryServiceTests) can run concurrently and would write to the captured sink
+        // during the swap window. In practice this cannot produce a false positive here because the
+        // only code that emits a message containing "RegisterAgentGaugeCallbacks called more than once"
+        // is PipelineTelemetry.RegisterAgentGaugeCallbacks itself, and all callers of WorkItemCountsService
+        // (the only class that calls RegisterAgentGaugeCallbacks) are confined to [Collection("Metrics")].
+        // A truly safe alternative would require changing the production API to accept an ILogger
+        // parameter — a broader change than this issue's scope. If fragility becomes an issue,
+        // consider exposing an internal/test-only logger hook on PipelineTelemetry.
+        var sink = new CaptureSink();
+        var previousLogger = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        try
+        {
+            // Act: second call — CAS finds non-null, logs a Warning, returns without overwriting.
+            PipelineTelemetry.RegisterAgentGaugeCallbacks(
+                activeJobsCallback: () => [new Measurement<long>(1L)],
+                totalConnectionsCallback: () => [new Measurement<long>(2L)]);
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        // Assert AC1: gauges still emit the first-registered values, not the second.
+        var activeJobs = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.jobs.active");
+        var totalConnections = ReadGaugeValues<long>(PipelineTelemetry.SourceName, "agent.connections.total");
+
+        activeJobs.Should().ContainSingle("agent.jobs.active must use the first-registered callback")
+            .Which.Should().Be(42L, "the second call must not overwrite the first activeJobsCallback");
+
+        totalConnections.Should().ContainSingle("agent.connections.total must use the first-registered callback")
+            .Which.Should().Be(99L, "the second call must not overwrite the first totalConnectionsCallback");
+
+        // Assert AC2: a Warning was logged for the double-registration attempt.
+        // Read from sink.Events (the CaptureSink's internal queue), not an external collection.
+        sink.Events.Should().ContainSingle(
+            e => e.Level == LogEventLevel.Warning
+                 && e.RenderMessage().Contains("RegisterAgentGaugeCallbacks"),
+            "a Warning including 'RegisterAgentGaugeCallbacks' must be logged when the method is called more than once");
     }
 }
