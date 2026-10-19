@@ -4,10 +4,12 @@ using AwesomeAssertions;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using Moq;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 using WireMock.Server;
 using System.Text;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Api.IntegrationTests;
 
@@ -722,14 +724,38 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task GetActiveDecompositionCountAsync_WhenNull_ReturnsZero()
+    public async Task GetActiveDecompositionCountAsync_WhenNullDeserialization_ThrowsAndLogsWarning()
     {
-        var (client, handler) = CreateWithStubHandler();
-        handler.Respond = _ => NullJson();
+        var mockLogger = new Mock<ILogger>(MockBehavior.Default);
+        // ForContext<T>() returns null when not set up on a Loose mock (reference return type).
+        // Without this setup, _logger is null and Warning() throws NullReferenceException instead
+        // of the InvalidOperationException asserted below. Pattern consistent with
+        // AutoConsolidationServiceTests and WorkItemDispatchLoopTests.
+        mockLogger
+            .Setup(l => l.ForContext<PipelineApiWorkItemClient>())
+            .Returns(mockLogger.Object);
 
-        var result = await client.GetActiveDecompositionCountAsync();
+        var handler = new StubHandler { Respond = _ => NullJson() };
+        var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new PipelineApiWorkItemClient(http, mockLogger.Object);
 
-        result.Should().Be(0, "null deserialization result must fall back to 0");
+        var act = () => client.GetActiveDecompositionCountAsync();
+
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            "a null deserialization result must throw so the Scheduler's catch block treats it " +
+            "as a transient error rather than a valid zero count");
+
+        // The Warning call uses two structured properties ({Endpoint}, {Type}), so the invoked
+        // Serilog overload is Warning<T0,T1>(string, T0, T1). The Verify must match that exact
+        // 3-argument signature — a mismatch yields 0 invocations (false-negative) rather than a
+        // compile error.
+        mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("null") || s.Contains("deserialized")),
+                It.IsAny<string>(),   // {Endpoint} parameter
+                It.IsAny<string>()), // {Type} parameter
+            Times.Once,
+            "a Warning must be logged before throwing so the failure is visible in telemetry");
     }
 
     // ── Stub ──────────────────────────────────────────────────────────────
