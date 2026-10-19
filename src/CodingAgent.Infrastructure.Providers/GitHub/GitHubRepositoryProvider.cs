@@ -40,9 +40,6 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     public GitHubRepositoryProvider(GitHubConnectionInfo connection, string token, BranchName baseBranch)
         : base(connection, token)
     {
-        // TODO: ThrowIfNullOrEmpty guards default(BranchName) and new BranchName("") correctly, but
-        // new BranchName(null) bypasses this guard if BranchName's primary constructor does not validate.
-        // This mirrors the pre-existing TODO in BranchName.cs — fix there to close the gap at construction.
         ArgumentException.ThrowIfNullOrEmpty(baseBranch.Value);
         _baseBranch = baseBranch;
         _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
@@ -54,9 +51,6 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     public GitHubRepositoryProvider(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider, BranchName baseBranch)
         : base(connection, tokenProvider)
     {
-        // TODO: ThrowIfNullOrEmpty guards default(BranchName) and new BranchName("") correctly, but
-        // new BranchName(null) bypasses this guard if BranchName's primary constructor does not validate.
-        // This mirrors the pre-existing TODO in BranchName.cs — fix there to close the gap at construction.
         ArgumentException.ThrowIfNullOrEmpty(baseBranch.Value);
         _baseBranch = baseBranch;
         _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
@@ -68,9 +62,6 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     internal GitHubRepositoryProvider(GitHubConnectionInfo connection, IGitHubClient gitHubClient, string token, BranchName baseBranch)
         : base(connection, gitHubClient, token)
     {
-        // TODO: ThrowIfNullOrEmpty guards default(BranchName) and new BranchName("") correctly, but
-        // new BranchName(null) bypasses this guard if BranchName's primary constructor does not validate.
-        // This mirrors the pre-existing TODO in BranchName.cs — fix there to close the gap at construction.
         ArgumentException.ThrowIfNullOrEmpty(baseBranch.Value);
         _baseBranch = baseBranch;
         _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
