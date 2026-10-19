@@ -417,4 +417,69 @@ public sealed class AutoConsolidationServiceTests
             Times.Never,
             "non-leader should never trigger consolidations");
     }
+
+    // ── Error isolation — per-section catch block coverage ─────────────────
+
+    [Fact]
+    public async Task RunOnce_BrainScopeThrows_DoesNotPropagateAndLogsWarning()
+    {
+        // Exercises the catch (Exception ex) block inside TryTriggerBrainScopeAsync.
+        _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("bp-auto-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated brain staleness failure"));
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 1,
+        });
+
+        // Must not throw despite the brain scope error
+        await sut.RunOnceAsync(CancellationToken.None);
+
+        _consolidation.Verify(
+            c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a throwing brain scope must not trigger consolidation");
+    }
+
+    [Fact]
+    public async Task RunOnce_HarnessFeedbackCountThrows_DoesNotPropagateAndLogsWarning()
+    {
+        // Exercises the catch (Exception ex) block in the harness-suggestions section of RunOnceAsync.
+        _staleness.Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated harness staleness failure"));
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoHarnessSuggestionsAfterFeedback = 1,
+        });
+
+        // Must not throw despite the harness count error
+        await sut.RunOnceAsync(CancellationToken.None);
+
+        _consolidation.Verify(
+            c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a throwing harness staleness query must not trigger consolidation");
+    }
+
+    [Fact]
+    public async Task RunOnce_TriggerReturnsNull_DoesNotThrow()
+    {
+        // Exercises the "result is null" branch inside TryTriggerIfThresholdReachedAsync.
+        // TriggerAutomaticAsync returns null when a run is already in progress or rejected.
+        _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("bp-auto-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(5); // meets threshold
+
+        _consolidation.Setup(c => c.TriggerAutomaticAsync(
+                ConsolidationRunType.BrainConsolidation, It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ConsolidationTriggerResult?)null);
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 5,
+        });
+
+        // Must complete without throwing even when the trigger returns null
+        await sut.RunOnceAsync(CancellationToken.None);
+    }
 }
