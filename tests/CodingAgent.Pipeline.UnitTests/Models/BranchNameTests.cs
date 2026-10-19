@@ -39,6 +39,14 @@ public class BranchNameTests
         result.Should().Be("main");
     }
 
+    [Fact]
+    public void ImplicitConversion_FromDefault_ThrowsArgumentException()
+    {
+        var act = () => { string _ = default(BranchName); };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     // TODO [WARNING]: No test for whitespace-only input through the implicit string → BranchName
     // operator. ArgumentException.ThrowIfNullOrEmpty does not reject strings like "   ", so a
     // whitespace-only branch name would be silently accepted. Add a test (and, if desired, switch to
@@ -72,12 +80,28 @@ public class BranchNameTests
         (a != b).Should().BeTrue();
     }
 
+    [Fact]
+    public void Constructor_WithNull_ThrowsArgumentNullException()
+    {
+        var act = () => new BranchName(null!);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_WithEmpty_ThrowsArgumentException()
+    {
+        var act = () => new BranchName(string.Empty);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     // TODO [WARNING]: Default_HasNullValue confirms that default(BranchName).Value is null, but there
-    // is no corresponding test verifying that passing a default(BranchName) or new BranchName(null)
-    // through the implicit string operator (or into a provider method) fails early with a clear
-    // exception rather than silently propagating null deeper into the call stack. Add a test for the
-    // downstream guard path (ArgumentException.ThrowIfNullOrEmpty(branchName.Value) in providers) to
-    // document the intended failure mode and prevent silent null propagation.
+    // is no corresponding test verifying that passing a default(BranchName) through the implicit string
+    // operator fails early with a clear exception. After the BranchName → string operator guard was
+    // added, default(BranchName) implicitly converted to string will throw; a test for that path would
+    // document the intended failure mode. The new BranchName(null) path is now covered by
+    // Constructor_WithNull_ThrowsArgumentNullException above.
     [Fact]
     public void Default_HasNullValue()
     {

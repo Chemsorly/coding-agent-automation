@@ -243,8 +243,8 @@ public sealed class AgentHubOnDisconnectedTests
 
         // Redis (authoritative) shows the agent already moved to conn-new on another replica
         var currentEntry = CreateAgent("caa-worker-xreplica", "conn-new", labels: new[] { "dotnet" });
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-worker-xreplica")))
-            .Returns(currentEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "caa-worker-xreplica"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(currentEntry);
 
         var hub = CreateHub("conn-old");
         await hub.OnDisconnectedAsync(null);
@@ -268,8 +268,8 @@ public sealed class AgentHubOnDisconnectedTests
 
         // Redis (authoritative) shows the agent already moved to conn-new on another replica
         var currentEntry = CreateAgent("caa-chat-xreplica", "conn-new", labels: new[] { "chat=true" });
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-chat-xreplica")))
-            .Returns(currentEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "caa-chat-xreplica"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(currentEntry);
 
         var hub = CreateHub("conn-old");
         await hub.OnDisconnectedAsync(null);
@@ -292,8 +292,8 @@ public sealed class AgentHubOnDisconnectedTests
 
         // Authoritative store confirms conn-1 is still the registered connection
         var currentEntry = CreateAgent("caa-worker-same", "conn-1", labels: new[] { "dotnet" });
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-worker-same")))
-            .Returns(currentEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "caa-worker-same"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(currentEntry);
 
         var hub = CreateHub("conn-1");
         await hub.OnDisconnectedAsync(null);
@@ -319,8 +319,8 @@ public sealed class AgentHubOnDisconnectedTests
 
         // Authoritative store confirms conn-1 is still the registered connection
         var currentEntry = CreateAgent("caa-chat-same", "conn-1", labels: new[] { "chat=true" });
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-chat-same")))
-            .Returns(currentEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "caa-chat-same"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(currentEntry);
 
         var hub = CreateHub("conn-1");
         await hub.OnDisconnectedAsync(null);
@@ -341,8 +341,8 @@ public sealed class AgentHubOnDisconnectedTests
         _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agentEntry);
 
         // Authoritative store returns null — entry TTL-expired or deregistered cross-replica
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-worker-nullentry")))
-            .Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "caa-worker-nullentry"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AgentEntry?)null);
 
         var hub = CreateHub("conn-1");
         await hub.OnDisconnectedAsync(null);
@@ -362,4 +362,68 @@ public sealed class AgentHubOnDisconnectedTests
     //   GetByConnectionId("conn-1") returns a chat=true agent;
     //   GetByAgentId(...) returns null;
     //   Assert Deregister is called once and TransitionStatus is never called.
+
+    // ── GetByAgentIdAsync failure handling ───────────────────────────────────
+
+    /// <summary>
+    /// When <c>GetByAgentIdAsync</c> throws a non-<see cref="OperationCanceledException"/>
+    /// (e.g. <c>RedisConnectionException</c>), the exception must be caught, logged as a warning,
+    /// and <c>base.OnDisconnectedAsync</c> must still run — leaving SignalR bookkeeping in a
+    /// consistent state. The agent should be treated as disconnected (fail-open).
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_GetByAgentIdAsyncThrowsNonOce_LogsWarningAndStillTransitionsAgent()
+    {
+        var agent = CreateAgent("caa-worker-redis-fault", "conn-1", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        // Simulate a Redis failure (non-OCE) from the authoritative store lookup
+        _facade.Setup(f => f.GetByAgentIdAsync(
+                It.Is<AgentId>(a => a.Value == "caa-worker-redis-fault"),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Redis connection refused"));
+
+        var hub = CreateHub("conn-1");
+        // Must NOT propagate the exception out of OnDisconnectedAsync
+        await hub.OnDisconnectedAsync(null);
+
+        // Fail-open: agent treated as if current entry is null (connection IDs "match" or entry absent)
+        // → TransitionStatus(Disconnected) is called so the agent is correctly marked as gone.
+        _facade.Verify(f => f.TransitionStatus(
+            It.Is<AgentId>(a => a.Value == "caa-worker-redis-fault"),
+            AgentStatus.Disconnected),
+            Times.Once,
+            "TransitionStatus must be called even when GetByAgentIdAsync throws — fail-open for disconnect");
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+
+        // Warning must have been logged
+        _logger.Verify(l => l.Warning(
+            It.IsAny<Exception>(),
+            It.Is<string>(s => s.Contains("GetByAgentIdAsync failed")),
+            It.IsAny<AgentId>()),
+            Times.Once,
+            "A Warning must be logged when GetByAgentIdAsync fails in OnDisconnectedAsync");
+    }
+
+    /// <summary>
+    /// When <c>GetByAgentIdAsync</c> throws <see cref="OperationCanceledException"/>, it must
+    /// propagate out of <c>OnDisconnectedAsync</c> uncaught — the <c>when</c> filter is an
+    /// intentional boundary: OCE is not a Redis failure and must not be silenced.
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_GetByAgentIdAsyncThrowsOce_PropagatesException()
+    {
+        var agent = CreateAgent("caa-worker-oce", "conn-1", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        _facade.Setup(f => f.GetByAgentIdAsync(
+                It.Is<AgentId>(a => a.Value == "caa-worker-oce"),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var hub = CreateHub("conn-1");
+        // OCE must propagate — it is excluded from the catch filter
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            hub.OnDisconnectedAsync(null));
+    }
 }
