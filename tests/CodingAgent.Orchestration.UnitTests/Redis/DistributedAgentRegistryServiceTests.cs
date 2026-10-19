@@ -1548,6 +1548,39 @@ public sealed class DistributedAgentRegistryServiceTests
             "an agent with a non-null ActiveJobId must not appear in GetIdleAgents() — " +
             "registering it as Idle when it has an active run is a double-booking vector");
     }
+
+    // ── RemoveFromConnectionIndex ──────────────────────────────────────────────
+
+    /// <summary>
+    /// <c>RemoveFromConnectionIndex</c> must only remove the node-local <c>_connectionIndex</c>
+    /// entry — it must NEVER delete the Redis hash. Deleting the hash would ghost-deregister the
+    /// active agent's entire registry entry, causing the agent to disappear from the registry
+    /// while it is still running a job.
+    /// </summary>
+    [Fact]
+    public void RemoveFromConnectionIndex_DoesNotDeleteRedisHash()
+    {
+        _sut.Register(Msg("agent-1"), "conn-A");
+
+        // Pre-condition: hash must exist after registration.
+        _store.GetHash("agent:agent-1").Should().NotBeNull(
+            "pre-condition: Redis hash must exist after Register");
+
+        _sut.RemoveFromConnectionIndex("conn-A");
+
+        // The Redis hash must NOT be deleted — only the node-local _connectionIndex entry is removed.
+        _store.GetHash("agent:agent-1").Should().NotBeNull(
+            "RemoveFromConnectionIndex must not delete the Redis hash; it is a node-local " +
+            "_connectionIndex-only operation (issue #3775)");
+
+        // The connection is now gone from the index (node-local cleanup confirmed).
+        _sut.GetByConnectionId("conn-A").Should().BeNull(
+            "GetByConnectionId must return null after RemoveFromConnectionIndex removes conn-A");
+
+        // The agent is still reachable by agent ID (Redis hash intact).
+        _sut.GetByAgentId(new AgentId("agent-1")).Should().NotBeNull(
+            "GetByAgentId must still resolve the agent — the Redis hash was not deleted");
+    }
 }
 
 /// <summary>

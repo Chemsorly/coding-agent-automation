@@ -133,14 +133,6 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
         if (_agents.TryRemove(agentId.Value, out var removed))
         {
-            // TODO (WARNING, issue #2758): When Register was called with preserveExistingConnectionId=true
-            // (mid-run kiro-cli reconnect), _connectionIndex retains both conn-A and conn-B.
-            // Deregister only removes removed.ConnectionId (conn-B, the primary set by
-            // existing.ConnectionId = connectionId at registration time); the stale conn-A key is
-            // never removed. Functionally benign — GetByConnectionId("conn-A") returns null once
-            // the entry is gone from _agents — but _connectionIndex retains the orphaned key
-            // indefinitely. Consider removing the original connection ID during deregister or
-            // cleaning it up in OnDisconnectedAsync when the stale connection closes.
             _connectionIndex.TryRemove(removed.ConnectionId, out AgentEntry? _);
             _logger.Information("Agent {AgentId} deregistered", agentId);
             return true;
@@ -171,6 +163,13 @@ public sealed class AgentRegistryService : IAgentRegistryService
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         return _connectionIndex.TryGetValue(connectionId, out var entry) ? entry : null;
+    }
+
+    /// <inheritdoc />
+    public void RemoveFromConnectionIndex(string connectionId)
+    {
+        ArgumentNullException.ThrowIfNull(connectionId);
+        _connectionIndex.TryRemove(connectionId, out AgentEntry? _);
     }
 
     /// <summary>
