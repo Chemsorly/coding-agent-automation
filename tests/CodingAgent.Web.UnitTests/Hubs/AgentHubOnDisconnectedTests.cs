@@ -363,6 +363,34 @@ public sealed class AgentHubOnDisconnectedTests
     //   GetByAgentId(...) returns null;
     //   Assert Deregister is called once and TransitionStatus is never called.
 
+    // ── Fix: same-replica reconnect stale connection cleanup (issue #2758/#3775) ──────────────
+
+    /// <summary>
+    /// When an agent has reconnected on conn-B (same replica), closing conn-A must remove
+    /// conn-A from the connection index so the stale key is reclaimed at connection-close time.
+    /// This is the same-replica reconnect path: GetByConnectionId(conn-A) returns the agent
+    /// entry whose ConnectionId is already conn-B (Register updated it to conn-B on this replica).
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_SameReplicaReconnect_CallsRemoveFromConnectionIndex()
+    {
+        // Arrange: agent re-registered to conn-B on this replica; conn-A is the stale closing connection.
+        // GetByConnectionId("conn-A") returns the agent entry with ConnectionId = "conn-B" because
+        // Register(conn-B) mutated/replaced the snapshot on this replica.
+        var agent = CreateAgent("caa-worker-stale", "conn-B", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByConnectionId("conn-A")).Returns(agent);
+
+        var hub = CreateHub("conn-A");
+        await hub.OnDisconnectedAsync(null);
+
+        // The stale conn-A key must be removed from the connection index at connection close time
+        _facade.Verify(f => f.RemoveFromConnectionIndex("conn-A"), Times.Once);
+        // Must NOT attempt any status transition — agent is still live on conn-B
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+        // Must NOT deregister — agent is still active
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+    }
+
     // ── GetByAgentIdAsync failure handling ───────────────────────────────────
 
     /// <summary>
