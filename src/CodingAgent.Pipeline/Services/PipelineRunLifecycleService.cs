@@ -140,19 +140,11 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, IChang
         // run even when ActiveRun is not set. (#2178)
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
-        // TODO: [WARNING] This catch block is intentionally broad (catches all Exception including
-        // OperationCanceledException). The reference implementation in RunLifecycleManager.FailRunAsync uses
-        // `catch (Exception ex) when (ex is not OperationCanceledException)` to let OCE propagate, reflecting
-        // that a cancelled token is a caller concern rather than a best-effort persistence failure. The
-        // acceptance criteria require "complete normally" on OCE, so the current broad catch satisfies them,
-        // but it diverges from the stated correct pattern. If callers rely on OCE propagating for cooperative
-        // shutdown, this silently breaks that contract. Verify intent with the issue author before narrowing.
-        // See review finding: DotNetSpecialist [WARNING] — issue #2470.
         try
         {
             await AddRunToHistoryAsync(run, ct).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex, "FailRunAsync: failed to persist run {RunId} to history", run.RunId);
         }
