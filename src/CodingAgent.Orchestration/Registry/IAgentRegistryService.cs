@@ -63,6 +63,13 @@ public interface IAgentRegistryService
     AgentEntry? GetByConnectionId(string connectionId);
 
     /// <summary>
+    /// Removes the specified SignalR connection ID from the connection index.
+    /// Used to reclaim stale entries when a superseded connection closes after a mid-run reconnect
+    /// (<c>preserveExistingConnectionId=true</c>). This is a no-op if the connection ID is not present.
+    /// </summary>
+    void RemoveFromConnectionIndex(string connectionId);
+
+    /// <summary>
     /// Updates the heartbeat timestamp for the specified agent.
     /// </summary>
     void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp);
