@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using CodingAgent.Infrastructure.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 
@@ -25,26 +26,16 @@ public static class PipelineApiClientServiceCollectionExtensions
         services.AddSingleton(options);
 
         // ── Shared HTTP resilience defaults ─────────────────────────────────────
-        // Sets PooledConnectionLifetime so stale connections to replaced pod IPs (after a
-        // rolling update) are recycled within 90s rather than persisting until the OS closes them.
-        // Without this, clients keep TCP connections to old pod IPs that return "Connection refused".
-        // Applied via ConfigureHttpClientDefaults so it covers every client registered below.
+        // Sets PooledConnectionLifetime to 90s via AddStandardHttpClientPoolDefaults so stale
+        // connections to replaced pod IPs are recycled after a rolling update. The sentinel guard
+        // in AddStandardHttpClientPoolDefaults prevents duplicate handler registration when this
+        // method is called more than once in the same DI container.
         //
         // NOTE: resilience options (CircuitBreaker.MinimumThroughput) are tuned per-client below
         // via AddStandardResilienceHandler(options => ...) rather than via ConfigureHttpClientDefaults
         // to avoid stacking a second pipeline when hosts call AddPipelineApiClient more than once
         // in the same DI container (e.g. WorkDistributionRegistration.Consolidation.cs).
-        // TODO [WARNING]: No test verifies PooledConnectionLifetime = 90s or CircuitBreaker.MinimumThroughput = 10
-        // for these clients. A DI-resolution test asserting HttpStandardResilienceOptions.CircuitBreaker.MinimumThroughput
-        // and SocketsHttpHandler.PooledConnectionLifetime would prevent silent regression. See test
-        // quality review finding [WARNING] in review-findings.md.
-        services.ConfigureHttpClientDefaults(b =>
-        {
-            b.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                PooledConnectionLifetime = TimeSpan.FromSeconds(90)
-            });
-        });
+        services.AddStandardHttpClientPoolDefaults();
 
         // Work items client — authenticated
         services.AddHttpClient<IPipelineApiWorkItemClient, PipelineApiWorkItemClient>(client =>
