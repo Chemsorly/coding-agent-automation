@@ -2726,4 +2726,259 @@ public class RefactoringExecutorTests : IDisposable
         // Success=false), catching regressions that merely swallow the write failure silently.
         result.Should().NotBeNull();
     }
+
+    // ── ScanOutcome tests ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_ValidProposals_ReturnsScanOutcome()
+    {
+        // Arrange — use non-default, distinct config values to avoid vacuous assertions
+        var baseJob = CreateJob();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = baseJob.JobId,
+            Type = baseJob.Type,
+            TemplateId = baseJob.TemplateId,
+            TemplateName = baseJob.TemplateName,
+            ProviderConfigs = baseJob.ProviderConfigs,
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                MaxRefactoringProposals = 7,
+                HotspotAnalysisLookback = TimeSpan.FromDays(45),
+                RefactoringReviewEnabled = true
+            },
+            AutoDispatch = true
+        };
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "category": "duplication",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
+                // Write structural findings file so CountFindings returns 2
+                var structuralPath = Path.Combine(path, AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(structuralPath)!);
+                File.WriteAllText(structuralPath, """{"findings":[{},{}],"notChecked":[]}""");
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        var executor = CreateExecutor();
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ScanOutcome.Should().NotBeNull();
+
+        var outcome = result.ScanOutcome!;
+        outcome.ProposalCount.Should().Be(1);
+        outcome.CreatedIssues.Should().HaveCount(1);
+        outcome.CreatedIssues[0].Identifier.Should().Be("42");
+        outcome.CreatedIssues[0].Category.Should().Be("duplication");
+        outcome.DroppedProposals.Should().BeEmpty();
+        outcome.UnfiledProposals.Should().BeEmpty();
+
+        // Three detectors (structural, correctness, design) — all succeeded
+        outcome.Detectors.Should().HaveCount(3);
+        outcome.Detectors.Should().AllSatisfy(d => d.Succeeded.Should().BeTrue());
+
+        // Structural detector wrote 2 findings; correctness and design wrote no findings file
+        var structural = outcome.Detectors.First(d => d.Name == "Structural debt");
+        structural.FindingCount.Should().Be(2);
+        outcome.Detectors.Where(d => d.Name != "Structural debt").Should().AllSatisfy(d => d.FindingCount.Should().BeNull());
+
+        // Settings from job config
+        outcome.MaxIssues.Should().Be(7);
+        outcome.HotspotLookbackDays.Should().Be(45);
+        outcome.ReviewEnabled.Should().BeTrue();
+        outcome.AutoDispatch.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IssueCreationFails_ReportsUnfiledProposals()
+    {
+        // Arrange
+        var baseJob = CreateJob();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = baseJob.JobId,
+            Type = baseJob.Type,
+            TemplateId = baseJob.TemplateId,
+            TemplateName = baseJob.TemplateName,
+            ProviderConfigs = baseJob.ProviderConfigs,
+            PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir }
+        };
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "category": "duplication",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Duplicate validation.",
+                    "rationale": "DRY."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, proposalsJson))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("forbidden", null, System.Net.HttpStatusCode.Forbidden));
+
+        var executor = CreateExecutor();
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ScanOutcome.Should().NotBeNull();
+
+        var outcome = result.ScanOutcome!;
+        outcome.CreatedIssues.Should().BeEmpty();
+        outcome.UnfiledProposals.Should().HaveCount(1);
+        outcome.UnfiledProposals[0].Title.Should().Be("Extract shared validation logic");
+        outcome.UnfiledProposals[0].Category.Should().Be("duplication");
+        outcome.UnfiledProposals[0].Reason.Should().BeNull("reason is null for unfiled proposals — only dropped proposals have a reason");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalNamingAgentFile_ReportsDroppedProposal()
+    {
+        // Arrange — two proposals: one valid, one with an affectedFile in .agent/ which validation drops
+        var baseJob = CreateJob();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = baseJob.JobId,
+            Type = baseJob.Type,
+            TemplateId = baseJob.TemplateId,
+            TemplateName = baseJob.TemplateName,
+            ProviderConfigs = baseJob.ProviderConfigs,
+            PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir }
+        };
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Valid refactoring proposal",
+                    "category": "duplication",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Valid.",
+                    "rationale": "DRY."
+                },
+                {
+                    "title": "Proposal naming agent scratch file",
+                    "category": "complexity",
+                    "affectedFiles": [".agent/notes.md"],
+                    "description": "Should be dropped.",
+                    "rationale": "Targets pipeline scratch space."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, proposalsJson))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "1", Url = "https://github.com/test/repo/issues/1" });
+
+        var executor = CreateExecutor();
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.ScanOutcome.Should().NotBeNull();
+
+        var outcome = result.ScanOutcome!;
+        outcome.DroppedProposals.Should().HaveCount(1);
+        outcome.DroppedProposals[0].Title.Should().Be("Proposal naming agent scratch file");
+        outcome.DroppedProposals[0].Category.Should().Be("complexity",
+            "Category must be mapped from the proposal when building the dropped-proposal note");
+        outcome.DroppedProposals[0].Reason.Should().NotBeNullOrEmpty("dropped proposals must carry the validation rejection reason");
+
+        outcome.CreatedIssues.Should().HaveCount(1, "the valid proposal was created successfully");
+    }
+
+    [Theory]
+    [InlineData(3, true)]     // valid file with 3 findings
+    [InlineData(-1, false)]   // missing file → null
+    [InlineData(-1, true)]    // file with "not json" content → null
+    [InlineData(-1, true, true)] // file with {"notChecked":[]} and no findings key → null
+    // TODO [SUGGESTION]: Add a case for an empty findings array: {"findings":[],"notChecked":[]} → 0.
+    // This exercises the boundary between "findings key present but empty" (0) and "findings key absent"
+    // (null), which the current cases do not cover. The method returns GetArrayLength() directly, so the
+    // two cases are already handled correctly, but an explicit test case would document the contract.
+    public void CountFindings_ReturnsExpectedResult(int expectedCount, bool fileExists, bool missingFindingsKey = false)
+    {
+        // Arrange
+        var filePath = Path.Combine(_tempDir, $"findings-{Guid.NewGuid()}.json");
+        if (fileExists)
+        {
+            if (expectedCount >= 0)
+            {
+                // Valid findings file with expectedCount items
+                var items = string.Join(",", Enumerable.Repeat("{}", expectedCount));
+                File.WriteAllText(filePath, $"{{\"findings\":[{items}],\"notChecked\":[]}}");
+            }
+            else if (missingFindingsKey)
+            {
+                File.WriteAllText(filePath, """{"notChecked":[]}""");
+            }
+            else
+            {
+                File.WriteAllText(filePath, "not json");
+            }
+        }
+
+        // Act
+        var result = RefactoringExecutor.CountFindings(filePath);
+
+        // Assert
+        if (expectedCount >= 0)
+            result.Should().Be(expectedCount);
+        else
+            result.Should().BeNull();
+    }
 }

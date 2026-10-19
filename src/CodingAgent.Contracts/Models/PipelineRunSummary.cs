@@ -216,6 +216,12 @@ public sealed class PipelineRunSummary
     public string? ConsolidationTemplateName { get; init; }
 
     /// <summary>
+    /// For a finished refactoring scan: what it produced (detectors, proposals, created issues, etc.).
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public RefactoringScanOutcome? RefactoringScanOutcome { get; init; }
+
+    /// <summary>
     /// Work item ID associated with this run, or null for runs that were created before this field
     /// was introduced or that have no backing WorkItem (e.g. backfilled ConsolidationRun rows with
     /// null WorkItemId).

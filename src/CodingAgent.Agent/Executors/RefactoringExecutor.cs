@@ -92,13 +92,28 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 
             var commitSha = await TryGetHeadCommitAsync(workspacePath, ct);
 
+            // ── Build base scan outcome (settings + commit; detectors added after Phase 1) ──
+            var baseOutcome = new RefactoringScanOutcome
+            {
+                AnalyzedCommitSha = commitSha,
+                MaxIssues = job.PipelineConfiguration.MaxRefactoringProposals,
+                HotspotLookbackDays = (int)job.PipelineConfiguration.HotspotAnalysisLookback.TotalDays,
+                ReviewEnabled = job.PipelineConfiguration.RefactoringReviewEnabled,
+                AutoDispatch = job.AutoDispatch
+            };
+
             // ── Phased Refactoring Detection ──
-            var phasedResult = await ExecutePhasedRefactoringAsync(job, agentProvider, workspacePath, issueContext, outcomeContext, onOutputLine, ct);
-            if (!phasedResult.Success) return phasedResult;
+            var (phasedResult, detectors) = await ExecutePhasedRefactoringAsync(job, agentProvider, workspacePath, issueContext, outcomeContext, onOutputLine, ct);
+            var outcomeWithDetectors = baseOutcome with { Detectors = detectors };
+            if (!phasedResult.Success)
+            {
+                phasedResult.ScanOutcome = outcomeWithDetectors;
+                return phasedResult;
+            }
 
             return await FinalizeProposalsAsync(
                 job, agentProvider, issueProvider, workspacePath,
-                new ScanBaseline([.. openIssueTitles, .. closedIssueTitles], commitSha), onOutputLine, ct);
+                new ScanBaseline([.. openIssueTitles, .. closedIssueTitles], commitSha), outcomeWithDetectors, onOutputLine, ct);
         }, ct);
     }
 
@@ -315,10 +330,36 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
+    /// Returns the number of findings in a Phase 1 detector findings file, or null when the file
+    /// does not exist, is not valid JSON, or has no <c>"findings"</c> array. Never throws.
+    /// </summary>
+    internal static int? CountFindings(string findingsFilePath)
+    {
+        try
+        {
+            if (!File.Exists(findingsFilePath))
+                return null;
+
+            var json = File.ReadAllText(findingsFilePath);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("findings", out var findings)
+                && findings.ValueKind == JsonValueKind.Array)
+            {
+                return findings.GetArrayLength();
+            }
+            return null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Phased multi-agent refactoring path.
     /// Phase 0 → Phase 1 (1–4 parallel agents, depending on focus) → Phase 2 (aggregation) → finalize.
     /// </summary>
-    private async Task<ConsolidationJobResult> ExecutePhasedRefactoringAsync(
+    private async Task<(ConsolidationJobResult Result, IReadOnlyList<RefactoringDetectorOutcome> Detectors)> ExecutePhasedRefactoringAsync(
         ConsolidationJobMessage job,
         IAgentProvider agentProvider,
         string workspacePath,
@@ -350,7 +391,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 "refactoring_conventions");
         });
 
-        if (failure is not null) return failure;
+        if (failure is not null) return (failure, []);
 
         // Phase 1: Parallel Focused Detection — run only the agents of the focus.
         TransitionTo(PipelineStep.DetectingFindings);
@@ -391,11 +432,35 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 
         var phase1Results = await Task.WhenAll(phase1Tasks);
 
+        // Build detector outcomes for structural, correctness, design (exclude test-gaps which has no findings file)
+        var detectors = selected
+            .Zip(phase1Results, (agent, result) => (agent, result))
+            .Where(x => x.agent.Focus != RefactoringScanFocus.Tests)
+            .Select(x => new RefactoringDetectorOutcome
+            {
+                Name = x.agent.Focus switch
+                {
+                    RefactoringScanFocus.Structure => "Structural debt",
+                    RefactoringScanFocus.Correctness => "Correctness and hygiene",
+                    RefactoringScanFocus.Design => "Design consistency",
+                    _ => x.agent.Focus.ToString()
+                },
+                Succeeded = x.result.Failure is null,
+                FindingCount = CountFindings(Path.Combine(workspacePath, x.agent.Focus switch
+                {
+                    RefactoringScanFocus.Structure => AgentWorkspacePaths.RefactoringStructuralFindingsFilePath,
+                    RefactoringScanFocus.Correctness => AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath,
+                    RefactoringScanFocus.Design => AgentWorkspacePaths.RefactoringDesignFindingsFilePath,
+                    _ => AgentWorkspacePaths.RefactoringStructuralFindingsFilePath
+                }))
+            })
+            .ToList();
+
         // Check for failures — log but continue if at least one agent succeeded
         var phase1Failures = phase1Results.Where(r => r.Failure is not null).ToList();
         if (phase1Failures.Count == phase1Results.Length)
         {
-            return CreateFailureResult(job.JobId, "All Phase 1 analysis agents failed");
+            return (CreateFailureResult(job.JobId, "All Phase 1 analysis agents failed"), detectors);
         }
 
         if (phase1Failures.Count > 0)
@@ -430,11 +495,11 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 "refactoring_aggregation");
         });
 
-        if (failure is not null) return failure;
+        if (failure is not null) return (failure, detectors);
 
         // Proposals are now at .agent/refactoring-proposals.json — return success
         // (the caller will finalize with review + issue creation)
-        return new ConsolidationJobResult { JobId = job.JobId, Success = true, Summary = "Phased analysis complete" };
+        return (new ConsolidationJobResult { JobId = job.JobId, Success = true, Summary = "Phased analysis complete" }, detectors);
     }
 
     /// <summary>
@@ -453,6 +518,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         IIssueProvider issueProvider,
         string workspacePath,
         ScanBaseline baseline,
+        RefactoringScanOutcome outcome,
         Action<string>? onOutputLine,
         CancellationToken ct)
     {
@@ -463,14 +529,18 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         if (!File.Exists(proposalsFilePath))
         {
             Logger.Warning("No refactoring proposals file found at {Path} after aggregation in run {RunId}", proposalsFilePath, job.JobId);
-            return CreateFailureResult(job.JobId, MissingProposalsFileMessage);
+            var failure = CreateFailureResult(job.JobId, MissingProposalsFileMessage);
+            failure.ScanOutcome = outcome;
+            return failure;
         }
 
         var proposals = await ParseProposalsAsync(proposalsFilePath, ct);
 
         if (proposals is null)
         {
-            return CreateFailureResult(job.JobId, "Failed to parse refactoring proposals JSON from agent output");
+            var failure = CreateFailureResult(job.JobId, "Failed to parse refactoring proposals JSON from agent output");
+            failure.ScanOutcome = outcome;
+            return failure;
         }
 
         if (proposals.Count == 0)
@@ -480,7 +550,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             {
                 JobId = job.JobId,
                 Success = true,
-                Summary = "No refactoring opportunities identified"
+                Summary = "No refactoring opportunities identified",
+                ScanOutcome = outcome
             };
         }
 
@@ -526,6 +597,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 
         // Deterministic checks the prompts cannot guarantee (paths, scope, category, duplicates)
         TransitionTo(PipelineStep.CreatingRefactoringIssues);
+        var proposalCount = proposals.Count; // post-review, pre-validation count for the outcome
         var (validProposals, rejectedProposals) = RefactoringProposalValidator.Validate(
             proposals, workspacePath, baseline.ExistingIssueTitles,
             RefactoringCategories.ForFocus(job.RefactoringFocus));
@@ -536,7 +608,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         // Create GitHub issues (capped at MaxRefactoringProposals)
-        var (createdIssues, firstFailureHint) = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
+        var (createdIssues, firstFailureHint, failedProposals) = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
         {
             activity?.SetTag("pipeline.proposal_count", proposals.Count);
             activity?.SetTag("pipeline.rejected_proposal_count", rejectedProposals.Count);
@@ -547,6 +619,23 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         var attemptedCount = Math.Min(validProposals.Count, job.PipelineConfiguration.MaxRefactoringProposals);
         var summary = FormatRefactoringSummary(createdIssues, attemptedCount, firstFailureHint, rejectedProposals.Count);
         Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
+
+        var finalOutcome = outcome with
+        {
+            ProposalCount = proposalCount,
+            CreatedIssues = createdIssues,
+            DroppedProposals = rejectedProposals.Select(r => new RefactoringProposalNote
+            {
+                Title = r.Proposal.Title,
+                Category = r.Proposal.Category,
+                Reason = r.Reason
+            }).ToList(),
+            UnfiledProposals = failedProposals.Select(p => new RefactoringProposalNote
+            {
+                Title = p.Title,
+                Category = p.Category
+            }).ToList()
+        };
 
         var allFailed = createdIssues.Count == 0 && attemptedCount > 0;
         return new ConsolidationJobResult
@@ -562,7 +651,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             ErrorMessage = firstFailureHint,
             CreatedIssues = createdIssues,
             ReviewTokenUsage = reviewResult.ReviewTokenUsage,
-            RefinementTokenUsage = reviewResult.RefinementTokenUsage
+            RefinementTokenUsage = reviewResult.RefinementTokenUsage,
+            ScanOutcome = finalOutcome
         };
     }
 
@@ -822,9 +912,9 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// Proposals are processed sequentially in the order they appear in <paramref name="proposals"/>.
     /// Individual issue creation failures are logged but do not stop processing.
     /// The first failure hint (classified HTTP status or exception type) is captured and returned
-    /// alongside the list of successfully created issues.
+    /// alongside the list of successfully created issues and the list of proposals whose creation failed.
     /// </summary>
-    private async Task<(IReadOnlyList<CreatedIssueInfo> Created, string? FirstFailureHint)> CreateIssuesAsync(
+    private async Task<(IReadOnlyList<CreatedIssueInfo> Created, string? FirstFailureHint, IReadOnlyList<RefactoringProposal> Failed)> CreateIssuesAsync(
         IReadOnlyList<RefactoringProposal> proposals,
         IIssueProvider issueProvider,
         int maxProposals,
@@ -833,6 +923,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         CancellationToken ct)
     {
         var createdIssues = new List<CreatedIssueInfo>();
+        var failedProposals = new List<RefactoringProposal>();
         string? firstFailureHint = null;
         var proposalsToProcess = proposals.Take(maxProposals).ToList();
         var labels = autoDispatch
@@ -855,7 +946,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 {
                     Identifier = result.Identifier,
                     Title = proposal.Title,
-                    Url = result.Url
+                    Url = result.Url,
+                    Category = proposal.Category
                 });
 
                 Logger.Information("Created refactoring issue {Identifier}: {Title}",
@@ -864,12 +956,13 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 firstFailureHint ??= ClassifyIssueCreationException(ex);
+                failedProposals.Add(proposal);
                 Logger.Warning(ex, "Failed to create issue for proposal '{Title}', continuing with remaining",
                     proposal.Title);
             }
         }
 
-        return (createdIssues, firstFailureHint);
+        return (createdIssues, firstFailureHint, failedProposals);
     }
 
     /// <summary>

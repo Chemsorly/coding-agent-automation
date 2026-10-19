@@ -439,6 +439,19 @@ public sealed class PipelineRunFactoryTests
         run.ConsolidationTemplateId = "template-abc";
         run.ConsolidationResultSummary = "Created 3 refactoring issues.";
         run.ConsolidationTemplateName = "my-template";
+        run.RefactoringScanOutcome = new RefactoringScanOutcome
+        {
+            Detectors = [new RefactoringDetectorOutcome { Name = "Structural debt", Succeeded = true, FindingCount = 5 }],
+            ProposalCount = 3,
+            CreatedIssues = [new CreatedIssueInfo { Identifier = "42", Title = "Fix duplication", Url = "https://example.com/42", Category = "duplication" }],
+            DroppedProposals = [new RefactoringProposalNote { Title = "Dropped proposal", Category = "complexity", Reason = "duplicate title" }],
+            UnfiledProposals = [],
+            AnalyzedCommitSha = "abc123def456",
+            MaxIssues = 7,
+            HotspotLookbackDays = 45,
+            ReviewEnabled = true,
+            AutoDispatch = false
+        };
 
         // Act — SummaryJson round-trip
         var summary = run.ToSummary();
@@ -448,6 +461,8 @@ public sealed class PipelineRunFactoryTests
         summary.ConsolidationTemplateId.Should().Be("template-abc");
         summary.ConsolidationResultSummary.Should().Be("Created 3 refactoring issues.");
         summary.ConsolidationTemplateName.Should().Be("my-template");
+        summary.RefactoringScanOutcome.Should().BeEquivalentTo(run.RefactoringScanOutcome,
+            "RefactoringScanOutcome must survive the ToSummary round-trip");
 
         // Act — Redis hash round-trip
         var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
@@ -461,6 +476,8 @@ public sealed class PipelineRunFactoryTests
             "ConsolidationResultSummary must survive the Redis hash round-trip");
         restored.ConsolidationTemplateName.Should().Be("my-template",
             "ConsolidationTemplateName must survive the Redis hash round-trip");
+        restored.RefactoringScanOutcome.Should().BeEquivalentTo(run.RefactoringScanOutcome,
+            "RefactoringScanOutcome must survive the Redis hash round-trip");
     }
 
     [Fact]
