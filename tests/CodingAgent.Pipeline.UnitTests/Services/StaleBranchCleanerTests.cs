@@ -466,6 +466,46 @@ public class StaleBranchCleanerTests
     // Add tests to verify: (1) Housekeeping.BranchDelete is emitted with branch_name and issue_id
     // tags when a stale branch is deleted; (2) no span is emitted when no branches qualify for deletion.
 
+    // ── Cadence clock not advanced on truncated run (issue #3754) ───────────────
+
+    /// <summary>
+    /// AC1 for issue #3754.
+    /// When the first call is truncated, _lastCleanupAt must NOT be stamped.
+    /// A subsequent call within the normal interval must still run cleanup
+    /// (not be skipped because the clock was erroneously advanced).
+    ///
+    /// This test fails on the pre-fix code (where the clock is stamped before
+    /// RunBranchCleanupAsync) and passes after the fix.
+    /// </summary>
+    [Fact]
+    public async Task WhenTruncated_LastCleanupAtNotAdvanced_SubsequentCallWithinIntervalRunsCleanup()
+    {
+        var cleaner = Create();
+        var t0 = DateTimeOffset.UtcNow;
+        cleaner.UtcNow = () => t0;
+
+        var repo = MakeRepoWithEmptyBranches();
+        var issues = new Mock<IIssueProvider>();
+
+        // First call — wasInputTruncated=true; RunBranchCleanupAsync short-circuits,
+        // no actual cleanup runs. The cadence clock must NOT be stamped.
+        await RunAsync(cleaner, repo, issues,
+            intervalMinutes: 60,
+            wasInputTruncated: true);
+
+        repo.Invocations.Clear();
+
+        // Second call at the same instant, wasInputTruncated=false.
+        // Because the clock was not stamped by the first call, elapsed is effectively
+        // infinite (lastCleanup=MinValue) — cleanup must run.
+        await RunAsync(cleaner, repo, issues,
+            intervalMinutes: 60,
+            wasInputTruncated: false);
+
+        repo.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "truncated first call must not advance the cadence clock — subsequent call within interval must still run cleanup");
+    }
+
     // ── Case-insensitivity regression (issue #3366) ───────────────────────────
 
     /// <summary>
