@@ -63,6 +63,10 @@ public sealed class ConsolidationJobResult
     /// <summary>Tokens written to the prompt cache.</summary>
     [Key(13)]
     public long CacheWriteTokens { get; set; }
+
+    /// <summary>For a refactoring scan: what it produced. Null for the other kinds.</summary>
+    [Key(14)]
+    public RefactoringScanOutcome? ScanOutcome { get; set; }
 }
 
 /// <summary>
@@ -80,4 +84,7 @@ public sealed record CreatedIssueInfo
 
     [Key(2)]
     public required string Url { get; init; }
+
+    [Key(3)]
+    public string? Category { get; init; }
 }
