@@ -18,6 +18,7 @@ namespace CodingAgent.Pipeline.Models;
 /// <list type="bullet">
 ///   <item><b>Volatile fields:</b> <see cref="CurrentStep"/>, <see cref="AgentId"/> — single-word atomic read/write via <see cref="Volatile"/>.</item>
 ///   <item><b>Interlocked fields:</b> <see cref="StartedAtOffset"/>, <see cref="LastStepChangeAt"/>, <see cref="CodeReviewCriticalCount"/>/<see cref="CodeReviewWarningCount"/>/<see cref="CodeReviewSuggestionCount"/> — atomic read/exchange via <see cref="Interlocked"/>.</item>
+///   <item><b>Lock-guarded pairs:</b> (<see cref="StartedAt"/>, <see cref="StartedAtOffset"/>) via <c>_startedAtLock</c>; (<see cref="CompletedAt"/>, <see cref="CompletedAtOffset"/>) via <c>_completedAtLock</c>. Both writes in each pair are always committed together under the respective lock.</item>
 ///   <item><b>Concurrent collections:</b> <see cref="CodeReviewAgentFindings"/>, <see cref="RetryErrors"/>, <see cref="ChatHistory"/>, <see cref="OutputLines"/>, <see cref="QualityGateHistory"/> — thread-safe containers.</item>
 ///   <item><b>Unprotected mutable properties:</b> everything else — callers must synchronize externally or ensure single-writer semantics.</item>
 /// </list>
@@ -77,6 +78,9 @@ public sealed partial class PipelineRun
 
     /// <summary>Lock guarding compound writes to the (StartedAt, StartedAtOffset) pair in <see cref="ResetStartedAt"/>.</summary>
     private readonly object _startedAtLock = new();
+
+    /// <summary>Lock guarding compound writes to the (CompletedAt, CompletedAtOffset) pair in <see cref="MarkCompleted()"/>, <see cref="MarkCompleted(DateTimeOffset)"/>, and <see cref="SetCompletedAt"/>.</summary>
+    private readonly object _completedAtLock = new();
 
     /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
     public DateTimeOffset? CompletedAtOffset { get; set; }
