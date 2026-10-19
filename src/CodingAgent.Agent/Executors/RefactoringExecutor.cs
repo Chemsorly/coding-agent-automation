@@ -592,21 +592,13 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 return;
             }
 
-            // NOTE (issue #3540): The log message "Hotspot analysis left out N commits" is only emitted when
-            // scanIssueRefs.Count > 0. When no scan issues exist yet (or all queries failed and refs is empty),
-            // the line is never written even though requirement 5 states it should always be logged. Consider
-            // always computing and logging the count (with 0 being a valid value) so operators can confirm
-            // the exclusion step ran, e.g.: var excludedCount = isExcludedCommit is null ? 0 : CountExcludedCommits(output, isExcludedCommit);
             // NOTE (issue #3540): CountExcludedCommits re-parses the same git log output that ParseHotspotOutput
             // already traversed, doing a second linear scan over potentially several megabytes. Consider
             // accumulating the excluded count inside ParseHotspotOutput and returning it alongside the hotspot
             // string to avoid the redundant traversal and reduce the risk of the two implementations diverging.
-            // Count excluded commits for the log message
-            if (scanIssueRefs.Count > 0)
-            {
-                var excludedCount = CountExcludedCommits(output, isExcludedCommit!);
-                Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits of refactoring scan issues", excludedCount);
-            }
+            // Count excluded commits for the log message (always logged; 0 when no scan issues exist)
+            var excludedCount = isExcludedCommit is null ? 0 : CountExcludedCommits(output, isExcludedCommit);
+            Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits of refactoring scan issues", excludedCount);
 
             var outputPath = Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath);
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);

@@ -2849,4 +2849,54 @@ public class RefactoringExecutorTests : IDisposable
         hotspotContent.Should().Contain("src/Kept.cs");
         hotspotContent.Should().NotContain("src/Excluded.cs", "Commit A was excluded because its subject contains (#42)");
     }
+
+    // ── AC3 (#3798): exclusion count logged as zero when no scan issue refs exist ─────────────
+
+    /// <summary>
+    /// When <c>scanIssueRefs</c> is empty (no closed scan issues), <c>WriteHotspotAnalysisAsync</c>
+    /// must still emit "Hotspot analysis left out {ExcludedCommitCount} commits…" with count 0
+    /// so operators can confirm the exclusion step ran.
+    /// Before the fix this line was guarded by <c>if (scanIssueRefs.Count &gt; 0)</c> and was
+    /// never written for the zero case.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_NoScanIssueRefs_ExclusionCountLoggedAsZero()
+    {
+        // Arrange — default _mockIssueProvider returns empty pages for both open and closed issues,
+        // so scanIssueRefs will be an empty set and isExcludedCommit will be null.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns<WorkspacePath, CancellationToken>(async (path, ct) =>
+            {
+                await RefactoringExecutor.RunGitCommandAsync(path, "init", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.email test@example.com", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.name Test", ct);
+
+                // One ordinary commit — not excluded because refs is empty
+                Directory.CreateDirectory(Path.Combine(path, "src"));
+                File.WriteAllText(Path.Combine(path, "src", "App.cs"), "// test");
+                await RefactoringExecutor.RunGitCommandAsync(path, "add .", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit -m \"feat: initial commit\"", ct);
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — the exclusion count must be logged as 0 even though scanIssueRefs is empty.
+        // It.Is<int>(n => n == 0) selects the Information<int>(string, int) overload and verifies the count.
+        _mockLogger.Verify(
+            l => l.Information(
+                It.Is<string>(s => s.Contains("left out")),
+                It.Is<int>(n => n == 0)),
+            Times.Once);
+    }
 }
