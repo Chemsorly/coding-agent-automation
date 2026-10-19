@@ -52,13 +52,7 @@ public sealed class LabelService : ILabelService
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
-        // TODO [WARNING]: Validate providerConfigId.Value is not null/empty. The previous string parameter
-        // had ArgumentNullException.ThrowIfNull(providerConfigId) which is now lost because structs
-        // can't be null, but default(ProviderConfigId) with Value = null can still flow through.
-        // A caller passing default(ProviderConfigId) will propagate null to GetProviderConfigByIdAsync
-        // and SwapIssueLabelAsync/SwapPrLabelAsync, which may throw NullReferenceException or produce
-        // incorrect store lookups rather than a clear validation error at the entry point.
-        // Fix: add ArgumentException.ThrowIfNullOrEmpty(providerConfigId.Value) here and in SwapLabelStrictAsync.
+        ArgumentException.ThrowIfNullOrEmpty(providerConfigId.Value);
 
         // Validate the transition if the caller provides the expected current label.
         // This is observational only — invalid transitions log a warning but do NOT block.
@@ -114,13 +108,7 @@ public sealed class LabelService : ILabelService
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
-        // TODO [WARNING]: Validate providerConfigId.Value is not null/empty. default(ProviderConfigId)
-        // with Value = null can flow through since structs can't be null. A null Value propagates to
-        // GetProviderConfigByIdAsync in SwapIssueLabelAsync/SwapPrLabelAsync, which may throw
-        // NullReferenceException or produce incorrect store lookups rather than a clear validation
-        // error at the entry point. Fix: add ArgumentException.ThrowIfNullOrEmpty(providerConfigId.Value)
-        // here (same gap exists in SwapLabelAsync). (Correctness/DotNetSpecialist)
-
+        ArgumentException.ThrowIfNullOrEmpty(providerConfigId.Value);
 
         _logger.Information(
             "Label swap (strict): {Identifier} → {NewLabel} (target={TargetKind}, provider={ProviderConfigId})",
