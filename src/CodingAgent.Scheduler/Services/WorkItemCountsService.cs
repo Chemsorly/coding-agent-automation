@@ -66,10 +66,12 @@ public sealed class WorkItemCountsService : BackgroundService
                 ? Volatile.Read(ref _cachedMeasurements)
                 : Enumerable.Empty<Measurement<long>>());
 
-        // Register agent and credential-pool gauge callbacks.
-        // The sentinel-field pattern matches WorkDistributionTelemetry.CredentialPoolAvailable and
-        // CredentialPoolClaimed: emit nothing before the first successful poll (null cached value)
-        // and nothing when not the leader.
+        // Register agent gauge callbacks.
+        // Only the first-registered callback wins (Interlocked.CompareExchange guard in
+        // RegisterAgentGaugeCallbacks), which is correct: regardless of which replica registered
+        // first, its callback will return empty measurements when that replica is not the leader.
+        // The sentinel-field pattern: emit nothing before the first successful poll (null cached
+        // value) and nothing when not the leader.
         PipelineTelemetry.RegisterAgentGaugeCallbacks(
             activeJobsCallback: () =>
             {
