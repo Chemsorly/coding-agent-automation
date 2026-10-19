@@ -46,60 +46,23 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         // to the requested target, skip the chain entirely. All three fallback steps would be
         // rejected immediately, generating spurious "Invalid transition" Warning logs.
         //
-        // Covered cases:
-        //   • Failed → Failed: a no-op; the item is already at the target state. Returns false
-        //     (no transition was performed) without executing any fallback steps (issue #2139 fix).
-        //   • Succeeded → Succeeded: WorkItemTransitionService.TransitionAsync is idempotent —
-        //     it returns true for already-at-target transitions. Without this guard the telemetry
-        //     block would fire a second time when the hub echoes a status already set by HTTP.
-        //   • Cancelled → Cancelled: same reasoning as Succeeded → Succeeded.
-        //   • Succeeded or Cancelled → any different target: no recovery path (3B-001 fix).
+        // IsIdempotentTransition covers:
+        //   • Any terminal → same terminal: idempotent no-op (issue #2139 fix for Failed→Failed;
+        //     Succeeded→Succeeded / Cancelled→Cancelled guards prevent duplicate telemetry when
+        //     WorkItemTransitionService.TransitionAsync returns true for already-at-target calls).
+        //   • Succeeded or Cancelled → any different terminal: no recovery path (3B-001 fix).
         //
         // NOT covered (falls through to the fallback chain):
-        //   • Failed → Running: legitimate infra-failure recovery path via TryInfrastructureRecoveryAsync.
-        //   • Failed → Succeeded: ditto — timeout-race recovery (issue #2146).
+        //   • Failed → Running/Succeeded/Cancelled: legitimate infra-failure and timeout-race
+        //     recovery paths via TryInfrastructureRecoveryAsync (issues #2139, #2146).
         var currentStatus = await _workItemTransition.GetCurrentStatusAsync(workItemId, ct);
 
-        if (currentStatus is WorkItemStatus.Failed && status is WorkItemStatus.Failed)
+        if (IsIdempotentTransition(currentStatus, status))
         {
             if (_logger.IsEnabled(LogLevel.Debug))
                 _logger.LogDebug(
-                    "WorkItem {WorkItemId} already in Failed state, skipping fallback chain (Failed→Failed no-op)",
-                    workItemId);
-            return false;
-        }
-
-        // Symmetric idempotent-return guards: WorkItemTransitionService.TransitionAsync returns true
-        // for already-at-target transitions (idempotent API), so without these guards a
-        // Succeeded→Succeeded or Cancelled→Cancelled call would reach TryDirectAsync, return true,
-        // and incorrectly record a metric for a transition that was not actually a state change.
-        if (currentStatus is WorkItemStatus.Succeeded && status is WorkItemStatus.Succeeded)
-        {
-            if (_logger.IsEnabled(LogLevel.Debug))
-                _logger.LogDebug(
-                    "WorkItem {WorkItemId} already in Succeeded state, skipping fallback chain (Succeeded→Succeeded no-op)",
-                    workItemId);
-            return false;
-        }
-
-        if (currentStatus is WorkItemStatus.Cancelled && status is WorkItemStatus.Cancelled)
-        {
-            if (_logger.IsEnabled(LogLevel.Debug))
-                _logger.LogDebug(
-                    "WorkItem {WorkItemId} already in Cancelled state, skipping fallback chain (Cancelled→Cancelled no-op)",
-                    workItemId);
-            return false;
-        }
-
-        if (currentStatus is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
-            && currentStatus != status)
-        {
-            if (_logger.IsEnabled(LogLevel.Debug))
-            {
-                _logger.LogDebug(
-                    "WorkItem {WorkItemId} already in terminal state {Current}, skipping fallback chain for requested {Target}",
+                    "WorkItem {WorkItemId} already in {Current} state, skipping fallback chain for requested {Target}",
                     workItemId, currentStatus, status);
-            }
             return false;
         }
 
@@ -237,6 +200,40 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
                 "WorkItemFallbackTransitionService: outcome telemetry for WorkItem {WorkItemId} failed (non-fatal)",
                 workItemId);
         }
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when calling the fallback chain for the given
+    /// <paramref name="current"/> → <paramref name="target"/> transition would be a no-op
+    /// or is structurally impossible, so the chain should be skipped entirely.
+    ///
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     Any terminal → same terminal: idempotent no-op (e.g. Failed→Failed, Succeeded→Succeeded,
+    ///     Cancelled→Cancelled). <see cref="WorkItemTransitionService.TransitionAsync"/> returns
+    ///     <see langword="true"/> for already-at-target calls, so without this guard a second hub
+    ///     completion event would incorrectly record a duplicate metric.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Succeeded or Cancelled → any different state: no recovery path exists for these states.
+    ///   </description></item>
+    /// </list>
+    ///
+    /// Explicitly returns <see langword="false"/> (chain should proceed) for Failed → any different
+    /// state, because Failed items can be recovered via
+    /// <see cref="TryInfrastructureRecoveryAsync"/> (infra-failure and timeout-race paths).
+    /// </summary>
+    private static bool IsIdempotentTransition(WorkItemStatus? current, WorkItemStatus target)
+    {
+        if (current is not (WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled))
+            return false;   // non-terminal current: always run the chain
+
+        if (current == target)
+            return true;    // same-state no-op for all three terminal states
+
+        // Failed can recover to other states (infra failure / timeout race);
+        // Succeeded and Cancelled have no recovery path.
+        return current is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled;
     }
 
     private static Action<WorkItemEntity> BuildMutationAction(
