@@ -36,20 +36,6 @@ public sealed class LabelServiceTests
     private static ProviderConfig MakeConfig(string id = "cfg-1", ProviderKind kind = ProviderKind.Issue) =>
         new() { Id = id, Kind = kind, DisplayName = "T", ProviderType = "GitHub" };
 
-    private static PipelineRun MakeRun() =>
-        PipelineRun.CreateImplementation(new PipelineRunCreationParams
-        {
-            RunId = "r1",
-            IssueIdentifier = "GH-1",
-            IssueTitle = "T",
-            IssueProviderConfigId = "github",
-            RepoProviderConfigId = "repo",
-            AgentId = "a1",
-            AgentProviderConfigId = "kiro",
-            InitiatedBy = "test",
-            StartedAt = DateTimeOffset.UtcNow
-        });
-
     // ── Constructor guards ────────────────────────────────────────────────
 
     [Fact]
@@ -64,6 +50,28 @@ public sealed class LabelServiceTests
     {
         var act = () => new LabelService(_configStore.Object, null!, _logger.Object);
         act.Should().Throw<ArgumentNullException>();
+    }
+
+    // ── Input validation guards ───────────────────────────────────────────
+
+    [Fact]
+    public async Task SwapLabelAsync_DefaultProviderConfigId_ThrowsArgumentException()
+    {
+        var act = () => _sut.SwapLabelAsync(
+            default(ProviderConfigId), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task SwapLabelStrictAsync_DefaultProviderConfigId_ThrowsArgumentException()
+    {
+        var act = () => _sut.SwapLabelStrictAsync(
+            default(ProviderConfigId), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>();
     }
 
     // ── SwapLabelAsync — issue path ───────────────────────────────────────
