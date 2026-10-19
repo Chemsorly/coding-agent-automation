@@ -19,7 +19,7 @@ public sealed partial class AgentHub
 
         ValidateRegistrationIdentity(message);
 
-        var preserveExistingConnectionId = await EvictStaleConnectionAsync(message);
+        var preserveExistingConnectionId = await EvictStaleConnectionAsync(message, Context.ConnectionAborted);
 
         _facade.Register(message, Context.ConnectionId, preserveExistingConnectionId);
 
@@ -92,7 +92,7 @@ public sealed partial class AgentHub
     /// <c>true</c> when the existing registry entry's connection must be preserved (mid-run
     /// kiro-cli reconnect); otherwise <c>false</c>.
     /// </returns>
-    private async Task<bool> EvictStaleConnectionAsync(AgentRegistrationMessage message)
+    private async Task<bool> EvictStaleConnectionAsync(AgentRegistrationMessage message, CancellationToken ct)
     {
         // If an agent with the same ID is already connected with a different connectionId,
         // force-disconnect the old connection before re-registering.
@@ -106,7 +106,7 @@ public sealed partial class AgentHub
         // whether message.ActiveJob is null — the new pod may not yet have a job assignment at
         // registration time. In that case the guard does NOT skip ForceDisconnect: a new pod must
         // always evict the stale connection of the old pod it is replacing.
-        var existingEntry = _facade.GetByAgentId(message.AgentId);
+        var existingEntry = await _facade.GetByAgentIdAsync(message.AgentId, ct);
         var preserveExistingConnectionId = false;
         if (existingEntry is not null && existingEntry.ConnectionId != Context.ConnectionId
             && existingEntry.Status != AgentStatus.Disconnected)

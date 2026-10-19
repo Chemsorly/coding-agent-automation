@@ -153,7 +153,7 @@ public sealed class AgentHubRegistrationTests
         var hub = CreateHub(ctx);
 
         var entry = CreateEntry("agent-1", "conn-1");
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(entry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
@@ -188,7 +188,7 @@ public sealed class AgentHubRegistrationTests
         var hub = CreateHub(ctx);
 
         var entry = CreateEntry("agent-1", "conn-1");
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(entry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
@@ -241,7 +241,7 @@ public sealed class AgentHubRegistrationTests
         var existingEntry = CreateEntry("agent-1", "conn-old", AgentStatus.Idle);
         var newEntry = CreateEntry("agent-1", "conn-new");
 
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(existingEntry);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new")).Returns(newEntry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
@@ -271,7 +271,7 @@ public sealed class AgentHubRegistrationTests
 
         // Same connection ID → no force disconnect
         var existingEntry = CreateEntry("agent-1", "conn-1", AgentStatus.Idle);
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(existingEntry);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(existingEntry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
@@ -473,7 +473,7 @@ public sealed class AgentHubRegistrationTests
         hub.Groups = new Mock<IGroupManager>().Object;
 
         var entry = CreateEntry("agent-1", "conn-dup");
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-dup")).Returns(entry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
@@ -530,7 +530,7 @@ public sealed class AgentHubRegistrationTests
             AgentId = "agent-1" // recorded by orphan recovery on the first pickup
         };
 
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
         _orphanRecoveryService
@@ -559,7 +559,7 @@ public sealed class AgentHubRegistrationTests
         var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
         var hub = CreateHub(ctx);
 
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
         _orphanRecoveryService
@@ -590,7 +590,7 @@ public sealed class AgentHubRegistrationTests
         var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
         var hub = CreateHub(ctx);
 
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
         _orphanRecoveryService
@@ -631,7 +631,7 @@ public sealed class AgentHubRegistrationTests
             // AgentId empty: dispatched, not yet picked up by its own pod
         };
 
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-other", "conn-1"));
         _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
@@ -673,7 +673,7 @@ public sealed class AgentHubRegistrationTests
             AgentId = "agent-1"
         };
 
-        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
             .ThrowsAsync(new InvalidOperationException("issue provider unreachable"));
@@ -736,7 +736,7 @@ public sealed class AgentHubRegistrationTests
         existingEntry.ActiveJobId = "job-123";
         var newEntry = CreateEntry("agent-1", "conn-new");
 
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(existingEntry);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true)).Returns(newEntry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
@@ -800,7 +800,7 @@ public sealed class AgentHubRegistrationTests
         existingEntry.ActiveJobId = runId;
         var newEntry = CreateEntry("agent-1", "conn-new");
 
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(existingEntry);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new")).Returns(newEntry);
         // TODO: [WARNING] This GetRun setup is never invoked by the RegisterAgent ForceDisconnect
         // path under test — RegisterAgent does not call GetRun during the disconnect guard. Its
@@ -862,7 +862,7 @@ public sealed class AgentHubRegistrationTests
         // existingEntry.ActiveJobId is null by default
         var newEntry = CreateEntry("agent-1", "conn-new");
 
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(existingEntry);
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new")).Returns(newEntry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
@@ -925,7 +925,7 @@ public sealed class AgentHubRegistrationTests
         };
         var newEntry = CreateEntry("agent-1", "conn-new");
 
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(existingEntry);
         // preserveExistingConnectionId must be false (default) — different hostname → NOT kiro-cli reconnect
         // TODO: [WARNING] This setup matches only when preserveExistingConnectionId=false. If production
         // code passes true instead, the mock returns null (no matching setup) causing a NullReferenceException
@@ -1000,7 +1000,7 @@ public sealed class AgentHubRegistrationTests
         };
         var newEntry = CreateEntry("agent-1", "conn-new");
 
-        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.GetByAgentIdAsync(It.Is<AgentId>(a => a.Value == "agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(existingEntry);
         // preserveExistingConnectionId must be true — same hostname confirms kiro-cli sub-process reconnect
         _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true)).Returns(newEntry);
         _orphanRecoveryService
@@ -1023,6 +1023,55 @@ public sealed class AgentHubRegistrationTests
         // Registration must complete with preserveExistingConnectionId=true to keep conn-old in _connectionIndex
         _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true), Times.Once,
             "registration must use preserveExistingConnectionId=true to preserve the in-flight pipeline connection");
+    }
+
+    // ── RegisterAgent — verifies async overload is used (not sync) ───────
+
+    [Fact]
+    public async Task RegisterAgent_CallsGetByAgentIdAsync_NotSyncOverload()
+    {
+        // Arrange: existing agent found via async lookup, triggers EvictStaleConnectionAsync branch
+        const string agentId = "agent-async-test";
+        var existingEntry = CreateEntry(agentId, "old-conn");
+        var context = BuildContext("new-conn", agentIdQueryParam: agentId);
+
+        _facade
+            .Setup(f => f.GetByAgentIdAsync(
+                It.Is<AgentId>(a => a.Value == agentId),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingEntry);
+
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "new-conn", It.IsAny<bool>()))
+            .Returns(existingEntry);
+
+        var mockClients = new Mock<IHubCallerClients<IAgentHubClient>>();
+        var clientProxy = new Mock<IAgentHubClient>();
+        mockClients.Setup(c => c.Client("old-conn")).Returns(clientProxy.Object);
+
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(
+                It.IsAny<AgentRegistrationMessage>(),
+                It.IsAny<AgentId>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OrphanRecoveryResult(null));
+
+        var hub = CreateHub(context);
+        hub.Clients = mockClients.Object;
+
+        // Act
+        await hub.RegisterAgent(new AgentRegistrationMessage
+        {
+            AgentId = new AgentId(agentId),
+            Hostname = "host",
+            Labels = [],
+        });
+
+        // Assert: async overload was called, sync overload was never called
+        _facade.Verify(f => f.GetByAgentIdAsync(
+            It.Is<AgentId>(a => a.Value == agentId),
+            It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+        _facade.Verify(f => f.GetByAgentId(It.IsAny<AgentId>()), Times.Never);
     }
 
     // ── DeregisterAgent — null agentId.Value throws ───────────────────────
