@@ -549,4 +549,93 @@ public class MessageSerializationPropertyTests
 
         deserialized.ConsolidationRunType.Should().Be(runType);
     }
+
+    /// <summary>
+    /// ConsolidationJobResult with a populated ScanOutcome survives a MessagePack round-trip.
+    /// Validates that the new Key(14) ScanOutcome field and its nested types serialize correctly.
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithScanOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "scan-run-1",
+            Success = true,
+            Summary = "Created 2 refactoring issue(s): #10, #11",
+            ScanOutcome = new RefactoringScanOutcome
+            {
+                Detectors =
+                [
+                    new RefactoringDetectorOutcome { Name = "Structural debt", Succeeded = true, FindingCount = 3 },
+                    new RefactoringDetectorOutcome { Name = "Correctness and hygiene", Succeeded = true, FindingCount = null },
+                    new RefactoringDetectorOutcome { Name = "Design consistency", Succeeded = false, FindingCount = null }
+                ],
+                ProposalCount = 3,
+                CreatedIssues =
+                [
+                    new CreatedIssueInfo { Identifier = "10", Title = "Fix duplication", Url = "https://example.com/10", Category = "duplication" },
+                    new CreatedIssueInfo { Identifier = "11", Title = "Remove dead code", Url = "https://example.com/11", Category = "dead-code" }
+                ],
+                DroppedProposals =
+                [
+                    new RefactoringProposalNote { Title = "Out-of-scope item", Category = "bug", Reason = "category is outside the scan focus" }
+                ],
+                UnfiledProposals = [],
+                AnalyzedCommitSha = "abc1234",
+                MaxIssues = 3,
+                HotspotLookbackDays = 90,
+                ReviewEnabled = true,
+                AutoDispatch = false
+            }
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.JobId.Should().Be(original.JobId);
+        deserialized.Success.Should().Be(original.Success);
+        deserialized.ScanOutcome.Should().NotBeNull();
+
+        var outcome = deserialized.ScanOutcome!;
+        outcome.ProposalCount.Should().Be(3);
+        outcome.Detectors.Should().HaveCount(3);
+        outcome.Detectors[0].Name.Should().Be("Structural debt");
+        outcome.Detectors[0].Succeeded.Should().BeTrue();
+        outcome.Detectors[0].FindingCount.Should().Be(3);
+        outcome.Detectors[1].Name.Should().Be("Correctness and hygiene");
+        outcome.Detectors[1].FindingCount.Should().BeNull();
+        outcome.Detectors[2].Succeeded.Should().BeFalse();
+        outcome.CreatedIssues.Should().HaveCount(2);
+        outcome.CreatedIssues[0].Category.Should().Be("duplication");
+        outcome.CreatedIssues[1].Category.Should().Be("dead-code");
+        outcome.DroppedProposals.Should().HaveCount(1);
+        outcome.DroppedProposals[0].Title.Should().Be("Out-of-scope item");
+        outcome.DroppedProposals[0].Reason.Should().Be("category is outside the scan focus");
+        outcome.UnfiledProposals.Should().BeEmpty();
+        outcome.AnalyzedCommitSha.Should().Be("abc1234");
+        outcome.MaxIssues.Should().Be(3);
+        outcome.HotspotLookbackDays.Should().Be(90);
+        outcome.ReviewEnabled.Should().BeTrue();
+        outcome.AutoDispatch.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// ConsolidationJobResult without ScanOutcome (null) round-trips with null ScanOutcome
+    /// (backward compatibility: existing payloads from agents that predate this field).
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithNullScanOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "scan-run-null",
+            Success = true,
+            ScanOutcome = null
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.ScanOutcome.Should().BeNull("null ScanOutcome must survive round-trip as null");
+    }
 }
