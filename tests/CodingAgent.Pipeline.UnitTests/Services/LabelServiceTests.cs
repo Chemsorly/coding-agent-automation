@@ -66,6 +66,28 @@ public sealed class LabelServiceTests
         act.Should().Throw<ArgumentNullException>();
     }
 
+    // ── Input validation guards ───────────────────────────────────────────
+
+    [Fact]
+    public async Task SwapLabelAsync_DefaultProviderConfigId_ThrowsArgumentException()
+    {
+        var act = () => _sut.SwapLabelAsync(
+            default(ProviderConfigId), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task SwapLabelStrictAsync_DefaultProviderConfigId_ThrowsArgumentException()
+    {
+        var act = () => _sut.SwapLabelStrictAsync(
+            default(ProviderConfigId), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
     // ── SwapLabelAsync — issue path ───────────────────────────────────────
 
     [Fact]
