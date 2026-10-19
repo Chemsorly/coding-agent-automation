@@ -32,19 +32,6 @@ namespace CodingAgent.Api;
 public static class ApiServiceCollectionExtensions
 {
     /// <summary>
-    /// Normalizes the connection string: enforces Timeout >= 15 and SslMode=Require in production.
-    /// Inlined from <c>DatabaseReadinessMonitor.NormalizeConnectionString</c> (monolith-only type).
-    /// </summary>
-    private static string NormalizeConnectionString(string connectionString, bool isProduction)
-    {
-        var csb = new NpgsqlConnectionStringBuilder(connectionString);
-        if (csb.Timeout == 0)
-            csb.Timeout = 15;
-        if (isProduction && csb.SslMode == SslMode.Prefer)
-            csb.SslMode = SslMode.Require;
-        return csb.ConnectionString;
-    }
-    /// <summary>
     /// Registers infrastructure services for the Pipeline API:
     /// EF pooled factory, distributed lock, resilience pipelines, config store,
     /// run history, consolidation/harness/loop-state stores, key-value store.
@@ -58,7 +45,7 @@ public static class ApiServiceCollectionExtensions
             Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
             "Development",
             StringComparison.OrdinalIgnoreCase);
-        var normalizedConnectionString = NormalizeConnectionString(connectionString, isProduction);
+        var normalizedConnectionString = DatabaseReadinessMonitor.NormalizeConnectionString(connectionString, isProduction);
 
         // ── EF Core DbContext Factory + scoped accessor ─────────────────────
         services.AddPooledDbContextFactory<PipelineDbContext>(opts =>
