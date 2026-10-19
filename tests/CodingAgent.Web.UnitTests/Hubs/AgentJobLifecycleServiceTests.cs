@@ -103,6 +103,16 @@ public sealed class AgentJobLifecycleServiceTests
         ActiveJobId = jobId
     };
 
+    // ── Constructor ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void Constructor_NullDeps_ThrowsArgumentNullException()
+    {
+        Action act = () => new AgentJobLifecycleService(null!);
+        act.Should().ThrowExactly<ArgumentNullException>()
+           .WithParameterName("deps");
+    }
+
     // ── HandleJobAcceptedAsync ────────────────────────────────────────────
 
     [Fact]

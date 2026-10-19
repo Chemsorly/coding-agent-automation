@@ -69,12 +69,6 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
     public async Task<PipelineRunStatus> GetRunStatusAsync(
         BranchName branchName, string? commitSha, CancellationToken ct)
     {
-        // NOTE (issue #3535): BranchName is a readonly record struct with a public primary
-        // constructor, so `new BranchName(null)` compiles and produces a value whose Value is null,
-        // bypassing the implicit-operator guard. The previous `ArgumentNullException.ThrowIfNull`
-        // guard was a no-op on a struct and was removed. All current call sites pass via implicit
-        // string→BranchName conversion. See BranchName.cs for the existing TODO.
-
         var query = new PipelineQuery
         {
             Ref = branchName,
@@ -134,10 +128,6 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
     public Task<PipelineRunStatus> WaitForCompletionAsync(
         BranchName branchName, string? commitSha, TimeSpan timeout, CancellationToken ct)
     {
-        // NOTE (issue #3535): Same null-Value risk as GetRunStatusAsync above —
-        // BranchName constructed directly with null bypasses the implicit-operator guard.
-        // All current call sites pass via implicit conversion. See BranchName.cs TODO.
-
         _logger.Information("Polling GitLab CI for branch {Branch} (commit: {CommitSha}, timeout: {Timeout})",
             branchName, commitSha ?? "any", timeout);
 
