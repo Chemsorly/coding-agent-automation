@@ -4,62 +4,71 @@ namespace CodingAgent.Pipeline.Models;
 
 public sealed partial class PipelineRun
 {
-    /// <summary>Atomically sets both <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> to the current UTC time.</summary>
-    /// <remarks>Idempotent: if the run is already completed, the existing timestamps are preserved and the call is a no-op.</remarks>
-    // TODO [WARNING] (DotNetSpecialist): This check-then-act on CompletedAtOffset.HasValue is not thread-safe. Two threads
-    // racing into MarkCompleted() can both observe HasValue == false, both pass the guard, and both proceed to write
-    // CompletedAt/CompletedAtOffset with different DateTimeOffset.UtcNow snapshots (the later write wins, causing
-    // the same timestamp-skew this fix intended to prevent). CompletedAtOffset has no synchronisation guard unlike
-    // StartedAt/StartedAtOffset which use _startedAtLock. Consider adding a dedicated lock (e.g. _completedAtLock)
-    // mirroring the ResetStartedAt pattern to make the check-then-set truly atomic.
+    /// <summary>
+    /// Sets <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> to the current UTC time.
+    /// Idempotent: the first writer wins and subsequent calls are no-ops.
+    /// </summary>
+    /// <remarks>
+    /// Thread-safety: The <see cref="CompletedAtOffset"/> check and both writes are guarded by
+    /// <c>_completedAtLock</c> so that no reader can observe one field updated without the other,
+    /// and only one timestamp snapshot can win the race.
+    /// </remarks>
     public void MarkCompleted()
     {
-        if (CompletedAtOffset.HasValue)
-            return; // Already completed — preserve the first timestamp
+        lock (_completedAtLock)
+        {
+            if (CompletedAtOffset.HasValue)
+                return; // Already completed — preserve the first timestamp
 
-        var now = DateTimeOffset.UtcNow;
+            var now = DateTimeOffset.UtcNow;
 #pragma warning disable CS0618
-        CompletedAt = now.UtcDateTime;
+            CompletedAt = now.UtcDateTime;
 #pragma warning restore CS0618
-        CompletedAtOffset = now;
+            CompletedAtOffset = now;
+        }
     }
 
-    /// <summary>Atomically sets both <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> from the provided timestamp.</summary>
-    /// <remarks>Idempotent: if the run is already completed, the existing timestamps are preserved and the call is a no-op.</remarks>
-    // TODO [WARNING] (DotNetSpecialist): Same check-then-act race as the parameterless overload above — two threads can both
-    // observe HasValue == false and proceed to write, with the later write winning. CompletedAtOffset is a plain
-    // auto-property with no synchronisation guard. PipelineRun is a shared-state object and MarkCompleted is public,
-    // so this race is reachable from RunLifecycleManager, PipelineRunLifecycleService, and LocalPipelineExecutor where
-    // concurrent access is more likely. Add a dedicated lock mirroring the _startedAtLock / ResetStartedAt pattern.
+    /// <summary>
+    /// Sets <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> from the provided timestamp.
+    /// Idempotent: the first writer wins and subsequent calls are no-ops.
+    /// </summary>
+    /// <remarks>
+    /// Thread-safety: The <see cref="CompletedAtOffset"/> check and both writes are guarded by
+    /// <c>_completedAtLock</c> so that no reader can observe one field updated without the other,
+    /// and only one timestamp snapshot can win the race.
+    /// </remarks>
     public void MarkCompleted(DateTimeOffset timestamp)
     {
-        if (CompletedAtOffset.HasValue)
-            return; // Already completed — preserve the first timestamp
+        lock (_completedAtLock)
+        {
+            if (CompletedAtOffset.HasValue)
+                return; // Already completed — preserve the first timestamp
 
 #pragma warning disable CS0618
-        CompletedAt = timestamp.UtcDateTime;
+            CompletedAt = timestamp.UtcDateTime;
 #pragma warning restore CS0618
-        CompletedAtOffset = timestamp;
+            CompletedAtOffset = timestamp;
+        }
     }
 
     /// <summary>
     /// Sets the run's completion time from the agent's final report, replacing an earlier stamp
     /// such as the one taken when the pull request was finalized.
     /// </summary>
-    // TODO [WARNING] (DotNetSpecialist): Same sequential dual-field write as MarkCompleted — no lock guards
-    // the pair (CompletedAt, CompletedAtOffset). If two threads call SetCompletedAt concurrently (e.g. an
-    // agent retransmits its completion payload), the interleave can leave CompletedAt from one writer paired
-    // with CompletedAtOffset from another, causing the two fields to disagree. Unlike MarkCompleted whose
-    // first-write-wins guard narrows the race window, SetCompletedAt has no guard at all, so the window is
-    // wider. ResetStartedAt guards the equivalent StartedAt/StartedAtOffset pair with _startedAtLock;
-    // consider adding _completedAtLock mirroring that pattern. Not defective on the current single-hub-
-    // dispatch path, but will become a risk if SetCompletedAt is called from additional concurrent sites.
+    /// <remarks>
+    /// Thread-safety: Both writes are guarded by <c>_completedAtLock</c> so that no reader can
+    /// observe the new <see cref="CompletedAt"/> with the stale <see cref="CompletedAtOffset"/>
+    /// (or vice versa).
+    /// </remarks>
     public void SetCompletedAt(DateTimeOffset timestamp)
     {
+        lock (_completedAtLock)
+        {
 #pragma warning disable CS0618
-        CompletedAt = timestamp.UtcDateTime;
+            CompletedAt = timestamp.UtcDateTime;
 #pragma warning restore CS0618
-        CompletedAtOffset = timestamp;
+            CompletedAtOffset = timestamp;
+        }
     }
 
     /// <summary>

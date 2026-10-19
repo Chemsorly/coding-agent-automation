@@ -105,6 +105,62 @@ public class PipelineRunConcurrencyTests
     }
 
     [Fact]
+    public void MarkCompleted_ConcurrentCalls_BothFieldsAreConsistentAfterRace()
+    {
+        // Arrange: two threads will race into MarkCompleted(DateTimeOffset) simultaneously with
+        // DISTINCT, pre-assigned timestamps. Using distinct timestamps guarantees that a torn write
+        // (CompletedAt from T1, CompletedAtOffset from T2) produces a detectable field mismatch
+        // regardless of clock resolution. If we used the parameterless MarkCompleted() instead,
+        // both threads could capture the same UtcNow value on coarse-resolution clocks (e.g.
+        // the default ~15 ms Windows timer), causing a torn write to pass the assertion silently.
+        var t1Timestamp = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+        var t2Timestamp = new DateTimeOffset(2026, 6, 1, 12, 0, 1, TimeSpan.Zero); // 1 s later — guaranteed distinct
+
+        // We run multiple iterations to increase the probability of catching an interleave.
+        for (var iteration = 0; iteration < 500; iteration++)
+        {
+            var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = $"concurrent-complete-{iteration}",
+                IssueIdentifier = "org/repo#1",
+                IssueTitle = "Concurrent MarkCompleted test",
+                IssueProviderConfigId = "ip",
+                RepoProviderConfigId = "rp"
+            });
+
+            using var barrier = new Barrier(2);
+
+            var t1 = new Thread(() =>
+            {
+                barrier.SignalAndWait();
+                run.MarkCompleted(t1Timestamp);
+            });
+            var t2 = new Thread(() =>
+            {
+                barrier.SignalAndWait();
+                run.MarkCompleted(t2Timestamp);
+            });
+
+            t1.Start();
+            t2.Start();
+            var t1Joined = t1.Join(TimeSpan.FromSeconds(10));
+            var t2Joined = t2.Join(TimeSpan.FromSeconds(10));
+
+            t1Joined.Should().BeTrue("thread 1 must terminate within the timeout (iteration {0})", iteration);
+            t2Joined.Should().BeTrue("thread 2 must terminate within the timeout (iteration {0})", iteration);
+
+            // After both threads have completed, exactly one timestamp must have won and both fields
+            // must agree on the same instant. With distinct timestamps, a torn write (CompletedAt
+            // from one thread and CompletedAtOffset from the other) produces a disagreement here.
+            run.CompletedAtOffset.HasValue.Should().BeTrue(
+                "at least one MarkCompleted call must have written a value (iteration {0})", iteration);
+            run.CompletedAt.Should().Be(run.CompletedAtOffset!.Value.UtcDateTime,
+                "CompletedAt and CompletedAtOffset must represent the same instant — " +
+                "a torn write would leave them disagreeing (iteration {0})", iteration);
+        }
+    }
+
+    [Fact]
     public void StartedAtOffset_AfterResetStartedAt_MatchesExpectedValue()
     {
         // Verify basic correctness of the Interlocked-backed property
