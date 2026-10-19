@@ -5,14 +5,14 @@ using LibGit2Sharp;
 namespace CodingAgent.Infrastructure.UnitTests.Git;
 
 /// <summary>
-/// Integration tests for <see cref="LibGit2SharpGitOperations"/>.
+/// Tests for <see cref="LibGit2SharpGitOperations"/>.
 /// Each test initialises a temp git repository, exercises the operation under test,
 /// and asserts on observable outcomes rather than LibGit2Sharp internals.
 ///
 /// Uses the same real-on-disk temp-repo pattern established by
 /// <see cref="RepositoryGitOperationsCommitBlacklistTests"/>.
+/// No external services required — all operations are purely in-process.
 /// </summary>
-[Trait("Category", "Integration")]
 public class LibGit2SharpGitOperationsTests : IDisposable
 {
     private readonly string _repoPath;
@@ -178,6 +178,156 @@ public class LibGit2SharpGitOperationsTests : IDisposable
 
         _sut.GetHeadCommitFileCount(_repoPath).Should().Be(1,
             "second commit adds exactly 1 file relative to its parent");
+    }
+
+    // ── GetConflicts: two-branch conflict returns ours/theirs content ─────────
+
+    [Fact]
+    public void GetConflicts_TwoBranchConflict_ReturnsBothContents()
+    {
+        // Arrange: set up conflicting commits on two branches using the same base.
+        // Must use a scoped using block — the Repository handle must be released
+        // before _sut.GetConflicts opens a second handle to the same path.
+        using (var repo = new Repository(_repoPath))
+        {
+            var sig = new Signature("test-author", "test@example.com", DateTimeOffset.UtcNow);
+            // Capture the default branch name (may be "main" or "master" depending on env)
+            var currentBranch = repo.Head.FriendlyName;
+
+            // Create feature branch pointing at the same initial commit
+            repo.CreateBranch("feature");
+
+            // Commit "ours content" on the current (main/master) branch
+            File.WriteAllText(Path.Combine(_repoPath, "tracked.txt"), "ours content");
+            Commands.Stage(repo, "tracked.txt");
+            repo.Commit("ours commit", sig, sig);
+
+            // Switch to feature branch and commit "theirs content"
+            Commands.Checkout(repo, repo.Branches["feature"]);
+            File.WriteAllText(Path.Combine(_repoPath, "tracked.txt"), "theirs content");
+            Commands.Stage(repo, "tracked.txt");
+            repo.Commit("theirs commit", sig, sig);
+
+            // Switch back to main/master and merge feature — produces a conflict
+            Commands.Checkout(repo, repo.Branches[currentBranch]);
+            repo.Merge(repo.Branches["feature"], sig, new MergeOptions());
+        }
+
+        // Act
+        var conflicts = _sut.GetConflicts(_repoPath);
+
+        // Assert
+        conflicts.Should().ContainSingle("one file was modified on both branches");
+        conflicts[0].FilePath.Should().Be("tracked.txt");
+        conflicts[0].OursContent.Should().Be("ours content",
+            "OursContent must reflect the receiving branch's blob");
+        conflicts[0].TheirsContent.Should().Be("theirs content",
+            "TheirsContent must reflect the merging branch's blob");
+    }
+
+    [Fact]
+    public void GetConflicts_ModifyDeleteConflict_OursContentIsEmpty()
+    {
+        // Arrange: modify-delete conflict — main deletes tracked.txt, feature modifies it.
+        // This exercises the conflict.Ours == null null-guard in GetConflicts (production L41):
+        //   var oursContent = conflict.Ours != null ? ... : "";
+        // Must use a scoped using block to release the Repository handle before SUT call.
+        using (var repo = new Repository(_repoPath))
+        {
+            var sig = new Signature("test-author", "test@example.com", DateTimeOffset.UtcNow);
+            var currentBranch = repo.Head.FriendlyName;
+
+            // Create feature branch at the initial commit (ancestor has tracked.txt)
+            repo.CreateBranch("feature");
+
+            // On main: delete tracked.txt and commit → conflict.Ours will be null on merge
+            File.Delete(Path.Combine(_repoPath, "tracked.txt"));
+            Commands.Stage(repo, "tracked.txt");
+            repo.Commit("delete tracked.txt on main", sig, sig);
+
+            // Switch to feature: tracked.txt is restored from the initial commit
+            Commands.Checkout(repo, repo.Branches["feature"]);
+            File.WriteAllText(Path.Combine(_repoPath, "tracked.txt"), "theirs content");
+            Commands.Stage(repo, "tracked.txt");
+            repo.Commit("modify tracked.txt on feature", sig, sig);
+
+            // Merge feature into main: main deleted the file, feature modified it → conflict
+            Commands.Checkout(repo, repo.Branches[currentBranch]);
+            repo.Merge(repo.Branches["feature"], sig, new MergeOptions());
+        }
+
+        // Act
+        var conflicts = _sut.GetConflicts(_repoPath);
+
+        // Assert
+        conflicts.Should().ContainSingle("one file has a modify-delete conflict");
+        conflicts[0].FilePath.Should().Be("tracked.txt",
+            "FilePath is resolved via conflict.Theirs.Path when Ours is null");
+        conflicts[0].OursContent.Should().Be("",
+            "OursContent must be empty string when conflict.Ours is null (main deleted the file)");
+        conflicts[0].TheirsContent.Should().Be("theirs content",
+            "TheirsContent must contain the feature branch's blob content");
+    }
+
+    // ── StageFile: single file appears in the index after staging ─────────────
+
+    [Fact]
+    public void StageFile_NewFile_AppearsInIndex()
+    {
+        // Arrange
+        File.WriteAllText(Path.Combine(_repoPath, "to-stage.txt"), "staged content");
+
+        // Act
+        _sut.StageFile(_repoPath, "to-stage.txt");
+
+        // Assert
+        using var repo = new Repository(_repoPath);
+        repo.Index["to-stage.txt"].Should().NotBeNull(
+            "the file must appear in the git index after StageFile is called");
+    }
+
+    // ── GetHeadCommitChanges: Added and Deleted status mapping ────────────────
+
+    [Fact]
+    public void GetHeadCommitChanges_AddAndDeleteInSingleCommit_ReturnsBothStatuses()
+    {
+        // Arrange: create a second commit that adds one file and deletes another.
+        // StageAllAndCommit uses Commands.Stage("*") which is equivalent to git add -A
+        // and stages both new files and deletions.
+        File.WriteAllText(Path.Combine(_repoPath, "new-added.txt"), "added content");
+        File.Delete(Path.Combine(_repoPath, "tracked.txt"));
+        _sut.StageAllAndCommit(_repoPath, "add new, delete old");
+
+        // Act
+        var changes = _sut.GetHeadCommitChanges(_repoPath);
+
+        // Assert
+        changes.Should().Contain(c => c.Path == "new-added.txt" && c.Status == FileChangeStatus.Added,
+            "new-added.txt was created in this commit and must map to FileChangeStatus.Added");
+        changes.Should().Contain(c => c.Path == "tracked.txt" && c.Status == FileChangeStatus.Deleted,
+            "tracked.txt was removed in this commit and must map to FileChangeStatus.Deleted");
+    }
+
+    // ── GetFileContentFromHead: existing path / non-existent path ─────────────
+
+    [Fact]
+    public void GetFileContentFromHead_ExistingFile_ReturnsContent()
+    {
+        // InitRepoWithCommit writes "original content" to tracked.txt without a trailing newline.
+        // Blob.GetContentText() returns the raw stored blob — no CRLF normalisation applied.
+        var result = _sut.GetFileContentFromHead(_repoPath, "tracked.txt");
+
+        result.Should().Be("original content",
+            "GetFileContentFromHead must return the exact content stored in the HEAD commit tree");
+    }
+
+    [Fact]
+    public void GetFileContentFromHead_NonExistentFile_ReturnsNull()
+    {
+        var result = _sut.GetFileContentFromHead(_repoPath, "does-not-exist.txt");
+
+        result.Should().BeNull(
+            "GetFileContentFromHead must return null when the path is not present in the HEAD tree");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
