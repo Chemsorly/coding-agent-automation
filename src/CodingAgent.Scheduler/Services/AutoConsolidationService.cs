@@ -134,48 +134,7 @@ public sealed class AutoConsolidationService : BackgroundService
 
             foreach (var group in brainGroups)
             {
-                var brainId = group.Key;
-                var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.BrainConsolidation, brainId, null);
-
-                try
-                {
-                    if (await _staleness.IsPausedAsync(scopeKey, ct))
-                    {
-                        _logger.Information(
-                            "Auto consolidation: {Type} for {Scope} is paused because its last run failed; a successful run resumes it",
-                            ConsolidationRunType.BrainConsolidation, scopeKey);
-                        continue;
-                    }
-
-                    var count = await _staleness.CountBrainRunsSinceLastConsolidationAsync(brainId, ct);
-                    if (count >= brainThreshold)
-                    {
-                        _logger.Information(
-                            "Auto consolidation: starting {Type} for {Scope} ({Count} since the last run, threshold {Threshold})",
-                            ConsolidationRunType.BrainConsolidation, scopeKey, count, brainThreshold);
-
-                        var firstTemplate = group.First().Template;
-                        var result = await _consolidation.TriggerAutomaticAsync(
-                            ConsolidationRunType.BrainConsolidation, new TemplateId(firstTemplate.Id), ct);
-
-                        if (result is null)
-                        {
-                            _logger.Debug(
-                                "Auto consolidation: {Type} for {Scope} was not started (already running or rejected)",
-                                ConsolidationRunType.BrainConsolidation, scopeKey);
-                        }
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex,
-                        "Auto consolidation: error checking {Type} for {Scope}",
-                        ConsolidationRunType.BrainConsolidation, scopeKey);
-                }
+                await TryTriggerBrainScopeAsync(group, brainThreshold, ct);
             }
         }
 
@@ -187,56 +146,8 @@ public sealed class AutoConsolidationService : BackgroundService
             foreach (var (template, project) in orderedTemplatesWithProject
                 .Where(pair => ConsolidationTemplateFilter.SupportsRefactoringDetection(pair.Template)))
             {
-                var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.RefactoringDetection, null, template.Id);
-
-                try
-                {
-                    if (await _staleness.IsPausedAsync(scopeKey, ct))
-                    {
-                        _logger.Information(
-                            "Auto consolidation: {Type} for {Scope} is paused because its last run failed; a successful run resumes it",
-                            ConsolidationRunType.RefactoringDetection, scopeKey);
-                        continue;
-                    }
-
-                    var limit = project?.MaxRefactoringProposals ?? config.MaxRefactoringProposals;
-                    var openCount = await _staleness.CountOpenScanIssuesAsync(template, ct);
-                    if (openCount >= limit)
-                    {
-                        _logger.Information(
-                            "Auto consolidation: refactoring scan for {Scope} skipped, {Open} scan issues are still open (limit {Limit})",
-                            scopeKey, openCount, limit);
-                        continue;
-                    }
-
-                    var count = await _staleness.CountClosedIssuesSinceLastScanAsync(template, ct);
-                    if (count >= refactoringThreshold)
-                    {
-                        _logger.Information(
-                            "Auto consolidation: starting {Type} for {Scope} ({Count} since the last run, threshold {Threshold})",
-                            ConsolidationRunType.RefactoringDetection, scopeKey, count, refactoringThreshold);
-
-                        var result = await _consolidation.TriggerAutomaticAsync(
-                            ConsolidationRunType.RefactoringDetection, new TemplateId(template.Id), ct);
-
-                        if (result is null)
-                        {
-                            _logger.Debug(
-                                "Auto consolidation: {Type} for {Scope} was not started (already running or rejected)",
-                                ConsolidationRunType.RefactoringDetection, scopeKey);
-                        }
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex,
-                        "Auto consolidation: error checking {Type} for {Scope}",
-                        ConsolidationRunType.RefactoringDetection, scopeKey);
-                }
+                await TryTriggerRefactoringDetectionScopeAsync(
+                    template, project, config.MaxRefactoringProposals, refactoringThreshold, ct);
             }
         }
 
@@ -248,31 +159,13 @@ public sealed class AutoConsolidationService : BackgroundService
 
             try
             {
-                if (await _staleness.IsPausedAsync(scopeKey, ct))
-                {
-                    _logger.Information(
-                        "Auto consolidation: {Type} for {Scope} is paused because its last run failed; a successful run resumes it",
-                        ConsolidationRunType.HarnessSuggestions, scopeKey);
-                    return;
-                }
-
+                // TODO: count is fetched before IsPausedAsync (inside TryTriggerIfThresholdReachedAsync).
+                // On a paused harness scope this incurs one unnecessary staleness query per tick.
+                // Fix: accept a count-fetching delegate in TryTriggerIfThresholdReachedAsync so
+                // the pause check can short-circuit before the count is fetched.
                 var count = await _staleness.CountFeedbackSinceLastHarnessSuggestionsAsync(ct);
-                if (count >= harnessThreshold)
-                {
-                    _logger.Information(
-                        "Auto consolidation: starting {Type} for {Scope} ({Count} since the last run, threshold {Threshold})",
-                        ConsolidationRunType.HarnessSuggestions, scopeKey, count, harnessThreshold);
-
-                    var result = await _consolidation.TriggerAutomaticAsync(
-                        ConsolidationRunType.HarnessSuggestions, null, ct);
-
-                    if (result is null)
-                    {
-                        _logger.Debug(
-                            "Auto consolidation: {Type} for {Scope} was not started (already running or rejected)",
-                            ConsolidationRunType.HarnessSuggestions, scopeKey);
-                    }
-                }
+                await TryTriggerIfThresholdReachedAsync(
+                    ConsolidationRunType.HarnessSuggestions, scopeKey, count, harnessThreshold, null, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -283,6 +176,126 @@ public sealed class AutoConsolidationService : BackgroundService
                 _logger.Warning(ex,
                     "Auto consolidation: error checking {Type} for {Scope}",
                     ConsolidationRunType.HarnessSuggestions, scopeKey);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks and fires a single brain-consolidation scope. Handles per-scope staleness queries,
+    /// the shared trigger skeleton, and per-scope error isolation so that one failing brain scope
+    /// does not abort others in the same tick.
+    /// </summary>
+    private async Task TryTriggerBrainScopeAsync(
+        IGrouping<string, (PipelineJobTemplate Template, PipelineProject Project)> group,
+        int threshold,
+        CancellationToken ct)
+    {
+        var brainId = group.Key;
+        var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.BrainConsolidation, brainId, null);
+        try
+        {
+            // TODO: count is fetched before IsPausedAsync (inside TryTriggerIfThresholdReachedAsync).
+            // On a paused scope this incurs one unnecessary staleness query per tick.
+            // Fix: accept a count-fetching delegate in TryTriggerIfThresholdReachedAsync so
+            // the pause check can short-circuit before the count is fetched.
+            var count = await _staleness.CountBrainRunsSinceLastConsolidationAsync(brainId, ct);
+            var templateId = new TemplateId(group.First().Template.Id);
+            await TryTriggerIfThresholdReachedAsync(
+                ConsolidationRunType.BrainConsolidation, scopeKey, count, threshold, templateId, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "Auto consolidation: error checking {Type} for {Scope}",
+                ConsolidationRunType.BrainConsolidation, scopeKey);
+        }
+    }
+
+    /// <summary>
+    /// Checks and fires a single refactoring-detection scope. Handles the open-proposal-limit guard,
+    /// per-scope staleness queries, the shared trigger skeleton, and per-scope error isolation so that
+    /// one failing template does not abort others in the same tick.
+    /// </summary>
+    private async Task TryTriggerRefactoringDetectionScopeAsync(
+        PipelineJobTemplate template,
+        PipelineProject? project,
+        int maxRefactoringProposalsFallback,
+        int threshold,
+        CancellationToken ct)
+    {
+        var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.RefactoringDetection, null, template.Id);
+        try
+        {
+            // TODO: count queries are fetched before IsPausedAsync (inside TryTriggerIfThresholdReachedAsync).
+            // On a paused scope this incurs up to two unnecessary staleness queries per tick
+            // (CountOpenScanIssues + CountClosedIssuesSinceLastScan). Fix: accept a count-fetching
+            // delegate in TryTriggerIfThresholdReachedAsync so the pause check can short-circuit first.
+            var limit = project?.MaxRefactoringProposals ?? maxRefactoringProposalsFallback;
+            var openCount = await _staleness.CountOpenScanIssuesAsync(template, ct);
+            if (openCount >= limit)
+            {
+                _logger.Information(
+                    "Auto consolidation: refactoring scan for {Scope} skipped, {Open} scan issues are still open (limit {Limit})",
+                    scopeKey, openCount, limit);
+                return;
+            }
+
+            var count = await _staleness.CountClosedIssuesSinceLastScanAsync(template, ct);
+            await TryTriggerIfThresholdReachedAsync(
+                ConsolidationRunType.RefactoringDetection, scopeKey, count, threshold,
+                new TemplateId(template.Id), ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "Auto consolidation: error checking {Type} for {Scope}",
+                ConsolidationRunType.RefactoringDetection, scopeKey);
+        }
+    }
+
+    /// <summary>
+    /// Shared trigger skeleton: checks whether the scope is paused, compares <paramref name="count"/> to
+    /// <paramref name="threshold"/>, and fires <see cref="IConsolidationService.TriggerAutomaticAsync"/>
+    /// when the threshold is reached. Called from each of the three auto-consolidation sections in
+    /// <see cref="RunOnceAsync"/>; exception handling remains in the caller's per-scope try/catch.
+    /// </summary>
+    private async Task TryTriggerIfThresholdReachedAsync(
+        ConsolidationRunType type,
+        string scopeKey,
+        int count,
+        int threshold,
+        TemplateId? templateId,
+        CancellationToken ct)
+    {
+        if (await _staleness.IsPausedAsync(scopeKey, ct))
+        {
+            _logger.Information(
+                "Auto consolidation: {Type} for {Scope} is paused because its last run failed; a successful run resumes it",
+                type, scopeKey);
+            return;
+        }
+
+        if (count >= threshold)
+        {
+            _logger.Information(
+                "Auto consolidation: starting {Type} for {Scope} ({Count} since the last run, threshold {Threshold})",
+                type, scopeKey, count, threshold);
+
+            var result = await _consolidation.TriggerAutomaticAsync(type, templateId, ct);
+
+            if (result is null)
+            {
+                _logger.Debug(
+                    "Auto consolidation: {Type} for {Scope} was not started (already running or rejected)",
+                    type, scopeKey);
             }
         }
     }
