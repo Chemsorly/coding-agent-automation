@@ -1102,7 +1102,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = homeId, Name = "Home" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
         await _store.SaveTemplateAsync(homeId, template, CancellationToken.None);
 
@@ -1174,7 +1177,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             var template = new PipelineJobTemplate
             {
-                Id = Guid.NewGuid().ToString(), Name = name, IssueProviderId = $"ip{index}", RepoProviderId = $"rp{index}"
+                Id = Guid.NewGuid().ToString(),
+                Name = name,
+                IssueProviderId = $"ip{index}",
+                RepoProviderId = $"rp{index}"
             };
             ids[name] = template.Id;
             await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
@@ -1202,7 +1208,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = yId, Name = "Y" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
         await _store.SaveTemplateAsync(defaultId, template, CancellationToken.None);
 
@@ -1233,7 +1242,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = sourceId, Name = "Source" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
         await _store.SaveTemplateAsync(sourceId, template, CancellationToken.None);
 
@@ -1252,7 +1264,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = secondId, Name = "Second" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
 
         await _store.SaveTemplateAsync(firstId, template, CancellationToken.None);

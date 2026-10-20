@@ -97,8 +97,12 @@ public sealed class AgentHubTriageTests
             .Callback<TriageResultReport, CancellationToken>((r, _) => report = r)
             .ReturnsAsync(new TriageRecord
             {
-                Id = triageId, ProjectId = ProjectId.ToString(), Source = TriageSource.Operator, Title = "t",
-                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow,
+                Id = triageId,
+                ProjectId = ProjectId.ToString(),
+                Source = TriageSource.Operator,
+                Title = "t",
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
             });
 
         await Ops().RecordResultAsync(new JobId("job-1"), ValidResult, CancellationToken.None);
@@ -121,8 +125,12 @@ public sealed class AgentHubTriageTests
             .Callback<TriageResultReport, CancellationToken>((r, _) => report = r)
             .ReturnsAsync(new TriageRecord
             {
-                Id = Guid.NewGuid(), ProjectId = ProjectId.ToString(), Source = TriageSource.Issue, Title = "t",
-                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow,
+                Id = Guid.NewGuid(),
+                ProjectId = ProjectId.ToString(),
+                Source = TriageSource.Issue,
+                Title = "t",
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
             });
 
         await Ops().RecordResultAsync(new JobId("job-1"), ValidResult, CancellationToken.None);
@@ -191,8 +199,12 @@ public sealed class AgentHubTriageTests
             .Callback<TriageResultReport, CancellationToken>((r, _) => report = r)
             .ReturnsAsync(new TriageRecord
             {
-                Id = Guid.NewGuid(), ProjectId = ProjectId.ToString(), Source = TriageSource.Issue, Title = "t",
-                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow,
+                Id = Guid.NewGuid(),
+                ProjectId = ProjectId.ToString(),
+                Source = TriageSource.Issue,
+                Title = "t",
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
             });
 
         await Ops().RecordResultAsync(new JobId("job-1"), """
@@ -216,7 +228,10 @@ public sealed class AgentHubTriageTests
         _facade.Setup(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WorkItemRunRecord
             {
-                TaskType = WorkItemTaskType.Triage, IssueIdentifier = "431", IssueProviderConfigId = "t-1", ProjectId = null,
+                TaskType = WorkItemTaskType.Triage,
+                IssueIdentifier = "431",
+                IssueProviderConfigId = "t-1",
+                ProjectId = null,
             });
 
         var act = () => Ops().RecordResultAsync(new JobId("job-1"), ValidResult, CancellationToken.None);
