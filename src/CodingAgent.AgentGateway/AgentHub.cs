@@ -97,15 +97,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 _logger.Information(
                     "Agent {AgentId} stale connection {StaleConn} closed (active connection: {ActiveConn}) — skipping status transition",
                     agent.AgentId, Context.ConnectionId, agent.ConnectionId);
-                // The stale _connectionIndex[conn-A] entry is left in place; it will be superseded
-                // (made unreachable) once the agent is deregistered at run completion, because
-                // GetAgentRaw will return null for the evicted agentId.
-                // TODO (WARNING, issue #2758): "_connectionIndex[conn-A] made unreachable" means
-                // GetByConnectionId returns null (no auth bypass), but the dictionary *key* itself is
-                // never removed — neither here nor in DeregisterAsync (which only removes conn-B,
-                // the current primary). This is an O(N) leak under sustained mid-run reconnects.
-                // Fix: call _connectionIndex.TryRemove(Context.ConnectionId, out _) here before
-                // returning so stale keys are reclaimed at connection close time.
+                _facade.RemoveFromConnectionIndex(Context.ConnectionId);
                 await base.OnDisconnectedAsync(exception);
                 return;
             }

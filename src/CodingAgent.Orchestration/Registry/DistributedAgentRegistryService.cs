@@ -333,17 +333,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         if (connectionId is not null)
             _connectionIndex.TryRemove(connectionId, out _);
 
-        // TODO (WARNING, issue #2758): When Register was called with preserveExistingConnectionId=true
-        // (mid-run kiro-cli reconnect), _connectionIndex retains both conn-A and conn-B. DeregisterAsync
-        // only removes snap.ConnectionId (conn-B, the primary); conn-A's entry is never removed here.
-        // OnDisconnectedAsync also returns early for stale conn-A (AgentHub.cs guard), so that path
-        // does not clean it up either. The leak is functionally benign — GetByConnectionId("conn-A")
-        // returns null after deregister because GetAgentRaw returns null (hash deleted) — but the
-        // dictionary key is retained for the agent's lifetime. Under sustained mid-run reconnects
-        // (e.g. long decomposition runs) this is O(N) unbounded growth. Consider removing
-        // Context.ConnectionId from _connectionIndex in the OnDisconnectedAsync guard branch so the
-        // stale key is reclaimed at connection close rather than never.
-
         // Unconditionally clear the local snapshot so that a subsequent heartbeat does NOT
         // recreate the entry for an intentionally deregistered agent (issue #2110 AC4).
         // This must NOT be inside the `if (entry is not null)` block: if the Redis hash has
@@ -595,6 +584,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // Snapshot absent (e.g. deregistered but _connectionIndex not yet cleaned):
         // fall back to Redis to surface a fresh entry if it exists.
         return GetAgentRaw(agentId);
+    }
+
+    /// <inheritdoc />
+    public void RemoveFromConnectionIndex(string connectionId)
+    {
+        ArgumentNullException.ThrowIfNull(connectionId);
+        _connectionIndex.TryRemove(connectionId, out _);
     }
 
     /// <inheritdoc />
