@@ -372,6 +372,22 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         result.Should().BeFalse("Succeeded→Succeeded is a no-op guarded by the symmetric idempotent-return guard");
     }
 
+    [Fact]
+    public async Task TryFallbackChainAsync_AlreadyAtCancelled_TargetCancelled_ReturnsFalse_Idempotent()
+    {
+        // Symmetric same-state guard: Cancelled→Cancelled must be a no-op, analogous to
+        // Succeeded→Succeeded. IsIdempotentTransition handles this via the current == target
+        // branch. WorkItemTransitionService.TransitionAsync is idempotent for already-at-target
+        // calls, so without this guard a second Cancelled event would incorrectly record a
+        // duplicate metric.
+        var id = await SeedWorkItem(WorkItemStatus.Cancelled);
+
+        var result = await _sut.TryFallbackChainAsync(id, WorkItemStatus.Cancelled, null, null, CancellationToken.None);
+
+        result.Should().BeFalse("Cancelled→Cancelled is a no-op guarded by IsIdempotentTransition");
+        (await ReadItem(id))!.Status.Should().Be(WorkItemStatus.Cancelled, "status must not be overwritten");
+    }
+
     // ── Test infrastructure ───────────────────────────────────────────────
 
     private async Task<Guid> SeedWorkItem(WorkItemStatus initialStatus)
@@ -535,12 +551,12 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         // to make this regression guard more robust.
     }
 
-    // ── Debug-logging path coverage (#2139 new code) ─────────────────────
-    // The two guards introduced in #2139 contain debug-level log calls behind
-    // IsEnabled(Debug) checks. NullLogger returns false for IsEnabled, so those
-    // branches are unreachable with the default fixture. These two tests create a
-    // WorkItemFallbackTransitionService backed by a real Debug-level logger to
-    // ensure the branches are executed and covered.
+    // ── Debug-logging path coverage ───────────────────────────────────────
+    // The consolidated IsIdempotentTransition guard contains a debug-level log call behind an
+    // IsEnabled(Debug) check. NullLogger returns false for IsEnabled, so that branch is
+    // unreachable with the default fixture. These two tests create a
+    // WorkItemFallbackTransitionService backed by a real Debug-level logger to ensure the
+    // branch is executed and covered.
 
     [Fact]
     public async Task TryFallbackChainAsync_WhenAlreadyFailed_TargetFailed_WithDebugLogger_ExecutesDebugLogBranch()
@@ -559,7 +575,7 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        // Act: Failed→Failed with debug logger — covers the LogDebug branch inside the guard
+        // Act: Failed→Failed with debug logger — covers the LogDebug branch inside IsIdempotentTransition
         var result = await sut.TryFallbackChainAsync(id, WorkItemStatus.Failed, null, null, CancellationToken.None);
 
         // Assert: same outcome — early exit returns false
@@ -569,8 +585,7 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
     [Fact]
     public async Task TryFallbackChainAsync_WhenSucceeded_TargetFailed_WithDebugLogger_ExecutesDebugLogBranch()
     {
-        // Arrange: use a debug-level logger so IsEnabled(Debug) returns true for the
-        // Succeeded/Cancelled + different target guard branch
+        // Arrange: use a debug-level logger so IsEnabled(Debug) returns true
         using var loggerFactory = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Trace).AddConsole());
         var debugLogger = loggerFactory.CreateLogger<WorkItemFallbackTransitionService>();
         var sut = new WorkItemFallbackTransitionService(_transitionService, debugLogger);
@@ -585,7 +600,7 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         }
 
         // Act: Succeeded→Failed with debug logger — covers the LogDebug branch inside the
-        // Succeeded/Cancelled guard that was introduced alongside the Failed→Failed guard
+        // consolidated IsIdempotentTransition guard
         var result = await sut.TryFallbackChainAsync(id, WorkItemStatus.Failed, null, null, CancellationToken.None);
 
         // Assert: same outcome — early exit returns false
