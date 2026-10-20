@@ -54,6 +54,14 @@ public interface IAgentHubFacade
     AgentEntry? GetByConnectionId(string connectionId);
 
     /// <summary>
+    /// Removes the specified SignalR connection ID from the connection index.
+    /// Called from <see cref="AgentHub.OnDisconnectedAsync"/> when a superseded connection closes
+    /// after a mid-run reconnect, to reclaim the stale key at connection-close time.
+    /// This is a no-op if the connection ID is not present.
+    /// </summary>
+    void RemoveFromConnectionIndex(string connectionId);
+
+    /// <summary>
     /// Transitions an agent to a new status.
     /// </summary>
     void TransitionStatus(AgentId agentId, AgentStatus newStatus);

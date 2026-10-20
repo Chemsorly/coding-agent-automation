@@ -73,6 +73,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _registry.GetByConnectionId(connectionId);
 
     /// <inheritdoc />
+    public void RemoveFromConnectionIndex(string connectionId)
+        => _registry.RemoveFromConnectionIndex(connectionId);
+
+    /// <inheritdoc />
     public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
         => _registry.TransitionStatus(agentId, newStatus);
 
