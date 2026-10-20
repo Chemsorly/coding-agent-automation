@@ -30,7 +30,7 @@ public sealed class AgentHubTriageTests
 
     public AgentHubTriageTests()
     {
-        _facade.Setup(f => f.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _facade.Setup(f => f.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "tpl-api", Name = "api", RepoProviderId = "rp-1", IssueProviderId = "t-1", Enabled = true },
@@ -323,7 +323,7 @@ public sealed class AgentHubTriageTests
                 new() { Id = "t-2", DisplayName = "t-2", ProviderType = "GitHub", Kind = ProviderKind.Issue },
                 new() { Id = "t-other", DisplayName = "t-other", ProviderType = "GitHub", Kind = ProviderKind.Issue },
             });
-        _facade.Setup(f => f.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _facade.Setup(f => f.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "tpl-1", Name = "api", IssueProviderId = "t-2", RepoProviderId = "rp-2", Enabled = true },

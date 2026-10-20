@@ -39,7 +39,7 @@ public sealed class GetAssignmentTests
     private static IProjectStore CreateNullProjectStore()
     {
         var mock = new Mock<IProjectStore>();
-        mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((PipelineProject?)null);
         return mock.Object;
     }
@@ -685,8 +685,8 @@ public sealed class GetAssignmentTests
             .ReturnsAsync(projects);
         mock.Setup(ps => ps.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
-        mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string id, CancellationToken _) => projects.FirstOrDefault(p => p.Id == id));
+        mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProjectId id, CancellationToken _) => projects.FirstOrDefault(p => p.Id == id.Value));
         return mock.Object;
     }
 
