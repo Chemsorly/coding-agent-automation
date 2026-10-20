@@ -658,7 +658,7 @@ public sealed class AgentHubIssueProxyTests
 
         result.Should().Be(expected);
         // Fast path: own provider must not trigger template lookup
-        _mockFacade.Verify(f => f.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockFacade.Verify(f => f.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -719,8 +719,8 @@ public sealed class AgentHubIssueProxyTests
         await act.Should().ThrowAsync<HubException>().WithMessage("*not in the scope*");
         _mockFacade.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
         // Null ProjectId must never trigger project or template lookups
-        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockFacade.Verify(f => f.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockFacade.Verify(f => f.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── ResolveIssueProviderForRunAsync — Warning logged before HubException ──
@@ -1087,7 +1087,7 @@ public sealed class AgentHubIssueProxyTests
 
         await act.Should().ThrowAsync<HubException>()
             .WithMessage("*ip-allowed*not in the scope*");
-        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static PipelineJobTemplate EnabledTemplate(string issueProviderId) => new()
@@ -1307,7 +1307,7 @@ public sealed class AgentHubIssueProxyTests
 
         result.Should().NotBeNull();
         mockProvider.Verify(p => p.ListClosedIssuesAsync(1, 50, null, null, It.IsAny<CancellationToken>()), Times.Once);
-        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()), Times.Never,
             "own-tracker access must bypass scope check without loading project data");
     }
 

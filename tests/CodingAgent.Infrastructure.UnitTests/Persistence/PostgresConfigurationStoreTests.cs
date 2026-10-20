@@ -1102,7 +1102,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = homeId, Name = "Home" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
         await _store.SaveTemplateAsync(homeId, template, CancellationToken.None);
 
@@ -1174,7 +1177,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             var template = new PipelineJobTemplate
             {
-                Id = Guid.NewGuid().ToString(), Name = name, IssueProviderId = $"ip{index}", RepoProviderId = $"rp{index}"
+                Id = Guid.NewGuid().ToString(),
+                Name = name,
+                IssueProviderId = $"ip{index}",
+                RepoProviderId = $"rp{index}"
             };
             ids[name] = template.Id;
             await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
@@ -1202,7 +1208,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = yId, Name = "Y" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
         await _store.SaveTemplateAsync(defaultId, template, CancellationToken.None);
 
@@ -1233,7 +1242,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = sourceId, Name = "Source" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
         await _store.SaveTemplateAsync(sourceId, template, CancellationToken.None);
 
@@ -1252,7 +1264,10 @@ public class PostgresConfigurationStoreTests : IDisposable
         await _store.SaveProjectAsync(new PipelineProject { Id = secondId, Name = "Second" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
         };
 
         await _store.SaveTemplateAsync(firstId, template, CancellationToken.None);
@@ -1261,6 +1276,22 @@ public class PostgresConfigurationStoreTests : IDisposable
         var projects = await CreateFreshStore().LoadProjectsAsync(CancellationToken.None);
         projects.Single(p => p.Id == firstId).TemplateIds.Should().BeEmpty();
         projects.Single(p => p.Id == secondId).TemplateIds.Should().Equal(template.Id);
+    }
+
+    [Fact]
+    public async Task GetProjectByIdAsync_WithDefaultProjectId_ThrowsArgumentException()
+    {
+        // default(ProjectId).Value is null — the guard added to fail fast instead of silently returning null
+        var act = () => _store.GetProjectByIdAsync(default, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*ProjectId must not be default*");
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_WithDefaultProjectId_ThrowsArgumentException()
+    {
+        // default(ProjectId).Value is null — the guard added to fail fast instead of silently no-oping
+        var act = () => _store.DeleteProjectAsync(default, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*ProjectId must not be default*");
     }
 
     // ── Helper: InMemoryDbContextFactory ────────────────────────────────

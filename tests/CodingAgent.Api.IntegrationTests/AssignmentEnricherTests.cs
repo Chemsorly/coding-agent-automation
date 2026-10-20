@@ -231,7 +231,7 @@ public sealed class AssignmentEnricherTests
         var projectStoreMock = new Mock<IProjectStore>();
         projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectTemplates ?? []);
         var consolidationTemplateResolver = new ConsolidationTemplateResolver(projectStoreMock.Object);
 
@@ -417,7 +417,7 @@ public sealed class AssignmentEnricherTests
         var projectStoreMock = new Mock<IProjectStore>();
         projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var enricher = new AssignmentEnricher(
             infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,

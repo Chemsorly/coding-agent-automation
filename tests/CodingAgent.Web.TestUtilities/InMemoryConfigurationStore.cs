@@ -196,8 +196,8 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.Select(WithMembers).ToList());
 
-    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
-        Task.FromResult(_projects.Where(p => p.Id == id).Select(WithMembers).FirstOrDefault());
+    public Task<PipelineProject?> GetProjectByIdAsync(ProjectId id, CancellationToken ct) =>
+        Task.FromResult(_projects.Where(p => p.Id == id.Value).Select(WithMembers).FirstOrDefault());
 
     public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
     {
@@ -206,31 +206,31 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         return Task.CompletedTask;
     }
 
-    public Task DeleteProjectAsync(string id, CancellationToken ct)
+    public Task DeleteProjectAsync(ProjectId id, CancellationToken ct)
     {
-        _projects.RemoveAll(p => p.Id == id);
+        _projects.RemoveAll(p => p.Id == id.Value);
 
         // The deleted project's templates move to the Default project.
-        foreach (var templateId in _templateProjects.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList())
+        foreach (var templateId in _templateProjects.Where(kv => kv.Value == id.Value).Select(kv => kv.Key).ToList())
             _templateProjects[templateId] = WellKnownIds.DefaultProjectId;
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(MembersOf(projectId).ToList());
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(ProjectId projectId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(MembersOf(projectId.Value).ToList());
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_templates.ToList());
 
-    public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
+    public Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct)
     {
         _templates.RemoveAll(t => t.Id == template.Id);
         _templates.Add(template);
-        _templateProjects[template.Id] = projectId;
+        _templateProjects[template.Id] = projectId.Value;
         return Task.CompletedTask;
     }
 
-    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
+    public Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct)
     {
         _templates.RemoveAll(t => t.Id == templateId.Value);
         _templateProjects.Remove(templateId.Value);
