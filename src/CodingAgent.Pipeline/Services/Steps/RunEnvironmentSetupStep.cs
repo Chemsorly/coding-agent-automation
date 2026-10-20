@@ -55,11 +55,11 @@ public sealed class RunEnvironmentSetupStep : IPipelineStep
             if (!result.Success)
             {
                 if (result.Exception is not null)
-                    Activity.Current?.RecordMaskedError(result.Exception, secrets, ct);
+                    activity?.RecordMaskedError(result.Exception, secrets, ct);
                 // TODO: Timeout detection relies on string matching. SetupCommandResult should expose a structured
                 // failure reason (e.g., IsTimeout bool or FailureKind enum) instead of requiring callers to inspect message content.
                 else if (result.FailureMessage?.Contains("timed out") == true)
-                    Activity.Current?.SetStatus(ActivityStatusCode.Error, result.FailureMessage);
+                    activity?.SetStatus(ActivityStatusCode.Error, result.FailureMessage);
 
                 await context.FailRunAsync(result.FailureMessage!, ct);
                 return StepResult.Stop;
