@@ -222,6 +222,12 @@ public sealed class PipelineRunSummary
     public RefactoringScanOutcome? RefactoringScanOutcome { get; init; }
 
     /// <summary>
+    /// What the brain consolidation changed and pushed, or null for non-brain-consolidation runs.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public BrainConsolidationOutcome? BrainConsolidationOutcome { get; init; }
+
+    /// <summary>
     /// Work item ID associated with this run, or null for runs that were created before this field
     /// was introduced or that have no backing WorkItem (e.g. backfilled ConsolidationRun rows with
     /// null WorkItemId).
