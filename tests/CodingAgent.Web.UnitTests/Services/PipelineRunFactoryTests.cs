@@ -540,6 +540,44 @@ public sealed class PipelineRunFactoryTests
         restored.ConsolidationResultSummary.Should().BeNull();
     }
 
+    [Fact]
+    public void ConsolidationRun_BrainConsolidationOutcome_RoundTripThroughSummaryAndRedisHash()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
+
+        var brainOutcome = new BrainConsolidationOutcome
+        {
+            FilesModified = 5,
+            EntriesMerged = 3,
+            ContradictionsResolved = 1,
+            EntriesPruned = 2,
+            PushedCommitSha = "abc123",
+            PushedCommitUrl = "https://example.com/commit/abc123",
+            PushAttempts = 2,
+            BaseBranch = "main"
+        };
+        run.BrainConsolidationOutcome = brainOutcome;
+
+        // Act — SummaryJson round-trip
+        var summary = run.ToSummary();
+
+        // Assert — SummaryJson
+        summary.BrainConsolidationOutcome.Should().NotBeNull();
+        summary.BrainConsolidationOutcome.Should().BeEquivalentTo(brainOutcome);
+
+        // Act — Redis hash round-trip
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        // Assert — Redis hash
+        restored.BrainConsolidationOutcome.Should().NotBeNull(
+            "BrainConsolidationOutcome must survive the Redis hash round-trip");
+        restored.BrainConsolidationOutcome.Should().BeEquivalentTo(brainOutcome,
+            "all fields of BrainConsolidationOutcome must survive the Redis hash round-trip");
+    }
+
     // ── FromDistributionRequest — RunType routing ─────────────────────────
     // TODO: [WARNING] This routing block is missing a Review RunType test case.
     // FromDistributionRequest now passes Review-specific fields (ReviewPrBranchName, ReviewPrTargetBranch,

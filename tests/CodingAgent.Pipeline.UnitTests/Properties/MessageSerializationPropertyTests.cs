@@ -638,4 +638,67 @@ public class MessageSerializationPropertyTests
 
         deserialized.ScanOutcome.Should().BeNull("null ScanOutcome must survive round-trip as null");
     }
+
+    /// <summary>
+    /// ConsolidationJobResult with a populated BrainOutcome survives a MessagePack round-trip.
+    /// Validates that the new Key(15) BrainOutcome field and all its nested fields serialize correctly.
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithBrainOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "brain-run-1",
+            Success = true,
+            Summary = "Files modified: 14, Entries merged: 9, Contradictions resolved: 2, Entries pruned: 17",
+            BrainOutcome = new BrainConsolidationOutcome
+            {
+                FilesModified = 14,
+                EntriesMerged = 9,
+                ContradictionsResolved = 2,
+                EntriesPruned = 17,
+                PushedCommitSha = "3f9b2c1d0e",
+                PushedCommitUrl = "https://github.com/org/brain/commit/3f9b2c1d0e",
+                PushAttempts = 2,
+                BaseBranch = "main"
+            }
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.JobId.Should().Be(original.JobId);
+        deserialized.Success.Should().Be(original.Success);
+        deserialized.BrainOutcome.Should().NotBeNull();
+
+        var outcome = deserialized.BrainOutcome!;
+        outcome.FilesModified.Should().Be(14);
+        outcome.EntriesMerged.Should().Be(9);
+        outcome.ContradictionsResolved.Should().Be(2);
+        outcome.EntriesPruned.Should().Be(17);
+        outcome.PushedCommitSha.Should().Be("3f9b2c1d0e");
+        outcome.PushedCommitUrl.Should().Be("https://github.com/org/brain/commit/3f9b2c1d0e");
+        outcome.PushAttempts.Should().Be(2);
+        outcome.BaseBranch.Should().Be("main");
+    }
+
+    /// <summary>
+    /// ConsolidationJobResult without BrainOutcome (null) round-trips with null BrainOutcome
+    /// (backward compatibility: existing payloads from agents that predate Key(15)).
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithNullBrainOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "brain-run-null",
+            Success = true,
+            BrainOutcome = null
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.BrainOutcome.Should().BeNull("null BrainOutcome must survive round-trip as null");
+    }
 }

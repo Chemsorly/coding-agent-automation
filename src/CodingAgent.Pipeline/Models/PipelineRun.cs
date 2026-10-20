@@ -432,6 +432,9 @@ public sealed partial class PipelineRun
     /// <summary>Outcome of the refactoring scan, or null for non-refactoring runs.</summary>
     public RefactoringScanOutcome? RefactoringScanOutcome { get; set; }
 
+    /// <summary>Outcome of the brain consolidation, or null for non-brain-consolidation runs.</summary>
+    public BrainConsolidationOutcome? BrainConsolidationOutcome { get; set; }
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     /// <param name="finalStepOverride">If non-null, used as <see cref="PipelineRunSummary.FinalStep"/> instead of <see cref="CurrentStep"/>.</param>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
@@ -495,6 +498,7 @@ public sealed partial class PipelineRun
         ConsolidationResultSummary = ConsolidationResultSummary,
         ConsolidationTemplateName = ConsolidationTemplateName,
         RefactoringScanOutcome = RefactoringScanOutcome,
+        BrainConsolidationOutcome = BrainConsolidationOutcome,
         // For new runs, RunId == WorkItemId (same GUID by contract in CreateFromWorkItem).
         // For consolidation runs the WorkItemId may differ from RunId (backfilled rows from the
         // ConsolidationRuns table may have a separate WorkItemId in the JSONB blob), so we expose
