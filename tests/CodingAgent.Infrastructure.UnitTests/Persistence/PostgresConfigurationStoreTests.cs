@@ -1263,6 +1263,22 @@ public class PostgresConfigurationStoreTests : IDisposable
         projects.Single(p => p.Id == secondId).TemplateIds.Should().Equal(template.Id);
     }
 
+    [Fact]
+    public async Task GetProjectByIdAsync_WithDefaultProjectId_ThrowsArgumentException()
+    {
+        // default(ProjectId).Value is null — the guard added to fail fast instead of silently returning null
+        var act = () => _store.GetProjectByIdAsync(default, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*ProjectId must not be default*");
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_WithDefaultProjectId_ThrowsArgumentException()
+    {
+        // default(ProjectId).Value is null — the guard added to fail fast instead of silently no-oping
+        var act = () => _store.DeleteProjectAsync(default, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*ProjectId must not be default*");
+    }
+
     // ── Helper: InMemoryDbContextFactory ────────────────────────────────
 
     private PostgresConfigurationStore CreateFreshStore()
