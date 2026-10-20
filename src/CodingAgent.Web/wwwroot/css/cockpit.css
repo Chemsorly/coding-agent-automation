@@ -403,6 +403,7 @@
 .cockpit-link-chip .icon { color: var(--accent); }
 
 .cockpit-findings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cockpit-findings.is-four { grid-template-columns: repeat(4, 1fr); }
 .cockpit-finding {
     display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
     border: 1px solid var(--border); border-radius: 11px; background: var(--subtle-bg);
@@ -796,6 +797,7 @@
     .cockpit-two-col { grid-template-columns: 1fr !important; }
     .cockpit-two-col-asymmetric { grid-template-columns: 1fr !important; }
     .cockpit-findings { grid-template-columns: 1fr; }
+    .cockpit-findings.is-four { grid-template-columns: 1fr 1fr; }
 }
 
 /* ── Auth pages and user menu (Spec 049) ─────────────────────────────────────── */
