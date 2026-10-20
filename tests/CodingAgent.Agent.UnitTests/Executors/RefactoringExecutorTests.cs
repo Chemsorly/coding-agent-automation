@@ -2857,6 +2857,55 @@ public class RefactoringExecutorTests : IDisposable
         hotspotContent.Should().NotContain("src/Excluded.cs", "Commit A was excluded because its subject contains (#42)");
     }
 
+    /// <summary>
+    /// When scanIssueRefs is empty, isExcludedCommit is null, so excludedCount is 0.
+    /// Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits…", 0) must still
+    /// be emitted exactly once — covering the unconditional log path added in issue #3798.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_EmptyScanIssueRefs_ExclusionCountLoggedAsZero()
+    {
+        // Arrange — no open scan issues (default setup returns empty list), so scanIssueRefs will be empty
+        // and isExcludedCommit will be null.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns<WorkspacePath, CancellationToken>(async (path, ct) =>
+            {
+                await RefactoringExecutor.RunGitCommandAsync(path, "init", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.email test@example.com", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.name Test", ct);
+
+                // One commit with no scan-issue ref in its subject.
+                Directory.CreateDirectory(Path.Combine(path, "src"));
+                File.WriteAllText(Path.Combine(path, "src", "Foo.cs"), "// test");
+                await RefactoringExecutor.RunGitCommandAsync(path, "add .", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit -m \"feat: some work\"", ct);
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — the log must fire unconditionally with excludedCount == 0 (null-branch of ternary)
+        _mockLogger.Verify(
+            l => l.Information(
+                It.Is<string>(s => s.Contains("left out")),
+                It.Is<int>(n => n == 0)),
+            Times.Once);
+
+        // The hotspot file must have been written (the commit contributes src/Foo.cs)
+        File.Exists(Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath))
+            .Should().BeTrue("one non-excluded commit contributed src/Foo.cs");
+    }
+
     // ── Scan outcome tests (issue #3569) ─────────────────────────────────────────────────────────────────────────────
 
     [Fact]

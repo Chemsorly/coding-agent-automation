@@ -170,25 +170,25 @@ public sealed class ApiProjectStore : IProjectStore
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
         => LoadCachedAsync(_projectsCache, _client.GetProjectsAsync, ct);
 
-    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
+    public Task<PipelineProject?> GetProjectByIdAsync(ProjectId id, CancellationToken ct)
         => SettingsWrites.NotServed<PipelineProject?>("Reading one project");
 
     public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
         => SettingsWrites.NotHere("Saving a project");
 
-    public Task DeleteProjectAsync(string id, CancellationToken ct)
+    public Task DeleteProjectAsync(ProjectId id, CancellationToken ct)
         => SettingsWrites.NotHere("Deleting a project");
 
-    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(ProjectId projectId, CancellationToken ct)
         => SettingsWrites.NotServed<IReadOnlyList<PipelineJobTemplate>>("Reading one project's templates");
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
         => LoadCachedAsync(_templatesCache, _client.GetAllTemplatesAsync, ct);
 
-    public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
+    public Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct)
         => SettingsWrites.NotHere("Saving a template");
 
-    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
+    public Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct)
         => SettingsWrites.NotHere("Deleting a template");
 
     public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
@@ -319,25 +319,25 @@ public sealed class ApiConfigurationStore : IConfigurationStore
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
         => _projects.LoadProjectsAsync(ct);
 
-    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
+    public Task<PipelineProject?> GetProjectByIdAsync(ProjectId id, CancellationToken ct)
         => _projects.GetProjectByIdAsync(id, ct);
 
     public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
         => _projects.SaveProjectAsync(project, ct);
 
-    public Task DeleteProjectAsync(string id, CancellationToken ct)
+    public Task DeleteProjectAsync(ProjectId id, CancellationToken ct)
         => _projects.DeleteProjectAsync(id, ct);
 
-    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(ProjectId projectId, CancellationToken ct)
         => _projects.LoadTemplatesForProjectAsync(projectId, ct);
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
         => _projects.LoadAllTemplatesAsync(ct);
 
-    public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
+    public Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct)
         => _projects.SaveTemplateAsync(projectId, template, ct);
 
-    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
+    public Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct)
         => _projects.DeleteTemplateAsync(projectId, templateId, ct);
 
     public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)

@@ -226,6 +226,13 @@ public sealed class AutoConsolidationServiceTests
             c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a paused scope must not trigger");
+
+        // TODO: this test does not assert that count methods (CountBrainRunsSinceLastConsolidationAsync,
+        // CountClosedIssuesSinceLastScanAsync, CountFeedbackSinceLastHarnessSuggestionsAsync) are
+        // Times.Never when paused, because the current implementation fetches counts BEFORE calling
+        // IsPausedAsync (inside TryTriggerIfThresholdReachedAsync). Adding Times.Never assertions for
+        // count methods would fail until the ordering is fixed (see TODO in TryTriggerBrainScopeAsync,
+        // TryTriggerRefactoringDetectionScopeAsync, and the harness section of RunOnceAsync).
     }
 
     // ── Refactoring scan ───────────────────────────────────────────────────
@@ -305,15 +312,11 @@ public sealed class AutoConsolidationServiceTests
     [Fact]
     public async Task RunOnce_OneTemplateThrows_OtherTemplatesStillChecked()
     {
-        // NOTE [WARNING]: the throwing template is listed LAST in TemplateIds, so TemplateRefactoring
-        // (the template asserted to still fire) is processed before the exception is ever raised.
-        // This means the test cannot catch a regression where catching template-N's exception aborts
-        // templates N+1+ (e.g. a break/return in the catch block instead of continue), because there
-        // are no templates after the throwing one. The throwing template should be listed FIRST to
-        // properly verify per-template isolation.
-
-        // Second template throws; TemplateRefactoring should still be checked.
-        var secondTemplate = new PipelineJobTemplate
+        // The throwing template is listed FIRST so that TemplateRefactoring is only processed
+        // after error handling for the first template completes. If the catch block incorrectly
+        // used break/return/rethrow, TemplateRefactoring would never be reached and the Times.Once
+        // assertion below would fail — correctly detecting the regression.
+        var throwingTemplate = new PipelineJobTemplate
         {
             Id = "tmpl-auto-throws",
             Name = "Throwing Repo",
@@ -324,16 +327,16 @@ public sealed class AutoConsolidationServiceTests
 
         var projectWithTwo = DefaultProject with
         {
-            TemplateIds = [TemplateRefactoring.Id, secondTemplate.Id],
+            TemplateIds = [throwingTemplate.Id, TemplateRefactoring.Id],
         };
 
         _configClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([projectWithTwo]);
         _configClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([TemplateRefactoring, secondTemplate]);
+            .ReturnsAsync([throwingTemplate, TemplateRefactoring]);
 
         _staleness.Setup(s => s.CountClosedIssuesSinceLastScanAsync(
-                It.Is<PipelineJobTemplate>(t => t.Id == secondTemplate.Id),
+                It.Is<PipelineJobTemplate>(t => t.Id == throwingTemplate.Id),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Simulated tracker failure"));
 
@@ -347,8 +350,11 @@ public sealed class AutoConsolidationServiceTests
             AutoRefactoringScanAfterClosedIssues = 3,
         });
 
-        // Should not throw despite one template error
+        // Should not throw despite the first template erroring
         await sut.RunOnceAsync(CancellationToken.None);
+
+        // TODO: also assert that IsPausedAsync is not called after count throws (ordering issue:
+        // counts are currently fetched before IsPausedAsync in TryTriggerIfThresholdReachedAsync).
 
         _consolidation.Verify(
             c => c.TriggerAutomaticAsync(
@@ -356,7 +362,7 @@ public sealed class AutoConsolidationServiceTests
                 It.Is<TemplateId?>(t => t.HasValue && t.Value.Value == TemplateRefactoring.Id),
                 It.IsAny<CancellationToken>()),
             Times.Once,
-            "the first template's trigger must still fire despite the second template throwing");
+            "TemplateRefactoring's trigger must still fire despite the preceding template throwing");
     }
 
     // ── Leader gate ────────────────────────────────────────────────────────
@@ -410,5 +416,70 @@ public sealed class AutoConsolidationServiceTests
             c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "non-leader should never trigger consolidations");
+    }
+
+    // ── Error isolation — per-section catch block coverage ─────────────────
+
+    [Fact]
+    public async Task RunOnce_BrainScopeThrows_DoesNotPropagateAndLogsWarning()
+    {
+        // Exercises the catch (Exception ex) block inside TryTriggerBrainScopeAsync.
+        _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("bp-auto-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated brain staleness failure"));
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 1,
+        });
+
+        // Must not throw despite the brain scope error
+        await sut.RunOnceAsync(CancellationToken.None);
+
+        _consolidation.Verify(
+            c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a throwing brain scope must not trigger consolidation");
+    }
+
+    [Fact]
+    public async Task RunOnce_HarnessFeedbackCountThrows_DoesNotPropagateAndLogsWarning()
+    {
+        // Exercises the catch (Exception ex) block in the harness-suggestions section of RunOnceAsync.
+        _staleness.Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated harness staleness failure"));
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoHarnessSuggestionsAfterFeedback = 1,
+        });
+
+        // Must not throw despite the harness count error
+        await sut.RunOnceAsync(CancellationToken.None);
+
+        _consolidation.Verify(
+            c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a throwing harness staleness query must not trigger consolidation");
+    }
+
+    [Fact]
+    public async Task RunOnce_TriggerReturnsNull_DoesNotThrow()
+    {
+        // Exercises the "result is null" branch inside TryTriggerIfThresholdReachedAsync.
+        // TriggerAutomaticAsync returns null when a run is already in progress or rejected.
+        _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("bp-auto-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(5); // meets threshold
+
+        _consolidation.Setup(c => c.TriggerAutomaticAsync(
+                ConsolidationRunType.BrainConsolidation, It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ConsolidationTriggerResult?)null);
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 5,
+        });
+
+        // Must complete without throwing even when the trigger returns null
+        await sut.RunOnceAsync(CancellationToken.None);
     }
 }

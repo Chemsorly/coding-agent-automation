@@ -150,6 +150,11 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
                 }
                 if (result.ScanOutcome is not null)
                     inMemoryRun.RefactoringScanOutcome = result.ScanOutcome;
+                if (result.BrainOutcome is not null)
+                {
+                    inMemoryRun.BrainConsolidationOutcome = result.BrainOutcome;
+                    inMemoryRun.BrainUpdatesPushed = true;
+                }
                 _runService.ReplaceRun(inMemoryRun);
             }
             else

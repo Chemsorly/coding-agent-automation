@@ -91,25 +91,25 @@ internal sealed class NullConfigurationStore : IConfigurationStore
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineProject>>([]);
 
-    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
+    public Task<PipelineProject?> GetProjectByIdAsync(ProjectId id, CancellationToken ct) =>
         Task.FromResult<PipelineProject?>(null);
 
     public Task SaveProjectAsync(PipelineProject project, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task DeleteProjectAsync(string id, CancellationToken ct) =>
+    public Task DeleteProjectAsync(ProjectId id, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct) =>
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(ProjectId projectId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineJobTemplate>>([]);
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineJobTemplate>>([]);
 
-    public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct) =>
+    public Task SaveTemplateAsync(ProjectId projectId, PipelineJobTemplate template, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct) =>
+    public Task DeleteTemplateAsync(ProjectId projectId, TemplateId templateId, CancellationToken ct) =>
         Task.CompletedTask;
 
     public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct) =>

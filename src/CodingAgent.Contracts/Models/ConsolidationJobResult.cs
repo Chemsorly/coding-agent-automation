@@ -67,6 +67,10 @@ public sealed class ConsolidationJobResult
     /// <summary>For a refactoring scan: what it produced. Null for the other kinds.</summary>
     [Key(14)]
     public RefactoringScanOutcome? ScanOutcome { get; set; }
+
+    /// <summary>For a brain consolidation that pushed its changes: what it changed and pushed. Null otherwise.</summary>
+    [Key(15)]
+    public BrainConsolidationOutcome? BrainOutcome { get; set; }
 }
 
 /// <summary>
