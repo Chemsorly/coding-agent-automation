@@ -84,36 +84,9 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         if (string.Equals(ctx.HubMethodName, nameof(AgentHub.RegisterAgent), StringComparison.Ordinal))
             return true;
 
-        var agent = _registry.GetByConnectionId(ctx.Context.ConnectionId);
+        var result = TryResolveAgent(ctx);
 
-        // Fallback: _connectionIndex is node-local and empty on a cold pod (after API restart).
-        // If GetByConnectionId misses, check Redis directly using the agentId query param.
-        //
-        // SECURITY: only accept the Redis entry if its ConnectionId already matches the current
-        // connection — meaning Register() has completed on some replica and written the new
-        // connectionId. If Redis still holds a previous connection's ID, the guard rejects the
-        // entry and the caller must retry (the Polly pipeline covers that residual window).
-        // TODO: ctx.Context.Features is non-nullable in the SignalR contract and is always initialized
-        // before InvokeMethodAsync — the `is not null` guard is redundant and misleading. The real
-        // null-safety is provided by the ?. null-conditional on GetHttpContext() below. Remove this
-        // guard in a future cleanup pass. (WARNING — Correctness Review / .NET Specialist / Security)
-        var queryAgentId = (string?)null;
-        if (agent is null && ctx.Context.Features is not null)
-        {
-            // TODO: No format/length validation is applied to queryAgentId before the Redis lookup.
-            // Any caller with a valid API key can probe Redis for arbitrary agent keys on a cold pod.
-            // Add a max-length and character allowlist check here if Redis key enumeration is a concern.
-            // (WARNING — Security Review)
-            queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(queryAgentId))
-            {
-                var candidate = _registry.GetByAgentId(new AgentId(queryAgentId));
-                if (candidate?.ConnectionId == ctx.Context.ConnectionId)
-                    agent = candidate;
-            }
-        }
-
-        if (agent is null)
+        if (result.Agent is null)
         {
             // An agent leaving while its connection is not registered (e.g. its session ended in the
             // reconnect window after an API restart) has nothing to deregister. Skip the call instead of
@@ -138,18 +111,17 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             // precise classification would require a Redis lookup confirming the agentId is a known agent
             // (even if not yet registered on this connection). Acknowledged as an accepted trade-off in
             // the issue spec. (Correctness Review / Security Review)
-            var isReconnectRace = !string.IsNullOrEmpty(queryAgentId);
-            var rejectionReason = isReconnectRace
+            var rejectionReason = result.IsReconnectRace
                 ? PipelineTelemetry.HubAuthRejectionReasons.ReconnectRace
                 : PipelineTelemetry.HubAuthRejectionReasons.NotRegistered;
 
             PipelineTelemetry.HubAuthRejections.Add(1,
                 new KeyValuePair<string, object?>(ReasonTag, rejectionReason));
 
-            if (isReconnectRace)
+            if (result.IsReconnectRace)
                 _logger.Debug(
                     "Hub method {Method} rejected — connection {ConnectionId} is reconnecting (agentId={AgentId}, likely reconnect-race window)",
-                    ctx.HubMethodName, ctx.Context.ConnectionId, LogSanitizer.SanitizeForLog(queryAgentId));
+                    ctx.HubMethodName, ctx.Context.ConnectionId, LogSanitizer.SanitizeForLog(result.QueryAgentId));
             else
                 _logger.Warning(
                     "Hub method {Method} rejected — connection {ConnectionId} is not a registered agent",
@@ -159,10 +131,69 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         }
 
         if (ctx.HubMethod.GetCustomAttribute<RequiresActiveJobAttribute>() is not null)
-            return GuardActiveJob(ctx, agent);
+            return GuardActiveJob(ctx, result.Agent);
 
         return true;
     }
+
+    /// <summary>
+    /// Resolves the calling agent from the registry, with a Redis fallback for cold-pod scenarios.
+    /// </summary>
+    /// <remarks>
+    /// Primary path: looks up by <c>ConnectionId</c> in the node-local <c>_connectionIndex</c>.
+    /// Fallback: when the primary misses (e.g. after an API restart), reads the <c>agentId</c>
+    /// query parameter and checks Redis directly via <see cref="IAgentRegistryService.GetByAgentId"/>.
+    ///
+    /// SECURITY: the Redis entry is accepted only if its stored <c>ConnectionId</c> already matches
+    /// the current connection — meaning <c>Register()</c> has completed on some replica and written
+    /// the new <c>connectionId</c>. If Redis still holds a previous connection's ID the entry is
+    /// rejected; the Polly retry pipeline on the agent side covers that residual window.
+    ///
+    /// TODO: No format/length validation is applied to <c>queryAgentId</c> before the Redis lookup.
+    /// Any caller with a valid API key can probe Redis for arbitrary agent keys on a cold pod.
+    /// Add a max-length and character allowlist check here if Redis key enumeration is a concern.
+    /// (WARNING — Security Review)
+    /// </remarks>
+    private AgentLookupResult TryResolveAgent(HubInvocationContext ctx)
+    {
+        var agent = _registry.GetByConnectionId(ctx.Context.ConnectionId);
+        if (agent is not null)
+            return new AgentLookupResult(agent, IsReconnectRace: false, QueryAgentId: null);
+
+        // Fallback: _connectionIndex is node-local and empty on a cold pod (after API restart).
+        // ctx.Context.Features is guarded explicitly because test infrastructure (Moq loose mocks)
+        // may return null for the Features property; GetHttpContext() dereferences Features directly
+        // and would throw NullReferenceException rather than returning a safe null in that case.
+        var queryAgentId = (string?)null;
+        if (ctx.Context.Features is not null)
+        {
+            queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(queryAgentId))
+            {
+                // TODO: No format/length validation is applied to queryAgentId before this lookup;
+                // see the Security Review TODO in the XML doc-comment above for context. (WARNING — Security Review)
+                var candidate = _registry.GetByAgentId(new AgentId(queryAgentId));
+                if (candidate?.ConnectionId == ctx.Context.ConnectionId)
+                    return new AgentLookupResult(candidate, IsReconnectRace: false, QueryAgentId: null);
+            }
+        }
+
+        return new AgentLookupResult(null, IsReconnectRace: !string.IsNullOrEmpty(queryAgentId), QueryAgentId: queryAgentId);
+    }
+
+    /// <summary>Result of <see cref="TryResolveAgent"/>.</summary>
+    /// <param name="Agent">The resolved agent, or <c>null</c> if not found or security-rejected.</param>
+    /// <param name="IsReconnectRace">
+    /// <c>true</c> when the <c>agentId</c> query parameter was present (indicating the agent is
+    /// likely in the reconnect-race window). Used by the caller to classify the rejection reason
+    /// and choose the appropriate log level.
+    /// </param>
+    /// <param name="QueryAgentId">
+    /// The raw (unsanitized) <c>agentId</c> query parameter value, populated only when
+    /// <see cref="IsReconnectRace"/> is <c>true</c>. Passed to <see cref="LogSanitizer"/> by the
+    /// caller before writing to logs.
+    /// </param>
+    private sealed record AgentLookupResult(AgentEntry? Agent, bool IsReconnectRace, string? QueryAgentId);
 
     /// <summary>
     /// Validates the <c>jobId</c> first parameter against the agent's <c>ActiveJobId</c>.
