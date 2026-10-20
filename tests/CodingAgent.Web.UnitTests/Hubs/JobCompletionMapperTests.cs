@@ -316,4 +316,123 @@ public sealed class JobCompletionMapperTests
         run.CompletedAtOffset.Should().Be(t2,
             "Apply must overwrite an earlier stamp with the agent's authoritative completion time");
     }
+
+    [Fact]
+    public void Apply_CopiesPhaseBreakdown_AllFields()
+    {
+        var run = CreateRun();
+        var phaseEntry = new PhaseUsagePayload
+        {
+            Tokens = 12345,
+            Cost = 1.23m,
+            SessionCount = 3,
+            AgentTimeSeconds = 42.5,
+            Provider = "kiro",
+            Model = "claude-sonnet-4-5",
+            InputTokens = 5000,
+            OutputTokens = 7000,
+            ReasoningTokens = 300,
+            CacheReadTokens = 100,
+            CacheWriteTokens = 200,
+            Turns = 7,
+            WebSearchRequests = 2,
+            BillingMode = "subscription"
+        };
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload> { ["codegen"] = phaseEntry }
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.Metrics.PhaseBreakdown.Should().HaveCount(1);
+        var result = run.Metrics.PhaseBreakdown["codegen"];
+        result.Tokens.Should().Be(12345);
+        result.Cost.Should().Be(1.23m);
+        result.SessionCount.Should().Be(3);
+        result.AgentTimeSeconds.Should().Be(42.5);
+        result.Provider.Should().Be("kiro");
+        result.Model.Should().Be("claude-sonnet-4-5");
+        result.InputTokens.Should().Be(5000);
+        result.OutputTokens.Should().Be(7000);
+        result.ReasoningTokens.Should().Be(300);
+        result.CacheReadTokens.Should().Be(100);
+        result.CacheWriteTokens.Should().Be(200);
+        result.Turns.Should().Be(7);
+        result.WebSearchRequests.Should().Be(2);
+        result.BillingMode.Should().Be("subscription");
+    }
+
+    [Fact]
+    public void Apply_PhaseBreakdownReplacesExistingEntries()
+    {
+        var run = CreateRun();
+        // Pre-populate with two entries
+        run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(Tokens: 999, Cost: 9.99m);
+        run.Metrics.PhaseBreakdown["analysis"] = new PhaseUsage(Tokens: 111, Cost: 1.11m);
+
+        var newCodegen = new PhaseUsagePayload { Tokens = 500, Cost = 0.50m, SessionCount = 1 };
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload> { ["codegen"] = newCodegen }
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.Metrics.PhaseBreakdown.Should().HaveCount(1,
+            "payload is the authoritative final breakdown — existing entries must be replaced");
+        run.Metrics.PhaseBreakdown.Should().ContainKey("codegen");
+        run.Metrics.PhaseBreakdown["codegen"].Tokens.Should().Be(500);
+        run.Metrics.PhaseBreakdown["codegen"].Cost.Should().Be(0.50m,
+            "the whole PhaseUsage object must be replaced, not merged with the old entry");
+        run.Metrics.PhaseBreakdown["codegen"].SessionCount.Should().Be(1,
+            "the whole PhaseUsage object must be replaced, not merged with the old entry");
+        run.Metrics.PhaseBreakdown.Should().NotContainKey("analysis",
+            "analysis key was absent from the payload and must be removed");
+    }
+
+    [Fact]
+    public void Apply_NullPhaseBreakdown_LeavesExistingEntries()
+    {
+        var run = CreateRun();
+        run.Metrics.PhaseBreakdown["analysis"] = new PhaseUsage(Tokens: 777, Cost: 0.77m);
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = null
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.Metrics.PhaseBreakdown.Should().HaveCount(1,
+            "a null PhaseBreakdown in the payload must leave existing entries unchanged");
+        run.Metrics.PhaseBreakdown["analysis"].Tokens.Should().Be(777);
+    }
+
+    [Fact]
+    public void Apply_EmptyPhaseBreakdown_ClearsExistingEntries()
+    {
+        // A non-null but empty dictionary means the agent completed with zero phases —
+        // existing stale entries must be cleared, not preserved (unlike the null case).
+        var run = CreateRun();
+        run.Metrics.PhaseBreakdown["analysis"] = new PhaseUsage(Tokens: 500, Cost: 0.50m);
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>()
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.Metrics.PhaseBreakdown.Should().BeEmpty(
+            "a non-null empty PhaseBreakdown must clear existing entries, not leave them (unlike null)");
+    }
 }

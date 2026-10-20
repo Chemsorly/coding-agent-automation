@@ -212,7 +212,7 @@ Cache token fields are populated for **OpenCode** and **Claude Code** agents. Ki
 ### LLM Usage Telemetry Architecture
 
 1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-invocation span (see "Session Spans" below) and adds the session count and elapsed time to `PipelineRun.Metrics.PhaseBreakdown` under the invocation's phase key. The calling phase executors add the tokens and cost with `AccumulateTokenUsage` under the same key.
-2. **Wire** — `LocalPipelineExecutor.BuildPayloadBase` converts `PhaseBreakdown` into `JobCompletionPayload.PhaseBreakdown` for transmission to the API.
+2. **Wire** — `LocalPipelineExecutor.BuildPayloadBase` converts `PhaseBreakdown` into `JobCompletionPayload.PhaseBreakdown` for transmission to the API. The API copies it onto its own run in `JobCompletionMapper` and keeps it in the Redis run hash (`phaseBreakdown`), so it reaches `PipelineRunSummary.PhaseBreakdown`.
 3. **API side** — `WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync` reads the breakdown and records the `pipeline.run.*` usage counters with the normalized `phase` tag.
 
 ### Session Spans (GenAI Semantic Conventions)
