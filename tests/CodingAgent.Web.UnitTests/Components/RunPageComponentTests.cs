@@ -1134,6 +1134,244 @@ public class RunPageComponentTests : BunitContext
         Assert.NotEmpty(cut.FindAll("[data-testid='diagnosis-card']"));
         Assert.Equal("Configuration", cut.Find("[data-testid='diagnosis-verdict']").TextContent.Trim());
     }
+
+    // ── Issue #3571: consolidation outcome display ─────────────────────────
+
+    /// <summary>
+    /// A finished refactoring scan with a RefactoringScanOutcome must render the created
+    /// issues, dropped proposal, scan settings, grid counts, and the commit SHA. The plain
+    /// "Result" section must be absent.
+    /// </summary>
+    [Fact]
+    public void ScanOutcome_RendersCreatedDroppedAndSettings()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            IssueIdentifier = "RefactoringDetection:tpl-1",
+            IssueTitle = "RefactoringDetection:tpl-1",
+            ConsolidationTemplateName = "my-template",
+            ConsolidationTemplateId = "tpl-1",
+            FinalStep = PipelineStep.Completed,
+            LastActiveStep = PipelineStep.CreatingRefactoringIssues,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            RefactoringScanOutcome = new RefactoringScanOutcome
+            {
+                ProposalCount = 3,
+                AnalyzedCommitSha = "d080c437e1a2b3",
+                MaxIssues = 3,
+                HotspotLookbackDays = 90,
+                ReviewEnabled = true,
+                AutoDispatch = false,
+                CreatedIssues =
+                [
+                    new CreatedIssueInfo { Identifier = "101", Title = "Refactor X", Url = "https://github.com/org/repo/issues/101" },
+                    new CreatedIssueInfo { Identifier = "102", Title = "Fix Y", Url = "https://github.com/org/repo/issues/102", Category = "bug" },
+                ],
+                DroppedProposals =
+                [
+                    new RefactoringProposalNote { Title = "Duplicate proposal", Reason = "title of an open issue" },
+                ],
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Created issues section with 2 links pointing to the correct URLs
+        var createdSection = cut.Find("[data-testid='scan-created-issues']");
+        var links = createdSection.QuerySelectorAll("a");
+        links.Length.Should().Be(2);
+        links[0].GetAttribute("href").Should().Be("https://github.com/org/repo/issues/101");
+        links[1].GetAttribute("href").Should().Be("https://github.com/org/repo/issues/102");
+        cut.Markup.Should().Contain("#101");
+        cut.Markup.Should().Contain("#102");
+        createdSection.TextContent.Should().Contain("bug");
+
+        // Dropped proposals section with reason
+        cut.Find("[data-testid='scan-dropped-proposals']").TextContent.Should().Contain("title of an open issue");
+
+        // Scan settings
+        var settingsSection = cut.Find("[data-testid='scan-settings']");
+        settingsSection.TextContent.Should().Contain("Max issues 3");
+        settingsSection.TextContent.Should().Contain("Hotspot lookback 90 days");
+
+        // Grid items: "2 of 3 proposals" and truncated commit SHA "d080c437e1a2"
+        cut.Markup.Should().Contain("2 of 3 proposals");
+        cut.Markup.Should().Contain("d080c437e1a2");
+
+        // Plain "Result" section must be absent when outcome is present
+        cut.FindAll("[data-testid='consolidation-result']").Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A failed scan with an unfiled proposal must render the unfiled proposals section
+    /// with the footer note. The created-issues section must be absent.
+    /// </summary>
+    [Fact]
+    public void ScanOutcome_WithUnfiledProposals_RendersThem()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            IssueIdentifier = "RefactoringDetection:tpl-2",
+            IssueTitle = "RefactoringDetection:tpl-2",
+            ConsolidationTemplateName = "my-template",
+            ConsolidationTemplateId = "tpl-2",
+            FinalStep = PipelineStep.Failed,
+            LastActiveStep = PipelineStep.CreatingRefactoringIssues,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            RefactoringScanOutcome = new RefactoringScanOutcome
+            {
+                ProposalCount = 1,
+                MaxIssues = 5,
+                HotspotLookbackDays = 30,
+                UnfiledProposals =
+                [
+                    new RefactoringProposalNote { Title = "Orphaned proposal", Category = "design" },
+                ],
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var unfiledSection = cut.Find("[data-testid='scan-unfiled-proposals']");
+        unfiledSection.TextContent.Should().Contain("Orphaned proposal");
+        unfiledSection.TextContent.Should().Contain("These proposals exist only in this run.");
+
+        // No created-issues section when CreatedIssues is empty
+        cut.FindAll("[data-testid='scan-created-issues']").Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A finished brain consolidation must render the four count tiles, the pushed commit
+    /// line with "merged onto newer brain commits" when PushAttempts > 1, and the
+    /// "Brain commit ↗" chip in the links rail.
+    /// </summary>
+    [Fact]
+    public void BrainOutcome_RendersTilesAndCommitLink()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.BrainConsolidation,
+            IssueIdentifier = "BrainConsolidation:global",
+            IssueTitle = "BrainConsolidation:global",
+            FinalStep = PipelineStep.Completed,
+            LastActiveStep = PipelineStep.PushingBrainChanges,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            BrainConsolidationOutcome = new BrainConsolidationOutcome
+            {
+                FilesModified = 14,
+                EntriesMerged = 9,
+                ContradictionsResolved = 2,
+                EntriesPruned = 17,
+                PushedCommitSha = "3f9b2c1d0e",
+                PushedCommitUrl = "https://github.com/org/brain/commit/3f9b2c1d0e",
+                PushAttempts = 2,
+                BaseBranch = "main",
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // brain-changes section with four tiles
+        var brainSection = cut.Find("[data-testid='brain-changes']");
+        brainSection.TextContent.Should().Contain("14");
+        brainSection.TextContent.Should().Contain("Files modified");
+        brainSection.TextContent.Should().Contain("9");
+        brainSection.TextContent.Should().Contain("Entries merged");
+        brainSection.TextContent.Should().Contain("2");
+        brainSection.TextContent.Should().Contain("Contradictions resolved");
+        brainSection.TextContent.Should().Contain("17");
+        brainSection.TextContent.Should().Contain("Entries pruned");
+        brainSection.TextContent.Should().Contain("merged onto newer brain commits (attempt 2)");
+        // Pushed commit line inside the brain-changes card
+        brainSection.TextContent.Should().Contain("Pushed 3f9b2c1");
+        brainSection.TextContent.Should().Contain("to main");
+
+        // Brain commit link in the links rail
+        var commitLink = cut.Find("[data-testid='brain-commit-link']");
+        commitLink.GetAttribute("href").Should().Be("https://github.com/org/brain/commit/3f9b2c1d0e");
+        commitLink.TextContent.Should().Contain("Brain commit 3f9b2c1");
+    }
+
+    /// <summary>
+    /// A harness-suggestions run with ConsolidationResultSummary and no structured outcomes
+    /// must still show the plain "Result" section.
+    /// </summary>
+    [Fact]
+    public void HarnessRun_KeepsResultSection()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.HarnessSuggestions,
+            IssueIdentifier = "HarnessSuggestions:global",
+            IssueTitle = "HarnessSuggestions:global",
+            FinalStep = PipelineStep.Completed,
+            LastActiveStep = PipelineStep.PushingBrainChanges,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            ConsolidationResultSummary = "Suggested 4 harness updates.",
+            // No RefactoringScanOutcome, no BrainConsolidationOutcome
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.Find("[data-testid='consolidation-result']").TextContent.Should().Contain("Suggested 4 harness updates.");
+    }
+
+    /// <summary>
+    /// Agent-supplied proposal titles must be HTML-encoded: a title containing script-injection
+    /// characters must appear as entities in the markup, never as raw HTML.
+    /// </summary>
+    [Fact]
+    public void MaliciousProposalTitle_IsEncoded()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+            IssueIdentifier = "RefactoringDetection:tpl-3",
+            IssueTitle = "RefactoringDetection:tpl-3",
+            ConsolidationTemplateName = "my-template",
+            ConsolidationTemplateId = "tpl-3",
+            FinalStep = PipelineStep.Failed,
+            LastActiveStep = PipelineStep.CreatingRefactoringIssues,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            RefactoringScanOutcome = new RefactoringScanOutcome
+            {
+                ProposalCount = 1,
+                MaxIssues = 5,
+                HotspotLookbackDays = 30,
+                UnfiledProposals =
+                [
+                    new RefactoringProposalNote { Title = "<img src=x onerror=alert(1)>" },
+                ],
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.Markup.Should().Contain("&lt;img");
+        cut.Markup.Should().NotContain("<img src=x");
+    }
 }
 
 /// <summary>
