@@ -197,12 +197,12 @@ public interface IAgentHubFacade
     /// Loads all templates belonging to the specified project.
     /// Returns an empty list if no project store is available or the project has no templates.
     /// </summary>
-    Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct);
+    Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(ProjectId projectId, CancellationToken ct);
 
     /// <summary>
     /// Loads a project by ID. Returns null if no project store is available or the project does not exist.
     /// </summary>
-    Task<PipelineProject?> GetProjectByIdAsync(string projectId, CancellationToken ct);
+    Task<PipelineProject?> GetProjectByIdAsync(ProjectId projectId, CancellationToken ct);
 
     /// <summary>
     /// Loads provider configurations of the specified kind.
