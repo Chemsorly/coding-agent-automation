@@ -427,6 +427,15 @@ public class AgentAuthorizationFilterObservabilityTests
     // acceptance proof that manager-mediated Report* calls wait for re-registration after a reconnect.
     // (Test Quality Review)
 
+    // NOTE: The Redis fallback SUCCESS path (GetByConnectionId null + agentId query present +
+    // GetByAgentId returns a candidate whose ConnectionId matches → method proceeds) and the
+    // fallback SECURITY REJECTION path (same setup but ConnectionId mismatches → HubException) are
+    // covered by AgentAuthorizationFilterRedisFallbackTests in AgentAuthTests.cs:
+    //   GuardAgentMethod_ConnectionIdMiss_RedisHasMatchingConnectionId_AllowsCall (success)
+    //   GuardAgentMethod_ConnectionIdMiss_RedisHasStaleConnectionId_Throws (security rejection)
+    // They are not duplicated here because this class uses Mock<IAgentRegistryService> exclusively
+    // and those scenarios are fully covered in the dedicated Redis fallback test class.
+
     [Fact]
     public void HubAuthRejectionReasons_NotRegistered_Value()
         => PipelineTelemetry.HubAuthRejectionReasons.NotRegistered.Should().Be("not_registered");

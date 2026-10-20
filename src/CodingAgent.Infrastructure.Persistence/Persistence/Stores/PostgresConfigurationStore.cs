@@ -558,10 +558,10 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         return result;
     }
 
-    public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
+    public async Task<PipelineProject?> GetProjectByIdAsync(ProjectId id, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(id);
-        if (!Guid.TryParse(id, out var guid))
+        if (id.Value is null) throw new ArgumentException("ProjectId must not be default.", nameof(id));
+        if (!Guid.TryParse(id.Value, out var guid))
             return null;
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -619,13 +619,13 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         }
     }
 
-    public async Task DeleteProjectAsync(string id, CancellationToken ct)
+    public async Task DeleteProjectAsync(ProjectId id, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(id);
-        if (!Guid.TryParse(id, out var guid))
+        if (id.Value is null) throw new ArgumentException("ProjectId must not be default.", nameof(id));
+        if (!Guid.TryParse(id.Value, out var guid))
             return;
 
-        if (string.Equals(id, WellKnownIds.DefaultProjectId, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(id.Value, WellKnownIds.DefaultProjectId, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The Default project cannot be deleted.");
 
         await _projectLock.WaitAsync(ct);
@@ -664,10 +664,9 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     // ── Template CRUD ────────────────────────────────────────────────────
 
     public async Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(
-        string projectId, CancellationToken ct)
+        ProjectId projectId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(projectId);
-        if (!Guid.TryParse(projectId, out var guid))
+        if (!Guid.TryParse(projectId.Value, out var guid))
             return [];
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -713,11 +712,10 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     }
 
     public async Task SaveTemplateAsync(
-        string projectId, PipelineJobTemplate template, CancellationToken ct)
+        ProjectId projectId, PipelineJobTemplate template, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(projectId);
         ArgumentNullException.ThrowIfNull(template);
-        if (!Guid.TryParse(projectId, out var projectGuid))
+        if (!Guid.TryParse(projectId.Value, out var projectGuid))
             return;
         if (!Guid.TryParse(template.Id, out var templateGuid))
             throw new ArgumentException($"Invalid template ID: {template.Id}");
@@ -764,10 +762,9 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     }
 
     public async Task DeleteTemplateAsync(
-        string projectId, TemplateId templateId, CancellationToken ct)
+        ProjectId projectId, TemplateId templateId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(projectId);
-        if (!Guid.TryParse(projectId, out _))
+        if (!Guid.TryParse(projectId.Value, out _))
             return;
         if (!Guid.TryParse(templateId.Value, out var templateGuid))
             return;
