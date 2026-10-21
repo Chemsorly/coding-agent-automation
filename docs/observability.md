@@ -218,6 +218,8 @@ Each phase entry in `PipelineRunSummary.PhaseBreakdown` also carries:
 
 `PipelineRunSummary.McpServers` holds the names of the MCP servers that were configured (and enabled) for the run, regardless of whether they were called. This lets the UI show a server that was configured but never called.
 
+**Claude Code** populates these fields from `tool_use` blocks in `assistant` events (calls), `tool_result` blocks in `user` events (failures), and the `mcp_servers` array of the `init` system event (unavailable servers).
+
 Two Warning log lines are emitted from agent pods (starting when each provider sub-issue lands):
 
 | Event | Message template | Properties |
