@@ -87,22 +87,6 @@ public class ConsolidationPromptBuilderReviewTests
     }
 
     [Fact]
-    public void BuildHarnessSuggestionsReviewPrompt_ContainsSuggestionsFilePath()
-    {
-        var result = ConsolidationPromptBuilder.BuildHarnessSuggestionsReviewPrompt();
-
-        result.Should().Contain(".agent/harness-suggestions-output.json");
-    }
-
-    [Fact]
-    public void BuildHarnessSuggestionsReviewPrompt_ContainsFeedbackDataReference()
-    {
-        var result = ConsolidationPromptBuilder.BuildHarnessSuggestionsReviewPrompt();
-
-        result.Should().Contain("feedback-data.json");
-    }
-
-    [Fact]
     public void BuildRefactoringRefinementPrompt_ContainsReviewFilePath()
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt();

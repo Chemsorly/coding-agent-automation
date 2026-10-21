@@ -77,8 +77,6 @@ public sealed class AutoConsolidationServiceTests
             .ReturnsAsync(false);
         _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(0);
-        _staleness.Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(0);
         _staleness.Setup(s => s.CountClosedIssuesSinceLastScanAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(0);
         _staleness.Setup(s => s.CountOpenScanIssuesAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
@@ -112,7 +110,6 @@ public sealed class AutoConsolidationServiceTests
         var cfg = config ?? new PipelineConfiguration
         {
             AutoBrainConsolidationAfterRuns = 5,
-            AutoHarnessSuggestionsAfterFeedback = 10,
             AutoRefactoringScanAfterClosedIssues = 3,
         };
         _configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -134,7 +131,6 @@ public sealed class AutoConsolidationServiceTests
         var sut = CreateSut(new PipelineConfiguration
         {
             AutoBrainConsolidationAfterRuns = 0,
-            AutoHarnessSuggestionsAfterFeedback = 0,
             AutoRefactoringScanAfterClosedIssues = 0,
         });
 
@@ -148,9 +144,6 @@ public sealed class AutoConsolidationServiceTests
             Times.Never);
         _staleness.Verify(
             s => s.CountClosedIssuesSinceLastScanAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _staleness.Verify(
-            s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -228,11 +221,11 @@ public sealed class AutoConsolidationServiceTests
             "a paused scope must not trigger");
 
         // TODO: this test does not assert that count methods (CountBrainRunsSinceLastConsolidationAsync,
-        // CountClosedIssuesSinceLastScanAsync, CountFeedbackSinceLastHarnessSuggestionsAsync) are
+        // CountClosedIssuesSinceLastScanAsync) are
         // Times.Never when paused, because the current implementation fetches counts BEFORE calling
         // IsPausedAsync (inside TryTriggerIfThresholdReachedAsync). Adding Times.Never assertions for
-        // count methods would fail until the ordering is fixed (see TODO in TryTriggerBrainScopeAsync,
-        // TryTriggerRefactoringDetectionScopeAsync, and the harness section of RunOnceAsync).
+        // count methods would fail until the ordering is fixed (see TODO in TryTriggerBrainScopeAsync
+        // and TryTriggerRefactoringDetectionScopeAsync).
     }
 
     // ── Refactoring scan ───────────────────────────────────────────────────
@@ -286,26 +279,6 @@ public sealed class AutoConsolidationServiceTests
     }
 
     // ── Harness suggestions ────────────────────────────────────────────────
-
-    [Fact]
-    public async Task RunOnce_HarnessFeedbackReachesThreshold_TriggersHarnessSuggestions()
-    {
-        _staleness.Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(10); // equals threshold
-
-        var sut = CreateSut(new PipelineConfiguration
-        {
-            AutoHarnessSuggestionsAfterFeedback = 10,
-        });
-        await sut.RunOnceAsync(CancellationToken.None);
-
-        _consolidation.Verify(
-            c => c.TriggerAutomaticAsync(
-                ConsolidationRunType.HarnessSuggestions,
-                It.Is<TemplateId?>(t => t == null),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
 
     // ── Error isolation ────────────────────────────────────────────────────
 
@@ -397,7 +370,6 @@ public sealed class AutoConsolidationServiceTests
             .ReturnsAsync(new PipelineConfiguration
             {
                 AutoBrainConsolidationAfterRuns = 1,
-                AutoHarnessSuggestionsAfterFeedback = 1,
                 AutoRefactoringScanAfterClosedIssues = 1,
             });
 
@@ -439,27 +411,6 @@ public sealed class AutoConsolidationServiceTests
             c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a throwing brain scope must not trigger consolidation");
-    }
-
-    [Fact]
-    public async Task RunOnce_HarnessFeedbackCountThrows_DoesNotPropagateAndLogsWarning()
-    {
-        // Exercises the catch (Exception ex) block in the harness-suggestions section of RunOnceAsync.
-        _staleness.Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Simulated harness staleness failure"));
-
-        var sut = CreateSut(new PipelineConfiguration
-        {
-            AutoHarnessSuggestionsAfterFeedback = 1,
-        });
-
-        // Must not throw despite the harness count error
-        await sut.RunOnceAsync(CancellationToken.None);
-
-        _consolidation.Verify(
-            c => c.TriggerAutomaticAsync(It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "a throwing harness staleness query must not trigger consolidation");
     }
 
     [Fact]

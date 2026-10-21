@@ -89,7 +89,7 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
     [Fact]
     public async Task Triggering_NeedsGlobalOperate()
     {
-        var body = new UiConsolidationTriggerRequest(ConsolidationRunType.HarnessSuggestions, null, false);
+        var body = new UiConsolidationTriggerRequest(ConsolidationRunType.BrainConsolidation, null, false);
 
         (await Http(TestUserTokens.Global(AccessRole.ReadOnly)).PostAsJsonAsync("/api/ui/consolidation/runs", body))
             .StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -135,11 +135,10 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
             .StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
         // With global read and all auto-start thresholds at their default (0), all counter
-        // dictionaries are empty and the harness counter is null.
+        // dictionaries are empty.
         var counters = await Client(TestUserTokens.Global(AccessRole.ReadOnly)).GetAutoCountersAsync();
 
         counters.BrainCounters.Should().BeEmpty();
         counters.RefactoringCounters.Should().BeEmpty();
-        counters.HarnessCounter.Should().BeNull();
     }
 }

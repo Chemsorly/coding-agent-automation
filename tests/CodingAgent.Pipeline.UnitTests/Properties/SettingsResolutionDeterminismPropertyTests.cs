@@ -294,7 +294,6 @@ public class SettingsResolutionArbitraries
         from maxRefactoringProposals in Gen.Choose(1, 10)
         from refactoringReviewEnabled in Gen.Elements(true, false)
         from brainConsolidationReviewEnabled in Gen.Elements(true, false)
-        from harnessSuggestionsReviewEnabled in Gen.Elements(true, false)
         from blacklistedPaths in GenBlacklistedPaths()
         from brainReadOnly in Gen.Elements(true, false)
         from ciCancelledMoveMaxRetries in Gen.Choose(0, 10)
@@ -320,7 +319,6 @@ public class SettingsResolutionArbitraries
             MaxRefactoringProposals = maxRefactoringProposals,
             RefactoringReviewEnabled = refactoringReviewEnabled,
             BrainConsolidationReviewEnabled = brainConsolidationReviewEnabled,
-            HarnessSuggestionsReviewEnabled = harnessSuggestionsReviewEnabled,
             BlacklistedPaths = blacklistedPaths,
             BrainReadOnly = brainReadOnly,
             CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,

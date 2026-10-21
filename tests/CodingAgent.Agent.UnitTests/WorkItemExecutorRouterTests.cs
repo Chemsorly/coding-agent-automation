@@ -164,14 +164,12 @@ public class WorkItemExecutorRouterTests
         var assignment = CreateMinimalAssignment(WorkItemTaskType.Consolidation) with
         {
             ConsolidationLastSuccessfulRunUtc = lastSuccess,
-            ConsolidationFeedbackDataJson = "[{\"outcome\":\"Failure\"}]",
             TraceContext = trace
         };
 
         await router.ExecuteAsync(assignment, CreateDisconnectedConnection(), new OutputBatcher(), _ => { }, CancellationToken.None);
 
         captured!.LastSuccessfulRunUtc.Should().Be(new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc));
-        captured.FeedbackDataJson.Should().Be("[{\"outcome\":\"Failure\"}]");
         captured.TraceContext.Should().BeSameAs(trace);
     }
 

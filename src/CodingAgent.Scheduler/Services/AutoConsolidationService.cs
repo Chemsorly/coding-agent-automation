@@ -10,8 +10,8 @@ namespace CodingAgent.Scheduler.Services;
 
 /// <summary>
 /// Leader-gated background service that automatically triggers consolidation runs (brain consolidation,
-/// refactoring scan, harness suggestions) when their respective staleness counters reach the configured
-/// thresholds. All three triggers default to 0 (off) — nothing changes until an operator sets a threshold.
+/// refactoring scan) when their respective staleness counters reach the configured
+/// thresholds. Both triggers default to 0 (off) — nothing changes until an operator sets a threshold.
 /// </summary>
 public sealed class AutoConsolidationService : BackgroundService
 {
@@ -94,9 +94,8 @@ public sealed class AutoConsolidationService : BackgroundService
     {
         var config = await _configStore.LoadPipelineConfigAsync(ct);
 
-        // Fast exit: all three triggers are off.
+        // Fast exit: both triggers are off.
         if (config.AutoBrainConsolidationAfterRuns == 0
-            && config.AutoHarnessSuggestionsAfterFeedback == 0
             && config.AutoRefactoringScanAfterClosedIssues == 0)
             return;
 
@@ -148,34 +147,6 @@ public sealed class AutoConsolidationService : BackgroundService
             {
                 await TryTriggerRefactoringDetectionScopeAsync(
                     template, project, config.MaxRefactoringProposals, refactoringThreshold, ct);
-            }
-        }
-
-        // ── Harness suggestions ────────────────────────────────────────────
-        if (config.AutoHarnessSuggestionsAfterFeedback > 0)
-        {
-            var harnessThreshold = config.AutoHarnessSuggestionsAfterFeedback;
-            var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.HarnessSuggestions, null, null);
-
-            try
-            {
-                // TODO: count is fetched before IsPausedAsync (inside TryTriggerIfThresholdReachedAsync).
-                // On a paused harness scope this incurs one unnecessary staleness query per tick.
-                // Fix: accept a count-fetching delegate in TryTriggerIfThresholdReachedAsync so
-                // the pause check can short-circuit before the count is fetched.
-                var count = await _staleness.CountFeedbackSinceLastHarnessSuggestionsAsync(ct);
-                await TryTriggerIfThresholdReachedAsync(
-                    ConsolidationRunType.HarnessSuggestions, scopeKey, count, harnessThreshold, null, ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "Auto consolidation: error checking {Type} for {Scope}",
-                    ConsolidationRunType.HarnessSuggestions, scopeKey);
             }
         }
     }

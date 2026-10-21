@@ -73,7 +73,6 @@ public sealed class ConsolidationServiceDedupTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockDistributor.Object,
             SelectorResolver: _mockSelectorResolver.Object));
@@ -147,8 +146,7 @@ public sealed class ConsolidationServiceDedupTests
     /// IssueIdentifier for global runs is "{type}:global".
     /// </summary>
     [Fact]
-    public async Task TriggerAsync_SecondTrigger_GlobalRun_WhileFirstNonTerminal_ReturnsNull()
-    {
+    public async Task TriggerAsync_SecondTrigger_GlobalRun_WhileFirstNonTerminal_ReturnsNull()    {
         var mockDistributor = new Mock<IWorkDistributor>();
         mockDistributor
             .SetupSequence(d => d.DistributeAsync(
@@ -168,14 +166,14 @@ public sealed class ConsolidationServiceDedupTests
 
         var sut = CreateSut(mockDistributor);
 
-        // Act: global run (null templateId) — HarnessSuggestions uses global scope
+        // Act: global run (null templateId) — BrainConsolidation with null template uses global scope
         var first = await sut.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions,
+            ConsolidationRunType.BrainConsolidation,
             null,
             CancellationToken.None);
 
         var second = await sut.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions,
+            ConsolidationRunType.BrainConsolidation,
             null,
             CancellationToken.None);
 
@@ -192,10 +190,10 @@ public sealed class ConsolidationServiceDedupTests
         mockDistributor.Verify(
             d => d.DistributeAsync(
                 It.Is<JobDistributionRequest>(r =>
-                    r.IssueIdentifier == $"{ConsolidationRunType.HarnessSuggestions}:global"),
+                    r.IssueIdentifier == $"{ConsolidationRunType.BrainConsolidation}:global"),
                 It.IsAny<CancellationToken>()),
             Times.AtLeastOnce,
-            "global run IssueIdentifier must be 'HarnessSuggestions:global'");
+            "global run IssueIdentifier must be 'BrainConsolidation:global'");
     }
 
     /// <summary>

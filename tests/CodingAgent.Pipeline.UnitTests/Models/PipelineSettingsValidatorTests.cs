@@ -134,7 +134,7 @@ public class PipelineSettingsValidatorTests
         var paths = PipelineSettingsValidator.ProjectOverridablePaths();
 
         paths.Should().Contain(["AgentTimeout", "CodeReview.MaxIterations", "CodeReview.InlineComments.MaxRetries"]);
-        paths.Should().NotContain(["MinIssueSlots", "MaxConcurrentDecompositions", "HarnessSuggestionsReviewEnabled", "ClosedLoopPollInterval"]);
+        paths.Should().NotContain(["MinIssueSlots", "MaxConcurrentDecompositions", "ClosedLoopPollInterval"]);
     }
 
     [Fact]

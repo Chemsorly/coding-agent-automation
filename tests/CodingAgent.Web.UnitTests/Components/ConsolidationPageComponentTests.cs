@@ -47,7 +47,6 @@ public class ConsolidationPageComponentTests : BunitContext
     private void RegisterServices(
         IReadOnlyList<PipelineJobTemplate>? templates = null,
         IReadOnlyList<PipelineRunSummary>? runHistory = null,
-        HarnessSuggestions? harnessSuggestions = null,
         PipelineConfiguration? pipelineConfig = null,
         IReadOnlyList<PipelineProject>? projects = null)
     {
@@ -58,7 +57,7 @@ public class ConsolidationPageComponentTests : BunitContext
             : [new PipelineProject { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = allTemplates.Select(t => t.Id).ToList(), Enabled = true }]);
 
         _mockConsolidationClient.Setup(s => s.GetOverviewAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => ConsolidationPageService.BuildOverview(allProjects, allTemplates, config, harnessSuggestions));
+            .ReturnsAsync(() => ConsolidationPageService.BuildOverview(allProjects, allTemplates, config));
         _mockConsolidationClient.Setup(s => s.GetRefactoringScanSettingsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string templateId, CancellationToken _) => ConsolidationPageService.BuildRefactoringScanSettings(
                 config, allProjects.FirstOrDefault(p => p.TemplateIds.Contains(templateId))));
@@ -85,8 +84,7 @@ public class ConsolidationPageComponentTests : BunitContext
             .Setup(s => s.GetAutoCountersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiConsolidationAutoCounters(
                 new Dictionary<string, UiAutoCounter>(),
-                new Dictionary<string, UiAutoCounter>(),
-                null));
+                new Dictionary<string, UiAutoCounter>()));
 
         Services.AddSingleton(_mockConsolidationClient.Object);
         Services.AddSingleton(_mockRunHistoryClient.Object);
@@ -420,64 +418,20 @@ public class ConsolidationPageComponentTests : BunitContext
         Assert.DoesNotContain(cardButtons, b => b.TextContent.Contains("Refactoring Scan"));
     }
 
-    // ═══ Requirement 1.3, 8.2: Harness suggestions section ═══
+    // ═══ Harness suggestions removed: the page must not render the section ═══
 
     [Fact]
-    public void HarnessSection_ShowsSuggestions_WhenAvailable()
+    public void Page_HasNoHarnessSuggestionsSection()
     {
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc),
-            BasedOnRunCount = 15,
-            SuccessRate = 0.8m,
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new() { Text = "Add retry logic", Rationale = "Frequent timeout failures", Frequency = 5 },
-                new() { Text = "Cache dependencies", Rationale = "Slow builds", Frequency = 3 }
-            }
-        };
-        RegisterServices(harnessSuggestions: suggestions);
+        // Arrange
+        RegisterServices();
 
+        // Act
         var cut = Render<Consolidation>();
 
-        var markup = cut.Markup;
-        Assert.Contains("Add retry logic", markup);
-        Assert.Contains("Frequent timeout failures", markup);
-        Assert.Contains("Cache dependencies", markup);
-        Assert.Contains("Slow builds", markup);
-    }
-
-    [Fact]
-    public void HarnessSection_ShowsNoSuggestions_WhenNull()
-    {
-        RegisterServices(harnessSuggestions: null);
-
-        var cut = Render<Consolidation>();
-
-        var markup = cut.Markup;
-        Assert.Contains("No suggestions generated yet", markup);
-    }
-
-    [Fact]
-    public void HarnessSection_ShowsMetadata_WhenSuggestionsExist()
-    {
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc),
-            BasedOnRunCount = 15,
-            SuccessRate = 0.8m,
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new() { Text = "Suggestion 1", Rationale = "Reason", Frequency = 2 }
-            }
-        };
-        RegisterServices(harnessSuggestions: suggestions);
-
-        var cut = Render<Consolidation>();
-
-        var meta = cut.Find(".consolidation-suggestions-meta");
-        Assert.Contains("15", meta.TextContent);
-        Assert.Contains("80", meta.TextContent);
+        // Assert
+        cut.Markup.Should().NotContain("Harness Suggestions");
+        cut.Markup.Should().NotContain("Generate Suggestions");
     }
 
     // ═══ Requirement 1.5: Run history table ═══
@@ -494,7 +448,7 @@ public class ConsolidationPageComponentTests : BunitContext
                 finalStep: PipelineStep.Completed,
                 summary: "3 files modified"),
             CreateConsolidationRun(
-                type: ConsolidationRunType.HarnessSuggestions,
+                type: ConsolidationRunType.RefactoringDetection,
                 templateId: null,
                 templateName: null,
                 finalStep: PipelineStep.Failed,
@@ -510,7 +464,7 @@ public class ConsolidationPageComponentTests : BunitContext
         Assert.Contains("DotNet Repo", rows[0].TextContent);
         Assert.Contains("Succeeded", rows[0].TextContent);
         Assert.Contains("3 files modified", rows[0].TextContent);
-        Assert.Contains("Harness Suggestions", rows[1].TextContent);
+        Assert.Contains("Refactoring Detection", rows[1].TextContent);
         Assert.Contains("Global", rows[1].TextContent);
         Assert.Contains("Failed", rows[1].TextContent);
     }
@@ -556,7 +510,6 @@ public class ConsolidationPageComponentTests : BunitContext
     [Theory]
     [InlineData("Brain Consolidation", false, "Brain consolidation rejected")]
     [InlineData("Refactoring Scan", true, "Refactoring scan rejected")]
-    [InlineData("Generate Suggestions", false, "Harness suggestions rejected")]
     public void TriggerRejection_NamesMissingJobTemplateAsPossibleCause(string buttonText, bool confirmInModal, string expectedStart)
     {
         RegisterServices(templates: [CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")]);
@@ -574,8 +527,7 @@ public class ConsolidationPageComponentTests : BunitContext
                 Task.FromException<string>(new InvalidOperationException(type switch
                 {
                     ConsolidationRunType.BrainConsolidation => "Brain consolidation rejected for Test Template — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
-                    ConsolidationRunType.RefactoringDetection => "Refactoring scan rejected for Test Template — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
-                    _ => "Harness suggestions rejected — already running, a configuration error occurred, or no job template matches the agent profile."
+                    _ => "Refactoring scan rejected for Test Template — already running, a configuration error occurred, no job template matches the agent profile, or template not found."
                 })));
 
         var cut = Render<Consolidation>();
@@ -807,30 +759,6 @@ public class ConsolidationPageComponentTests : BunitContext
             ConsolidationRunType.BrainConsolidation, "t1", false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
     }
 
-    [Fact]
-    public void HarnessSuggestions_TriggersImmediately_NoModal()
-    {
-        var templates = new List<PipelineJobTemplate>
-        {
-            CreateTemplate(brainProviderId: "brain-1")
-        };
-        RegisterServices(templates: templates);
-
-        _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
-            .ReturnsAsync(Queued);
-
-        var cut = Render<Consolidation>();
-
-        var suggestionsButton = cut.FindAll(".btn-trigger")
-            .First(b => b.TextContent.Contains("Generate Suggestions"));
-        suggestionsButton.Click();
-
-        Assert.Empty(cut.FindAll(".modal-overlay"));
-        _mockConsolidationClient.Verify(s => s.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()), Times.Once);
-    }
-
     // ═══ Issue #1772: Modal focus and Enter-key bubble fixes ═══
 
     [Fact]
@@ -1030,27 +958,6 @@ public class ConsolidationPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void TriggerConsolidation_HarnessSuggestions_CallsTriggerAsync()
-    {
-        var templates = new List<PipelineJobTemplate>
-        {
-            CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")
-        };
-        RegisterServices(templates: templates);
-        _mockConsolidationClient.Setup(s => s.TriggerAsync(
-                ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()))
-            .ReturnsAsync(Queued);
-
-        var cut = Render<Consolidation>();
-
-        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Generate Suggestions")).Click();
-
-        _mockConsolidationClient.Verify(
-            s => s.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, false, It.IsAny<CancellationToken>(), It.IsAny<RefactoringScanFocus>()),
-            Times.Once);
-    }
-
-    [Fact]
     public async Task TriggerConsolidation_ShowsQueuedStatusMessage_AfterSuccessfulTrigger()
     {
         var templates = new List<PipelineJobTemplate>
@@ -1162,11 +1069,12 @@ public class ConsolidationPageComponentTests : BunitContext
     public void Access_TriggerControls_NeedGlobalOperator(AccessRole role, bool visible)
     {
         Services.AddTestAccess(TestAccess.Global(role));
-        RegisterServices(templates: Array.Empty<PipelineJobTemplate>());
+        RegisterServices(templates: [CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")]);
 
         var cut = Render<Consolidation>();
 
-        cut.Markup.Contains("Generate Suggestions").Should().Be(visible);
+        // The per-card trigger buttons render only for global operators (spec 049).
+        cut.FindAll(".btn-trigger").Any(b => b.TextContent.Contains("Brain Consolidation")).Should().Be(visible);
     }
 
     // ── Issue #3592: Automatic-start counters ─────────────────────────────────
@@ -1181,8 +1089,7 @@ public class ConsolidationPageComponentTests : BunitContext
             .Setup(s => s.GetAutoCountersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiConsolidationAutoCounters(
                 new Dictionary<string, UiAutoCounter> { ["t1"] = new UiAutoCounter(14, 20, null) },
-                new Dictionary<string, UiAutoCounter>(),
-                null));
+                new Dictionary<string, UiAutoCounter>()));
 
         var cut = Render<Consolidation>();
 
@@ -1219,8 +1126,7 @@ public class ConsolidationPageComponentTests : BunitContext
                     ["t1"] = new UiAutoCounter(7, 20, null),
                     ["t2"] = new UiAutoCounter(7, 20, null)
                 },
-                new Dictionary<string, UiAutoCounter>(),
-                null));
+                new Dictionary<string, UiAutoCounter>()));
 
         var cut = Render<Consolidation>();
 
@@ -1246,8 +1152,7 @@ public class ConsolidationPageComponentTests : BunitContext
                 new Dictionary<string, UiAutoCounter>
                 {
                     ["t1"] = new UiAutoCounter(3, 10, "auto paused: the last run failed")
-                },
-                null));
+                }));
 
         var cut = Render<Consolidation>();
 
@@ -1275,8 +1180,7 @@ public class ConsolidationPageComponentTests : BunitContext
                 new Dictionary<string, UiAutoCounter>
                 {
                     ["t1"] = new UiAutoCounter(5, 10, "auto waiting: 3 scan issues still open")
-                },
-                null));
+                }));
 
         var cut = Render<Consolidation>();
 
@@ -1289,28 +1193,6 @@ public class ConsolidationPageComponentTests : BunitContext
             // string from the mock, as AutoCounters_RefactoringPaused_ShowsPausedText does for its value.
             blocked.TextContent.Should().Contain("auto waiting:");
             blocked.TextContent.Should().Contain("scan issues still open");
-        });
-    }
-
-    [Fact]
-    public void AutoCounters_HarnessThresholdSet_ShowsCounter()
-    {
-        RegisterServices(templates: Array.Empty<PipelineJobTemplate>());
-
-        _mockConsolidationClient
-            .Setup(s => s.GetAutoCountersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UiConsolidationAutoCounters(
-                new Dictionary<string, UiAutoCounter>(),
-                new Dictionary<string, UiAutoCounter>(),
-                new UiAutoCounter(41, 50, null)));
-
-        var cut = Render<Consolidation>();
-
-        cut.WaitForAssertion(() =>
-        {
-            var counter = cut.Find("[data-testid='auto-counter-harness']");
-            counter.TextContent.Should().Contain("41 / 50 feedback entries since the last run");
-            counter.TextContent.Should().Contain("· auto");
         });
     }
 
@@ -1338,8 +1220,7 @@ public class ConsolidationPageComponentTests : BunitContext
             .Setup(s => s.GetAutoCountersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiConsolidationAutoCounters(
                 new Dictionary<string, UiAutoCounter> { ["t1"] = new UiAutoCounter(5, 20, null) },
-                new Dictionary<string, UiAutoCounter>(),  // refactoring counter absent (failed)
-                null));
+                new Dictionary<string, UiAutoCounter>()));  // refactoring counter absent (failed)
 
         var cut = Render<Consolidation>();
 

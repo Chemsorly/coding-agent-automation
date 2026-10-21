@@ -360,7 +360,6 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
 
         // ── Persistence services (subset required by AddApiOrchestration) ────
         services.AddSingleton<IPipelineRunHistoryService>(new Mock<IPipelineRunHistoryService>().Object);
-        services.AddSingleton<IHarnessSuggestionStore>(new Mock<IHarnessSuggestionStore>().Object);
         services.AddSingleton<ILoopStateStore>(new Mock<ILoopStateStore>().Object);
         services.AddSingleton<IFeedbackCommentOutbox>(new Mock<IFeedbackCommentOutbox>().Object);
         services.AddSingleton<ITriageStore>(new Mock<ITriageStore>().Object);

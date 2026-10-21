@@ -150,7 +150,7 @@ public record JobDistributionRequest
 
     // --- Consolidation-specific ---
 
-    /// <summary>The consolidation run type (Brain, RefactoringDetection, HarnessSuggestions).</summary>
+    /// <summary>The consolidation run type (Brain, RefactoringDetection).</summary>
     public ConsolidationRunType? ConsolidationRunType { get; init; }
 
     /// <summary>Template ID for template-scoped consolidation runs (null for global).</summary>
@@ -164,12 +164,6 @@ public record JobDistributionRequest
     /// history. Set at delivery time; brain consolidation focuses on what changed since.
     /// </summary>
     public DateTimeOffset? ConsolidationLastSuccessfulRunUtc { get; init; }
-
-    /// <summary>
-    /// For harness suggestions: the <see cref="RunFeedback"/> entries collected since the last successful
-    /// harness suggestion run, as JSON. Set at delivery time; null when there is none.
-    /// </summary>
-    public string? ConsolidationFeedbackDataJson { get; init; }
 
     /// <summary>
     /// For triage runs: the triage's earlier attempts and the project's other triages, as Markdown. Set at

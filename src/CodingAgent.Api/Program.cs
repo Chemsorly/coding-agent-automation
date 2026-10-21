@@ -155,7 +155,6 @@ app.MapHub<UiHub>(HubRoutes.Ui, options => options.CloseOnAuthenticationExpirati
 app.MapWorkItemEndpoints();
 app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();
-app.MapHarnessSuggestionEndpoints();
 app.MapFeedbackCommentOutboxEndpoints();
 app.MapAgentEndpoints();
 app.MapApiSchedulerEndpoints();

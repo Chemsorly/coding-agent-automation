@@ -180,20 +180,6 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
         result.ErrorMessage.Should().Contain("issue provider");
     }
 
-    // ── HarnessSuggestions — Missing Configs ─────────────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_HarnessSuggestions_MissingAgentConfig_ReturnsFailure()
-    {
-        var executor = CreateExecutor();
-        var job = CreateHarnessSuggestionsJob(providerConfigs: []);
-
-        var result = await executor.ExecuteAsync(job, _connection, CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("agent provider");
-    }
-
     // ── Unknown Type ─────────────────────────────────────────────────────
 
     [Fact]
@@ -355,29 +341,6 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Unsupported");
         result.JobId.Should().Be("job-error");
-    }
-
-    // ── HarnessSuggestions — Provider Creation Failure ────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_HarnessSuggestions_UnsupportedAgentType_ReturnsFailure()
-    {
-        var executor = CreateExecutor();
-        var agentConfig = new ProviderConfig
-        {
-            Id = "agent-1",
-            Kind = ProviderKind.Agent,
-            ProviderType = "UnsupportedAgent",
-            DisplayName = "Bad Agent",
-            Settings = new Dictionary<string, string>()
-        };
-
-        var job = CreateHarnessSuggestionsJob(providerConfigs: [agentConfig]);
-
-        var result = await executor.ExecuteAsync(job, _connection, CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("Unsupported");
     }
 
     // ── RefactoringDetection — Issue Provider Token Handling ────────────
@@ -613,30 +576,6 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
         result.Success.Should().BeFalse();
     }
 
-    // ── HarnessSuggestions — Full Path (agent validation passes) ─────────
-
-    [Fact]
-    public async Task ExecuteAsync_HarnessSuggestions_ValidAgentConfig_ReturnsResult()
-    {
-        var executor = CreateExecutor();
-        var agentConfig = new ProviderConfig
-        {
-            Id = "agent-1",
-            Kind = ProviderKind.Agent,
-            ProviderType = "KiroCli",
-            DisplayName = "Agent",
-            Settings = new Dictionary<string, string>()
-        };
-
-        var job = CreateHarnessSuggestionsJob(providerConfigs: [agentConfig]);
-
-        // Agent validation may pass or fail depending on environment.
-        // Either way, we get a result back (not an exception).
-        var result = await executor.ExecuteAsync(job, _connection, CancellationToken.None);
-
-        result.JobId.Should().Be(job.JobId);
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private LocalConsolidationExecutor CreateExecutor() =>
@@ -656,15 +595,6 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
         {
             JobId = $"job-refactor-{Guid.NewGuid():N}",
             Type = ConsolidationRunType.RefactoringDetection,
-            ProviderConfigs = providerConfigs ?? [],
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-    private static ConsolidationJobMessage CreateHarnessSuggestionsJob(
-        IReadOnlyList<ProviderConfig>? providerConfigs = null) => new()
-        {
-            JobId = $"job-harness-{Guid.NewGuid():N}",
-            Type = ConsolidationRunType.HarnessSuggestions,
             ProviderConfigs = providerConfigs ?? [],
             PipelineConfiguration = new PipelineConfiguration()
         };

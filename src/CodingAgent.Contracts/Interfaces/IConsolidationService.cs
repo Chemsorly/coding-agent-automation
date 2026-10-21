@@ -3,7 +3,7 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
-/// Manages consolidation loop execution: triggering runs and persisting harness suggestions.
+/// Manages consolidation loop execution: triggering runs.
 /// </summary>
 public interface IConsolidationService
 {
@@ -13,7 +13,7 @@ public interface IConsolidationService
     /// agent available).
     /// </summary>
     /// <param name="type">The type of consolidation loop to execute.</param>
-    /// <param name="templateId">The Pipeline Job Template ID (null for harness suggestions which are global).</param>
+    /// <param name="templateId">The Pipeline Job Template ID.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
     /// <param name="focus">Which detection agent a refactoring scan runs; ignored by the other consolidation types.</param>
@@ -26,21 +26,6 @@ public interface IConsolidationService
     /// configuration error, template not found).
     /// </summary>
     Task<ConsolidationTriggerResult?> TriggerAutomaticAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct);
-
-    /// <summary>
-    /// Returns the current harness suggestions from the persisted file
-    /// (<c>config/pipeline/harness-suggestions.json</c>).
-    /// </summary>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>The deserialized suggestions, or <c>null</c> if the file does not exist.</returns>
-    Task<HarnessSuggestions?> GetHarnessSuggestionsAsync(CancellationToken ct);
-
-    /// <summary>
-    /// Persists harness suggestions to the config file, overwriting any existing content.
-    /// </summary>
-    /// <param name="suggestions">The suggestions to persist.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task SaveHarnessSuggestionsAsync(HarnessSuggestions suggestions, CancellationToken ct);
 
     /// <summary>
     /// Fired when any consolidation run changes state (created, completed, or failed).

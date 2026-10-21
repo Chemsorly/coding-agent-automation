@@ -98,7 +98,6 @@ public static class UiFormatters
     {
         ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
         ConsolidationRunType.RefactoringDetection => "Refactoring Scan",
-        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
         _ => "Consolidation"
     };
 
@@ -111,7 +110,6 @@ public static class UiFormatters
         var scope = templateName ?? templateId;
         return type switch
         {
-            ConsolidationRunType.HarnessSuggestions => "Harness suggestions · all projects",
             ConsolidationRunType.BrainConsolidation => scope is null ? "Brain consolidation" : $"Brain consolidation · {scope}",
             ConsolidationRunType.RefactoringDetection => scope is null ? "Refactoring scan" : $"Refactoring scan · {scope}",
             _ => scope is null ? "Consolidation" : $"Consolidation · {scope}"

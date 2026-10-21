@@ -54,36 +54,6 @@ public class ConsolidationPromptBuilderTests
     }
 
     /// <summary>
-    /// Harness suggestion prompt includes feedback count and success rate.
-    /// **Validates: Requirements 7.3**
-    /// </summary>
-    [Fact]
-    public void BuildHarnessSuggestionPrompt_IncludesFeedbackCountAndSuccessRate()
-    {
-        var result = ConsolidationPromptBuilder.BuildHarnessSuggestionPrompt(
-            feedbackCount: 42, successRate: 78.5m);
-
-        result.Should().Contain("42");
-        // The success rate is formatted with F1 using the current culture's decimal separator
-        var expectedRate = 78.5m.ToString("F1") + "%";
-        result.Should().Contain(expectedRate);
-    }
-
-    /// <summary>
-    /// Harness suggestion prompt instructs concrete, actionable suggestions.
-    /// **Validates: Requirements 7.4**
-    /// </summary>
-    [Fact]
-    public void BuildHarnessSuggestionPrompt_InstructsConcreteSuggestions()
-    {
-        var result = ConsolidationPromptBuilder.BuildHarnessSuggestionPrompt(
-            feedbackCount: 10, successRate: 65.0m);
-
-        result.Should().Contain("Concrete and actionable");
-        result.Should().Contain("Grounded in evidence");
-    }
-
-    /// <summary>
     /// FormatBrainConsolidationSummary includes all four metrics.
     /// **Validates: Requirements 4.2**
     /// </summary>

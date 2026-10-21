@@ -47,7 +47,7 @@ public sealed class ConsolidationPageServiceTests
         };
         var templates = new[] { Template("z1"), Template("a1"), Template("a2", enabled: false), Template("o1") };
 
-        var overview = ConsolidationPageService.BuildOverview(projects, templates, new PipelineConfiguration(), null);
+        var overview = ConsolidationPageService.BuildOverview(projects, templates, new PipelineConfiguration());
 
         overview.Templates.Select(t => t.Id).Should().Equal("a1", "z1");
     }
@@ -58,7 +58,7 @@ public sealed class ConsolidationPageServiceTests
         var projects = new[] { Project("alpha", templateIds: ["full", "no-brain", "no-issues"]) };
         var templates = new[] { Template("full"), Template("no-brain", brain: null), Template("no-issues", issues: null) };
 
-        var overview = ConsolidationPageService.BuildOverview(projects, templates, new PipelineConfiguration(), null);
+        var overview = ConsolidationPageService.BuildOverview(projects, templates, new PipelineConfiguration());
 
         overview.Templates.Should().Equal(
             new UiConsolidationTemplate("full", "full-name", true, true, false),
@@ -77,7 +77,7 @@ public sealed class ConsolidationPageServiceTests
         var templates = new[] { Template("own-flag", brainReadOnly: true), Template("global"), Template("project-writes") };
         var readOnlyGlobally = new PipelineConfiguration { BrainReadOnly = true };
 
-        var overview = ConsolidationPageService.BuildOverview(projects, templates, readOnlyGlobally, null);
+        var overview = ConsolidationPageService.BuildOverview(projects, templates, readOnlyGlobally);
 
         overview.Templates.ToDictionary(t => t.Id, t => t.BrainReadOnly).Should().BeEquivalentTo(new Dictionary<string, bool>
         {
@@ -88,19 +88,17 @@ public sealed class ConsolidationPageServiceTests
     }
 
     [Fact]
-    public void Overview_MapsEveryTemplateWithABrain_AndPassesTheSuggestionsThrough()
+    public void Overview_MapsEveryTemplateWithABrain()
     {
-        var suggestions = new HarnessSuggestions { GeneratedAtUtc = DateTime.UtcNow, BasedOnRunCount = 4, SuccessRate = 0.5m, Suggestions = [] };
         var templates = new[] { Template("enabled"), Template("disabled", enabled: false, brain: "brain-2"), Template("brainless", brain: null) };
 
-        var overview = ConsolidationPageService.BuildOverview([], templates, new PipelineConfiguration(), suggestions);
+        var overview = ConsolidationPageService.BuildOverview([], templates, new PipelineConfiguration());
 
         overview.BrainProviderByTemplate.Should().BeEquivalentTo(new Dictionary<string, string>
         {
             ["enabled"] = "brain-1",
             ["disabled"] = "brain-2",
         });
-        overview.HarnessSuggestions.Should().BeSameAs(suggestions);
     }
 
     [Fact]
@@ -162,7 +160,6 @@ public sealed class ConsolidationPageServiceTests
 
         result.BrainCounters.Should().BeEmpty();
         result.RefactoringCounters.Should().BeEmpty();
-        result.HarnessCounter.Should().BeNull();
         mockStaleness.VerifyNoOtherCalls();
     }
 
@@ -261,71 +258,41 @@ public sealed class ConsolidationPageServiceTests
     }
 
     [Fact]
-    public async Task GetAutoCounters_HarnessThresholdSet_ReturnsHarnessCounter()
-    {
-        var config = new PipelineConfiguration { AutoHarnessSuggestionsAfterFeedback = 50 };
-        var mockStaleness = new Mock<ConsolidationStalenessService>();
-        mockStaleness
-            .Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(41);
-        mockStaleness
-            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-
-        var service = BuildService(mockStaleness, config, [], []);
-
-        var result = await service.GetAutoCountersAsync(CancellationToken.None);
-
-        result.HarnessCounter.Should().Be(new UiAutoCounter(41, 50, null));
-    }
-
-    [Fact]
-    public async Task GetAutoCounters_HarnessPaused_ReturnsPausedBlockedText()
-    {
-        var config = new PipelineConfiguration { AutoHarnessSuggestionsAfterFeedback = 50 };
-        var mockStaleness = new Mock<ConsolidationStalenessService>();
-        mockStaleness
-            .Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(30);
-        mockStaleness
-            .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
-        var service = BuildService(mockStaleness, config, [], []);
-
-        var result = await service.GetAutoCountersAsync(CancellationToken.None);
-
-        result.HarnessCounter!.Blocked.Should().Be("auto paused: the last run failed");
-    }
-
-    [Fact]
     public async Task GetAutoCounters_StalenessThrows_OmitsThatCounterAndContinues()
     {
         var config = new PipelineConfiguration
         {
             AutoBrainConsolidationAfterRuns = 20,
-            AutoHarnessSuggestionsAfterFeedback = 50
+            AutoRefactoringScanAfterClosedIssues = 10,
+            MaxRefactoringProposals = 3,
         };
         var mockStaleness = new Mock<ConsolidationStalenessService>();
-        // Brain throws
+        // Brain throws — should not propagate or suppress the refactoring counter
         mockStaleness
             .Setup(s => s.CountBrainRunsSinceLastConsolidationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("staleness failure"));
-        // Harness succeeds
-        mockStaleness
-            .Setup(s => s.CountFeedbackSinceLastHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(20);
         mockStaleness
             .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
+        // Refactoring counter succeeds independently
+        mockStaleness
+            .Setup(s => s.CountOpenScanIssuesAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+        mockStaleness
+            .Setup(s => s.CountClosedIssuesSinceLastScanAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(7);
 
         var service = BuildService(mockStaleness, config,
-            [Project("p", templateIds: ["t1"])],
-            [Template("t1", brain: "brain-1", repo: null, issues: null)]);
+            [Project("p", templateIds: ["t1", "t2"])],
+            [
+                Template("t1", brain: "brain-1", repo: null, issues: null),  // brain template
+                Template("t2", brain: null),                                   // refactoring template (no brain)
+            ]);
 
         var result = await service.GetAutoCountersAsync(CancellationToken.None);
 
-        result.BrainCounters.Should().BeEmpty("brain counter failed");
-        result.HarnessCounter.Should().Be(new UiAutoCounter(20, 50, null));
+        result.BrainCounters.Should().BeEmpty("brain counter failed — the exception must suppress only the brain counter");
+        result.RefactoringCounters.Should().ContainKey("t2",
+            "refactoring counter must still be populated even when the brain counter threw");
     }
 }

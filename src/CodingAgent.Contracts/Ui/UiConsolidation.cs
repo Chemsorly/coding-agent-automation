@@ -11,11 +11,9 @@ namespace CodingAgent.Contracts.Ui;
 /// The brain provider of every template that has one, enabled or not. Brain consolidation works on a
 /// brain that several templates can share, so the page matches a run to a card by brain.
 /// </param>
-/// <param name="HarnessSuggestions">The last generated suggestions, or null when none exist.</param>
 public sealed record UiConsolidationOverview(
     IReadOnlyList<UiConsolidationTemplate> Templates,
-    IReadOnlyDictionary<string, string> BrainProviderByTemplate,
-    HarnessSuggestions? HarnessSuggestions);
+    IReadOnlyDictionary<string, string> BrainProviderByTemplate);
 
 /// <summary>One template card of the Consolidation page.</summary>
 /// <param name="BrainReadOnly">The brain is read-only for this template, so brain consolidation does not run from it.</param>
@@ -39,8 +37,8 @@ public sealed record UiRefactoringScanSettings(
     bool ReviewEnabledIsProjectOverride);
 
 /// <summary>
-/// Body of <c>POST /api/ui/consolidation/runs</c>. <paramref name="TemplateId"/> is null for harness
-/// suggestions, which are global; <paramref name="AutoDispatch"/> labels a refactoring scan's issues
+/// Body of <c>POST /api/ui/consolidation/runs</c>. <paramref name="TemplateId"/> identifies the template;
+/// <paramref name="AutoDispatch"/> labels a refactoring scan's issues
 /// <c>agent:next</c>; <paramref name="RefactoringFocus"/> selects which detection agent runs.
 /// </summary>
 public sealed record UiConsolidationTriggerRequest(ConsolidationRunType Type, string? TemplateId, bool AutoDispatch, RefactoringScanFocus RefactoringFocus = RefactoringScanFocus.All);
@@ -54,8 +52,7 @@ public sealed record UiConsolidationTriggerRequest(ConsolidationRunType Type, st
 /// <param name="RefactoringCounters">Keyed by template id.</param>
 public sealed record UiConsolidationAutoCounters(
     IReadOnlyDictionary<string, UiAutoCounter> BrainCounters,
-    IReadOnlyDictionary<string, UiAutoCounter> RefactoringCounters,
-    UiAutoCounter? HarnessCounter);
+    IReadOnlyDictionary<string, UiAutoCounter> RefactoringCounters);
 
 /// <summary>One automatic-start counter with current value, threshold, and optional blocked reason.</summary>
 /// <param name="Blocked">

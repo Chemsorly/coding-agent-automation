@@ -110,20 +110,6 @@ public class ConsolidationProviderResolverTests
         result.Failure!.ErrorMessage.Should().Contain("issue provider");
     }
 
-    // ── HarnessSuggestions — Missing Configs ─────────────────────────────
-
-    [Fact]
-    public async Task ResolveHarness_MissingAgentConfig_ReturnsFailure()
-    {
-        var resolver = CreateResolver();
-        var job = CreateJob(ConsolidationRunType.HarnessSuggestions, []);
-
-        var result = await resolver.ResolveHarnessProvidersAsync(job, CancellationToken.None);
-
-        result.IsSuccess.Should().BeFalse();
-        result.Failure!.ErrorMessage.Should().Contain("agent provider");
-    }
-
     // ── Refactoring — Issue Provider Missing Token ───────────────────────
 
     [Fact]
@@ -197,20 +183,6 @@ public class ConsolidationProviderResolverTests
 
         var resultNoProxy = await resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
         var resultNullProxy = await resolver.ResolveRefactoringProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
-
-        resultNoProxy.IsSuccess.Should().BeFalse();
-        resultNullProxy.IsSuccess.Should().BeFalse();
-        resultNullProxy.Failure!.ErrorMessage.Should().Be(resultNoProxy.Failure!.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task ResolveHarness_WithNullProxy_BehavesIdenticallyToNoProxyOverload()
-    {
-        var resolver = CreateResolver();
-        var job = CreateJob(ConsolidationRunType.HarnessSuggestions, []);
-
-        var resultNoProxy = await resolver.ResolveHarnessProvidersAsync(job, CancellationToken.None);
-        var resultNullProxy = await resolver.ResolveHarnessProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
 
         resultNoProxy.IsSuccess.Should().BeFalse();
         resultNullProxy.IsSuccess.Should().BeFalse();

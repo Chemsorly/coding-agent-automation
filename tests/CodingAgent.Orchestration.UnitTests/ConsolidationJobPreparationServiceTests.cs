@@ -159,7 +159,7 @@ public sealed class ConsolidationJobPreparationServiceTests
     }
 
     [Fact]
-    public async Task PrepareAsync_HarnessSuggestions_ExcludesIssuePermission()
+    public async Task PrepareAsync_NullTemplate_ExcludesIssuePermission()
     {
         SetupAgentConfig("agent-cfg");
         SetupMatchingProfile("agent-cfg");
@@ -173,7 +173,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, MakeMatchingProfile("agent-cfg"), CancellationToken.None);
 
         capturedIncludeIssue.Should().BeFalse();
     }
@@ -314,7 +314,7 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         var svc = CreateService();
         // Empty agentLabels — no profile matches → no agent config added
-        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, null, CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, null, CancellationToken.None);
 
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
@@ -419,7 +419,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, MakeMatchingProfile("agent-cfg"), CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Should().HaveCount(1);
@@ -501,7 +501,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, null, CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, null, CancellationToken.None);
 
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
@@ -702,7 +702,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var svc = CreateService();
 
         var result = await svc.PrepareAsync(
-            ConsolidationRunType.HarnessSuggestions,
+            ConsolidationRunType.BrainConsolidation,
             null,
             MakeMatchingProfile("agent-cfg"),
             CancellationToken.None);

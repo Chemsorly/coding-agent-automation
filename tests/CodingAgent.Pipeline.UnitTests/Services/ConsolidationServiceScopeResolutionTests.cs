@@ -77,7 +77,6 @@ public sealed class ConsolidationServiceScopeResolutionTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _projectStore.Object,
-            new Mock<IHarnessSuggestionStore>().Object,
             _providerConfigStore.Object,
             WorkDistributor: _distributor.Object,
             SelectorResolver: _selectorResolver.Object));
@@ -143,7 +142,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
         // block is skipped entirely — LoadProjectsAsync is never called.
         var sut = CreateSut();
 
-        await sut.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+        await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
 
         // TODO: Also assert the shape of the dispatched request for a global run: ConsolidationTemplateId
         // is null, ProjectId is null, ProjectName is null, and RepoProviderConfigId is the fallback/empty
@@ -161,7 +160,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
         // Characterizes: when templateId is null, GetProviderConfigByIdAsync is never called.
         var sut = CreateSut();
 
-        await sut.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+        await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
 
         _providerConfigStore.Verify(
             s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
@@ -170,17 +169,17 @@ public sealed class ConsolidationServiceScopeResolutionTests
     }
 
     [Fact]
-    public async Task TriggerAsync_GlobalHarnessRun_SendsNoTemplateName()
+    public async Task TriggerAsync_GlobalRun_SendsNoTemplateName()
     {
-        // Verifies: global harness suggestion runs (no template) must not propagate a template
+        // Verifies: global consolidation runs (no template) must not propagate a template
         // name — ConsolidationTemplateName must be null, not "Global" or any other string.
         var sut = CreateSut();
 
-        await sut.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+        await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
 
         _requests.Should().ContainSingle()
             .Which.ConsolidationTemplateName.Should().BeNull(
-                "global harness suggestion runs have no template; ConsolidationTemplateName must be null");
+                "global consolidation runs have no template; ConsolidationTemplateName must be null");
     }
 
     // ── 3. BuildConsolidationDistributionRequest forwards all required fields ─

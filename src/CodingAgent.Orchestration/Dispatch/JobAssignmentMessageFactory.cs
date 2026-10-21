@@ -68,7 +68,6 @@ public static class JobAssignmentMessageFactory
             ConsolidationRunType = request.ConsolidationRunType,
             ConsolidationTemplateId = request.ConsolidationTemplateId,
             ConsolidationLastSuccessfulRunUtc = request.ConsolidationLastSuccessfulRunUtc,
-            ConsolidationFeedbackDataJson = request.ConsolidationFeedbackDataJson,
             TriageContextMarkdown = request.TriageContextMarkdown,
             AutoDispatch = request.AutoDispatch,
             RefactoringFocus = request.RefactoringFocus,

@@ -39,9 +39,6 @@ public class PipelineTelemetryAgentSpanTests : IDisposable
     [InlineData("RefactoringDetection.AgentExecution")]
     [InlineData("RefactoringDetection.AdversarialReview")]
     [InlineData("RefactoringDetection.CreateIssues")]
-    [InlineData("HarnessSuggestion.AgentExecution")]
-    [InlineData("HarnessSuggestion.WriteToFile")]
-    [InlineData("HarnessSuggestion.AdversarialReview")]
     [InlineData("Agent.ReceiveJob")]
     [InlineData("Agent.ReportCompletion")]
     public void StartActivity_SpanName_CreatesActivity(string spanName)

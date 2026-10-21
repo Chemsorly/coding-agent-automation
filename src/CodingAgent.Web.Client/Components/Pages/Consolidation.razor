@@ -19,7 +19,7 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Consolidation</h1>
-            <span class="cockpit-page-sub">Brain consolidation, refactoring detection, and harness suggestions</span>
+            <span class="cockpit-page-sub">Brain consolidation and refactoring detection</span>
         </div>
     </div>
 
@@ -141,63 +141,6 @@
                         </div>
                     </div>
                 }
-            </div>
-        }
-    </section>
-
-    <!-- Global Harness Suggestions -->
-    <section class="settings-section">
-        <div class="cockpit-card-header">
-            <h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2>
-            @if (_autoCounters?.HarnessCounter is { } harnessCounter)
-            {
-                <span class="consolidation-auto-counter" data-testid="auto-counter-harness">@harnessCounter.Count / @harnessCounter.Threshold feedback entries since the last run@(harnessCounter.Blocked is null ? " · auto" : "")</span>
-                @if (harnessCounter.Blocked is not null)
-                {
-                    <span class="consolidation-auto-blocked" data-testid="auto-blocked-harness">@harnessCounter.Blocked</span>
-                }
-            }
-        </div>
-        @if (_isLoading)
-        {
-            <div class="monitoring-empty">Loading...</div>
-        }
-        else if (_harnessSuggestions == null)
-        {
-            <div class="monitoring-empty">No suggestions generated yet.</div>
-        }
-        else
-        {
-            <div class="consolidation-suggestions-meta">
-                Generated: @_harnessSuggestions.GeneratedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
-                — Based on @_harnessSuggestions.BasedOnRunCount runs
-                — Success rate: @_harnessSuggestions.SuccessRate.ToString("P1")
-            </div>
-            @if (_harnessSuggestions.Suggestions.Count == 0)
-            {
-                <div class="monitoring-empty">No suggestions in the current batch.</div>
-            }
-            else
-            {
-                <div class="consolidation-suggestions-list">
-                    @foreach (var suggestion in _harnessSuggestions.Suggestions)
-                    {
-                        <div class="consolidation-suggestion-item">
-                            <div class="consolidation-suggestion-text">@suggestion.Text</div>
-                            <div class="consolidation-suggestion-rationale">@suggestion.Rationale</div>
-                            <div class="consolidation-suggestion-frequency">Frequency: @suggestion.Frequency runs</div>
-                        </div>
-                    }
-                </div>
-            }
-        }
-        @if (Access.HasGlobalOperate)
-        {
-            <div class="consolidation-card-actions" style="margin-top: 12px;">
-                <button class="btn-trigger" disabled="@(_isLoading || _triggering || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
-                        @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null)">
-                    <Icon Name="sparkles" Size="14" /> Generate Suggestions
-                </button>
             </div>
         }
     </section>
@@ -351,7 +294,6 @@
     private IReadOnlyDictionary<string, string> _brainByTemplate = new Dictionary<string, string>(StringComparer.Ordinal);
     private IReadOnlyList<PipelineRunSummary> _runHistory = [];
     private bool _anyRunCancellable;
-    private HarnessSuggestions? _harnessSuggestions;
     private string? _statusMessage;
     private bool _statusIsError;
     private bool _isLoading = true;
@@ -421,18 +363,16 @@
     {
         try
         {
-            // The API works out each card's capabilities and loads the harness suggestions (spec 051 2.4b).
+            // The API works out each card's capabilities (spec 051 2.4b).
             var overview = await ConsolidationApi.GetOverviewAsync();
             _templates = overview.Templates;
             _brainByTemplate = overview.BrainProviderByTemplate;
-            _harnessSuggestions = overview.HarnessSuggestions;
         }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Failed to load templates for consolidation page");
             _templates = [];
             _brainByTemplate = new Dictionary<string, string>(StringComparer.Ordinal);
-            _harnessSuggestions = null;
         }
 
         try
@@ -650,7 +590,6 @@
     {
         ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
         ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
-        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
         _ => type.ToString()
     };
 }

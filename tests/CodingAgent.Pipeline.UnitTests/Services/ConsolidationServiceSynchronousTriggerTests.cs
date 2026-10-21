@@ -87,7 +87,6 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             logger ?? new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: _mockWorkDistributor.Object,
             SelectorResolver: _mockSelectorResolver.Object));

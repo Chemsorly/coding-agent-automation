@@ -64,7 +64,6 @@ public sealed class ConsolidationServiceBrainScopeTests
             new LoggerConfiguration().CreateLogger(),
             bootstrap,
             _projectStore.Object,
-            new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: _distributor.Object,
             SelectorResolver: _selectorResolver.Object,
@@ -171,15 +170,15 @@ public sealed class ConsolidationServiceBrainScopeTests
     }
 
     [Fact]
-    public async Task TriggerAsync_HarnessSuggestions_UseTheGlobalTimeout()
+    public async Task TriggerAsync_GlobalRun_UseTheGlobalTimeout()
     {
         _project = _project with { AgentTimeout = TimeSpan.FromMinutes(90) };
         var sut = CreateSut();
 
-        await sut.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+        await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
 
         _requests.Should().ContainSingle().Which.TimeoutSeconds.Should().Be(3600,
-            "harness suggestions have no template, so no project override applies");
+            "global runs have no template, so no project override applies");
     }
 
     [Fact]

@@ -28,7 +28,7 @@ public class ConsolidationActionsColumnTests : BunitContext
     {
         Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         _mockConsolidationClient.Setup(s => s.GetOverviewAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UiConsolidationOverview([], new Dictionary<string, string>(), null));
+            .ReturnsAsync(new UiConsolidationOverview([], new Dictionary<string, string>()));
 
         // Default run history: empty
         _mockRunHistoryClient

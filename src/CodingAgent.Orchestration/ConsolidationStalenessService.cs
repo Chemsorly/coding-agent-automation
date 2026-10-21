@@ -76,23 +76,6 @@ public class ConsolidationStalenessService
     }
 
     /// <summary>
-    /// Returns the number of runs with feedback collected since the last successful harness suggestion run.
-    /// </summary>
-    public virtual async Task<int> CountFeedbackSinceLastHarnessSuggestionsAsync(CancellationToken ct)
-    {
-        var scopeKey = new IssueIdentifier(
-            ConsolidationService.ScopeKey(ConsolidationRunType.HarnessSuggestions, null, null));
-
-        var since = await ConsolidationRunHistoryContext.GetLastSuccessfulRunAsync(_history, scopeKey, ct);
-
-        var result = await _history.GetRunHistoryAsync(
-            new RunHistoryQuery(Page: 1, PageSize: 500, FeedbackOnly: true, Since: since),
-            ct);
-
-        return result.Items.Count(r => r.Feedback is not null);
-    }
-
-    /// <summary>
     /// Returns the number of issues closed in the template's tracker (by the last-update date filter)
     /// since the last successful refactoring scan for that template, excluding issues the scan itself created.
     /// </summary>

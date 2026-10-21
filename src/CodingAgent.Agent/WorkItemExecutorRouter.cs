@@ -69,7 +69,6 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             ProviderConfigs = assignment.ProviderConfigs,
             PipelineConfiguration = assignment.PipelineConfiguration,
             LastSuccessfulRunUtc = assignment.ConsolidationLastSuccessfulRunUtc?.UtcDateTime,
-            FeedbackDataJson = assignment.ConsolidationFeedbackDataJson,
             TraceContext = assignment.TraceContext,
             AutoDispatch = assignment.AutoDispatch,
             RefactoringFocus = assignment.RefactoringFocus,

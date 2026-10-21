@@ -96,16 +96,10 @@ public sealed class ConsolidationServiceTests
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-test-default", ErrorMessage: null));
     }
 
-    // TODO [WARNING]: Each CreateSut() call allocates a fresh InMemoryHarnessSuggestionStore(), not a shared
-    // class-level instance. Tests that verify harness-suggestion persistence across calls within the same
-    // ConsolidationService instance will pass even if the service wires the wrong store, because each call
-    // gets its own empty store. Consider promoting the store to a class-level field so that
-    // tests can assert SaveAsync results are visible via GetAsync on the same instance the service holds.
     private ConsolidationService CreateSut() => new(new ConsolidationServiceDependencies(
         _logger,
         _config,
         _mockProjectStore.Object,
-        new InMemoryHarnessSuggestionStore(),
         _mockProviderConfigStore.Object,
         WorkDistributor: _mockWorkDistributor.Object));
 
@@ -172,7 +166,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             configWithoutLabels,
             _mockProjectStore.Object,
-            new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object));
 
         // Without a WorkDistributor injected, TriggerAsync throws InvalidOperationException.
@@ -224,7 +217,7 @@ public sealed class ConsolidationServiceTests
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+            ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
 
         run.Should().NotBeNull();
         run!.ProjectName.Should().BeNull();
@@ -321,64 +314,7 @@ public sealed class ConsolidationServiceTests
 
     #endregion
 
-    #region Harness suggestions — read/write round-trip
-
-    [Fact]
-    public async Task SaveAndGetHarnessSuggestions_RoundTripsCorrectly()
-    {
-        // Validates: Requirement 9.2
-        var sut = CreateSut();
-
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = new DateTime(2026, 7, 15, 10, 0, 0, DateTimeKind.Utc),
-            BasedOnRunCount = 42,
-            SuccessRate = 0.85m,
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new()
-                {
-                    Text = "Increase agent timeout for complex repos",
-                    Rationale = "3 out of 5 failures were timeout-related",
-                    Frequency = 3
-                },
-                new()
-                {
-                    Text = "Add file context for config files",
-                    Rationale = "Agents frequently miss appsettings.json",
-                    Frequency = 7
-                }
-            }
-        };
-
-        await sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
-        var loaded = await sut.GetHarnessSuggestionsAsync(CancellationToken.None);
-
-        loaded.Should().NotBeNull();
-        loaded!.GeneratedAtUtc.Should().Be(suggestions.GeneratedAtUtc);
-        loaded.BasedOnRunCount.Should().Be(42);
-        loaded.SuccessRate.Should().Be(0.85m);
-        loaded.Suggestions.Should().HaveCount(2);
-        loaded.Suggestions[0].Text.Should().Be("Increase agent timeout for complex repos");
-        loaded.Suggestions[0].Frequency.Should().Be(3);
-        loaded.Suggestions[1].Text.Should().Be("Add file context for config files");
-        loaded.Suggestions[1].Frequency.Should().Be(7);
-    }
-
-    [Fact]
-    public async Task GetHarnessSuggestionsAsync_FileDoesNotExist_ReturnsNull()
-    {
-        // Validates: Requirement 9.2
-        var sut = CreateSut();
-
-        var result = await sut.GetHarnessSuggestionsAsync(CancellationToken.None);
-
-        result.Should().BeNull();
-    }
-
-    #endregion
-
-    #region TriggerAsync — global (null templateId) for harness suggestions
+    #region TriggerAsync — global (null templateId)
 
     [Fact]
     public async Task TriggerAsync_NullTemplateId_CreatesGlobalRun()
@@ -387,12 +323,12 @@ public sealed class ConsolidationServiceTests
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+            ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
 
         run.Should().NotBeNull();
         run!.TemplateId.Should().BeNull();
         run.TemplateName.Should().Be("Global");
-        run.Type.Should().Be(ConsolidationRunType.HarnessSuggestions);
+        run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
     }
 
     #endregion
@@ -414,7 +350,6 @@ public sealed class ConsolidationServiceTests
                 _logger,
                 _config,
                 _mockProjectStore.Object,
-                new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 WorkDistributor: _mockWorkDistributor.Object));
 
@@ -437,7 +372,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             _config,
             _mockProjectStore.Object,
-            new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object,
             WorkDistributor: _mockWorkDistributor.Object));
 
@@ -477,7 +411,6 @@ public sealed class ConsolidationServiceTests
             capturingLogger,
             _config,
             _mockProjectStore.Object,
-            new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object,
             WorkDistributor: _mockWorkDistributor.Object));
 
@@ -510,136 +443,6 @@ public sealed class ConsolidationServiceTests
             "TriggerAsync must set the WorkItemId returned by IWorkDistributor on the returned result");
         run.RunId.Should().NotBe("wi-test-default",
             "ConsolidationTriggerResult.RunId must be a freshly generated Guid, distinct from the WorkItemId");
-    }
-
-    #endregion
-
-    #region GetHarnessSuggestionsAsync / SaveHarnessSuggestionsAsync — exception paths
-
-    [Fact]
-    public async Task GetHarnessSuggestionsAsync_WhenStoreThrows_ReturnsNull()
-    {
-        // Covers the catch block in GetHarnessSuggestionsAsync.
-        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
-        mockHarnessStore
-            .Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("simulated read failure"));
-
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger,
-            _config,
-            _mockProjectStore.Object,
-            mockHarnessStore.Object,
-            _mockProviderConfigStore.Object));
-
-        var result = await sut.GetHarnessSuggestionsAsync(CancellationToken.None);
-
-        result.Should().BeNull("GetHarnessSuggestionsAsync must return null when the store throws");
-    }
-
-    [Fact]
-    public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_DoesNotThrow()
-    {
-        // Covers the catch block in SaveHarnessSuggestionsAsync.
-        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
-        mockHarnessStore
-            .Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("simulated write failure"));
-
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger,
-            _config,
-            _mockProjectStore.Object,
-            mockHarnessStore.Object,
-            _mockProviderConfigStore.Object));
-
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = DateTime.UtcNow,
-            BasedOnRunCount = 1,
-            SuccessRate = 1.0m,
-            Suggestions = []
-        };
-
-        var act = () => sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
-
-        await act.Should().NotThrowAsync(
-            "SaveHarnessSuggestionsAsync must swallow store exceptions and not propagate them");
-    }
-
-    [Fact]
-    public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_LogsWarning()
-    {
-        // Covers the catch block in SaveHarnessSuggestionsAsync:
-        // verifies that an Error-level log event is emitted and that OnChange is NOT invoked
-        // (the catch block prevents reaching OnChange?.Invoke()).
-        //
-        // NOTE: CreateSut() cannot be used here — it wires in the class-level _logger which
-        // is a no-op logger that discards all events. An inline SUT with a capturing logger
-        // is required.
-        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
-        mockHarnessStore
-            .Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("simulated write failure"));
-
-        var sink = new CapturingSink();
-        var capturingLogger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
-
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            capturingLogger,
-            _config,
-            _mockProjectStore.Object,
-            mockHarnessStore.Object,
-            _mockProviderConfigStore.Object));
-
-        var onChangeFired = 0;
-        sut.OnChange += () => onChangeFired++;
-
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = DateTime.UtcNow,
-            BasedOnRunCount = 1,
-            SuccessRate = 1.0m,
-            Suggestions = []
-        };
-
-        var act = () => sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
-        await act.Should().NotThrowAsync(
-            "SaveHarnessSuggestionsAsync must swallow store exceptions and not propagate them");
-
-        sink.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Warning,
-            "the catch block must emit exactly one Warning-level log event");
-        sink.Events.Single(e => e.Level == LogEventLevel.Warning)
-            .RenderMessage().Should().Contain("Failed to save harness suggestions",
-            "the log message must identify the failing operation");
-
-        onChangeFired.Should().Be(0,
-            "OnChange must not be invoked when SaveAsync throws — the catch block short-circuits before OnChange?.Invoke()");
-    }
-
-    [Fact]
-    public async Task SaveHarnessSuggestionsAsync_OnSuccess_InvokesOnChangeExactlyOnce()
-    {
-        // AC3: SaveHarnessSuggestionsAsync success path — OnChange is invoked exactly once.
-        // Uses a mock store that succeeds so the happy path (try block) is exercised.
-        // Uses CreateSut() (backed by the InMemoryHarnessSuggestionStore) so SaveAsync succeeds.
-        var sut = CreateSut();
-
-        var onChangeFired = 0;
-        sut.OnChange += () => onChangeFired++;
-
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = DateTime.UtcNow,
-            BasedOnRunCount = 5,
-            SuccessRate = 0.9m,
-            Suggestions = []
-        };
-
-        await sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
-
-        onChangeFired.Should().Be(1,
-            "SaveHarnessSuggestionsAsync must invoke OnChange exactly once on success — not zero times (so the UI refreshes) and not more than once (no double-fire)");
     }
 
     #endregion
@@ -700,7 +503,7 @@ public sealed class ConsolidationServiceTests
     [Theory]
     [InlineData(ConsolidationRunType.BrainConsolidation, "tmpl-1")]
     [InlineData(ConsolidationRunType.RefactoringDetection, "tmpl-1")]
-    [InlineData(ConsolidationRunType.HarnessSuggestions, null)]
+    [InlineData(ConsolidationRunType.RefactoringDetection, null)]
     public async Task ScopeKey_MatchesTheIssueIdentifierOfTheDistributedRequest(
         ConsolidationRunType type, string? templateId)
     {

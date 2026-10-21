@@ -254,13 +254,11 @@ public sealed class JobAssignmentMessageFactoryTests
         var req = MinimalRequest() with
         {
             ConsolidationLastSuccessfulRunUtc = lastSuccess,
-            ConsolidationFeedbackDataJson = "[{\"outcome\":\"Failure\"}]"
         };
 
         var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), req);
 
         msg.ConsolidationLastSuccessfulRunUtc.Should().Be(lastSuccess);
-        msg.ConsolidationFeedbackDataJson.Should().Be("[{\"outcome\":\"Failure\"}]");
     }
 
     // ── Consolidation fields ────────────────────────────────────────
