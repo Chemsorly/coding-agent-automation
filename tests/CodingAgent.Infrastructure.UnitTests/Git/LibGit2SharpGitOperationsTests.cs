@@ -12,7 +12,6 @@ namespace CodingAgent.Infrastructure.UnitTests.Git;
 /// Uses the same real-on-disk temp-repo pattern established by
 /// <see cref="RepositoryGitOperationsCommitBlacklistTests"/>.
 /// </summary>
-[Trait("Category", "Integration")]
 public class LibGit2SharpGitOperationsTests : IDisposable
 {
     private readonly string _repoPath;
@@ -180,6 +179,98 @@ public class LibGit2SharpGitOperationsTests : IDisposable
             "second commit adds exactly 1 file relative to its parent");
     }
 
+    // ── GetConflicts: two-branch merge conflict ───────────────────────────────
+
+    [Fact]
+    public void GetConflicts_WithMergeConflict_ReturnsBothSidesContent()
+    {
+        const string oursContent = "ours content";
+        const string theirsContent = "theirs content";
+
+        CreateMergeConflict(_repoPath, "tracked.txt", oursContent, theirsContent);
+
+        var conflicts = _sut.GetConflicts(_repoPath);
+
+        conflicts.Should().HaveCount(1, "exactly one file was modified on both sides");
+        var conflict = conflicts[0];
+        conflict.FilePath.Should().Be("tracked.txt");
+        conflict.OursContent.Should().Be(oursContent);
+        conflict.TheirsContent.Should().Be(theirsContent);
+    }
+
+    // ── StageFile: single file staged ─────────────────────────────────────────
+
+    [Fact]
+    public void StageFile_NewFile_AppearsInIndex()
+    {
+        const string fileName = "unstaged.txt";
+        File.WriteAllText(Path.Combine(_repoPath, fileName), "some content");
+
+        _sut.StageFile(_repoPath, fileName);
+
+        using var repo = new Repository(_repoPath);
+        repo.Index[fileName].Should().NotBeNull(
+            "StageFile must add the file to the git index");
+    }
+
+    // ── GetHeadCommitChanges: Added and Deleted status mapping ────────────────
+
+    [Fact]
+    public void GetHeadCommitChanges_InitialCommit_ReturnsEmpty()
+    {
+        // Initial commit has no parent → parentTree is null → must return empty, not throw.
+        // Guards against regression of the `if (parentTree is null) return Array.Empty<FileChange>()`
+        // null-check in the production implementation.
+        var changes = _sut.GetHeadCommitChanges(_repoPath);
+
+        changes.Should().BeEmpty(
+            "the initial commit has no parent, so GetHeadCommitChanges must return an empty list");
+    }
+
+    [Fact]
+    public void GetHeadCommitChanges_AddedAndDeletedFiles_BothStatusesReturned()
+    {
+        const string addedFileName = "added-file.txt";
+        var sig = new Signature("test-author", "test@example.com", DateTimeOffset.UtcNow);
+
+        File.WriteAllText(Path.Combine(_repoPath, addedFileName), "new content");
+        File.Delete(Path.Combine(_repoPath, "tracked.txt"));
+
+        using (var repo = new Repository(_repoPath))
+        {
+            Commands.Stage(repo, addedFileName);
+            Commands.Stage(repo, "tracked.txt");  // stages the deletion
+            repo.Commit("add and delete", sig, sig);
+        }
+
+        var changes = _sut.GetHeadCommitChanges(_repoPath);
+
+        changes.Any(c => c.Path == addedFileName && c.Status == FileChangeStatus.Added)
+            .Should().BeTrue("added-file.txt was added in this commit");
+        changes.Any(c => c.Path == "tracked.txt" && c.Status == FileChangeStatus.Deleted)
+            .Should().BeTrue("tracked.txt was deleted in this commit");
+    }
+
+    // ── GetFileContentFromHead ────────────────────────────────────────────────
+
+    [Fact]
+    public void GetFileContentFromHead_ExistingFile_ReturnsCommittedContent()
+    {
+        var content = _sut.GetFileContentFromHead(_repoPath, "tracked.txt");
+
+        content.Should().Be("original content",
+            "tracked.txt was committed with this exact content in the initial commit");
+    }
+
+    [Fact]
+    public void GetFileContentFromHead_NonExistentFile_ReturnsNull()
+    {
+        var content = _sut.GetFileContentFromHead(_repoPath, "does-not-exist.txt");
+
+        content.Should().BeNull(
+            "a path not present in the HEAD tree must return null");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void InitRepoWithCommit(string path)
@@ -195,5 +286,41 @@ public class LibGit2SharpGitOperationsTests : IDisposable
         Commands.Stage(repo, "*");
         var sig = new Signature("test-author", "test@example.com", DateTimeOffset.UtcNow);
         repo.Commit("initial commit", sig, sig);
+    }
+
+    /// <summary>
+    /// Creates a two-branch merge conflict for <paramref name="fileName"/> in <paramref name="repoPath"/>.
+    /// Commits <paramref name="oursContent"/> on the main branch and <paramref name="theirsContent"/> on a
+    /// "feature" branch, then merges feature into main. After this call the repo is in a conflicted state.
+    /// </summary>
+    private static void CreateMergeConflict(
+        string repoPath, string fileName, string oursContent, string theirsContent)
+    {
+        var sig = new Signature("test-author", "test@example.com", DateTimeOffset.UtcNow);
+
+        using var repo = new Repository(repoPath);
+        var mainBranchName = repo.Head.FriendlyName;
+
+        // Create the feature branch at the current HEAD (before any divergence)
+        repo.CreateBranch("feature");
+
+        // Commit the 'ours' change on the main branch
+        File.WriteAllText(Path.Combine(repoPath, fileName), oursContent);
+        Commands.Stage(repo, fileName);
+        repo.Commit("ours change", sig, sig);
+
+        // Switch to feature and commit the 'theirs' change
+        Commands.Checkout(repo, repo.Branches["feature"]);
+        File.WriteAllText(Path.Combine(repoPath, fileName), theirsContent);
+        Commands.Stage(repo, fileName);
+        repo.Commit("theirs change", sig, sig);
+
+        // Return to main and merge feature — this creates a conflict because both branches
+        // independently modified the same file from the same base commit.
+        Commands.Checkout(repo, repo.Branches[mainBranchName]);
+        repo.Merge(repo.Branches["feature"], sig, new MergeOptions
+        {
+            FastForwardStrategy = FastForwardStrategy.NoFastForward
+        });
     }
 }
