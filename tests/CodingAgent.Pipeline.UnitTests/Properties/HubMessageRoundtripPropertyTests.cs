@@ -726,4 +726,64 @@ public class HubMessageRoundtripPropertyTests
         deserialized.Title.Should().Be("Extract payment service");
         deserialized.Url.Should().Be("https://github.com/org/repo/issues/42");
     }
+
+    // ── JobCompletionPayload — McpServers and ToolCalls ──────────────────
+
+    [Fact]
+    public void JobCompletionPayload_WithMcpServersAndToolCalls_SurvivesRoundTrip()
+    {
+        var original = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero),
+            McpServers = new List<string> { "sonarqube", "context7" },
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new PhaseUsagePayload
+                {
+                    Tokens = 1000,
+                    ToolCalls = new Dictionary<string, McpCallCounts>
+                    {
+                        ["sonarqube/get_issues"] = new McpCallCounts { Calls = 5, FailedOther = 1 }
+                    },
+                    UnavailableMcpServers = new Dictionary<string, string>
+                    {
+                        ["context7"] = McpServerStatuses.NeedsAuth
+                    }
+                }
+            }
+        };
+
+        var deserialized = RoundTrip(original);
+
+        deserialized.McpServers.Should().NotBeNull();
+        deserialized.McpServers.Should().BeEquivalentTo(new[] { "sonarqube", "context7" });
+
+        deserialized.PhaseBreakdown.Should().NotBeNull();
+        deserialized.PhaseBreakdown.Should().ContainKey("codegen");
+
+        var phase = deserialized.PhaseBreakdown!["codegen"];
+        phase.ToolCalls.Should().NotBeNull();
+        phase.ToolCalls!.Should().ContainKey("sonarqube/get_issues");
+        phase.ToolCalls["sonarqube/get_issues"].Calls.Should().Be(5);
+        phase.ToolCalls["sonarqube/get_issues"].FailedOther.Should().Be(1);
+
+        phase.UnavailableMcpServers.Should().NotBeNull();
+        phase.UnavailableMcpServers!["context7"].Should().Be(McpServerStatuses.NeedsAuth);
+    }
+
+    [Fact]
+    public void JobCompletionPayload_NullMcpServers_SurvivesRoundTrip()
+    {
+        var original = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            McpServers = null
+        };
+
+        var deserialized = RoundTrip(original);
+
+        deserialized.McpServers.Should().BeNull("null McpServers must round-trip as null (old agent compat)");
+    }
 }

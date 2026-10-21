@@ -368,6 +368,9 @@ public sealed partial class PipelineRun
     /// </summary>
     public string? HarnessVersion { get; set; }
 
+    /// <summary>Names of the enabled MCP servers configured for this run; null when none.</summary>
+    public IReadOnlyList<string>? McpServers { get; set; }
+
     /// <summary>Project ID that owned the dispatching template at dispatch time.</summary>
     public string? ProjectId { get; set; }
 
@@ -487,6 +490,7 @@ public sealed partial class PipelineRun
         AgentProviderConfigId = AgentProviderConfigId,
         BranchName = BranchName,
         HarnessVersion = HarnessVersion,
+        McpServers = McpServers,
         OutputTail = OutputLines.IsEmpty ? null : OutputLines.TakeLast(PipelineConstants.OutputTailCapacity).ToList(),
         PodLogTail = PodLogTail,
         IssueProviderConfigId = IssueProviderConfigId,

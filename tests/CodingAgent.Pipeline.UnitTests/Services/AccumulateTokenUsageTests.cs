@@ -161,7 +161,10 @@ public class AccumulateTokenUsageTests
         run.AccumulateTokenUsage(new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.5m, UsageDetails = details }, "codegen");
         run.AccumulateTokenUsage(new AgentResult
         {
-            ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.25m,
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = usage,
+            Cost = 0.25m,
             UsageDetails = details with
             {
                 RateLimits = [new AgentRateLimitObservation { Provider = "claude", Window = "five_hour", Status = "allowed_warning", Utilization = 0.9 }]
@@ -201,5 +204,128 @@ public class AccumulateTokenUsageTests
         phase.Tokens.Should().Be(3);
         phase.InputTokens.Should().Be(1);
         phase.Cost.Should().BeNull();
+    }
+
+    // ── Tool call accumulation ────────────────────────────────────────────
+
+    [Fact]
+    public void AccumulateTokenUsage_ToolCallsRecordedWhenUsageIsNull()
+    {
+        var run = CreateRun();
+        var result = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = null,
+            ToolCalls = new Dictionary<string, McpCallCounts>
+            {
+                ["sonarqube/get_issues"] = new McpCallCounts { Calls = 3 }
+            }
+        };
+
+        run.AccumulateTokenUsage(result, "codegen");
+
+        run.Metrics.PhaseBreakdown.Should().ContainKey("codegen");
+        run.Metrics.PhaseBreakdown["codegen"].ToolCalls.Should().NotBeNull();
+        run.Metrics.PhaseBreakdown["codegen"].ToolCalls!["sonarqube/get_issues"].Calls.Should().Be(3);
+        run.CacheReadTokens.Should().Be(0, "Usage is null so token accumulation is skipped");
+    }
+
+    [Fact]
+    public void AccumulateTokenUsage_TwoResultsInOnePhase_ToolCallsSumPerKey()
+    {
+        var run = CreateRun();
+        var first = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = null,
+            ToolCalls = new Dictionary<string, McpCallCounts>
+            {
+                ["sonarqube/get_issues"] = new McpCallCounts { Calls = 2, FailedOther = 1 },
+                ["github/list_prs"] = new McpCallCounts { Calls = 1 }
+            }
+        };
+        var second = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = null,
+            ToolCalls = new Dictionary<string, McpCallCounts>
+            {
+                ["sonarqube/get_issues"] = new McpCallCounts { Calls = 3, FailedAuth = 1 }
+            }
+        };
+
+        run.AccumulateTokenUsage(first, "codegen");
+        run.AccumulateTokenUsage(second, "codegen");
+
+        var phase = run.Metrics.PhaseBreakdown["codegen"];
+        phase.ToolCalls.Should().NotBeNull();
+        // sonarqube/get_issues: 2+3=5 calls, 1 FailedOther + 1 FailedAuth
+        phase.ToolCalls!["sonarqube/get_issues"].Calls.Should().Be(5);
+        phase.ToolCalls["sonarqube/get_issues"].FailedOther.Should().Be(1);
+        phase.ToolCalls["sonarqube/get_issues"].FailedAuth.Should().Be(1);
+        // github/list_prs: only in first result
+        phase.ToolCalls["github/list_prs"].Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public void AccumulateTokenUsage_UnavailableServers_MergedNewerValueWins()
+    {
+        var run = CreateRun();
+        var first = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = null,
+            UnavailableMcpServers = new Dictionary<string, string>
+            {
+                ["sonarqube"] = McpServerStatuses.Failed,
+                ["grafana"] = McpServerStatuses.NeedsAuth
+            }
+        };
+        var second = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = null,
+            UnavailableMcpServers = new Dictionary<string, string>
+            {
+                // sonarqube gets a newer status — it should win
+                ["sonarqube"] = McpServerStatuses.NeedsAuth,
+                ["context7"] = McpServerStatuses.Failed
+            }
+        };
+
+        run.AccumulateTokenUsage(first, "analysis");
+        run.AccumulateTokenUsage(second, "analysis");
+
+        var phase = run.Metrics.PhaseBreakdown["analysis"];
+        phase.UnavailableMcpServers.Should().NotBeNull();
+        phase.UnavailableMcpServers!["sonarqube"].Should().Be(McpServerStatuses.NeedsAuth,
+            "newer value wins for duplicate server keys");
+        phase.UnavailableMcpServers["grafana"].Should().Be(McpServerStatuses.NeedsAuth);
+        phase.UnavailableMcpServers["context7"].Should().Be(McpServerStatuses.Failed);
+    }
+
+    [Fact]
+    public void AccumulateTokenUsage_NullPhase_RecordsNothing()
+    {
+        var run = CreateRun();
+        var result = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = null,
+            ToolCalls = new Dictionary<string, McpCallCounts>
+            {
+                ["sonarqube/get_issues"] = new McpCallCounts { Calls = 5 }
+            }
+        };
+
+        run.AccumulateTokenUsage(result, phase: null);
+
+        run.Metrics.PhaseBreakdown.Should().BeEmpty("null phase means tool calls are not recorded to any phase");
     }
 }

@@ -60,6 +60,8 @@ internal static class JobCompletionMapper
             foreach (var (phase, usage) in payload.PhaseBreakdown)
                 run.Metrics.PhaseBreakdown[phase] = ToPhaseUsage(usage);
         }
+        if (payload.McpServers is not null)
+            run.McpServers = payload.McpServers;
     }
 
     private static PhaseUsage ToPhaseUsage(PhaseUsagePayload p) =>
@@ -72,6 +74,8 @@ internal static class JobCompletionMapper
             CacheWriteTokens = p.CacheWriteTokens,
             Turns = p.Turns,
             WebSearchRequests = p.WebSearchRequests,
-            BillingMode = p.BillingMode
+            BillingMode = p.BillingMode,
+            ToolCalls = p.ToolCalls,
+            UnavailableMcpServers = p.UnavailableMcpServers
         };
 }

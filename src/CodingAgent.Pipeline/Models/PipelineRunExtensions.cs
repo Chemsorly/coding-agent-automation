@@ -46,6 +46,13 @@ public static class PipelineRunExtensions
     /// </summary>
     public static void AccumulateTokenUsage(this PipelineRun run, AgentResult? result, string? phase = null)
     {
+        if (phase is not null && result is { ToolCalls.Count: > 0 } or { UnavailableMcpServers.Count: > 0 })
+        {
+            run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
+                AddToolCalls(new PhaseUsage(0, null), result!),
+                (_, existing) => AddToolCalls(existing, result!));
+        }
+
         if (result?.UsageDetails is { RateLimits.Count: > 0 } details)
         {
             foreach (var observation in details.RateLimits)
@@ -88,6 +95,49 @@ public static class PipelineRunExtensions
                 AddUsage(new PhaseUsage(0, null), usage, cost: null, details: null),
                 (_, existing) => AddUsage(existing, usage, cost: null, details: null));
         }
+    }
+
+    /// <summary>
+    /// Returns <paramref name="phase"/> with tool calls and unavailable servers from <paramref name="result"/> merged in.
+    /// Tool calls are summed per key; unavailable servers use the newer value on conflict.
+    /// </summary>
+    private static PhaseUsage AddToolCalls(PhaseUsage phase, AgentResult result)
+    {
+        IReadOnlyDictionary<string, McpCallCounts>? mergedCalls = null;
+        if (result.ToolCalls is { Count: > 0 })
+        {
+            var calls = phase.ToolCalls is { Count: > 0 }
+                ? new Dictionary<string, McpCallCounts>(phase.ToolCalls)
+                : new Dictionary<string, McpCallCounts>();
+            foreach (var (key, incoming) in result.ToolCalls)
+            {
+                calls[key] = calls.TryGetValue(key, out var existing)
+                    ? existing.Add(incoming)
+                    : incoming;
+            }
+            mergedCalls = calls;
+        }
+        else
+        {
+            mergedCalls = phase.ToolCalls;
+        }
+
+        IReadOnlyDictionary<string, string>? mergedServers = null;
+        if (result.UnavailableMcpServers is { Count: > 0 })
+        {
+            var servers = phase.UnavailableMcpServers is { Count: > 0 }
+                ? new Dictionary<string, string>(phase.UnavailableMcpServers)
+                : new Dictionary<string, string>();
+            foreach (var (server, status) in result.UnavailableMcpServers)
+                servers[server] = status;
+            mergedServers = servers;
+        }
+        else
+        {
+            mergedServers = phase.UnavailableMcpServers;
+        }
+
+        return phase with { ToolCalls = mergedCalls, UnavailableMcpServers = mergedServers };
     }
 
     /// <summary>

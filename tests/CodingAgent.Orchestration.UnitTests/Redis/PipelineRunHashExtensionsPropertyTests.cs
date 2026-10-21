@@ -423,4 +423,75 @@ public class PipelineRunHashExtensionsPropertyTests
         summary.PhaseBreakdown!["analysis"].Tokens.Should().Be(999);
         summary.PhaseBreakdown!["analysis"].Cost.Should().Be(0.99m);
     }
+
+    // ── McpServers roundtrip ───────────────────────────────────────────────
+
+    [Fact]
+    public void McpServers_SurvivesRoundTrip()
+    {
+        var run = MakeMinimalRun();
+        run.McpServers = new List<string> { "sonarqube", "github" };
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.McpServers.Should().NotBeNull();
+        restored.McpServers.Should().BeEquivalentTo(new[] { "sonarqube", "github" },
+            "McpServers must survive the Redis hash round-trip");
+    }
+
+    [Fact]
+    public void McpServers_Null_SurvivesAsNull()
+    {
+        var run = MakeMinimalRun();
+        run.McpServers = null;
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.McpServers.Should().BeNull("null McpServers must round-trip as null");
+    }
+
+    [Fact]
+    public void ToSummary_AfterFromHash_PreservesMcpServers()
+    {
+        var run = MakeMinimalRun();
+        run.McpServers = new List<string> { "sonarqube", "grafana" };
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+        var summary = restored.ToSummary();
+
+        summary.McpServers.Should().NotBeNull();
+        summary.McpServers.Should().BeEquivalentTo(new[] { "sonarqube", "grafana" },
+            "McpServers must survive the Redis hash and ToSummary round-trip");
+    }
+
+    // ── PhaseBreakdown with ToolCalls roundtrip ───────────────────────────
+
+    [Fact]
+    public void PhaseBreakdown_WithToolCalls_SurvivesRoundTrip()
+    {
+        var run = MakeMinimalRun();
+        run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(Tokens: 500, Cost: 0.5m)
+        {
+            ToolCalls = new Dictionary<string, McpCallCounts>
+            {
+                ["sonarqube/get_issues"] = new McpCallCounts { Calls = 7, FailedOther = 2 },
+                ["web/search"] = new McpCallCounts { Calls = 3 }
+            },
+            UnavailableMcpServers = new Dictionary<string, string>
+            {
+                ["grafana"] = McpServerStatuses.NeedsAuth
+            }
+        };
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.Metrics.PhaseBreakdown.Should().ContainKey("codegen");
+        var entry = restored.Metrics.PhaseBreakdown["codegen"];
+        entry.ToolCalls.Should().NotBeNull();
+        entry.ToolCalls!["sonarqube/get_issues"].Calls.Should().Be(7);
+        entry.ToolCalls["sonarqube/get_issues"].FailedOther.Should().Be(2);
+        entry.ToolCalls["web/search"].Calls.Should().Be(3);
+        entry.UnavailableMcpServers.Should().NotBeNull();
+        entry.UnavailableMcpServers!["grafana"].Should().Be(McpServerStatuses.NeedsAuth);
+    }
 }

@@ -283,4 +283,56 @@ public class WriteMcpConfigStepTests : IDisposable
             InitiatedBy = "test-user"
         };
     }
+
+    // ── McpServers populated on run ───────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_WithDisabledServers_McpServersContainsOnlyEnabledNames()
+    {
+        // Arrange — three servers, one disabled
+        var servers = new List<McpServerConfig>
+        {
+            new() { Name = "sonarqube", Type = "stdio", Command = "node", Disabled = false },
+            new() { Name = "disabled-server", Type = "stdio", Command = "node", Disabled = true },
+            new() { Name = "github", Type = "http", Url = "https://github.local/mcp" }
+        };
+        var job = CreateJobWithMcpServers(servers);
+        var step = new WriteMcpConfigStep(job);
+        var context = CreateTestContext(_tempDir);
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — only enabled server names are stored on the run
+        context.Run.McpServers.Should().NotBeNull();
+        context.Run.McpServers.Should().BeEquivalentTo(new[] { "sonarqube", "github" },
+            "disabled servers must be excluded from McpServers");
+        context.Run.McpServers.Should().NotContain("disabled-server");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllServersDisabled_McpServersIsEmpty()
+    {
+        // When all servers are disabled the count > 0 check is still reached (job has servers),
+        // but the filter produces an empty list. This documents the behaviour explicitly:
+        // run.McpServers is [] (empty list), not null — callers that distinguish null from empty
+        // should treat both as "no usable servers", as the summary field comment specifies.
+        var servers = new List<McpServerConfig>
+        {
+            new() { Name = "server-a", Type = "stdio", Command = "node", Disabled = true },
+            new() { Name = "server-b", Type = "stdio", Command = "node", Disabled = true }
+        };
+        var job = CreateJobWithMcpServers(servers);
+        var step = new WriteMcpConfigStep(job);
+        var context = CreateTestContext(_tempDir);
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — assignment runs (count = 2, not 0), but filter yields empty list
+        context.Run.McpServers.Should().NotBeNull(
+            "the assignment runs even when all servers are disabled (count > 0 bypasses early return)");
+        context.Run.McpServers.Should().BeEmpty(
+            "all servers are disabled so the filtered list is empty");
+    }
 }

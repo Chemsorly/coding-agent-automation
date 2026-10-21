@@ -42,4 +42,10 @@ public sealed record PhaseUsage(
     /// How the phase's LLM calls were paid for (<see cref="AgentBillingModes"/>), or null if unknown.
     /// </summary>
     public string? BillingMode { get; init; }
+
+    /// <summary>MCP and web tool calls in this phase, keyed <c>server/tool</c>. Null when none were recorded.</summary>
+    public IReadOnlyDictionary<string, McpCallCounts>? ToolCalls { get; init; }
+
+    /// <summary>MCP servers that could not be used in this phase, by name, with a <see cref="McpServerStatuses"/> value. Null when none.</summary>
+    public IReadOnlyDictionary<string, string>? UnavailableMcpServers { get; init; }
 }

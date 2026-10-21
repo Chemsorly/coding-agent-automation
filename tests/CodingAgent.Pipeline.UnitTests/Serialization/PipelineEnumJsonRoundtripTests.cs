@@ -52,8 +52,8 @@ public class PipelineEnumJsonRoundtripTests
     public void Discovery_FindsAtLeastKnownEnumCount()
     {
         var enumTypes = GetPipelineEnumTypes();
-        enumTypes.Should().HaveCountGreaterThanOrEqualTo(16,
-            "expected at least 16 public enums in the Pipeline assembly (regression guard)");
+        enumTypes.Should().HaveCountGreaterThanOrEqualTo(17,
+            "expected at least 17 public enums in the Pipeline assembly (regression guard)");
     }
 
     // ── Data source ──────────────────────────────────────────────────────

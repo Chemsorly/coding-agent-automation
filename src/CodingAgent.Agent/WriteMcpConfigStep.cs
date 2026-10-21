@@ -31,6 +31,8 @@ internal sealed class WriteMcpConfigStep : IPipelineStep
             return Task.FromResult(StepResult.Continue);
         }
 
+        context.Run.McpServers = _job.McpServers.Where(s => !s.Disabled).Select(s => s.Name).ToList();
+
         try
         {
             var mcpConfigPath = context.AgentProvider.McpConfigPath;

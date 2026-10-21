@@ -435,4 +435,77 @@ public sealed class JobCompletionMapperTests
         run.Metrics.PhaseBreakdown.Should().BeEmpty(
             "a non-null empty PhaseBreakdown must clear existing entries, not leave them (unlike null)");
     }
+
+    // ── McpServers ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Apply_CopiesMcpServers()
+    {
+        var run = CreateRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            McpServers = new List<string> { "sonarqube", "github" }
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.McpServers.Should().BeEquivalentTo(new[] { "sonarqube", "github" });
+    }
+
+    [Fact]
+    public void Apply_NullMcpServers_LeavesExistingValue()
+    {
+        var run = CreateRun();
+        run.McpServers = new List<string> { "existing-server" };
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            McpServers = null
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.McpServers.Should().BeEquivalentTo(new[] { "existing-server" },
+            "null McpServers in payload must not overwrite an existing value (old agent compatibility)");
+    }
+
+    // ── PhaseBreakdown ToolCalls + UnavailableMcpServers ─────────────────
+
+    [Fact]
+    public void Apply_CopiesPhaseBreakdown_ToolCallsAndUnavailableMcpServers()
+    {
+        var run = CreateRun();
+        var phaseEntry = new PhaseUsagePayload
+        {
+            Tokens = 500,
+            BillingMode = "subscription",
+            ToolCalls = new Dictionary<string, McpCallCounts>
+            {
+                ["sonarqube/get_issues"] = new McpCallCounts { Calls = 7, FailedAuth = 1 }
+            },
+            UnavailableMcpServers = new Dictionary<string, string>
+            {
+                ["grafana"] = McpServerStatuses.NeedsAuth
+            }
+        };
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload> { ["analysis"] = phaseEntry }
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        var result = run.Metrics.PhaseBreakdown["analysis"];
+        result.ToolCalls.Should().NotBeNull();
+        result.ToolCalls!["sonarqube/get_issues"].Calls.Should().Be(7);
+        result.ToolCalls["sonarqube/get_issues"].FailedAuth.Should().Be(1);
+        result.UnavailableMcpServers.Should().NotBeNull();
+        result.UnavailableMcpServers!["grafana"].Should().Be(McpServerStatuses.NeedsAuth);
+    }
 }

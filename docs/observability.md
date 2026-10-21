@@ -209,6 +209,32 @@ Cache token fields are populated for **OpenCode** and **Claude Code** agents. Ki
 
 `PipelineRunSummary.PhaseBreakdown` is keyed by the raw phase key (e.g. `analysis`, `codegen`, `review_correctness`, `quality_gate`). Each entry carries `Tokens` and `Cost`; the Run page (`/runs/{id}`) renders it as the "Cost & token breakdown" table (the pipeline sidebar shows the same data as "Cost Breakdown"). It is `null` for runs recorded before the feature existed.
 
+### MCP tool calls
+
+Each phase entry in `PipelineRunSummary.PhaseBreakdown` also carries:
+
+- **`ToolCalls`** — a `Dictionary<string, McpCallCounts>` keyed by `server/tool` (e.g. `"sonarqube/get_issues"`, `"web/search"`). Each value holds the total call count and the count of failed calls split by cause: `FailedConnection`, `FailedAuth`, `FailedOther`, `FailedUnknown`. Built-in web tools use the `web` server prefix (`web/search`, `web/fetch`). Built-in file and shell tools are not counted.
+- **`UnavailableMcpServers`** — a `Dictionary<string, string>` mapping server name to a `McpServerStatuses` value (`"failed"` or `"needs-auth"`).
+
+`PipelineRunSummary.McpServers` holds the names of the MCP servers that were configured (and enabled) for the run, regardless of whether they were called. This lets the UI show a server that was configured but never called.
+
+Two Warning log lines are emitted from agent pods (starting when each provider sub-issue lands):
+
+| Event | Message template | Properties |
+|---|---|---|
+| Failed MCP call | `MCP call failed: {McpServer}/{McpTool} ({McpFailureCategory}): {McpError}` | `McpServer`, `McpTool`, `McpFailureCategory`, `McpError` |
+| Unavailable server | `MCP server unavailable: {McpServer} ({McpServerStatus})` | `McpServer`, `McpServerStatus` |
+
+`McpError` is masked (secrets replaced with `***`) and cut to 200 characters before logging.
+
+**LogQL example** — total failed calls by server and cause over 24 hours:
+
+```logql
+sum by (McpServer, McpFailureCategory) (count_over_time({service_name="coding-agent-worker"} |= "MCP call failed" [24h]))
+```
+
+There is no metric for tool calls, to keep active series low.
+
 ### LLM Usage Telemetry Architecture
 
 1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-invocation span (see "Session Spans" below) and adds the session count and elapsed time to `PipelineRun.Metrics.PhaseBreakdown` under the invocation's phase key. The calling phase executors add the tokens and cost with `AccumulateTokenUsage` under the same key.
