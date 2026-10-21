@@ -11,6 +11,7 @@
 @inject IUiConfigClient UiConfig
 @inject CurrentAccess Access
 @inject IAccessGuard Guard
+@inject IUiRunClient RunHistory
 
 @*
     Triage page (spec 050, mocks B4 result, B6 needs input; B3 is the run page, linked from here).
@@ -356,9 +357,30 @@
                 {
                     <section class="cockpit-card cockpit-card-pad" data-testid="triage-checks-by-source">
                         <h2 style="margin: 0 0 4px; font-size: 15px;">Checks by source</h2>
+                        @{
+                            var _triageCalls = ToolUsageDisplay.ByServer(_resultRun, TriagePhases);
+                        }
                         @foreach (var (source, count) in TriageDisplay.ChecksBySource(result.Investigated))
                         {
-                            <div class="triage-kv"><span>@source</span><span class="triage-mono">@count check@(count == 1 ? "" : "s")</span></div>
+                            var _matchedServer = _triageCalls.FirstOrDefault(s => string.Equals(s.Server, source, StringComparison.OrdinalIgnoreCase));
+                            <div class="triage-kv">
+                                <span>@source</span>
+                                <span class="triage-mono">@count check@(count == 1 ? "" : "s")@if (_matchedServer is not null)
+                                {
+                                    if (_matchedServer.Unavailable is not null)
+                                    {
+                                        <text> · ⚠ unavailable (@_matchedServer.Unavailable)</text>
+                                    }
+                                    else if (_matchedServer.Totals.Calls > 0)
+                                    {
+                                        <text> · @_matchedServer.Totals.Calls call(s)</text>
+                                    }
+                                    else
+                                    {
+                                        <text> · <span data-testid="triage-source-no-calls" title="The agent lists checks against this source, but the run made no call to it.">⚠ no calls</span></text>
+                                    }
+                                }</span>
+                            </div>
                         }
                     </section>
                 }
@@ -432,6 +454,8 @@
 
     private readonly CancellationTokenSource _cts = new();
     private TriageDetail? _detail;
+    private PipelineRunSummary? _resultRun;
+    private static readonly string[] TriagePhases = ["triage", "triage_refinement"];
     private bool _loading = true;
     private string? _error;
     private string? _notice;
@@ -516,8 +540,20 @@
             var detail = await Triages.GetAsync(Id, _cts.Token);
             // Spec 049: a triage of a project the user cannot read looks exactly like a missing one
             _detail = detail is not null && Access.CanRead(detail.Record.ProjectId) ? detail : null;
+            _resultRun = null;
             if (_detail is null) return;
             ResetSelection();
+
+            if (_detail.Record.LatestResultAttempt?.WorkItemId is { } runIdStr
+                && Guid.TryParse(runIdStr, out var runId))
+            {
+                try
+                {
+                    _resultRun = (await RunHistory.GetRunAsync(runId, _cts.Token))?.Run;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { Logger.LogDebug(ex, "TriagePage: failed to load the run for MCP call display"); }
+            }
 
             if (_retentionDays is null)
             {

@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
@@ -20,6 +21,7 @@ public class TriagePageComponentTests : BunitContext
 {
     private readonly Mock<CodingAgent.Web.Ui.IUiTriageClient> _triages = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _config = new();
+    private readonly Mock<CodingAgent.Web.Ui.IUiRunClient> _runHistory = new();
 
     public TriagePageComponentTests()
     {
@@ -30,8 +32,12 @@ public class TriagePageComponentTests : BunitContext
                 new CodingAgent.Contracts.Ui.UiTemplate("t1", "payments-worker", true),
                 new CodingAgent.Contracts.Ui.UiTemplate("t2", "checkout-api", true),
             ]);
+        // Default: GetRunAsync returns null (old runs / no run data)
+        _runHistory.Setup(r => r.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CodingAgent.Contracts.Ui.UiRunDetail?)null);
         Services.AddSingleton(_triages.Object);
         Services.AddSingleton(_config.Object);
+        Services.AddSingleton(_runHistory.Object);
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
@@ -318,5 +324,167 @@ public class TriagePageComponentTests : BunitContext
         cut.Find("[data-testid='triage-draft-expand']").Click();
 
         cut.FindAll("[data-testid='triage-draft-expand']").Should().BeEmpty();
+    }
+
+    // ── Issue #3823: MCP call counts next to checks-by-source ────────────
+
+    private static readonly string TriageRunId = "a0000000-0000-0000-0000-000000000001";
+
+    private PipelineRunSummary MakeTriageRun(
+        IReadOnlyList<string>? mcpServers = null,
+        IReadOnlyDictionary<string, PhaseUsage>? phases = null) =>
+        new PipelineRunSummary
+        {
+            RunId = TriageRunId,
+            IssueIdentifier = "1",
+            IssueTitle = "test triage run",
+            FinalStep = PipelineStep.Completed,
+            McpServers = mcpServers,
+            PhaseBreakdown = phases,
+        };
+
+    private void ReturnsWithRun(TriageDetail detail, PipelineRunSummary run)
+    {
+        Returns(detail);
+        _runHistory.Setup(r => r.GetRunAsync(Guid.Parse(TriageRunId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiRunDetail(run, null));
+    }
+
+    [Fact]
+    public void ChecksBySource_WhenRunHasMcpCallsMatchingSource_ShowsCallCount()
+    {
+        var detail = Detail(OperatorRecord(ShopProjectId, Attempt(TriageRunId, CauseFound())));
+        var run = MakeTriageRun(
+            mcpServers: ["grafana"],
+            phases: new Dictionary<string, PhaseUsage>
+            {
+                ["triage"] = new PhaseUsage(0, null) with
+                {
+                    ToolCalls = new Dictionary<string, McpCallCounts>
+                    {
+                        ["grafana/query"] = new McpCallCounts { Calls = 5 },
+                    },
+                },
+            });
+        ReturnsWithRun(detail, run);
+
+        var cut = RenderPage();
+
+        var checksSection = cut.Find("[data-testid='triage-checks-by-source']");
+        // "grafana" row should show "5 call(s)"
+        checksSection.TextContent.Should().Contain("5 call(s)");
+    }
+
+    [Fact]
+    public void ChecksBySource_ConfiguredServerWithNoTriageCalls_ShowsNoCallsWarning()
+    {
+        var detail = Detail(OperatorRecord(ShopProjectId, Attempt(TriageRunId, CauseFound())));
+        var run = MakeTriageRun(mcpServers: ["grafana"]);
+        ReturnsWithRun(detail, run);
+
+        var cut = RenderPage();
+
+        cut.Find("[data-testid='triage-source-no-calls']").TextContent.Should().Contain("⚠");
+        cut.Find("[data-testid='triage-source-no-calls']")
+            .GetAttribute("title").Should()
+            .Contain("The agent lists checks against this source, but the run made no call to it.");
+    }
+
+    [Fact]
+    public void ChecksBySource_CallsInTriageReviewPhaseDoNotCount()
+    {
+        // triage_review calls must be excluded; only triage + triage_refinement count
+        var detail = Detail(OperatorRecord(ShopProjectId, Attempt(TriageRunId, CauseFound())));
+        var run = MakeTriageRun(
+            mcpServers: ["grafana"],
+            phases: new Dictionary<string, PhaseUsage>
+            {
+                ["triage_review"] = new PhaseUsage(0, null) with
+                {
+                    ToolCalls = new Dictionary<string, McpCallCounts>
+                    {
+                        ["grafana/query"] = new McpCallCounts { Calls = 50 },
+                    },
+                },
+            });
+        ReturnsWithRun(detail, run);
+
+        var cut = RenderPage();
+
+        // The triage_review calls don't count, so grafana has 0 triage-phase calls → no-calls warning
+        cut.FindAll("[data-testid='triage-source-no-calls']").Should().HaveCount(1);
+        cut.Find("[data-testid='triage-checks-by-source']").TextContent.Should().NotContain("50");
+    }
+
+    [Fact]
+    public void ChecksBySource_NonServerSourceIsUnchanged()
+    {
+        // "code" appears in the CauseFound data but is not an MCP server.
+        // mcpServers = ["grafana"] with no calls → grafana gets no-calls warning (1 element).
+        // "code" (from TriageTestData checks "code · payments-worker") must not get the warning.
+        var detail = Detail(OperatorRecord(ShopProjectId, Attempt(TriageRunId, CauseFound())));
+        var run = MakeTriageRun(mcpServers: ["grafana"]);
+        ReturnsWithRun(detail, run);
+
+        var cut = RenderPage();
+
+        // Only grafana (the configured server) should have the no-calls warning, not "code"
+        cut.FindAll("[data-testid='triage-source-no-calls']").Should().HaveCount(1,
+            "only the matched MCP server source ('grafana') gets the warning; 'code' must not");
+    }
+
+    [Fact]
+    public void ChecksBySource_UnavailableServerShowsUnavailableStatus()
+    {
+        // When the matched server was unavailable in the triage phases, show the status instead of no-calls.
+        var detail = Detail(OperatorRecord(ShopProjectId, Attempt(TriageRunId, CauseFound())));
+        var run = MakeTriageRun(
+            mcpServers: ["grafana"],
+            phases: new Dictionary<string, PhaseUsage>
+            {
+                ["triage"] = new PhaseUsage(0, null) with
+                {
+                    UnavailableMcpServers = new Dictionary<string, string>
+                    {
+                        ["grafana"] = "needs-auth",
+                    },
+                },
+            });
+        ReturnsWithRun(detail, run);
+
+        var cut = RenderPage();
+
+        var checksSection = cut.Find("[data-testid='triage-checks-by-source']");
+        checksSection.TextContent.Should().Contain("unavailable (needs-auth)");
+        // The no-calls warning must NOT render when unavailable supersedes it
+        cut.FindAll("[data-testid='triage-source-no-calls']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ChecksBySource_WhenGetRunAsyncFails_PageStillRenders()
+    {
+        Returns(Detail(OperatorRecord(ShopProjectId, Attempt(TriageRunId, CauseFound()))));
+        _runHistory.Setup(r => r.GetRunAsync(Guid.Parse(TriageRunId), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("timeout"));
+
+        var cut = RenderPage();
+
+        // Page renders normally; checks-by-source shows count only (no call info)
+        cut.Find("[data-testid='triage-checks-by-source']");
+        cut.FindAll("[data-testid='triage-source-no-calls']").Should().BeEmpty();
+        cut.FindAll("[data-testid='triage-error']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ChecksBySource_WhenResultRunIsNull_SourcesShowOnlyCheckCount()
+    {
+        // _runHistory returns null by default → _resultRun is null → no enrichment
+        Returns(Detail(OperatorRecord(ShopProjectId, Attempt("wi-1", CauseFound()))));
+
+        var cut = RenderPage();
+
+        var section = cut.Find("[data-testid='triage-checks-by-source']");
+        section.TextContent.Should().Contain("grafana");
+        cut.FindAll("[data-testid='triage-source-no-calls']").Should().BeEmpty();
     }
 }

@@ -395,7 +395,7 @@ The rules a plausible change could break. Details are in the linked entries.
 <!-- 2026-10-10 -->
 **Rule:** "What the agent investigated" (hypotheses, every check with where, why and result, and what it did not check) is part of the agent's result file and is shown as written. Checks per source are counted from that list.
 **Why:** People judge an RCA by whether the agent looked in the right places, and the agent knows why it ran each check. **Accepting:** the list can be incomplete or embellished; the adversarial review checks every entry for a source.
-**Not:** counting real tool calls from the agent CLI output (provider-specific and noisy).
+**Not:** replacing the list with the real tool calls, or linking each check to the call that made it: agents don't see call IDs and Kiro prints none. The page shows the real calls per server next to the list instead ([tool calls](#runs-record-their-mcp-and-web-tool-calls-by-name-and-count)).
 **Revisit when:** reviewers find investigated lists that don't match what the run did.
 
 ### Refactoring consolidation loop: autonomous up to PR creation, merge is human-gated
