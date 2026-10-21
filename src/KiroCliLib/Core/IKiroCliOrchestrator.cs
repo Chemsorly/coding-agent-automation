@@ -44,4 +44,10 @@ public interface IKiroCliOrchestrator : IDisposable
     /// later run with the same settings fails the same way.
     /// </summary>
     bool LastRunRejectedConfiguration { get; }
+
+    /// <summary>
+    /// MCP and web tool calls of the last <see cref="ExecutePromptAsync"/>, keyed <c>server/tool</c>
+    /// (<c>web/search</c> for web search); empty before the first run.
+    /// </summary>
+    IReadOnlyDictionary<string, KiroToolCallCount> LastRunToolCalls { get; }
 }
