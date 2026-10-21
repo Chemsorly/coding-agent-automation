@@ -72,7 +72,6 @@ public class AttentionMcpSectionComponentTests : BunitContext
         };
 
     private static readonly DateTimeOffset T1 = new(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset T2 = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
     // ── tests ─────────────────────────────────────────────────────────────────
 

@@ -151,7 +151,7 @@ public class AttentionAggregatorTests
     [Fact]
     public void EmptyInput_ReturnsAllEmptyResult()
     {
-        var result = AttentionAggregator.Aggregate(new List<PipelineRunSummary>());
+        var result = AttentionAggregator.Aggregate([]);
 
         Assert.Empty(result.NeedsRefinement);
         Assert.Empty(result.FailedRuns);
@@ -517,7 +517,7 @@ public class AttentionAggregatorTests
                 }),
             // T3: neutral — sonarqube configured but not called and not unavailable
             MakeRunWithMcp("owner/repo#3", T3,
-                mcpServers: new[] { "sonarqube" }),
+                mcpServers: ["sonarqube"]),
             // T2: problem — all calls failed
             MakeRunWithMcp("owner/repo#2", T2,
                 toolCalls: new Dictionary<string, McpCallCounts>
@@ -571,7 +571,7 @@ public class AttentionAggregatorTests
         {
             // T2 (newer): configured as "Sonarqube" (uppercase S) — neutral
             MakeRunWithMcp("owner/repo#2", T2,
-                mcpServers: new[] { "Sonarqube" }),
+                mcpServers: ["Sonarqube"]),
             // T1 (older): all calls failed under "sonarqube" (lowercase)
             MakeRunWithMcp("owner/repo#1", T1,
                 toolCalls: new Dictionary<string, McpCallCounts>
