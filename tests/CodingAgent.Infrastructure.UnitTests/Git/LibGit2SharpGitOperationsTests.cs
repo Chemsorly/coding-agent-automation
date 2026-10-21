@@ -123,7 +123,7 @@ public class LibGit2SharpGitOperationsTests : IDisposable
     public void GetFileContentFromHeadParent_WithParentCommit_ReturnsOriginalContent()
     {
         const string originalContent = "original content";
-        const string updatedContent  = "updated content";
+        const string updatedContent = "updated content";
 
         // The initial commit already has "tracked.txt" with "initial content".
         // Create a second commit that modifies the file.
