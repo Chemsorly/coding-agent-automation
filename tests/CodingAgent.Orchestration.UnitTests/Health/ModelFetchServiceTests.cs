@@ -358,6 +358,114 @@ public class ModelFetchServiceTests
         error.Should().NotBeNull(); // "No agents available"
     }
 
+    // ── CancelAsync deadlock regression (issue #3794) ────────────────────────────
+
+    /// <summary>
+    /// Regression test for issue #3794 (SonarQube S6966).
+    ///
+    /// <para>
+    /// Registers a blocking callback directly on <c>timeoutCts.Token</c> via the
+    /// <c>timeoutCtsFactory</c> constructor parameter, then exercises the production code
+    /// path in <see cref="ModelFetchService"/> where
+    /// <c>await timeoutCts.CancelAsync().ConfigureAwait(false)</c> is called.
+    /// </para>
+    ///
+    /// <para>
+    /// The blocking callback simulates an infrastructure callback (e.g. registered by
+    /// SignalR or ASP.NET Core) that performs blocking-async work when the token is
+    /// cancelled. With <c>CancelAsync()</c>, the callback is dispatched to the thread
+    /// pool so the calling thread is never blocked. The <c>WaitAsync(5 s)</c> guard
+    /// ensures the test fails rather than hanging if <c>CancelAsync()</c> is ever
+    /// regressed to synchronous <c>Cancel()</c> in an environment where thread starvation
+    /// causes the blocking callback to deadlock.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task SendFetchRequestAsync_WithBlockingCallbackOnTimeoutCts_CancelAsync_CompletesWithoutDeadlock()
+    {
+        var fakeRedis = new FakeRedisStore();
+        var logger = new Mock<ILogger>();
+        var registry = new AgentRegistryService(logger.Object);
+        var capturedRequestId = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockComm = new Mock<IAgentCommunication>();
+
+        // Semaphores used by the factory callback to simulate a blocking "awaiting" operation.
+        var callbackEntered = new SemaphoreSlim(0, 1);
+        var callbackCanProceed = new SemaphoreSlim(0, 1);
+
+        // Factory that creates a linked CTS with a blocking callback pre-registered.
+        // The callback simulates infrastructure code that awaits (blocks) when the token
+        // is cancelled — the scenario flagged by SonarQube S6966.
+        Func<CancellationToken, CancellationTokenSource> blockingFactory = ct =>
+        {
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.Token.Register(() =>
+            {
+                callbackEntered.Release();
+                callbackCanProceed.Wait(); // blocks the thread invoking the callback
+            });
+            return cts;
+        };
+
+        // Background task: unblocks the callback as soon as it starts running.
+        // This prevents the test from hanging in environments with sufficient thread-pool
+        // threads (normal CI conditions), while still exercising the blocking path.
+        _ = Task.Run(async () =>
+        {
+            await callbackEntered.WaitAsync();
+            callbackCanProceed.Release();
+        });
+
+        var serviceA = new ModelFetchService(
+            registry, mockComm.Object, logger.Object,
+            redis: fakeRedis,
+            responseTimeout: TimeSpan.FromSeconds(10),
+            timeoutCtsFactory: blockingFactory);
+
+        var serviceB = new ModelFetchService(
+            registry, new Mock<IAgentCommunication>().Object, logger.Object,
+            redis: fakeRedis,
+            responseTimeout: TimeSpan.FromSeconds(10));
+
+        registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "pod-blocking-callback",
+            Hostname = "h",
+            Labels = []
+        }, "conn-bc");
+
+        // serviceA's mock captures the requestId but does NOT complete the TCS locally,
+        // forcing the cross-replica (Redis poll) path so that pollTask wins WhenAny and
+        // timeoutCts.CancelAsync() (the fixed line) is called with the blocking callback
+        // registered on timeoutCts.Token.
+        mockComm.Setup(c => c.RequestFetchModelsAsync(
+                "conn-bc", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            {
+                capturedRequestId.TrySetResult(req.RequestId);
+                return Task.CompletedTask;
+            });
+
+        var fetchTask = serviceA.FetchModelsAsync(CancellationToken.None);
+        var requestId = await capturedRequestId.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Complete via serviceB (cross-replica): pollTask wins WhenAny; then
+        // timeoutCts.CancelAsync() fires the blocking callback registered above.
+        await serviceB.CompleteRequestAsync(new FetchModelsResponse
+        {
+            RequestId = requestId,
+            Models = [new AgentModelInfo { ModelId = "blocking-callback-result" }]
+        });
+
+        // WaitAsync(5 s) ensures the test fails (rather than hanging indefinitely)
+        // if the blocking callback ever deadlocks the method.
+        var (models, error) = await fetchTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        error.Should().BeNull("CancelAsync with a blocking callback must not deadlock");
+        models.Should().HaveCount(1);
+        models[0].ModelId.Should().Be("blocking-callback-result");
+    }
+
     // ── CompleteRequestAsync resolves pending fetch ────────────────────────────
 
     [Fact]

@@ -121,7 +121,6 @@ public class ConsolidationServicePropertyTests : IDisposable
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object,
-            new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockDist2.Object));
 

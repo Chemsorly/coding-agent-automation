@@ -383,7 +383,7 @@ public class MessageSerializationPropertyTests
         var original = new ConsolidationJobMessage
         {
             JobId = "consolidation-2",
-            Type = ConsolidationRunType.HarnessSuggestions,
+            Type = ConsolidationRunType.RefactoringDetection,
             ProviderConfigs = Array.Empty<ProviderConfig>(),
             PipelineConfiguration = new PipelineConfiguration()
         };
@@ -441,7 +441,7 @@ public class MessageSerializationPropertyTests
         // [5] PipelineConfiguration — serialize a default instance
         MessagePackSerializer.Serialize(ref writer, new PipelineConfiguration(), MsgPackOptions);
         writer.WriteNil();                                            // [6] LastSuccessfulRunUtc
-        writer.WriteNil();                                            // [7] FeedbackDataJson
+        writer.WriteNil();                                            // [7] retired
         writer.WriteNil();                                            // [8] retired (was WorkspacePath)
         writer.WriteNil();                                            // [9] TraceContext
 
@@ -535,7 +535,6 @@ public class MessageSerializationPropertyTests
     [Theory]
     [InlineData(ConsolidationRunType.BrainConsolidation)]
     [InlineData(ConsolidationRunType.RefactoringDetection)]
-    [InlineData(ConsolidationRunType.HarnessSuggestions)]
     public void JobAssignmentMessage_RoundTrip_AllConsolidationRunTypes(ConsolidationRunType runType)
     {
         var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Implementation) with
@@ -548,5 +547,157 @@ public class MessageSerializationPropertyTests
         var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
 
         deserialized.ConsolidationRunType.Should().Be(runType);
+    }
+
+    /// <summary>
+    /// ConsolidationJobResult with a populated ScanOutcome survives a MessagePack round-trip.
+    /// Validates that the new Key(14) ScanOutcome field and its nested types serialize correctly.
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithScanOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "scan-run-1",
+            Success = true,
+            Summary = "Created 2 refactoring issue(s): #10, #11",
+            ScanOutcome = new RefactoringScanOutcome
+            {
+                Detectors =
+                [
+                    new RefactoringDetectorOutcome { Name = "Structural debt", Succeeded = true, FindingCount = 3 },
+                    new RefactoringDetectorOutcome { Name = "Correctness and hygiene", Succeeded = true, FindingCount = null },
+                    new RefactoringDetectorOutcome { Name = "Design consistency", Succeeded = false, FindingCount = null }
+                ],
+                ProposalCount = 3,
+                CreatedIssues =
+                [
+                    new CreatedIssueInfo { Identifier = "10", Title = "Fix duplication", Url = "https://example.com/10", Category = "duplication" },
+                    new CreatedIssueInfo { Identifier = "11", Title = "Remove dead code", Url = "https://example.com/11", Category = "dead-code" }
+                ],
+                DroppedProposals =
+                [
+                    new RefactoringProposalNote { Title = "Out-of-scope item", Category = "bug", Reason = "category is outside the scan focus" }
+                ],
+                UnfiledProposals = [],
+                AnalyzedCommitSha = "abc1234",
+                MaxIssues = 3,
+                HotspotLookbackDays = 90,
+                ReviewEnabled = true,
+                AutoDispatch = false
+            }
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.JobId.Should().Be(original.JobId);
+        deserialized.Success.Should().Be(original.Success);
+        deserialized.ScanOutcome.Should().NotBeNull();
+
+        var outcome = deserialized.ScanOutcome!;
+        outcome.ProposalCount.Should().Be(3);
+        outcome.Detectors.Should().HaveCount(3);
+        outcome.Detectors[0].Name.Should().Be("Structural debt");
+        outcome.Detectors[0].Succeeded.Should().BeTrue();
+        outcome.Detectors[0].FindingCount.Should().Be(3);
+        outcome.Detectors[1].Name.Should().Be("Correctness and hygiene");
+        outcome.Detectors[1].FindingCount.Should().BeNull();
+        outcome.Detectors[2].Succeeded.Should().BeFalse();
+        outcome.CreatedIssues.Should().HaveCount(2);
+        outcome.CreatedIssues[0].Category.Should().Be("duplication");
+        outcome.CreatedIssues[1].Category.Should().Be("dead-code");
+        outcome.DroppedProposals.Should().HaveCount(1);
+        outcome.DroppedProposals[0].Title.Should().Be("Out-of-scope item");
+        outcome.DroppedProposals[0].Reason.Should().Be("category is outside the scan focus");
+        outcome.UnfiledProposals.Should().BeEmpty();
+        outcome.AnalyzedCommitSha.Should().Be("abc1234");
+        outcome.MaxIssues.Should().Be(3);
+        outcome.HotspotLookbackDays.Should().Be(90);
+        outcome.ReviewEnabled.Should().BeTrue();
+        outcome.AutoDispatch.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// ConsolidationJobResult without ScanOutcome (null) round-trips with null ScanOutcome
+    /// (backward compatibility: existing payloads from agents that predate this field).
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithNullScanOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "scan-run-null",
+            Success = true,
+            ScanOutcome = null
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.ScanOutcome.Should().BeNull("null ScanOutcome must survive round-trip as null");
+    }
+
+    /// <summary>
+    /// ConsolidationJobResult with a populated BrainOutcome survives a MessagePack round-trip.
+    /// Validates that the new Key(15) BrainOutcome field and all its nested fields serialize correctly.
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithBrainOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "brain-run-1",
+            Success = true,
+            Summary = "Files modified: 14, Entries merged: 9, Contradictions resolved: 2, Entries pruned: 17",
+            BrainOutcome = new BrainConsolidationOutcome
+            {
+                FilesModified = 14,
+                EntriesMerged = 9,
+                ContradictionsResolved = 2,
+                EntriesPruned = 17,
+                PushedCommitSha = "3f9b2c1d0e",
+                PushedCommitUrl = "https://github.com/org/brain/commit/3f9b2c1d0e",
+                PushAttempts = 2,
+                BaseBranch = "main"
+            }
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.JobId.Should().Be(original.JobId);
+        deserialized.Success.Should().Be(original.Success);
+        deserialized.BrainOutcome.Should().NotBeNull();
+
+        var outcome = deserialized.BrainOutcome!;
+        outcome.FilesModified.Should().Be(14);
+        outcome.EntriesMerged.Should().Be(9);
+        outcome.ContradictionsResolved.Should().Be(2);
+        outcome.EntriesPruned.Should().Be(17);
+        outcome.PushedCommitSha.Should().Be("3f9b2c1d0e");
+        outcome.PushedCommitUrl.Should().Be("https://github.com/org/brain/commit/3f9b2c1d0e");
+        outcome.PushAttempts.Should().Be(2);
+        outcome.BaseBranch.Should().Be("main");
+    }
+
+    /// <summary>
+    /// ConsolidationJobResult without BrainOutcome (null) round-trips with null BrainOutcome
+    /// (backward compatibility: existing payloads from agents that predate Key(15)).
+    /// </summary>
+    [Fact]
+    public void ConsolidationJobResult_RoundTrip_WithNullBrainOutcome()
+    {
+        var original = new ConsolidationJobResult
+        {
+            JobId = "brain-run-null",
+            Success = true,
+            BrainOutcome = null
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobResult>(bytes, MsgPackOptions);
+
+        deserialized.BrainOutcome.Should().BeNull("null BrainOutcome must survive round-trip as null");
     }
 }

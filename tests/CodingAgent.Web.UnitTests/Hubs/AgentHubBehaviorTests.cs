@@ -544,34 +544,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
     }
 
     [Fact]
-    public async Task ReportConsolidationComplete_WithSuggestions_PersistsAndIncrementsBadge()
-    {
-        var agent = CreateAgent();
-        agent.ActiveJobId = "crun-1"; // agent must have matching ActiveJobId to pass the ownership check
-        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = DateTime.UtcNow,
-            BasedOnRunCount = 10,
-            SuccessRate = 0.8m,
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new() { Text = "S1", Rationale = "R1", Frequency = 5 },
-                new() { Text = "S2", Rationale = "R2", Frequency = 3 }
-            }
-        };
-
-        var hub = CreateHubWithOrchestration();
-        var result = new ConsolidationJobResult { JobId = "crun-1", Success = true, Summary = "OK", HarnessSuggestions = suggestions };
-
-        var act = async () => await hub.ReportConsolidationComplete(result);
-
-        // HarnessSuggestions persistence and badge counting are now inside IHubConsolidationOperations
-        await act.Should().NotThrowAsync();
-    }
-
-    [Fact]
     public async Task ReportConsolidationComplete_WithCreatedIssues_IncrementsBadge()
     {
         var agent = CreateAgent();
@@ -736,7 +708,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // Facade returns the existing run and agent entry
         _mockFacade.Setup(f => f.GetRun(runId)).Returns(existingRun);
-        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(agentEntry);
         _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
         _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
@@ -800,7 +772,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // GetRun returns null — no in-memory run (K8s mode, no rehydration after cancel)
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(agentEntry);
         _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
 
@@ -874,7 +846,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         };
 
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(agentEntry);
         _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
 
@@ -948,7 +920,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         };
 
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(agentEntry);
         _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
 
@@ -1665,7 +1637,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-50); // Nearly timed out
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHub();
@@ -1699,7 +1671,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.LastStepChangeAt = originalTimestamp;
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHub();
@@ -1728,7 +1700,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.LastStepChangeAt = originalTimestamp;
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHub();
@@ -1756,7 +1728,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-50);
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHub();
@@ -1785,7 +1757,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         agent.ActiveJobId = null; // No active job
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-        _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(agent);
 
         var hub = CreateHub();
         var heartbeat = new HeartbeatMessage

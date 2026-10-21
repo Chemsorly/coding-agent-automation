@@ -1,6 +1,7 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Api.Client.Stores;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using System.Diagnostics.CodeAnalysis;
@@ -38,17 +39,9 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton(Log.Logger);
 
         // ── Shared HTTP resilience defaults ──────────────────────────────────
-        // Sets PooledConnectionLifetime so stale connections to replaced pod IPs (after a
-        // rolling update) are recycled within 90s rather than persisting indefinitely.
-        // Applied via ConfigureHttpClientDefaults so it covers every client registered in
-        // this AddSchedulerServices call.
-        services.ConfigureHttpClientDefaults(b =>
-        {
-            b.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                PooledConnectionLifetime = TimeSpan.FromSeconds(90)
-            });
-        });
+        // Sets PooledConnectionLifetime to 90s via AddStandardHttpClientPoolDefaults so
+        // stale connections to replaced pod IPs are recycled after a rolling update.
+        services.AddStandardHttpClientPoolDefaults();
 
         // ── HTTP clients to the API ──────────────────────────────────────────
         // CircuitBreaker.MinimumThroughput tuned to 10 (down from the default 100) so the
@@ -70,9 +63,6 @@ public static class SchedulerServiceCollectionExtensions
             .AddStandardResilienceHandler(configureResilienceOptions);
 
         services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(configurePipelineApiClient)
-            .AddStandardResilienceHandler(configureResilienceOptions);
-
-        services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(configurePipelineApiClient)
             .AddStandardResilienceHandler(configureResilienceOptions);
 
         services.AddHttpClient("TokenVending")
@@ -131,15 +121,7 @@ public static class SchedulerServiceCollectionExtensions
             new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
         // ── Token vending + label services ────────────────────────────────────
-        services.AddSingleton<TokenVendingService>(sp =>
-            new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
-        services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
-        services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
-
-        services.AddSingleton<ILabelService>(sp => new LabelService(
-            sp.GetRequiredService<IProviderConfigStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            Log.Logger));
+        services.AddTokenVendingCore();
 
         // ── Dispatch resolution ───────────────────────────────────────────────
         services.AddDispatchResolutionServices(includeWorkItemClient: true);
@@ -150,8 +132,6 @@ public static class SchedulerServiceCollectionExtensions
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
 
         // ── Consolidation services ────────────────────────────────────────────
-        services.AddSingleton<IHarnessSuggestionStore>(sp =>
-            new ApiBackedHarnessSuggestionStore(sp.GetRequiredService<IPipelineApiHarnessSuggestionClient>()));
         services.AddSingleton<IConsolidationSelectorResolver>(sp =>
             new ConsolidationSelectorResolver(
                 sp.GetRequiredService<IAgentProfileStore>(),
@@ -426,7 +406,6 @@ public static class SchedulerServiceCollectionExtensions
             Log.Logger,
             new PipelineConfiguration(),
             sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<IHarnessSuggestionStore>(),
             sp.GetRequiredService<IProviderConfigStore>(),
             WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
             SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),

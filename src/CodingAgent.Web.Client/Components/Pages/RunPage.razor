@@ -143,6 +143,10 @@
                 {
                     <a href="consolidation" class="cockpit-link-chip" data-testid="consolidation-page-link"><Icon Name="refresh-cw" Size="14" /> Consolidation page →</a>
                 }
+                @if (run.BrainConsolidationOutcome is { PushedCommitUrl: { } brainCommitUrl, PushedCommitSha: { } brainCommitSha })
+                {
+                    <a href="@brainCommitUrl" target="_blank" rel="noopener" class="cockpit-link-chip" data-testid="brain-commit-link"><Icon Name="link" Size="14" /> Brain commit @brainCommitSha[..Math.Min(7, brainCommitSha.Length)] ↗</a>
+                }
             </div>
         }
 
@@ -179,6 +183,14 @@
                 {
                     <div class="cockpit-detail-item"><div class="k">Sub-issues</div><div class="v">@run.DecompositionSubIssuesCreated / @run.DecompositionSubIssuesAttempted created</div></div>
                 }
+                @if (run.RefactoringScanOutcome is { } scanGrid)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Issues created</div><div class="v">@scanGrid.CreatedIssues.Count of @scanGrid.ProposalCount proposals</div></div>
+                    @if (scanGrid.AnalyzedCommitSha is not null)
+                    {
+                        <div class="cockpit-detail-item"><div class="k">Analyzed commit</div><div class="v mono">@scanGrid.AnalyzedCommitSha[..Math.Min(12, scanGrid.AnalyzedCommitSha.Length)]</div></div>
+                    }
+                }
             </div>
 
             @if (run.RunType == PipelineRunType.Review)
@@ -199,11 +211,90 @@
                 </div>
             }
 
-            @if (run.RunType == PipelineRunType.Consolidation && !string.IsNullOrEmpty(run.ConsolidationResultSummary))
+            @if (run.RunType == PipelineRunType.Consolidation && run.RefactoringScanOutcome is null && run.BrainConsolidationOutcome is null && !string.IsNullOrEmpty(run.ConsolidationResultSummary))
             {
                 <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="consolidation-result">
                     <div class="cockpit-detail-sub-label">Result</div>
                     <div style="font-size: 13.5px;">@run.ConsolidationResultSummary</div>
+                </div>
+            }
+
+            @if (run.RefactoringScanOutcome is { } scan)
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="scan-settings">
+                    <div class="cockpit-detail-sub-label">Scan settings</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                        <span class="cockpit-chip">Max issues @scan.MaxIssues</span>
+                        <span class="cockpit-chip">Hotspot lookback @scan.HotspotLookbackDays days</span>
+                        <span class="cockpit-chip">Adversarial review @(scan.ReviewEnabled ? "On" : "Off")</span>
+                        <span class="cockpit-chip">Auto-dispatch @(scan.AutoDispatch ? "On" : "Off")</span>
+                    </div>
+                </div>
+                @if (scan.CreatedIssues.Count > 0)
+                {
+                    <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="scan-created-issues">
+                        <div class="cockpit-detail-sub-label">Created issues</div>
+                        @foreach (var issue in scan.CreatedIssues)
+                        {
+                            <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 13.5px;">
+                                <a href="@issue.Url" target="_blank" rel="noopener" style="font-weight: 600; white-space: nowrap;">#@issue.Identifier ↗</a>
+                                <span>@issue.Title</span>
+                                @if (issue.Category is not null)
+                                {
+                                    <span class="cockpit-chip">@issue.Category</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                @if (scan.DroppedProposals.Count > 0)
+                {
+                    <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="scan-dropped-proposals">
+                        <div class="cockpit-detail-sub-label">Dropped by validation</div>
+                        @foreach (var proposal in scan.DroppedProposals)
+                        {
+                            <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 13.5px;">
+                                <span style="color: var(--text-muted); text-decoration: line-through;">@proposal.Title</span>
+                                <span style="color: var(--warning);">@proposal.Reason</span>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (scan.UnfiledProposals.Count > 0)
+                {
+                    <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="scan-unfiled-proposals">
+                        <div class="cockpit-detail-sub-label">Proposals not filed</div>
+                        @foreach (var proposal in scan.UnfiledProposals)
+                        {
+                            <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 13.5px;">
+                                <span>@proposal.Title</span>
+                                @if (proposal.Category is not null)
+                                {
+                                    <span class="cockpit-chip">@proposal.Category</span>
+                                }
+                            </div>
+                        }
+                        <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">These proposals exist only in this run.</div>
+                    </div>
+                }
+            }
+
+            @if (run.BrainConsolidationOutcome is { } brain)
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="brain-changes">
+                    <div class="cockpit-detail-sub-label">Brain changes</div>
+                    <div class="cockpit-findings is-four">
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.FilesModified</span><span class="cockpit-finding-l">Files modified</span></div>
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.EntriesMerged</span><span class="cockpit-finding-l">Entries merged</span></div>
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.ContradictionsResolved</span><span class="cockpit-finding-l">Contradictions resolved</span></div>
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.EntriesPruned</span><span class="cockpit-finding-l">Entries pruned</span></div>
+                    </div>
+                    @if (brain.PushedCommitSha is not null)
+                    {
+                        <div style="margin-top: 10px; font-size: 13.5px;">
+                            Pushed @brain.PushedCommitSha[..Math.Min(7, brain.PushedCommitSha.Length)] to @(brain.BaseBranch ?? "")@(brain.PushAttempts > 1 ? $" · merged onto newer brain commits (attempt {brain.PushAttempts})" : "")
+                        </div>
+                    }
                 </div>
             }
 
@@ -850,6 +941,8 @@
         model.ConsolidationType = summary.ConsolidationType;
         model.ConsolidationTemplateId = summary.ConsolidationTemplateId;
         model.ConsolidationTemplateName = summary.ConsolidationTemplateName;
+        model.RefactoringScanOutcome = summary.RefactoringScanOutcome;
+        model.BrainConsolidationOutcome = summary.BrainConsolidationOutcome;
 
         return model;
     }

@@ -231,7 +231,7 @@ public sealed class AssignmentEnricherTests
         var projectStoreMock = new Mock<IProjectStore>();
         projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectTemplates ?? []);
         var consolidationTemplateResolver = new ConsolidationTemplateResolver(projectStoreMock.Object);
 
@@ -417,7 +417,7 @@ public sealed class AssignmentEnricherTests
         var projectStoreMock = new Mock<IProjectStore>();
         projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var enricher = new AssignmentEnricher(
             infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
@@ -939,8 +939,7 @@ public sealed class AssignmentEnricherTests
     private static (StubDispatchInfrastructure Infra, Mock<IConsolidationJobPreparationService> ConsolidationPreparer, AssignmentEnricher Enricher) MakeConsolidationEnricher(
         IReadOnlyList<AgentProfile>? profiles = null,
         ConsolidationJobPreparationResult? preparationResult = null,
-        IPipelineRunHistoryService? runHistory = null,
-        IHarnessSuggestionStore? harnessSuggestions = null)
+        IPipelineRunHistoryService? runHistory = null)
     {
         // Infra must NOT be called for consolidation items — configure to throw if invoked
         var infra = new StubDispatchInfrastructure((_, _) =>
@@ -965,11 +964,11 @@ public sealed class AssignmentEnricherTests
         var enricher = new AssignmentEnricher(
             infra, profileStoreMock.Object, preparerMock.Object,
             projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger,
-            new ConsolidationRunContextSources(runHistory, harnessSuggestions));
+            new ConsolidationRunContextSources(runHistory));
         return (infra, preparerMock, enricher);
     }
 
-    // ── Consolidation run history: last successful run + harness feedback ─────────────────────
+    // ── Consolidation run history: last successful run ─────────────────────
 
     private static PipelineRunSummary MakeConsolidationRunSummary(string scopeKey, DateTimeOffset completedAt) => new()
     {
@@ -980,22 +979,8 @@ public sealed class AssignmentEnricherTests
         CompletedAtOffset = completedAt,
     };
 
-    private static PipelineRunSummary MakeRunWithFeedback(string stuckReason) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = new IssueIdentifier("1"),
-        IssueTitle = "Some issue",
-        FinalStep = PipelineStep.Failed,
-        Feedback = new RunFeedback
-        {
-            Outcome = FeedbackOutcome.Failure,
-            CollectedAtUtc = DateTime.UtcNow,
-            Harness = new HarnessFeedback { StuckReason = stuckReason }
-        }
-    };
-
     private static Mock<IPipelineRunHistoryService> MakeRunHistory(
-        IReadOnlyList<PipelineRunSummary> successfulConsolidations, IReadOnlyList<PipelineRunSummary>? runsWithFeedback = null)
+        IReadOnlyList<PipelineRunSummary> successfulConsolidations)
     {
         var history = new Mock<IPipelineRunHistoryService>();
         history
@@ -1004,12 +989,6 @@ public sealed class AssignmentEnricherTests
                     && q.ProjectId == null && q.Since == null && q.RunType == PipelineRunType.Consolidation),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = successfulConsolidations, Page = 1, PageSize = 100, HasMore = false });
-        history
-            .Setup(h => h.GetRunHistoryAsync(
-                It.Is<RunHistoryQuery>(q => q.Page == 1 && q.FeedbackOnly && q.FinalStep == null
-                    && q.ProjectId == null && q.RunType == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runsWithFeedback ?? [], Page = 1, PageSize = 200, HasMore = false });
         return history;
     }
 
@@ -1030,64 +1009,6 @@ public sealed class AssignmentEnricherTests
         var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
         result!.ConsolidationLastSuccessfulRunUtc.Should().Be(latest);
-        result.ConsolidationFeedbackDataJson.Should().BeNull("only harness suggestions get run feedback");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_HarnessSuggestions_SetsFeedbackSinceTheStoredSuggestionsWereGenerated()
-    {
-        // Anchored on the stored suggestions, not on the last successful harness run: a run that found no
-        // feedback also succeeds, and anchoring on it would skip feedback that no run has analyzed
-        var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
-            with
-        { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
-        var generatedAt = new DateTime(2026, 9, 20, 8, 0, 0, DateTimeKind.Utc);
-        var history = MakeRunHistory(
-            [MakeConsolidationRunSummary("HarnessSuggestions:global", new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero))],
-            [MakeRunWithFeedback("Build tool missing"), MakeRunWithFeedback("Flaky test")]);
-        var store = new Mock<IHarnessSuggestionStore>();
-        store.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HarnessSuggestions { GeneratedAtUtc = generatedAt, BasedOnRunCount = 3, SuccessRate = 50, Suggestions = [] });
-        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object, harnessSuggestions: store.Object);
-
-        var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
-
-        result!.ConsolidationFeedbackDataJson.Should().Contain("Build tool missing").And.Contain("Flaky test");
-        var expectedQuery = new RunHistoryQuery(Page: 1, PageSize: ConsolidationRunHistoryContext.MaxFeedbackEntries,
-            FeedbackOnly: true, Since: new DateTimeOffset(generatedAt));
-        history.Verify(h => h.GetRunHistoryAsync(expectedQuery, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task EnrichAsync_HarnessSuggestions_NoStoredSuggestions_TakesTheNewestFeedback()
-    {
-        var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
-            with
-        { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
-        var history = MakeRunHistory([], [MakeRunWithFeedback("Build tool missing")]);
-        var store = new Mock<IHarnessSuggestionStore>();
-        store.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>())).ReturnsAsync((HarnessSuggestions?)null);
-        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object, harnessSuggestions: store.Object);
-
-        var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
-
-        result!.ConsolidationFeedbackDataJson.Should().Contain("Build tool missing");
-        var expectedQuery = new RunHistoryQuery(Page: 1, PageSize: ConsolidationRunHistoryContext.MaxFeedbackEntries, FeedbackOnly: true);
-        history.Verify(h => h.GetRunHistoryAsync(expectedQuery, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task EnrichAsync_HarnessSuggestions_NoFeedback_LeavesFeedbackNull()
-    {
-        var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
-            with
-        { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
-        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: MakeRunHistory([]).Object);
-
-        var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
-
-        result!.ConsolidationLastSuccessfulRunUtc.Should().BeNull();
-        result.ConsolidationFeedbackDataJson.Should().BeNull();
     }
 
     [Fact]

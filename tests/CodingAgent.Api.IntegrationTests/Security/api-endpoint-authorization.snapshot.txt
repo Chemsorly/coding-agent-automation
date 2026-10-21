@@ -13,8 +13,6 @@ GET /api/export/runs.json -> Service: OperatorApiKey
 GET /api/feedback-comment-outbox/pending -> Service: OperatorApiKey
 POST /api/feedback-comment-outbox/{id:guid}/complete -> Service: OperatorApiKey
 POST /api/feedback-comment-outbox/{id:guid}/fail -> Service: OperatorApiKey
-GET /api/harness-suggestions/ -> Service: OperatorApiKey
-PUT /api/harness-suggestions/ -> Service: OperatorApiKey
 GET /api/pipeline-runs/ -> Service: OperatorApiKey
 POST /api/pipeline-runs/ -> Service: OperatorApiKey
 GET /api/pipeline-runs/active-branches -> Service: OperatorApiKey

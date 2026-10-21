@@ -73,6 +73,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _registry.GetByConnectionId(connectionId);
 
     /// <inheritdoc />
+    public void RemoveFromConnectionIndex(string connectionId)
+        => _registry.RemoveFromConnectionIndex(connectionId);
+
+    /// <inheritdoc />
     public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
         => _registry.TransitionStatus(agentId, newStatus);
 
@@ -315,7 +319,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     // ── Issue provider operations ───────────────────────────────────────
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(ProjectId projectId, CancellationToken ct)
     {
         if (_projectStore is null)
             return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(Array.Empty<PipelineJobTemplate>());
@@ -323,7 +327,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     /// <inheritdoc />
-    public Task<PipelineProject?> GetProjectByIdAsync(string projectId, CancellationToken ct)
+    public Task<PipelineProject?> GetProjectByIdAsync(ProjectId projectId, CancellationToken ct)
     {
         if (_projectStore is null)
             return Task.FromResult<PipelineProject?>(null);

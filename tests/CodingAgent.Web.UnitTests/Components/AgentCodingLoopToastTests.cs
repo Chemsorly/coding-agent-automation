@@ -194,9 +194,9 @@ public class AgentCodingLoopToastTests : BunitContext
             });
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { DefaultTemplate });
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockProjectStore.Setup(s => s.DeleteTemplateAsync(It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()))
+        _mockProjectStore.Setup(s => s.DeleteTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockProjectStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

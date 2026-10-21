@@ -209,11 +209,23 @@ public sealed class PipelineRunSummary
     public string? ConsolidationResultSummary { get; init; }
 
     /// <summary>
-    /// Consolidation template display name (e.g. "My Repo"), or null for global/harness-suggestions runs
+    /// Consolidation template display name (e.g. "My Repo"), or null for global-scope runs
     /// and for runs persisted before this field was introduced.
     /// Stored in the JSONB SummaryJson column; no DB migration needed.
     /// </summary>
     public string? ConsolidationTemplateName { get; init; }
+
+    /// <summary>
+    /// What the refactoring scan produced, or null for non-refactoring runs.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public RefactoringScanOutcome? RefactoringScanOutcome { get; init; }
+
+    /// <summary>
+    /// What the brain consolidation changed and pushed, or null for non-brain-consolidation runs.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public BrainConsolidationOutcome? BrainConsolidationOutcome { get; init; }
 
     /// <summary>
     /// Work item ID associated with this run, or null for runs that were created before this field

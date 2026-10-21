@@ -158,6 +158,13 @@ public class RefactoringExecutorTests : IDisposable
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("parse");
 
+        // ScanOutcome must be set even on the malformed-JSON failure; proposal fields must be empty
+        result.ScanOutcome.Should().NotBeNull("FinalizeProposalsAsync sets ScanOutcome on the malformed-JSON early exit");
+        result.ScanOutcome!.ProposalCount.Should().Be(0, "malformed JSON means no proposals were parsed");
+        result.ScanOutcome.CreatedIssues.Should().BeEmpty();
+        result.ScanOutcome.DroppedProposals.Should().BeEmpty();
+        result.ScanOutcome.UnfiledProposals.Should().BeEmpty();
+
         // Should never call CreateIssueAsync when JSON is malformed
         _mockIssueProvider.Verify(
             x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
@@ -2725,5 +2732,424 @@ public class RefactoringExecutorTests : IDisposable
         // if the IOException propagated past TryWriteIssueContextFileAsync (the outer wrapper would set
         // Success=false), catching regressions that merely swallow the write failure silently.
         result.Should().NotBeNull();
+    }
+
+    // ── AC2 (#3756): Git log returns no file changes → hotspot early exit (L308) ───────────────────────
+
+    /// <summary>
+    /// When the workspace is a real git repo but all commits are empty (no file changes),
+    /// ParseHotspotOutput returns null, L308 fires, and the hotspot output file is not written.
+    /// Covers <c>WriteHotspotAnalysisAsync</c> L308.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_GitLogHasNoFileChanges_HotspotFileNotWrittenAndNoHistoryLogged()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+
+        // Use .Returns<T1,T2>(async …) — NOT .Callback + .Returns(Task.CompletedTask) —
+        // so the returned Task is not resolved until the git commands inside complete.
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns<WorkspacePath, CancellationToken>(async (path, ct) =>
+            {
+                await RefactoringExecutor.RunGitCommandAsync(path, "init", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.email test@example.com", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.name Test", ct);
+                // Empty commit: git log succeeds but produces no file-path lines.
+                // ParseHotspotOutput will find no entries and return null, triggering L308.
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit --allow-empty -m initial", ct);
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act — result.Success will be false (no proposals file written by the mock); that is unrelated to this criterion
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — L308: Logger.Information("No git history found within lookback window for hotspot analysis")
+        _mockLogger.Verify(
+            l => l.Information(It.Is<string>(s => s.Contains("No git history found"))),
+            Times.Once);
+
+        // The hotspot file must not exist: the early return at L308 skips File.WriteAllTextAsync
+        File.Exists(Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath))
+            .Should().BeFalse("git log produced no file-change lines so no hotspot file should be written");
+    }
+
+    // ── AC3 (#3756): scanIssueRefs exclusion path (L581-L613) ───────────────────────────────────────────
+
+    /// <summary>
+    /// When scanIssueRefs is non-empty and a commit's subject contains a matching reference,
+    /// that commit's files are excluded from the hotspot output and the exclusion count is logged.
+    /// Covers <c>WriteHotspotAnalysisAsync</c> L581-L613: isExcludedCommit lambda, CountExcludedCommits,
+    /// and Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits…").
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_ScanIssueRefMatchesCommitSubject_FileExcludedAndExclusionCountLogged()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+
+        // Open scan issue #42 — FormatIssueReference returns "#42" so scanIssueRefs = {"#42"}.
+        // The isExcludedCommit predicate checks subject.Contains("(#42)") (L584-L589).
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [MakeScanIssue("42")],
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
+            });
+        _mockIssueProvider
+            .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
+            .Returns<IssueIdentifier>(id => $"#{id.Value}");
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns<WorkspacePath, CancellationToken>(async (path, ct) =>
+            {
+                await RefactoringExecutor.RunGitCommandAsync(path, "init", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.email test@example.com", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.name Test", ct);
+
+                // Commit A — subject contains "(#42)" → matched by isExcludedCommit → files skipped
+                Directory.CreateDirectory(Path.Combine(path, "src"));
+                File.WriteAllText(Path.Combine(path, "src", "Excluded.cs"), "// test");
+                await RefactoringExecutor.RunGitCommandAsync(path, "add .", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit -m \"feat: refactoring (#42)\"", ct);
+
+                // Commit B — no scan issue ref → not excluded; contributes src/Kept.cs to the hotspot
+                File.WriteAllText(Path.Combine(path, "src", "Kept.cs"), "// test");
+                await RefactoringExecutor.RunGitCommandAsync(path, "add .", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit -m \"feat: something else\"", ct);
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act — result.Success will be false (no proposals file written by the mock); that is unrelated to this criterion
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — L607: Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits…", 1)
+        // It.Is<int>(n => n == 1) selects the Information<int>(string, int) overload and verifies the exact count.
+        _mockLogger.Verify(
+            l => l.Information(
+                It.Is<string>(s => s.Contains("left out")),
+                It.Is<int>(n => n == 1)),
+            Times.Once);
+
+        // The hotspot file must have been written (Commit B contributed src/Kept.cs)
+        var hotspotPath = Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath);
+        File.Exists(hotspotPath).Should().BeTrue("Commit B contributed src/Kept.cs to the hotspot analysis");
+        var hotspotContent = File.ReadAllText(hotspotPath);
+        hotspotContent.Should().Contain("src/Kept.cs");
+        hotspotContent.Should().NotContain("src/Excluded.cs", "Commit A was excluded because its subject contains (#42)");
+    }
+
+    /// <summary>
+    /// When scanIssueRefs is empty, isExcludedCommit is null, so excludedCount is 0.
+    /// Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits…", 0) must still
+    /// be emitted exactly once — covering the unconditional log path added in issue #3798.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_EmptyScanIssueRefs_ExclusionCountLoggedAsZero()
+    {
+        // Arrange — no open scan issues (default setup returns empty list), so scanIssueRefs will be empty
+        // and isExcludedCommit will be null.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns<WorkspacePath, CancellationToken>(async (path, ct) =>
+            {
+                await RefactoringExecutor.RunGitCommandAsync(path, "init", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.email test@example.com", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "config user.name Test", ct);
+
+                // One commit with no scan-issue ref in its subject.
+                Directory.CreateDirectory(Path.Combine(path, "src"));
+                File.WriteAllText(Path.Combine(path, "src", "Foo.cs"), "// test");
+                await RefactoringExecutor.RunGitCommandAsync(path, "add .", ct);
+                await RefactoringExecutor.RunGitCommandAsync(path, "commit -m \"feat: some work\"", ct);
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — the log must fire unconditionally with excludedCount == 0 (null-branch of ternary)
+        _mockLogger.Verify(
+            l => l.Information(
+                It.Is<string>(s => s.Contains("left out")),
+                It.Is<int>(n => n == 0)),
+            Times.Once);
+
+        // The hotspot file must have been written (the commit contributes src/Foo.cs)
+        File.Exists(Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath))
+            .Should().BeTrue("one non-excluded commit contributed src/Foo.cs");
+    }
+
+    // ── Scan outcome tests (issue #3569) ─────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_AllPhase1AgentsFail_ReturnsScanOutcomeWithFailedDetectors()
+    {
+        // Arrange: Phase 0 succeeds; all 4 Phase 1 agents fail; Phase 2 is never reached.
+        // Verifies that phasedResult.ScanOutcome is populated on the phased-failure early-exit path.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Phase 0 (call 1): success; Phase 1 × 4 (calls 2–5): all fail; Phase 2 is never dispatched.
+        _mockAgentProvider
+            .SetupSequence(x => x.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 0
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 1 (fail)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 1 (fail)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 1 (fail)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] });  // Phase 1 (fail)
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse("all Phase 1 agents failed");
+        result.ScanOutcome.Should().NotBeNull(
+            "ScanOutcome must be set on the phased-failure early-exit path in ExecuteAsync");
+
+        var outcome = result.ScanOutcome!;
+        // Three detectors are always returned, all Succeeded=false because all Phase 1 agents failed
+        outcome.Detectors.Should().HaveCount(3,
+            "ExecutePhasedRefactoringAsync always returns the three structural/correctness/design detectors");
+        outcome.Detectors.All(d => !d.Succeeded).Should().BeTrue(
+            "all detectors must be Succeeded=false when all Phase 1 agents fail");
+        // Settings from the job must be present on the outcome
+        outcome.MaxIssues.Should().Be(job.PipelineConfiguration.MaxRefactoringProposals);
+        outcome.HotspotLookbackDays.Should().Be((int)job.PipelineConfiguration.HotspotAnalysisLookback.TotalDays);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ValidProposals_ReturnsScanOutcome()
+    {
+        // Arrange — same setup as ExecuteAsync_ValidProposals_CreatesIssues,
+        // with category and structural findings file.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "category": "duplication",
+                    "affectedFiles": ["src/Service.cs", "src/Handler.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
+                // Write structural findings file with 2 findings
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(
+                    Path.Combine(agentDir, AgentWorkspacePaths.RefactoringStructuralFindingsFilePath.Replace(".agent/", "")),
+                    """{"findings":[{},{}],"notChecked":[]}""");
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Found 1 refactoring opportunity."] });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ScanOutcome.Should().NotBeNull();
+        var outcome = result.ScanOutcome!;
+
+        outcome.ProposalCount.Should().Be(1, "one proposal after adversarial review");
+        outcome.CreatedIssues.Should().HaveCount(1);
+        outcome.CreatedIssues[0].Identifier.Should().Be("42");
+        outcome.CreatedIssues[0].Category.Should().Be("duplication");
+        outcome.DroppedProposals.Should().BeEmpty();
+        outcome.UnfiledProposals.Should().BeEmpty();
+
+        // Three detectors, all succeeded (all agents return ExitCode=0)
+        outcome.Detectors.Should().HaveCount(3);
+        outcome.Detectors.All(d => d.Succeeded).Should().BeTrue();
+        // Structural detector has 2 findings; others have no findings file → null
+        outcome.Detectors[0].Name.Should().Be("Structural debt");
+        outcome.Detectors[0].FindingCount.Should().Be(2);
+        outcome.Detectors[1].Name.Should().Be("Correctness and hygiene");
+        outcome.Detectors[1].FindingCount.Should().BeNull();
+        outcome.Detectors[2].Name.Should().Be("Design consistency");
+        outcome.Detectors[2].FindingCount.Should().BeNull();
+
+        // Settings from job
+        outcome.MaxIssues.Should().Be(job.PipelineConfiguration.MaxRefactoringProposals);
+        outcome.HotspotLookbackDays.Should().Be((int)job.PipelineConfiguration.HotspotAnalysisLookback.TotalDays);
+        outcome.ReviewEnabled.Should().Be(job.PipelineConfiguration.RefactoringReviewEnabled);
+        outcome.AutoDispatch.Should().Be(job.AutoDispatch);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IssueCreationFails_ReportsUnfiledProposals()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "category": "duplication",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("forbidden", null, System.Net.HttpStatusCode.Forbidden));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ScanOutcome.Should().NotBeNull();
+        var outcome = result.ScanOutcome!;
+
+        outcome.UnfiledProposals.Should().HaveCount(1);
+        outcome.UnfiledProposals[0].Title.Should().Be("Extract shared validation logic");
+        outcome.UnfiledProposals[0].Category.Should().Be("duplication");
+        outcome.UnfiledProposals[0].Reason.Should().BeNull("unfiled proposals have no reason, only dropped ones do");
+        outcome.CreatedIssues.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalNamingAgentFile_ReportsDroppedProposal()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        // Two proposals: one valid, one with a file in .agent/ (validation drops it)
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Remove dead helper",
+                    "category": "dead-code",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Delete it.",
+                    "rationale": "No callers."
+                },
+                {
+                    "title": "Update the agent notes file",
+                    "category": "documentation",
+                    "affectedFiles": [".agent/notes.md"],
+                    "description": "Fix the stale note.",
+                    "rationale": "It is outdated."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "7", Url = "https://github.com/test/repo/issues/7" });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ScanOutcome.Should().NotBeNull();
+        var outcome = result.ScanOutcome!;
+
+        outcome.DroppedProposals.Should().HaveCount(1);
+        outcome.DroppedProposals[0].Title.Should().Be("Update the agent notes file");
+        outcome.DroppedProposals[0].Category.Should().Be("documentation");
+        outcome.DroppedProposals[0].Reason.Should().NotBeNullOrEmpty("validation must provide a reason");
+    }
+
+    [Theory]
+    [InlineData("valid3", 3)]
+    [InlineData("missing", null)]
+    [InlineData("notjson", null)]
+    [InlineData("nofindings", null)]
+    public void CountFindings_Theory(string scenario, int? expected)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"count-findings-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string filePath;
+            switch (scenario)
+            {
+                case "valid3":
+                    filePath = Path.Combine(tempDir, "findings.json");
+                    File.WriteAllText(filePath, """{"findings":[{},{},{}],"notChecked":[]}""");
+                    break;
+                case "missing":
+                    filePath = Path.Combine(tempDir, "nonexistent.json");
+                    break;
+                case "notjson":
+                    filePath = Path.Combine(tempDir, "findings.json");
+                    File.WriteAllText(filePath, "not json");
+                    break;
+                case "nofindings":
+                    filePath = Path.Combine(tempDir, "findings.json");
+                    File.WriteAllText(filePath, """{"notChecked":[]}""");
+                    break;
+                default:
+                    throw new ArgumentException($"Unknown scenario: {scenario}");
+            }
+
+            var result = RefactoringExecutor.CountFindings(filePath);
+            result.Should().Be(expected);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 }

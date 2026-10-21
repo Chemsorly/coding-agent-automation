@@ -1,4 +1,5 @@
 using CodingAgent.Web.Models;
+using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Models;
@@ -757,16 +758,6 @@ public class PipelineSidebarComponentTests : BunitContext
     }
 
     [Fact]
-    public void HarnessSuggestions_HasNoPhases()
-    {
-        var run = CreateConsolidationRun(ConsolidationRunType.HarnessSuggestions);
-        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
-
-        Assert.Empty(cut.FindAll("[data-testid^='phase-']"));
-        Assert.Empty(cut.FindAll("#step-GeneratingCode"));
-    }
-
-    [Fact]
     public void ConsolidationRun_Completed_TicksOnlyItsOwnSteps()
     {
         var run = CreateConsolidationRun(
@@ -787,6 +778,88 @@ public class PipelineSidebarComponentTests : BunitContext
 
         // Implementation step must not be rendered
         Assert.Empty(cut.FindAll("#step-GeneratingCode"));
+    }
+
+    // ── Issue #3571: consolidation step outcome details ────────────────────
+
+    /// <summary>
+    /// A completed refactoring scan with detectors and issued/dropped proposal counts
+    /// must show per-detector lines under DetectingFindings and the summary count under
+    /// CreatingRefactoringIssues.
+    /// </summary>
+    [Fact]
+    public void ScanOutcome_ShowsDetectorAndIssueDetails()
+    {
+        var run = CreateConsolidationRun(
+            ConsolidationRunType.RefactoringDetection,
+            currentStep: PipelineStep.Completed,
+            highWaterMark: PipelineStep.CreatingRefactoringIssues);
+
+        run.RefactoringScanOutcome = new RefactoringScanOutcome
+        {
+            Detectors =
+            [
+                new RefactoringDetectorOutcome { Name = "Structural debt", Succeeded = true, FindingCount = 6 },
+                new RefactoringDetectorOutcome { Name = "Correctness and hygiene", Succeeded = false, FindingCount = null },
+                new RefactoringDetectorOutcome { Name = "Design consistency", Succeeded = true, FindingCount = 3 },
+            ],
+            ProposalCount = 3,
+            CreatedIssues =
+            [
+                new CreatedIssueInfo { Identifier = "201", Title = "Issue A", Url = "https://example.com/201" },
+                new CreatedIssueInfo { Identifier = "202", Title = "Issue B", Url = "https://example.com/202" },
+            ],
+            DroppedProposals =
+            [
+                new RefactoringProposalNote { Title = "Dropped proposal", Reason = "duplicate" },
+            ],
+            MaxIssues = 5,
+            HotspotLookbackDays = 30,
+        };
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        var detectingStep = cut.Find("#step-DetectingFindings");
+        detectingStep.TextContent.Should().Contain("Structural debt · 6 findings");
+        detectingStep.TextContent.Should().Contain("Correctness and hygiene · failed");
+
+        var creatingStep = cut.Find("#step-CreatingRefactoringIssues");
+        creatingStep.TextContent.Should().Contain("2/2 created");
+        creatingStep.TextContent.Should().Contain("1 dropped by validation");
+    }
+
+    /// <summary>
+    /// A completed brain consolidation with an outcome must show "N files modified" under
+    /// ConsolidatingKnowledge and the pushed SHA with "merged onto newer commits" under
+    /// PushingBrainChanges.
+    /// </summary>
+    [Fact]
+    public void BrainOutcome_ShowsPushDetails()
+    {
+        var run = CreateConsolidationRun(
+            ConsolidationRunType.BrainConsolidation,
+            currentStep: PipelineStep.Completed,
+            highWaterMark: PipelineStep.PushingBrainChanges);
+
+        run.BrainConsolidationOutcome = new BrainConsolidationOutcome
+        {
+            FilesModified = 14,
+            EntriesMerged = 5,
+            ContradictionsResolved = 1,
+            EntriesPruned = 3,
+            PushedCommitSha = "3f9b2c1d0e",
+            PushedCommitUrl = "https://github.com/org/brain/commit/3f9b2c1d0e",
+            PushAttempts = 2,
+            BaseBranch = "main",
+        };
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        cut.Find("#step-ConsolidatingKnowledge").TextContent.Should().Contain("14 files modified");
+
+        var pushingStep = cut.Find("#step-PushingBrainChanges");
+        pushingStep.TextContent.Should().Contain("pushed 3f9b2c1");
+        pushingStep.TextContent.Should().Contain("merged onto newer commits");
     }
 }
 

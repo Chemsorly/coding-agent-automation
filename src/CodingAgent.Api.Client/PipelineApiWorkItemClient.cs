@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Api.Client;
 
@@ -11,10 +12,12 @@ namespace CodingAgent.Api.Client;
 internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
 {
     private readonly HttpClient _http;
+    private readonly ILogger _logger;
 
-    public PipelineApiWorkItemClient(HttpClient http)
+    public PipelineApiWorkItemClient(HttpClient http, ILogger? logger = null)
     {
         _http = http;
+        _logger = (logger ?? Serilog.Log.Logger).ForContext<PipelineApiWorkItemClient>();
     }
 
     public Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, CancellationToken ct = default)
@@ -155,14 +158,20 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
             "/api/work-items/active-decomposition-count",
             PipelineJsonOptions.Default,
             ct);
-        // TODO [WARNING]: A null result (e.g. malformed 200 body, missing 'count' field) silently
-        // returns 0 via the null-coalesce. The caller (LoadActiveDecompositionCountAsync) only wraps
-        // this in a try/catch for exceptions — a null deserialization result returns 0 without throwing
-        // and without any log or metric emission. A silent 0 from a serialization error is
-        // indistinguishable from a legitimate zero count, and would allow up to MaxConcurrentDecompositions
-        // extra dispatches with no diagnostic signal. Consider throwing or logging a warning when result
-        // is null so the failure is visible in telemetry.
-        return result?.Count ?? 0;
+        if (result is null)
+        {
+            _logger.Warning(
+                "GetActiveDecompositionCountAsync: response from {Endpoint} deserialized to null — " +
+                "the API returned a syntactically valid 200 body that could not be mapped to {Type}; " +
+                "throwing to prevent a silent zero from bypassing the concurrent-decomposition limit.",
+                "/api/work-items/active-decomposition-count",
+                nameof(ActiveDecompositionCountResponse));
+            throw new InvalidOperationException(
+                "GetActiveDecompositionCountAsync: GetFromJsonAsync returned null for " +
+                "/api/work-items/active-decomposition-count. The API response is syntactically valid " +
+                "JSON but could not be deserialized into ActiveDecompositionCountResponse.");
+        }
+        return result.Count;
     }
 
     public async Task<DispatchPendingResult> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)

@@ -76,7 +76,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// For persistent worker agents, the entry is transitioned to <see cref="AgentStatus.Disconnected"/>
     /// so the existing reconnect and orphan-recovery flow can proceed unchanged.
     /// </summary>
-    public override Task OnDisconnectedAsync(Exception? exception)
+    public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
@@ -97,16 +97,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 _logger.Information(
                     "Agent {AgentId} stale connection {StaleConn} closed (active connection: {ActiveConn}) — skipping status transition",
                     agent.AgentId, Context.ConnectionId, agent.ConnectionId);
-                // The stale _connectionIndex[conn-A] entry is left in place; it will be superseded
-                // (made unreachable) once the agent is deregistered at run completion, because
-                // GetAgentRaw will return null for the evicted agentId.
-                // TODO (WARNING, issue #2758): "_connectionIndex[conn-A] made unreachable" means
-                // GetByConnectionId returns null (no auth bypass), but the dictionary *key* itself is
-                // never removed — neither here nor in DeregisterAsync (which only removes conn-B,
-                // the current primary). This is an O(N) leak under sustained mid-run reconnects.
-                // Fix: call _connectionIndex.TryRemove(Context.ConnectionId, out _) here before
-                // returning so stale keys are reclaimed at connection close time.
-                return base.OnDisconnectedAsync(exception);
+                _facade.RemoveFromConnectionIndex(Context.ConnectionId);
+                await base.OnDisconnectedAsync(exception);
+                return;
             }
 
             // Cross-replica reconnect guard (issue #3554):
@@ -120,22 +113,31 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             // and we must not change its status.
             // Note: string.Equals with Ordinal is equivalent to the != operator used in the #2758
             // guard — both perform ordinal comparison on SignalR-generated connection ID strings.
-            // TODO (WARNING, issue #3554): GetByAgentId on DistributedAgentRegistryService issues a
-            // synchronous Redis call (HashGetAllAsync(...).GetAwaiter().GetResult()). If the Redis
-            // connection is interrupted at this moment, GetResult() will throw RedisConnectionException.
-            // That exception is currently unhandled and will propagate out of OnDisconnectedAsync,
-            // preventing base.OnDisconnectedAsync(exception) from running and potentially leaving
-            // SignalR connection bookkeeping in a partially-cleaned-up state. The pre-existing
-            // synchronous wrapper in AgentHubFacade.GetByAgentId carries this risk; a future fix
-            // should wrap this call in a try/catch and treat a Redis failure as "entry unknown"
-            // (i.e. fall through to the existing handling), logging the exception as a Warning.
-            var current = _facade.GetByAgentId(agent.AgentId);
+            AgentEntry? current;
+            try
+            {
+                current = await _facade.GetByAgentIdAsync(agent.AgentId, CancellationToken.None);
+            }
+            catch (Exception redisEx) when (redisEx is not OperationCanceledException)
+            {
+                // If the authoritative store is unavailable, treat the entry as unknown and fall
+                // through to the existing handling (TransitionStatus / Deregister). A Redis outage
+                // at disconnect time is fail-open: the agent is marked Disconnected as if the entry
+                // had expired, which is safe. The alternative — propagating the exception — would
+                // prevent base.OnDisconnectedAsync from running and leave SignalR bookkeeping in a
+                // partially-cleaned-up state.
+                _logger.Warning(redisEx,
+                    "OnDisconnectedAsync: GetByAgentIdAsync failed for agent {AgentId} — treating as unknown, proceeding",
+                    agent.AgentId);
+                current = null;
+            }
             if (current is not null && !string.Equals(current.ConnectionId, Context.ConnectionId, StringComparison.Ordinal))
             {
                 _logger.Information(
                     "Agent {AgentId} connection {ConnectionId} closed, but the agent is registered on connection {CurrentConnectionId}; skipping",
                     agent.AgentId, Context.ConnectionId, current.ConnectionId);
-                return base.OnDisconnectedAsync(exception);
+                await base.OnDisconnectedAsync(exception);
+                return;
             }
             // Proceed: entry is null (TTL-expired / deregistered) or connection IDs match.
 
@@ -176,7 +178,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             }
         }
 
-        return base.OnDisconnectedAsync(exception);
+        await base.OnDisconnectedAsync(exception);
     }
 
     // ── Heartbeat ───────────────────────────────────────────────────────
@@ -188,7 +190,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// timeout from killing agents legitimately waiting in long-running steps (e.g., ExternalCi polling).
     /// Does NOT refresh when <c>CurrentStep</c> is null — preserving stuck-agent detection (#788).
     /// </summary>
-    public Task Heartbeat(HeartbeatMessage message)
+    public async Task Heartbeat(HeartbeatMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
 
@@ -199,7 +201,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             _logger.Warning(
                 "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",
                 Context.ConnectionId, SanitizeForLog(message.AgentId.Value));
-            return Task.CompletedTask;
+            return;
         }
 
         _facade.UpdateHeartbeat(message.AgentId, message.Timestamp);
@@ -209,7 +211,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         // don't reset the clock so the progress timeout can still detect stuck-in-Busy (#788).
         if (message.CurrentStep is not null)
         {
-            var agent = _facade.GetByAgentId(message.AgentId);
+            var agent = await _facade.GetByAgentIdAsync(message.AgentId, Context.ConnectionAborted);
             if (agent?.ActiveJobId is not null)
             {
                 var run = _facade.GetRun(agent.ActiveJobId);
@@ -226,8 +228,6 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 }
             }
         }
-
-        return Task.CompletedTask;
     }
 
     // ── Shared private helpers ──────────────────────────────────────────

@@ -21,12 +21,20 @@ public sealed class ConsolidationServiceBrainScopeTests
 
     private static readonly PipelineJobTemplate TemplateA = new()
     {
-        Id = "tmpl-a", Name = "Repo A", IssueProviderId = "ip-a", RepoProviderId = "rp-a", BrainProviderId = SharedBrain
+        Id = "tmpl-a",
+        Name = "Repo A",
+        IssueProviderId = "ip-a",
+        RepoProviderId = "rp-a",
+        BrainProviderId = SharedBrain
     };
 
     private static readonly PipelineJobTemplate TemplateB = new()
     {
-        Id = "tmpl-b", Name = "Repo B", IssueProviderId = "ip-b", RepoProviderId = "rp-b", BrainProviderId = SharedBrain
+        Id = "tmpl-b",
+        Name = "Repo B",
+        IssueProviderId = "ip-b",
+        RepoProviderId = "rp-b",
+        BrainProviderId = SharedBrain
     };
 
     private readonly Mock<IProjectStore> _projectStore = new();
@@ -64,7 +72,6 @@ public sealed class ConsolidationServiceBrainScopeTests
             new LoggerConfiguration().CreateLogger(),
             bootstrap,
             _projectStore.Object,
-            new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: _distributor.Object,
             SelectorResolver: _selectorResolver.Object,
@@ -171,15 +178,15 @@ public sealed class ConsolidationServiceBrainScopeTests
     }
 
     [Fact]
-    public async Task TriggerAsync_HarnessSuggestions_UseTheGlobalTimeout()
+    public async Task TriggerAsync_GlobalRun_UseTheGlobalTimeout()
     {
         _project = _project with { AgentTimeout = TimeSpan.FromMinutes(90) };
         var sut = CreateSut();
 
-        await sut.TriggerAsync(ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+        await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
 
         _requests.Should().ContainSingle().Which.TimeoutSeconds.Should().Be(3600,
-            "harness suggestions have no template, so no project override applies");
+            "global runs have no template, so no project override applies");
     }
 
     [Fact]

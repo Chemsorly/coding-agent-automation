@@ -345,4 +345,82 @@ public class PipelineRunHashExtensionsPropertyTests
         restored.IssueLabels.Should().BeEquivalentTo(new[] { "bug", "enhancement" });
         restored.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "agent-1", "agent-2" });
     }
+
+    // ── PhaseBreakdown roundtrip ───────────────────────────────────────────────
+
+    [Fact]
+    public void ToHashEntries_FromHash_PreservesPhaseBreakdown()
+    {
+        var run = MakeMinimalRun();
+        run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(
+            Tokens: 12345,
+            Cost: 1.23m,
+            SessionCount: 3,
+            AgentTimeSeconds: 42.5,
+            Provider: "kiro",
+            Model: "claude-sonnet-4-5")
+        {
+            InputTokens = 5000,
+            OutputTokens = 7000,
+            ReasoningTokens = 300,
+            CacheReadTokens = 100,
+            CacheWriteTokens = 200,
+            Turns = 7,
+            WebSearchRequests = 2,
+            BillingMode = "subscription"
+        };
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.Metrics.PhaseBreakdown.Should().HaveCount(1);
+        var entry = restored.Metrics.PhaseBreakdown["codegen"];
+        entry.Tokens.Should().Be(12345);
+        entry.Cost.Should().Be(1.23m);
+        entry.SessionCount.Should().Be(3);
+        entry.AgentTimeSeconds.Should().Be(42.5);
+        entry.Provider.Should().Be("kiro");
+        entry.Model.Should().Be("claude-sonnet-4-5");
+        entry.InputTokens.Should().Be(5000);
+        entry.OutputTokens.Should().Be(7000);
+        entry.ReasoningTokens.Should().Be(300);
+        entry.CacheReadTokens.Should().Be(100);
+        entry.CacheWriteTokens.Should().Be(200);
+        entry.Turns.Should().Be(7);
+        entry.WebSearchRequests.Should().Be(2);
+        entry.BillingMode.Should().Be("subscription");
+    }
+
+    [Fact]
+    public void FromHash_MissingPhaseBreakdown_GivesEmptyBreakdown()
+    {
+        var run = MakeMinimalRun();
+        run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(Tokens: 100, Cost: 0.10m);
+
+        // Remove the phaseBreakdown entry from the hash (simulates a hash written before this feature)
+        var hash = run.ToHashEntries()
+            .Where(e => (string)e.Name! != "phaseBreakdown")
+            .ToArray();
+
+        var restored = PipelineRunHashExtensions.FromHash(hash)!;
+
+        restored.Metrics.PhaseBreakdown.Should().BeEmpty(
+            "a hash without phaseBreakdown must give an empty breakdown, not throw");
+    }
+
+    [Fact]
+    public void ToSummary_AfterFromHash_PreservesPhaseBreakdown()
+    {
+        var run = MakeMinimalRun();
+        run.Metrics.PhaseBreakdown["analysis"] = new PhaseUsage(
+            Tokens: 999, Cost: 0.99m, SessionCount: 1);
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+        var summary = restored.ToSummary();
+
+        summary.PhaseBreakdown.Should().NotBeNull(
+            "ToSummary must propagate PhaseBreakdown read back from a Redis hash");
+        summary.PhaseBreakdown!.Should().ContainKey("analysis");
+        summary.PhaseBreakdown!["analysis"].Tokens.Should().Be(999);
+        summary.PhaseBreakdown!["analysis"].Cost.Should().Be(0.99m);
+    }
 }

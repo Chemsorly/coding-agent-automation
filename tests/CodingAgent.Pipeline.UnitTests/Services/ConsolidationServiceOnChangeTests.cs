@@ -45,7 +45,6 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
-            new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
 
@@ -67,22 +66,5 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
         await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
 
         _onChangeLog.Should().NotBeEmpty("TriggerAsync must fire OnChange so UI shows the new run");
-    }
-
-    [Fact]
-    public async Task SaveHarnessSuggestionsAsync_FiresOnChange()
-    {
-        var suggestions = new HarnessSuggestions
-        {
-            BasedOnRunCount = 1,
-            GeneratedAtUtc = DateTime.UtcNow,
-            SuccessRate = 1.0m,
-            Suggestions = new List<HarnessSuggestion>()
-        };
-        _onChangeLog.Clear();
-
-        await _sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
-
-        _onChangeLog.Should().HaveCount(1, "SaveHarnessSuggestionsAsync must fire OnChange exactly once");
     }
 }

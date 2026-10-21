@@ -18,7 +18,7 @@ namespace CodingAgent.Orchestration;
 ///     returning to callers that persist to Postgres history.</item>
 ///   <item><c>StartedAt</c> — deprecated shadow of <see cref="PipelineRun.StartedAtOffset"/>; omitted.</item>
 ///   <item><c>CompletedAt</c> — deprecated shadow of <see cref="PipelineRun.CompletedAtOffset"/>; omitted.</item>
-///   <item><c>_startedAtLock</c>, <c>Metrics</c> internal fields — not serialized.</item>
+///   <item><c>_startedAtLock</c>, <c>Metrics</c> internal fields — <c>Metrics.PhaseBreakdown</c> is stored as <c>phaseBreakdown</c>; other <c>Metrics</c> fields are not serialized.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -136,6 +136,7 @@ public static class PipelineRunHashExtensions
             J("analysisConcerns",           run.AnalysisConcerns),
             J("analysisBlockingIssues",     run.AnalysisBlockingIssues),
             J("codeReviewAgentsRun",        run.CodeReviewAgentsRun),
+            J("phaseBreakdown",             run.Metrics.PhaseBreakdown.IsEmpty ? null : new Dictionary<string, PhaseUsage>(run.Metrics.PhaseBreakdown)),
             J("resolvedQualityGateConfigIds", run.ResolvedQualityGateConfigIds),
             J("resolvedReviewerConfigIds",  run.ResolvedReviewerConfigIds),
             J("codeReviewAgentFindings",    run.CodeReviewAgentFindings),
@@ -145,6 +146,8 @@ public static class PipelineRunHashExtensions
             F("consolidationTemplateId",        run.ConsolidationTemplateId ?? ""),
             F("consolidationResultSummary",     run.ConsolidationResultSummary ?? ""),
             F("consolidationTemplateName",      run.ConsolidationTemplateName ?? ""),
+            J("refactoringScanOutcome",         run.RefactoringScanOutcome),
+            J("brainConsolidationOutcome",      run.BrainConsolidationOutcome),
         ];
     }
 
@@ -201,6 +204,8 @@ public static class PipelineRunHashExtensions
         run.ConsolidationTemplateId = r.OptionalString("consolidationTemplateId");
         run.ConsolidationResultSummary = r.OptionalString("consolidationResultSummary");
         run.ConsolidationTemplateName = r.OptionalString("consolidationTemplateName");
+        run.RefactoringScanOutcome = r.Json<RefactoringScanOutcome>("refactoringScanOutcome");
+        run.BrainConsolidationOutcome = r.Json<BrainConsolidationOutcome>("brainConsolidationOutcome");
 
         return run;
     }
@@ -329,6 +334,11 @@ public static class PipelineRunHashExtensions
         if (findingsDict is not null)
             foreach (var kv in findingsDict)
                 run.CodeReviewAgentFindings[kv.Key] = kv.Value;
+
+        var phaseBreakdown = r.Json<Dictionary<string, PhaseUsage>>("phaseBreakdown");
+        if (phaseBreakdown is not null)
+            foreach (var kv in phaseBreakdown)
+                run.Metrics.PhaseBreakdown[kv.Key] = kv.Value;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

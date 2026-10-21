@@ -464,6 +464,55 @@ public sealed class PipelineRunFactoryTests
     }
 
     [Fact]
+    public void ConsolidationRun_RefactoringScanOutcome_RoundTripThroughSummaryAndRedisHash()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
+
+        var scanOutcome = new RefactoringScanOutcome
+        {
+            Detectors =
+            [
+                new RefactoringDetectorOutcome { Name = "Structural debt", Succeeded = true, FindingCount = 5 }
+            ],
+            ProposalCount = 2,
+            CreatedIssues =
+            [
+                new CreatedIssueInfo { Identifier = "42", Title = "Fix duplication", Url = "https://github.com/test/repo/issues/42", Category = "duplication" }
+            ],
+            DroppedProposals =
+            [
+                new RefactoringProposalNote { Title = "Out-of-scope proposal", Category = "bug", Reason = "category is outside the scan focus" }
+            ],
+            UnfiledProposals = [],
+            AnalyzedCommitSha = "abc123",
+            MaxIssues = 3,
+            HotspotLookbackDays = 90,
+            ReviewEnabled = true,
+            AutoDispatch = false
+        };
+        run.RefactoringScanOutcome = scanOutcome;
+
+        // Act — SummaryJson round-trip
+        var summary = run.ToSummary();
+
+        // Assert — SummaryJson
+        summary.RefactoringScanOutcome.Should().NotBeNull();
+        summary.RefactoringScanOutcome.Should().BeEquivalentTo(scanOutcome);
+
+        // Act — Redis hash round-trip
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        // Assert — Redis hash
+        restored.RefactoringScanOutcome.Should().NotBeNull(
+            "RefactoringScanOutcome must survive the Redis hash round-trip");
+        restored.RefactoringScanOutcome.Should().BeEquivalentTo(scanOutcome,
+            "all fields of RefactoringScanOutcome must survive the Redis hash round-trip");
+    }
+
+    [Fact]
     public void ConsolidationRun_NullResultFields_RoundTripAsNullThroughSummaryAndRedisHash()
     {
         // Arrange — verify null fields survive as null (not empty string or default)
@@ -489,6 +538,44 @@ public sealed class PipelineRunFactoryTests
         restored.ConsolidationType.Should().BeNull();
         restored.ConsolidationTemplateId.Should().BeNull();
         restored.ConsolidationResultSummary.Should().BeNull();
+    }
+
+    [Fact]
+    public void ConsolidationRun_BrainConsolidationOutcome_RoundTripThroughSummaryAndRedisHash()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
+
+        var brainOutcome = new BrainConsolidationOutcome
+        {
+            FilesModified = 5,
+            EntriesMerged = 3,
+            ContradictionsResolved = 1,
+            EntriesPruned = 2,
+            PushedCommitSha = "abc123",
+            PushedCommitUrl = "https://example.com/commit/abc123",
+            PushAttempts = 2,
+            BaseBranch = "main"
+        };
+        run.BrainConsolidationOutcome = brainOutcome;
+
+        // Act — SummaryJson round-trip
+        var summary = run.ToSummary();
+
+        // Assert — SummaryJson
+        summary.BrainConsolidationOutcome.Should().NotBeNull();
+        summary.BrainConsolidationOutcome.Should().BeEquivalentTo(brainOutcome);
+
+        // Act — Redis hash round-trip
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        // Assert — Redis hash
+        restored.BrainConsolidationOutcome.Should().NotBeNull(
+            "BrainConsolidationOutcome must survive the Redis hash round-trip");
+        restored.BrainConsolidationOutcome.Should().BeEquivalentTo(brainOutcome,
+            "all fields of BrainConsolidationOutcome must survive the Redis hash round-trip");
     }
 
     // ── FromDistributionRequest — RunType routing ─────────────────────────

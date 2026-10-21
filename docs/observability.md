@@ -212,7 +212,7 @@ Cache token fields are populated for **OpenCode** and **Claude Code** agents. Ki
 ### LLM Usage Telemetry Architecture
 
 1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-invocation span (see "Session Spans" below) and adds the session count and elapsed time to `PipelineRun.Metrics.PhaseBreakdown` under the invocation's phase key. The calling phase executors add the tokens and cost with `AccumulateTokenUsage` under the same key.
-2. **Wire** — `LocalPipelineExecutor.BuildPayloadBase` converts `PhaseBreakdown` into `JobCompletionPayload.PhaseBreakdown` for transmission to the API.
+2. **Wire** — `LocalPipelineExecutor.BuildPayloadBase` converts `PhaseBreakdown` into `JobCompletionPayload.PhaseBreakdown` for transmission to the API. The API copies it onto its own run in `JobCompletionMapper` and keeps it in the Redis run hash (`phaseBreakdown`), so it reaches `PipelineRunSummary.PhaseBreakdown`.
 3. **API side** — `WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync` reads the breakdown and records the `pipeline.run.*` usage counters with the normalized `phase` tag.
 
 ### Session Spans (GenAI Semantic Conventions)
@@ -426,7 +426,7 @@ All emitted by the agent pod.
 | `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection |
 | `PrePrCleanup` | `pipeline.run_id` | Workspace deletion + reporter disposal (child of ExecutePipeline, emitted by `PipelineCleanup.RunAsync`) |
 | `WorkItemAgent.Execute` | `work_item_id`, `agent_id` | Top-level span for K8s work-item agent lifecycle (connect, execute, report). Parent is the API request that created the WorkItem (via TRACEPARENT env var). |
-| `ExecuteConsolidation` | `pipeline.run_id`, `pipeline.consolidation_type` | Top-level span wrapping a consolidation run (brain, refactoring, or harness) |
+| `ExecuteConsolidation` | `pipeline.run_id`, `pipeline.consolidation_type` | Top-level span wrapping a consolidation run (brain or refactoring) |
 | `BrainConsolidation.Clone` | `pipeline.run_id` | Brain repo clone during consolidation |
 | `BrainConsolidation.AgentExecution` | `pipeline.run_id` | Main agent LLM call for brain consolidation |
 | `BrainConsolidation.DiffGeneration` | `pipeline.run_id` | Diff summary agent call (LLM execution) |
@@ -443,9 +443,6 @@ All emitted by the agent pod.
 | `RefactoringDetection.Phase2.Aggregation` | `pipeline.run_id` | Aggregation and prioritization of the detected proposals |
 | `RefactoringDetection.AdversarialReview` | `pipeline.run_id` | Adversarial review of refactoring proposals |
 | `RefactoringDetection.CreateIssues` | `pipeline.run_id`, `pipeline.proposal_count`, `pipeline.rejected_proposal_count` | Creating GitHub issues for proposals |
-| `HarnessSuggestion.AgentExecution` | `pipeline.run_id` | Main agent LLM call for harness suggestions |
-| `HarnessSuggestion.WriteToFile` | `pipeline.run_id` | Write-to-file agent call (LLM execution) |
-| `HarnessSuggestion.AdversarialReview` | `pipeline.run_id` | Adversarial review of harness suggestions |
 
 ### Tag Schema
 
@@ -467,7 +464,7 @@ All emitted by the agent pod.
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
 | `pipeline.project_id` | UUID | Project identifier — set only on **spans** (not on metric tags; use `pipeline.project_name` for metrics since it is 1:1 with `pipeline.project_id`) |
 | `pipeline.project_name` | string | Project display name |
-| `pipeline.consolidation_type` | `BrainConsolidation`, `RefactoringDetection`, `HarnessSuggestions` | Consolidation run type (on `ExecuteConsolidation` span) |
+| `pipeline.consolidation_type` | `BrainConsolidation`, `RefactoringDetection` | Consolidation run type (on `ExecuteConsolidation` span) |
 | `code_review.iteration` | integer | Code review iteration index (1-based) |
 | `code_review.max_iterations` | integer | Total configured review iterations |
 | `code_review.parallel` | `true`/`false` | Whether review agents ran in parallel |
@@ -617,15 +614,6 @@ ExecuteConsolidation
 ├── RefactoringDetection.Phase2.Aggregation
 ├── RefactoringDetection.AdversarialReview
 └── RefactoringDetection.CreateIssues
-```
-
-For a harness suggestion run:
-
-```
-ExecuteConsolidation
-├── HarnessSuggestion.AgentExecution
-├── HarnessSuggestion.WriteToFile
-└── HarnessSuggestion.AdversarialReview
 ```
 
 

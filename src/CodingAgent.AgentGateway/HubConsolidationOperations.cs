@@ -30,8 +30,8 @@ public interface IHubConsolidationOperations
     Task CompleteModelFetchRequestAsync(FetchModelsResponse response);
 
     /// <summary>
-    /// Handles consolidation job completion: updates run status, persists harness
-    /// suggestions, increments badge count, writes pipeline run history via
+    /// Handles consolidation job completion: updates run status, increments badge
+    /// count, writes pipeline run history via
     /// <see cref="IRunLifecycleManager"/>, and notifies change listeners.
     /// Returns a debug info string for E2E test observability.
     /// </summary>
@@ -148,6 +148,13 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
                     inMemoryRun.CacheReadTokens = result.CacheReadTokens;
                     inMemoryRun.CacheWriteTokens = result.CacheWriteTokens;
                 }
+                if (result.ScanOutcome is not null)
+                    inMemoryRun.RefactoringScanOutcome = result.ScanOutcome;
+                if (result.BrainOutcome is not null)
+                {
+                    inMemoryRun.BrainConsolidationOutcome = result.BrainOutcome;
+                    inMemoryRun.BrainUpdatesPushed = true;
+                }
                 _runService.ReplaceRun(inMemoryRun);
             }
             else
@@ -172,21 +179,6 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to route consolidation run {JobId} through RunLifecycleManager (non-fatal)", result.JobId);
-        }
-
-        if (result.HarnessSuggestions is not null)
-        {
-            try
-            {
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                await _consolidationService.SaveHarnessSuggestionsAsync(result.HarnessSuggestions, ct);
-                _logger.Information("Consolidation run {JobId} SaveHarnessSuggestionsAsync completed in {ElapsedMs}ms", sanitizedJobId, sw.ElapsedMilliseconds);
-                _badgeService.IncrementBy(result.HarnessSuggestions.Suggestions.Count);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Failed to persist harness suggestions for consolidation job {JobId}", sanitizedJobId);
-            }
         }
 
         if (result.CreatedIssues is { Count: > 0 })

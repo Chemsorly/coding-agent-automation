@@ -6,8 +6,7 @@ namespace CodingAgent.Pipeline.Models;
 public enum ConsolidationRunType
 {
     BrainConsolidation,
-    RefactoringDetection,
-    HarnessSuggestions
+    RefactoringDetection
 }
 
 /// <summary>

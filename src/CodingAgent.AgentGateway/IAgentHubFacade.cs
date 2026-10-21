@@ -54,6 +54,14 @@ public interface IAgentHubFacade
     AgentEntry? GetByConnectionId(string connectionId);
 
     /// <summary>
+    /// Removes the specified SignalR connection ID from the connection index.
+    /// Called from <see cref="AgentHub.OnDisconnectedAsync"/> when a superseded connection closes
+    /// after a mid-run reconnect, to reclaim the stale key at connection-close time.
+    /// This is a no-op if the connection ID is not present.
+    /// </summary>
+    void RemoveFromConnectionIndex(string connectionId);
+
+    /// <summary>
     /// Transitions an agent to a new status.
     /// </summary>
     void TransitionStatus(AgentId agentId, AgentStatus newStatus);
@@ -189,12 +197,12 @@ public interface IAgentHubFacade
     /// Loads all templates belonging to the specified project.
     /// Returns an empty list if no project store is available or the project has no templates.
     /// </summary>
-    Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct);
+    Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(ProjectId projectId, CancellationToken ct);
 
     /// <summary>
     /// Loads a project by ID. Returns null if no project store is available or the project does not exist.
     /// </summary>
-    Task<PipelineProject?> GetProjectByIdAsync(string projectId, CancellationToken ct);
+    Task<PipelineProject?> GetProjectByIdAsync(ProjectId projectId, CancellationToken ct);
 
     /// <summary>
     /// Loads provider configurations of the specified kind.

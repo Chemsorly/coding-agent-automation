@@ -24,8 +24,7 @@ internal sealed class ConsolidationPageService(
         var allProjects = await projects.LoadProjectsAsync(ct);
         var allTemplates = await projects.LoadAllTemplatesAsync(ct);
         var config = await configStore.LoadPipelineConfigAsync(ct);
-        var suggestions = await consolidation.GetHarnessSuggestionsAsync(ct);
-        return BuildOverview(allProjects, allTemplates, config, suggestions);
+        return BuildOverview(allProjects, allTemplates, config);
     }
 
     /// <summary>
@@ -35,8 +34,7 @@ internal sealed class ConsolidationPageService(
     internal static UiConsolidationOverview BuildOverview(
         IReadOnlyList<PipelineProject> allProjects,
         IReadOnlyList<PipelineJobTemplate> allTemplates,
-        PipelineConfiguration config,
-        HarnessSuggestions? suggestions)
+        PipelineConfiguration config)
     {
         var templatesById = allTemplates.ToDictionary(t => t.Id, StringComparer.Ordinal);
         var cards = allProjects
@@ -62,7 +60,7 @@ internal sealed class ConsolidationPageService(
             .Where(t => !string.IsNullOrEmpty(t.BrainProviderId))
             .ToDictionary(t => t.Id, t => t.BrainProviderId!, StringComparer.Ordinal);
 
-        return new UiConsolidationOverview(cards, brains, suggestions);
+        return new UiConsolidationOverview(cards, brains);
     }
 
     public async Task<UiRefactoringScanSettings> GetRefactoringScanSettingsAsync(string templateId, CancellationToken ct)
@@ -111,7 +109,6 @@ internal sealed class ConsolidationPageService(
 
         var brainCounters = new Dictionary<string, UiAutoCounter>(StringComparer.Ordinal);
         var refactoringCounters = new Dictionary<string, UiAutoCounter>(StringComparer.Ordinal);
-        UiAutoCounter? harnessCounter = null;
 
         // ── Brain counters ────────────────────────────────────────────────────
         if (config.AutoBrainConsolidationAfterRuns > 0)
@@ -186,26 +183,7 @@ internal sealed class ConsolidationPageService(
             }
         }
 
-        // ── Harness counter ───────────────────────────────────────────────────
-        if (config.AutoHarnessSuggestionsAfterFeedback > 0)
-        {
-            var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.HarnessSuggestions, null, null);
-            try
-            {
-                var count = await staleness.CountFeedbackSinceLastHarnessSuggestionsAsync(ct);
-                var paused = await staleness.IsPausedAsync(scopeKey, ct);
-                harnessCounter = new UiAutoCounter(
-                    count,
-                    config.AutoHarnessSuggestionsAfterFeedback,
-                    paused ? "auto paused: the last run failed" : null);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Consolidation page: failed to load the automatic-start counter for {Scope}", scopeKey);
-            }
-        }
-
-        return new UiConsolidationAutoCounters(brainCounters, refactoringCounters, harnessCounter);
+        return new UiConsolidationAutoCounters(brainCounters, refactoringCounters);
     }
 
     /// <summary>
@@ -229,7 +207,6 @@ internal sealed class ConsolidationPageService(
         {
             ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
             ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
-            ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running, a configuration error occurred, or no job template matches the agent profile.",
             _ => "Consolidation rejected.",
         });
     }
@@ -238,7 +215,6 @@ internal sealed class ConsolidationPageService(
     {
         ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
         ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
-        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
         _ => type.ToString(),
     };
 }

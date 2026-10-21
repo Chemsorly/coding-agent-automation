@@ -566,14 +566,66 @@ public sealed class DispatchWorkItemServiceTests
 
     // ── TryEnterSelectorDispatchAsync ─────────────────────────────────────────
 
-    // TODO [WARNING]: Missing test for the non-Pending branch disposal path.
-    // When postLockCheck returns a non-Pending item, TryEnterSelectorDispatchAsync calls
-    // acquiredLock.DisposeAsync() inside the try block (DispatchWorkItemService.cs:779) and
-    // returns (null, earlyReturn). A test should seed a Dispatched/Succeeded work item, supply a
-    // mock lock handle, call TryEnterSelectorDispatchAsync with its ID, and assert DisposeAsync
-    // was called Times.Once(). Without this, a regression where DisposeAsync throws on the
-    // non-Pending path (triggering the catch block and a second disposal) would go undetected.
-    // (TestQualityReviewer finding, issue #3701)
+    /// <summary>
+    /// AC4 (issue #3795) — Regression test for the double-dispose risk on the non-Pending branch.
+    /// When the item is NOT Pending (so <c>acquiredLock.DisposeAsync()</c> is called inside the
+    /// try block) AND that disposal throws, the catch block must NOT call <c>DisposeAsync()</c>
+    /// a second time; it must re-throw the original exception.
+    ///
+    /// <para>
+    /// Without the <c>lockTransferred</c> flag fix the catch block calls
+    /// <c>acquiredLock.DisposeAsync()</c> unconditionally, so this test would record
+    /// <c>Times.Exactly(2)</c> and the <c>Times.Once()</c> assertion would fail.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task TryEnterSelectorDispatchAsync_NonPendingBranchDisposeThrows_CatchDoesNotDisposeAgainAndRethrows()
+    {
+        // Arrange — lock handle whose DisposeAsync() throws (simulates a DB connection drop
+        // at the moment of advisory-lock release on the non-Pending early-return path).
+        var lockHandle = new Mock<IAsyncDisposable>();
+        lockHandle.Setup(h => h.DisposeAsync())
+            .ThrowsAsync(new InvalidOperationException("simulated disposal failure"));
+
+        var lockProvider = new Mock<IDistributedLockProvider>();
+        lockProvider
+            .Setup(p => p.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(lockHandle.Object);
+
+        // Seed a non-Pending work item so the if-branch is entered.
+        var dbFactory = CreateDbFactory();
+        var workItemId = Guid.NewGuid();
+        await using (var seedCtx = await dbFactory.CreateDbContextAsync())
+        {
+            seedCtx.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                Status = WorkItemStatus.Dispatched,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-1",
+                AgentSelector = "dotnet,kiro",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = "{}"
+            });
+            await seedCtx.SaveChangesAsync();
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // Act & Assert — original exception from the in-try DisposeAsync() propagates unchanged.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            DispatchWorkItemService.TryEnterSelectorDispatchAsync(
+                lockProvider.Object, "dotnet,kiro", db, workItemId, CancellationToken.None));
+        ex.Message.Should().Be("simulated disposal failure",
+            "the original exception must propagate via 'throw;', not be replaced by a new throw");
+
+        // The critical assertion: DisposeAsync was called exactly once (the in-try call).
+        // Without the lockTransferred fix this would be Times.Exactly(2).
+        lockHandle.Verify(h => h.DisposeAsync(), Times.Once(),
+            "catch block must not call DisposeAsync() a second time when the in-try disposal threw");
+    }
 
     /// <summary>
     /// AC1 — Regression test for issue #3701.

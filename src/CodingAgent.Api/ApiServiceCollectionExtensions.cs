@@ -1,6 +1,7 @@
 using CodingAgent.AgentGateway;
 using CodingAgent.Api.Client;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -32,22 +33,9 @@ namespace CodingAgent.Api;
 public static class ApiServiceCollectionExtensions
 {
     /// <summary>
-    /// Normalizes the connection string: enforces Timeout >= 15 and SslMode=Require in production.
-    /// Inlined from <c>DatabaseReadinessMonitor.NormalizeConnectionString</c> (monolith-only type).
-    /// </summary>
-    private static string NormalizeConnectionString(string connectionString, bool isProduction)
-    {
-        var csb = new NpgsqlConnectionStringBuilder(connectionString);
-        if (csb.Timeout == 0)
-            csb.Timeout = 15;
-        if (isProduction && csb.SslMode == SslMode.Prefer)
-            csb.SslMode = SslMode.Require;
-        return csb.ConnectionString;
-    }
-    /// <summary>
     /// Registers infrastructure services for the Pipeline API:
     /// EF pooled factory, distributed lock, resilience pipelines, config store,
-    /// run history, consolidation/harness/loop-state stores, key-value store.
+    /// run history, consolidation/loop-state stores, key-value store.
     /// </summary>
     public static IServiceCollection AddApiInfrastructure(
         this IServiceCollection services,
@@ -58,7 +46,7 @@ public static class ApiServiceCollectionExtensions
             Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
             "Development",
             StringComparison.OrdinalIgnoreCase);
-        var normalizedConnectionString = NormalizeConnectionString(connectionString, isProduction);
+        var normalizedConnectionString = DatabaseReadinessMonitor.NormalizeConnectionString(connectionString, isProduction);
 
         // ── EF Core DbContext Factory + scoped accessor ─────────────────────
         services.AddPooledDbContextFactory<PipelineDbContext>(opts =>
@@ -116,10 +104,6 @@ public static class ApiServiceCollectionExtensions
         // ── ILoopStateStore ─────────────────────────────────────────────────
         services.AddSingleton<ILoopStateStore>(sp =>
             new PostgresLoopStateStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-
-        // ── IHarnessSuggestionStore ─────────────────────────────────────────
-        services.AddSingleton<IHarnessSuggestionStore>(sp =>
-            new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // ── IKeyValueStore ──────────────────────────────────────────────────
         services.AddScoped<IKeyValueStore, PostgresKeyValueStore>();
@@ -401,41 +385,22 @@ public static class ApiServiceCollectionExtensions
     private static void AddTokenVending(IServiceCollection services)
     {
         // ── ITokenVendingService ─────────────────────────────────────────────
-        // SocketsHttpHandler.PooledConnectionLifetime set to 90s so stale connections to
-        // replaced pod IPs are recycled after a rolling update. CircuitBreaker.MinimumThroughput
-        // lowered to 10 so the breaker can trip on low-traffic clients during a pod blip.
-        // TODO [WARNING]: This ConfigureHttpClientDefaults call is registered independently from
-        // the one in PipelineApiClientServiceCollectionExtensions.cs. If both are active in the
-        // same container, ConfigurePrimaryHttpMessageHandler accumulates, and each registration
-        // replaces the previous handler instance — the first SocketsHttpHandler is created and
-        // immediately abandoned (minor leak until GC). Consider consolidating into a single shared
-        // call. See review finding [WARNING] ApiServiceCollectionExtensions.cs:220.
-        services.ConfigureHttpClientDefaults(b =>
-        {
-            b.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                PooledConnectionLifetime = TimeSpan.FromSeconds(90)
-            });
-        });
+        // SocketsHttpHandler.PooledConnectionLifetime set to 90s via AddStandardHttpClientPoolDefaults.
+        // CircuitBreaker.MinimumThroughput lowered to 10 so the breaker can trip on low-traffic
+        // clients during a pod blip.
+        services.AddStandardHttpClientPoolDefaults();
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-        services.AddSingleton<TokenVendingService>(sp =>
-            new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
-        services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
-        services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
+        services.AddTokenVendingCore();
     }
 
     /// <summary>
-    /// Registers label services: <see cref="ILabelService"/> and <see cref="ILabelSwapService"/>.
+    /// Registers label services: <see cref="ILabelSwapService"/>.
+    /// <see cref="ILabelService"/> is registered by <see cref="AddTokenVending"/> via
+    /// <see cref="TokenVendingServiceCollectionExtensions.AddTokenVendingCore"/>.
     /// </summary>
     private static void AddLabelServices(IServiceCollection services)
     {
-        // ── ILabelService ────────────────────────────────────────────────────
-        services.AddSingleton<ILabelService>(sp => new LabelService(
-            sp.GetRequiredService<IProviderConfigStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            Log.Logger));
-
         // ── ILabelSwapService ─────────────────────────────────────────────────
         // Registered conditionally so the API degrades gracefully when ILabelService is unconfigured.
         // LabelSwapService is internal sealed — accessed here through the same assembly.
@@ -482,7 +447,6 @@ public static class ApiServiceCollectionExtensions
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>(),
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
                 SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
@@ -716,8 +680,7 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<ConsolidationTemplateResolver>(),
             Log.Logger,
             new ConsolidationRunContextSources(
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>()),
+                sp.GetRequiredService<IPipelineRunHistoryService>()),
             sp.GetRequiredService<ITriageStore>()));
 
         // ── Pending dispatch services (POST /api/work-items/{id}/dispatch) ───────────────────

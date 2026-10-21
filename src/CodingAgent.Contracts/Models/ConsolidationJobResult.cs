@@ -25,9 +25,7 @@ public sealed class ConsolidationJobResult
     [Key(4)]
     public IReadOnlyList<CreatedIssueInfo>? CreatedIssues { get; init; }
 
-    /// <summary>For harness suggestions: the generated suggestions object.</summary>
-    [Key(5)]
-    public HarnessSuggestions? HarnessSuggestions { get; init; }
+    // Key(5) is retired (was HarnessSuggestions). Do not reuse.
 
     /// <summary>Token usage from the discriminator review agent call.</summary>
     [Key(6)]
@@ -63,6 +61,14 @@ public sealed class ConsolidationJobResult
     /// <summary>Tokens written to the prompt cache.</summary>
     [Key(13)]
     public long CacheWriteTokens { get; set; }
+
+    /// <summary>For a refactoring scan: what it produced. Null for the other kinds.</summary>
+    [Key(14)]
+    public RefactoringScanOutcome? ScanOutcome { get; set; }
+
+    /// <summary>For a brain consolidation that pushed its changes: what it changed and pushed. Null otherwise.</summary>
+    [Key(15)]
+    public BrainConsolidationOutcome? BrainOutcome { get; set; }
 }
 
 /// <summary>
@@ -80,4 +86,7 @@ public sealed record CreatedIssueInfo
 
     [Key(2)]
     public required string Url { get; init; }
+
+    [Key(3)]
+    public string? Category { get; init; }
 }

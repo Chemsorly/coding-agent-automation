@@ -177,12 +177,13 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             // 7. Push to base branch. Many repositories feed one brain, so their runs may have pushed
             //    lessons since the clone; the push then merges those lines in instead of failing.
             Logger.Information("Pushing brain consolidation changes for run {RunId}", job.JobId);
+            int pushAttempts;
             using (var pushActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Push"))
             {
                 pushActivity?.SetTag("pipeline.run_id", job.JobId);
                 try
                 {
-                    await _brainUpdateService.PushConsolidationAsync(
+                    pushAttempts = await _brainUpdateService.PushConsolidationAsync(
                         workspacePath, commitMessage, brainProvider, ct, job.PipelineConfiguration.BrainPushMaxRetries);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -202,6 +203,18 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 }
             }
 
+            // Read the SHA of the commit that was just pushed. Failure here must never fail the run.
+            string? pushedSha = null;
+            try
+            {
+                pushedSha = await brainProvider.GetHeadCommitShaAsync(workspacePath, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.Warning(ex, "Could not read the pushed brain commit for run {RunId}", job.JobId);
+            }
+            if (string.IsNullOrEmpty(pushedSha)) pushedSha = null;
+
             // 8. Parse metrics from agent output
             var responseText = string.Join("\n", agentResult.OutputLines);
             var (filesModified, entriesMerged, contradictionsResolved, entriesPruned) = ParseMetrics(responseText);
@@ -219,7 +232,18 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 Summary = summary,
                 DiffSummaryTokenUsage = diffSummaryTokenUsage,
                 ReviewTokenUsage = reviewTokenUsage,
-                RefinementTokenUsage = refinementTokenUsage
+                RefinementTokenUsage = refinementTokenUsage,
+                BrainOutcome = new BrainConsolidationOutcome
+                {
+                    FilesModified = filesModified,
+                    EntriesMerged = entriesMerged,
+                    ContradictionsResolved = contradictionsResolved,
+                    EntriesPruned = entriesPruned,
+                    PushedCommitSha = pushedSha,
+                    PushedCommitUrl = pushedSha is null ? null : brainProvider.GetCommitWebUrl(pushedSha),
+                    PushAttempts = pushAttempts,
+                    BaseBranch = brainProvider.BaseBranch
+                }
             };
         }, ct);
     }

@@ -718,6 +718,10 @@
         PipelineStep.FinalizingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.ReflectingOnRun => Run.BrainProviderConfigId != null,
         PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,
+        PipelineStep.DetectingFindings => Run.RefactoringScanOutcome is { Detectors.Count: > 0 },
+        PipelineStep.CreatingRefactoringIssues => Run.RefactoringScanOutcome is not null,
+        PipelineStep.ConsolidatingKnowledge => Run.BrainConsolidationOutcome is not null,
+        PipelineStep.PushingBrainChanges => Run.BrainConsolidationOutcome is not null,
         _ => false
     };
 
@@ -759,6 +763,14 @@
         PipelineStep.GeneratingSubIssues => RenderGeneratingSubIssuesDetails(state),
         PipelineStep.CreatingIssues => RenderCreatingIssuesDetails(state),
         PipelineStep.PostingSummary => RenderPostingSummaryDetails(state),
+        PipelineStep.DetectingFindings when Run.RefactoringScanOutcome is { Detectors.Count: > 0 }
+            => RenderDetectingFindingsDetails(),
+        PipelineStep.CreatingRefactoringIssues when Run.RefactoringScanOutcome is not null
+            => RenderCreatingRefactoringIssuesDetails(),
+        PipelineStep.ConsolidatingKnowledge when Run.BrainConsolidationOutcome is not null
+            => RenderConsolidatingKnowledgeDetails(),
+        PipelineStep.PushingBrainChanges when Run.BrainConsolidationOutcome is not null
+            => RenderPushingBrainChangesDetails(),
         _ => _ => { }
     };
 
@@ -1198,4 +1210,55 @@
     };
 
     // ─── Utilities ───────────────────────────────────────────────────────
+
+    private RenderFragment RenderDetectingFindingsDetails() => __builder =>
+    {
+        <div class="step-detail-box">
+            @foreach (var detector in Run.RefactoringScanOutcome!.Detectors)
+            {
+                @if (detector.Succeeded)
+                {
+                    <div><Icon Name="check-circle" /> @(detector.FindingCount.HasValue ? $"{detector.Name} · {detector.FindingCount} findings" : detector.Name)</div>
+                }
+                else
+                {
+                    <div><Icon Name="x-circle" /> @detector.Name · failed</div>
+                }
+            }
+        </div>
+    };
+
+    private RenderFragment RenderCreatingRefactoringIssuesDetails() => __builder =>
+    {
+        var scanOutcome = Run.RefactoringScanOutcome!;
+        var created = scanOutcome.CreatedIssues.Count;
+        var unfiled = scanOutcome.UnfiledProposals.Count;
+        <div class="step-detail-box">
+            <div>@created/@(created + unfiled) created</div>
+            @if (scanOutcome.DroppedProposals.Count > 0)
+            {
+                <div>@scanOutcome.DroppedProposals.Count dropped by validation</div>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderConsolidatingKnowledgeDetails() => __builder =>
+    {
+        <div class="step-detail">@Run.BrainConsolidationOutcome!.FilesModified files modified</div>
+    };
+
+    private RenderFragment RenderPushingBrainChangesDetails() => __builder =>
+    {
+        var brainOutcome = Run.BrainConsolidationOutcome!;
+        <div class="step-detail-box">
+            @if (brainOutcome.PushedCommitSha is not null)
+            {
+                <div>pushed @brainOutcome.PushedCommitSha[..Math.Min(7, brainOutcome.PushedCommitSha.Length)]</div>
+            }
+            @if (brainOutcome.PushAttempts > 1)
+            {
+                <div>merged onto newer commits</div>
+            }
+        </div>
+    };
 }

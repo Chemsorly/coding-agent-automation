@@ -4,8 +4,8 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.Services.Prompts;
 
 /// <summary>
-/// Builds prompts for the three consolidation loop types:
-/// brain consolidation, refactoring detection, and harness suggestions.
+/// Builds prompts for the two consolidation loop types:
+/// brain consolidation and refactoring detection.
 /// </summary>
 public static partial class ConsolidationPromptBuilder
 {
@@ -216,76 +216,6 @@ public static partial class ConsolidationPromptBuilder
     }
 
     /// <summary>
-    /// Builds the harness suggestion analysis prompt.
-    /// Instructs agent to identify top 3-5 improvements from feedback data.
-    /// </summary>
-    public static string BuildHarnessSuggestionPrompt(int feedbackCount, decimal successRate)
-    {
-        var sb = new StringBuilder();
-
-        sb.AppendLine("# Harness Improvement Analysis");
-        sb.AppendLine();
-        sb.AppendLine("You are analyzing accumulated pipeline run feedback to identify recurring patterns and suggest improvements.");
-        sb.AppendLine();
-
-        // Context
-        PromptBuilder.AppendSection(sb, "## Feedback Context", s =>
-        {
-            s.AppendLine($"- **Total runs with feedback:** {feedbackCount}");
-            s.AppendLine($"- **Overall success rate:** {successRate:F1}%");
-            s.AppendLine();
-            s.AppendLine("The feedback data file (`feedback-data.json`) in this workspace contains the raw RunFeedback entries from pipeline runs.");
-            s.AppendLine("Each entry includes harness feedback (pipeline/tool issues) and optionally issue feedback (issue/repo quality problems).");
-        });
-
-        // Instructions
-        PromptBuilder.AppendSection(sb, "## Analysis Instructions", s =>
-        {
-            s.AppendLine("1. Read the feedback data file completely");
-            s.AppendLine("2. Identify recurring patterns across multiple runs — look for repeated categories, similar stuck reasons, and common missing capabilities");
-            s.AppendLine("3. Rank patterns by **frequency** (how many runs mention it) and **impact** (how much it affects success rate)");
-            s.AppendLine("4. Produce the **top 3-5 improvement suggestions** that would have the highest positive impact");
-        });
-
-        // Quality requirements
-        PromptBuilder.AppendSection(sb, "## Suggestion Quality Requirements", s =>
-        {
-            s.AppendLine("Each suggestion MUST be:");
-            s.AppendLine("- **Concrete and actionable** — specify exactly what to change (e.g., \"Add file X to the initial context provided to the agent\" not \"Provide more context\")");
-            s.AppendLine("- **Grounded in evidence** — reference at least 3 specific feedback entries (by their category or stuckReason text) that motivate the suggestion");
-            s.AppendLine("- **Scoped to one change** — each suggestion addresses one improvement, not a bundle of changes");
-            s.AppendLine();
-            s.AppendLine("Do NOT produce abstract recommendations like \"improve error handling\" or \"add more tests\".");
-            s.AppendLine("Every suggestion must reference specific feedback patterns and propose a specific change.");
-        });
-
-        // Output format
-        PromptBuilder.AppendOutputFormatHeading(sb);
-        sb.AppendLine();
-        sb.AppendLine("Produce your analysis as a JSON object with the following structure:");
-        sb.AppendLine();
-        sb.AppendLine("```json");
-        sb.AppendLine("{");
-        sb.AppendLine($"  \"generatedAtUtc\": \"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}\",");
-        sb.AppendLine($"  \"basedOnRunCount\": {feedbackCount},");
-        sb.AppendLine($"  \"successRate\": {successRate:F1},");
-        sb.AppendLine("  \"suggestions\": [");
-        sb.AppendLine("    {");
-        sb.AppendLine("      \"text\": \"The concrete suggestion text — what to change and how\",");
-        sb.AppendLine("      \"rationale\": \"Why this would help, referencing specific feedback patterns\",");
-        sb.AppendLine("      \"frequency\": 5");
-        sb.AppendLine("    }");
-        sb.AppendLine("  ]");
-        sb.AppendLine("}");
-        sb.AppendLine("```");
-        sb.AppendLine();
-        sb.AppendLine("The `frequency` field indicates how many runs contributed to this observation.");
-        sb.AppendLine("Order suggestions by impact (highest first).");
-
-        return sb.ToString();
-    }
-
-    /// <summary>
     /// Formats the brain consolidation summary string with all metrics.
     /// </summary>
     public static string FormatBrainConsolidationSummary(
@@ -374,34 +304,6 @@ public static partial class ConsolidationPromptBuilder
     }
 
     /// <summary>
-    /// Review prompt for harness suggestions.
-    /// Instructs discriminator to read .agent/harness-suggestions-output.json and
-    /// feedback-data.json, then write findings to .agent/harness-suggestions-review.md.
-    /// </summary>
-    public static string BuildHarnessSuggestionsReviewPrompt()
-    {
-        return BuildAdversarialReviewPrompt(new AdversarialReviewPromptSpec
-        {
-            Title = "Harness Suggestions Review",
-            SubjectNoun = "harness improvement suggestions",
-            IntroScope = "the suggestions file and the original feedback data",
-            InputInstruction = $"Read the suggestions file at `{AgentWorkspacePaths.HarnessSuggestionsOutputFilePath}` from the workspace.\nAlso read `feedback-data.json` from the workspace root to cross-reference suggestions against actual feedback data.",
-            OutputPath = AgentWorkspacePaths.HarnessSuggestionsReviewFilePath,
-            EvaluationBullets =
-            [
-                "Suggestions not grounded in specific feedback patterns from the data",
-                "Abstract or non-actionable suggestions that lack specificity",
-                "Implausible frequency counts that don't match the feedback data",
-                "Bundled concerns that should be separate suggestions",
-                "Rationales lacking specific evidence from feedback entries",
-            ],
-            EvaluationSubject = "the suggestions",
-            SubjectShortName = "suggestions",
-            DoNotModifyClause = "Do NOT modify source files, configuration files, or the suggestions file being reviewed. Only read the input files and write the review findings file."
-        });
-    }
-
-    /// <summary>
     /// Refinement prompt for refactoring proposals.
     /// Instructs generator to read .agent/refactoring-review.md and update
     /// .agent/refactoring-proposals.json accordingly.
@@ -439,24 +341,6 @@ public static partial class ConsolidationPromptBuilder
                 "Fix incorrect merges",
                 "Correct factual errors",
                 $"Update `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` with a note about what was revised",
-            ]);
-    }
-
-    /// <summary>
-    /// Refinement prompt for harness suggestions.
-    /// Instructs generator to read .agent/harness-suggestions-review.md and update
-    /// .agent/harness-suggestions-output.json accordingly.
-    /// </summary>
-    public static string BuildHarnessSuggestionsRefinementPrompt()
-    {
-        return BuildRefinementPrompt(
-            "Harness Suggestions Refinement",
-            "harness suggestions",
-            AgentWorkspacePaths.HarnessSuggestionsReviewFilePath,
-            "updating `" + AgentWorkspacePaths.HarnessSuggestionsOutputFilePath + "`",
-            [
-                "Make suggestions more concrete, add specific evidence references, correct frequency counts",
-                "You may remove suggestions that the reviewer correctly identified as unfounded",
             ]);
     }
 

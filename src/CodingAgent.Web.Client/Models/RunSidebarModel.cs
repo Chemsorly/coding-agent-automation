@@ -60,6 +60,10 @@ public sealed class RunSidebarModel
     public string? ConsolidationTemplateId { get; set; }
     public string? ConsolidationTemplateName { get; set; }
     public Dictionary<string, PhaseUsage> PhaseBreakdown { get; } = [];
+    /// <summary>What the refactoring scan produced; null for non-scan runs or while the run is in progress.</summary>
+    public RefactoringScanOutcome? RefactoringScanOutcome { get; set; }
+    /// <summary>What the brain consolidation changed and pushed; null for non-brain runs or while the run is in progress.</summary>
+    public BrainConsolidationOutcome? BrainConsolidationOutcome { get; set; }
 
     /// <summary>
     /// The last step the run is known to have reached, from the data it produced, else from
