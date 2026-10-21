@@ -372,7 +372,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         FinalLabel = run.FinalLabel,
         HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION"),
         PhaseBreakdown = BuildPhaseBreakdownPayload(run.Metrics.PhaseBreakdown),
-        RateLimits = run.Metrics.RateLimits.IsEmpty ? null : run.Metrics.RateLimits.Values.ToList()
+        RateLimits = run.Metrics.RateLimits.IsEmpty ? null : run.Metrics.RateLimits.Values.ToList(),
+        McpServers = run.McpServers
     };
 
     /// <summary>
@@ -403,7 +404,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 CacheWriteTokens = kvp.Value.CacheWriteTokens,
                 Turns = kvp.Value.Turns,
                 WebSearchRequests = kvp.Value.WebSearchRequests,
-                BillingMode = kvp.Value.BillingMode
+                BillingMode = kvp.Value.BillingMode,
+                ToolCalls = kvp.Value.ToolCalls,
+                UnavailableMcpServers = kvp.Value.UnavailableMcpServers
             });
     }
 

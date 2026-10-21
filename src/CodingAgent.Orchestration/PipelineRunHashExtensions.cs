@@ -137,6 +137,7 @@ public static class PipelineRunHashExtensions
             J("analysisBlockingIssues",     run.AnalysisBlockingIssues),
             J("codeReviewAgentsRun",        run.CodeReviewAgentsRun),
             J("phaseBreakdown",             run.Metrics.PhaseBreakdown.IsEmpty ? null : new Dictionary<string, PhaseUsage>(run.Metrics.PhaseBreakdown)),
+            J("mcpServers",                 run.McpServers),
             J("resolvedQualityGateConfigIds", run.ResolvedQualityGateConfigIds),
             J("resolvedReviewerConfigIds",  run.ResolvedReviewerConfigIds),
             J("codeReviewAgentFindings",    run.CodeReviewAgentFindings),
@@ -339,6 +340,8 @@ public static class PipelineRunHashExtensions
         if (phaseBreakdown is not null)
             foreach (var kv in phaseBreakdown)
                 run.Metrics.PhaseBreakdown[kv.Key] = kv.Value;
+
+        run.McpServers = r.Json<List<string>>("mcpServers");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

@@ -671,6 +671,14 @@ A setting's limits are standard `[Range]` attributes, the one source for the API
 **Not:** configurable bundle URLs (no demand yet); bundling with npm at build time (no JS build step).
 **Revisit when:** Faro is needed without internet access; the minimal change is SDK and tracing URL overrides.
 
+### Runs record their MCP and web tool calls by name and count
+<!-- 2026-10-20 -->
+**Rule:** Every agent call records its MCP and web tool calls per phase as `server/tool`, with the number of calls and of failed calls by cause (connection, auth, other, unknown), and the MCP servers it could not use. The run keeps the names of its configured MCP servers. Only names and counts are stored; arguments, results and error texts are not. Failed calls and unavailable servers are logged as warnings, with the error text masked and cut to 200 characters.
+**Why:** Operators need to see whether an agent used SonarQube, Grafana or web search, and the agent's own account can't prove it. Names and counts answer that and carry no secrets.
+**Accepting:** three provider-specific parsers; the cause of a failure is guessed from its error text; Kiro reports no failure reason, can't tie a failure to its call when calls run in parallel, and reports no server status.
+**Not:** storing arguments or error texts in the run; a per-tool metric (active series); a list of built-in tools to hide (MCP calls are recognised by their name format instead).
+**Revisit when:** operators need to know what a call looked up, or infrastructure failures hide in the "other" cause.
+
 ## Scope and users
 
 ### Image extraction: security hardening kept but feature is experimental, may be reworked

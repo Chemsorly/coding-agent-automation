@@ -419,6 +419,13 @@ public sealed record JobCompletionPayload
     /// </summary>
     [Key(28)]
     public IReadOnlyList<AgentRateLimitObservation>? RateLimits { get; init; }
+
+    /// <summary>
+    /// Names of the enabled MCP servers configured for the run. Null when none.
+    /// Wire-compat: additive field — old agents omit it.
+    /// </summary>
+    [Key(29)]
+    public IReadOnlyList<string>? McpServers { get; init; }
 }
 
 /// <summary>
@@ -667,6 +674,20 @@ public sealed record PhaseUsagePayload
     /// <summary>How the LLM calls were paid for (<see cref="AgentBillingModes"/>), or null if unknown.</summary>
     [Key(13)]
     public string? BillingMode { get; init; }
+
+    /// <summary>
+    /// MCP and web tool calls in this phase, keyed <c>server/tool</c>.
+    /// Null when none were recorded. Wire-compat: additive field — old agents omit it.
+    /// </summary>
+    [Key(14)]
+    public IReadOnlyDictionary<string, McpCallCounts>? ToolCalls { get; init; }
+
+    /// <summary>
+    /// MCP servers that could not be used in this phase, by name, with a <see cref="McpServerStatuses"/> value.
+    /// Null when none. Wire-compat: additive field — old agents omit it.
+    /// </summary>
+    [Key(15)]
+    public IReadOnlyDictionary<string, string>? UnavailableMcpServers { get; init; }
 }
 
 /// <summary>

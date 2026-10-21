@@ -124,6 +124,12 @@ public sealed class PipelineRunSummary
     /// <summary>Per-phase token/cost breakdown, or null if no phase data was collected (e.g. old runs).</summary>
     public IReadOnlyDictionary<string, PhaseUsage>? PhaseBreakdown { get; init; }
 
+    /// <summary>
+    /// Names of the enabled MCP servers configured for the run. Null for runs without MCP servers
+    /// and runs recorded before this field existed. Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public IReadOnlyList<string>? McpServers { get; init; }
+
     /// <summary>Agent provider config ID for display name resolution in the UI.</summary>
     public string? AgentProviderConfigId { get; init; }
 

@@ -49,4 +49,16 @@ public sealed class AgentResult
     /// The QG retry loop uses this to skip <c>RetryCount</c> increments on transient provider errors.
     /// </summary>
     public AgentErrorCategory ErrorCategory { get; init; } = AgentErrorCategory.None;
+
+    /// <summary>
+    /// MCP and web tool calls of this invocation, keyed <c>server/tool</c> (<see cref="McpToolKeys"/>).
+    /// Built-in file and shell tools are not counted. Null when the provider reported none.
+    /// </summary>
+    public IReadOnlyDictionary<string, McpCallCounts>? ToolCalls { get; init; }
+
+    /// <summary>
+    /// MCP servers this invocation could not use, by name, with a <see cref="McpServerStatuses"/> value.
+    /// Null when there were none or the provider cannot tell.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? UnavailableMcpServers { get; init; }
 }
