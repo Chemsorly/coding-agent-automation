@@ -161,7 +161,10 @@ public class AccumulateTokenUsageTests
         run.AccumulateTokenUsage(new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.5m, UsageDetails = details }, "codegen");
         run.AccumulateTokenUsage(new AgentResult
         {
-            ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.25m,
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = usage,
+            Cost = 0.25m,
             UsageDetails = details with
             {
                 RateLimits = [new AgentRateLimitObservation { Provider = "claude", Window = "five_hour", Status = "allowed_warning", Utilization = 0.9 }]
