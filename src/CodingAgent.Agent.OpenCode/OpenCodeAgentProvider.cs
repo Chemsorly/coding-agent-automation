@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -69,6 +71,9 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     /// first call reach it. The agent's MCP config writer fills its <c>mcp</c> section.
     /// </remarks>
     public string McpConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".opencode", "opencode.json");
+
+    /// <summary>Test-only: overrides <see cref="McpConfigPath"/> to avoid reading the real user home directory.</summary>
+    internal string? McpConfigPathOverride { get; set; }
 
     /// <inheritdoc />
     public bool SupportsParallelExecution => true;
@@ -213,6 +218,10 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
 
             // Capture token usage delta on all paths (success, timeout, error)
             var (usage, cost) = await CaptureSessionTokenDeltaAsync(sessionId, workspacePath);
+
+            // Build MCP tool-call metrics from SSE state + GET /mcp server statuses
+            var (toolCalls, unavailableMcpServers) = await BuildMcpMetricsAsync(sseState, workspacePath, request, ct);
+
             return new AgentResult
             {
                 ExitCode = result.ExitCode,
@@ -222,7 +231,9 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                 // Forward the error category set by HandleHttpErrorResponseAsync.
                 // Other result construction paths (timeout, exception) produce None by default,
                 // which is correct — they are not provider HTTP classification failures.
-                ErrorCategory = result.ErrorCategory
+                ErrorCategory = result.ErrorCategory,
+                ToolCalls = toolCalls,
+                UnavailableMcpServers = unavailableMcpServers
             };
         }
         finally
@@ -694,4 +705,195 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
         ".gif" => "image/gif",
         _ => "application/octet-stream"
     };
+
+    // ── MCP tool call tracking ────────────────────────────────────────────
+
+    /// <summary>Deserializes one entry from the GET /mcp response object.</summary>
+    private sealed record McpServerStatusEntry
+    {
+        public string? Status { get; init; }
+    }
+
+    /// <summary>
+    /// Calls <c>GET /mcp</c> on the workspace-scoped OpenCode instance and returns
+    /// a <c>name → status</c> dictionary, or null on failure.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>?> GetMcpStatusAsync(string workspacePath, CancellationToken ct)
+    {
+        try
+        {
+            using var client = CreateDirectoryClientForPath(workspacePath);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+            using var response = await client.GetAsync("/mcp", timeoutCts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.Debug("GET /mcp returned HTTP {Status}", (int)response.StatusCode);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+            var entries = JsonSerializer.Deserialize<Dictionary<string, McpServerStatusEntry>>(json, OpenCodeJson.JsonOptions);
+            if (entries is null)
+            {
+                _logger.Debug("GET /mcp returned null after deserialization");
+                return null;
+            }
+
+            return entries.ToDictionary(kv => kv.Key, kv => kv.Value.Status ?? "", StringComparer.Ordinal);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "GET /mcp failed");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Builds the <see cref="AgentResult.ToolCalls"/> and <see cref="AgentResult.UnavailableMcpServers"/>
+    /// from the SSE call state and the MCP server status endpoint.
+    /// </summary>
+    private async Task<(IReadOnlyDictionary<string, McpCallCounts>? ToolCalls, IReadOnlyDictionary<string, string>? UnavailableMcpServers)>
+        BuildMcpMetricsAsync(SseCallState sseState, string workspacePath, AgentRequest request, CancellationToken ct)
+    {
+        // --- server names from GET /mcp (primary) or config-file fallback ---
+        var mcpStatus = await GetMcpStatusAsync(workspacePath, ct);
+
+        IEnumerable<string> serverNames;
+        if (mcpStatus is not null)
+        {
+            serverNames = mcpStatus.Keys;
+        }
+        else
+        {
+            var configNames = TryReadConfigFileServerNames(McpConfigPathOverride ?? McpConfigPath);
+            if (configNames is null)
+            {
+                serverNames = [];
+                _logger.Warning("OpenCode MCP server names unavailable; MCP calls of this invocation are not counted");
+            }
+            else
+            {
+                serverNames = configNames;
+            }
+        }
+
+        // --- ToolCalls ---
+        Dictionary<string, McpCallCounts>? toolCalls = null;
+        foreach (var (callId, toolName) in sseState.ToolCallNames)
+        {
+            var key = ToolKey(toolName, serverNames);
+            if (key is null)
+                continue;
+
+            toolCalls ??= new Dictionary<string, McpCallCounts>(StringComparer.Ordinal);
+            var existing = toolCalls.TryGetValue(key, out var e) ? e : new McpCallCounts();
+            var delta = new McpCallCounts { Calls = 1 };
+
+            if (sseState.ToolCallErrors.TryGetValue(callId, out var error))
+            {
+                var category = McpFailureClassifier.Classify(error);
+                var server = McpToolKeys.ServerOf(key);
+                // ToolKey always returns slash-containing keys (web/fetch, web/search, or server/tool),
+                // so server.Length + 1 < key.Length is guaranteed. Guard defensively against a future
+                // ToolKey variant that might return a slash-free string.
+                var tool = server.Length + 1 < key.Length ? key[(server.Length + 1)..] : key;
+                McpCallLog.Failed(_logger, server, tool, category, error, request.EnvironmentVariables);
+                delta = delta.Add(category switch
+                {
+                    McpFailureCategory.Auth       => new McpCallCounts { FailedAuth = 1 },
+                    McpFailureCategory.Connection => new McpCallCounts { FailedConnection = 1 },
+                    McpFailureCategory.Other      => new McpCallCounts { FailedOther = 1 },
+                    _                             => new McpCallCounts { FailedUnknown = 1 }
+                });
+            }
+
+            toolCalls[key] = existing.Add(delta);
+        }
+
+        // --- UnavailableMcpServers ---
+        Dictionary<string, string>? unavailableMcpServers = null;
+        if (mcpStatus is not null)
+        {
+            foreach (var (name, status) in mcpStatus)
+            {
+                var mapped = status switch
+                {
+                    "failed"                      => McpServerStatuses.Failed,
+                    "needs_auth"                  => McpServerStatuses.NeedsAuth,
+                    "needs_client_registration"   => McpServerStatuses.NeedsAuth,
+                    _                             => null
+                };
+                if (mapped is null)
+                    continue;
+
+                unavailableMcpServers ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                unavailableMcpServers[name] = mapped;
+                McpCallLog.Unavailable(_logger, name, mapped);
+            }
+        }
+
+        return (
+            toolCalls is { Count: > 0 } ? toolCalls : null,
+            unavailableMcpServers is { Count: > 0 } ? unavailableMcpServers : null
+        );
+    }
+
+    /// <summary>
+    /// Reads the MCP server names from the provider's own config file.
+    /// Returns the keys of the <c>mcp</c> object, or null if the file cannot be read or parsed.
+    /// Never logs the file contents (it holds MCP credentials).
+    /// </summary>
+    private static IEnumerable<string>? TryReadConfigFileServerNames(string configPath)
+    {
+        try
+        {
+            var content = File.ReadAllText(configPath);
+            var node = JsonNode.Parse(content);
+            var mcpObject = node?["mcp"]?.AsObject();
+            return mcpObject?.Select(kv => kv.Key).ToList();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Maps an OpenCode tool name to a <c>server/tool</c> key using the provided server names.
+    /// Returns <c>web/fetch</c> for <c>webfetch</c>, <c>web/search</c> for <c>websearch</c>,
+    /// or tries the server names (longest sanitized prefix first) for MCP tool calls.
+    /// Returns null for unrecognised built-in tools.
+    /// </summary>
+    internal static string? ToolKey(string tool, IEnumerable<string> serverNames)
+    {
+        if (string.Equals(tool, "webfetch", StringComparison.Ordinal))
+            return McpToolKeys.WebFetch;
+        if (string.Equals(tool, "websearch", StringComparison.Ordinal))
+            return McpToolKeys.WebSearch;
+
+        // Build (sanitizedName, originalName) pairs sorted by sanitized length descending (longest match wins)
+        var pairs = serverNames
+            .Select(name => (sanitized: SanitizeServerNameRegex().Replace(name, "_"), original: name))
+            .OrderByDescending(p => p.sanitized.Length)
+            .ToList();
+
+        foreach (var (sanitized, original) in pairs)
+        {
+            var prefix = sanitized + "_";
+            if (tool.StartsWith(prefix, StringComparison.Ordinal) && tool.Length > prefix.Length)
+                return McpToolKeys.Of(original, tool[prefix.Length..]);
+        }
+
+        return null;
+    }
+
+    /// <summary>Matches characters that are not allowed in an OpenCode sanitized server name.</summary>
+    [GeneratedRegex(@"[^a-zA-Z0-9_\-]", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex SanitizeServerNameRegex();
 }

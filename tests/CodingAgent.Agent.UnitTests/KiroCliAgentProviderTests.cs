@@ -505,4 +505,101 @@ public class KiroCliAgentProviderTests
             line.Should().NotContain("\x1b[");
         }
     }
+
+    // --- ToolCalls mapping tests ---
+
+    [Fact]
+    public async Task ExecuteAsync_ToolCalls_MapsFailedToFailedUnknown()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(0);
+        _mockOrchestrator
+            .Setup(o => o.LastRunToolCalls)
+            .Returns(new Dictionary<string, KiroToolCallCount> { ["sonarqube/get_issues"] = new KiroToolCallCount(3, 1) });
+
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws", UseResume = true };
+        var result = await _provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ToolCalls.Should().NotBeNull();
+        result.ToolCalls!.Should().ContainKey("sonarqube/get_issues");
+        result.ToolCalls["sonarqube/get_issues"].Calls.Should().Be(3);
+        result.ToolCalls["sonarqube/get_issues"].FailedUnknown.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ToolCalls_IsNullWhenCounterIsEmpty()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(0);
+        _mockOrchestrator
+            .Setup(o => o.LastRunToolCalls)
+            .Returns(new Dictionary<string, KiroToolCallCount>());
+
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws", UseResume = true };
+        var result = await _provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ToolCalls.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_LogsMcpCallFailedWarning_OncePerFailedCall()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(0);
+        // Calls=3, Failed=2 → expect exactly 2 Warning log entries for MCP failure.
+        _mockOrchestrator
+            .Setup(o => o.LastRunToolCalls)
+            .Returns(new Dictionary<string, KiroToolCallCount> { ["sonarqube/get_issues"] = new KiroToolCallCount(3, 2) });
+
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws", UseResume = true };
+        await _provider.ExecuteAsync(request, CancellationToken.None);
+
+        // Verify the correct server ("sonarqube") and tool ("get_issues") are passed, not just the count.
+        _mockLogger.Verify(l => l.Warning(
+            It.IsAny<string>(),
+            It.Is<object>(v => v.Equals("sonarqube")),
+            It.Is<object>(v => v.Equals("get_issues")),
+            It.IsAny<object>(), It.IsAny<object>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Timeout_ToolCallsIsSetFromOrchestratorAtTimeoutTime()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
+                {
+                    await Task.Delay(Timeout.Infinite, ct);
+                    return 0;
+                });
+        _mockOrchestrator
+            .Setup(o => o.LastRunToolCalls)
+            .Returns(new Dictionary<string, KiroToolCallCount> { ["sonarqube/a"] = new KiroToolCallCount(1, 0) });
+
+        var request = new AgentRequest
+        {
+            Prompt = "slow",
+            WorkspacePath = "/ws",
+            Timeout = TimeSpan.FromMilliseconds(50),
+            UseResume = true
+        };
+        var result = await _provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ExitCode.Should().Be(ExitCodes.Timeout);
+        result.ToolCalls.Should().NotBeNull();
+        result.ToolCalls!.Should().ContainKey("sonarqube/a");
+    }
 }

@@ -195,11 +195,15 @@ public class ClaudeStreamJsonParserTests
         lines.Should().BeEmpty();
         _state.RateLimits["five_hour"].Should().BeEquivalentTo(new
         {
-            Status = "allowed", Utilization = 0.73, ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1791669600)
+            Status = "allowed",
+            Utilization = 0.73,
+            ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1791669600)
         });
         _state.RateLimits["seven_day"].Should().BeEquivalentTo(new
         {
-            Status = "allowed", Utilization = 0.46, ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1792069200)
+            Status = "allowed",
+            Utilization = 0.46,
+            ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1792069200)
         });
         _state.RateLimits["overage"].Status.Should().Be("rejected");
     }
@@ -276,5 +280,142 @@ public class ClaudeStreamJsonParserTests
         state.RateLimits["five_hour"] = new AgentRateLimitObservation { Window = "five_hour", Status = "rejected" };
 
         state.ClassifyFailure().Should().Be(AgentErrorCategory.ProviderRateLimit);
+    }
+
+    // ── MCP / web tool counting ──────────────────────────────────────────
+
+    [Fact]
+    public void ProcessLine_McpToolUse_CountsCallAndPreservesOutputLine()
+    {
+        var lines = ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__sonarqube__get_file_coverage_details","input":{"key":"x"}}]}}""",
+            _state);
+
+        lines.Should().Equal("▶ mcp__sonarqube__get_file_coverage_details: x");
+        _state.ToolCalls["sonarqube/get_file_coverage_details"].Calls.Should().Be(1);
+        _state.CountedToolUseIds["t1"].Should().Be("sonarqube/get_file_coverage_details");
+    }
+
+    [Theory]
+    [InlineData("Bash", false, null)]
+    [InlineData("Edit", false, null)]
+    [InlineData("Read", false, null)]
+    [InlineData("TodoWrite", false, null)]
+    [InlineData("Task", false, null)]
+    [InlineData("WebSearch", true, "web/search")]
+    [InlineData("WebFetch", true, "web/fetch")]
+    [InlineData("mcp__broken", false, null)]         // no second __
+    [InlineData("mcp____tool", false, null)]         // empty server segment
+    [InlineData("mcp__server__", false, null)]       // empty tool segment
+    public void ProcessLine_ToolUse_ToolKeyClassification(string toolName, bool counted, string? expectedKey)
+    {
+        var state = new ClaudeStreamState();
+        var json = $$$"""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"x","name":"{{{toolName}}}","input":{}}]}}""";
+        ClaudeStreamJsonParser.ProcessLine(json, state);
+
+        if (counted)
+        {
+            state.ToolCalls.Should().ContainKey(expectedKey!);
+            state.ToolCalls[expectedKey!].Calls.Should().Be(1);
+        }
+        else
+        {
+            state.ToolCalls.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public void ProcessLine_SubagentToolUse_IsCountedAndIndented()
+    {
+        var lines = ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"content":[{"type":"tool_use","id":"t2","name":"mcp__sonarqube__get_file_coverage_details","input":{"key":"y"}}]}}""",
+            _state);
+
+        lines.Should().ContainSingle().Which.Should().StartWith("  ▶");
+        _state.ToolCalls["sonarqube/get_file_coverage_details"].Calls.Should().Be(1);
+        _state.CountedToolUseIds["t2"].Should().Be("sonarqube/get_file_coverage_details");
+    }
+
+    [Theory]
+    [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Error: 401 Unauthorized"}]}}""", "FailedAuth")]
+    [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":[{"type":"text","text":"MCP error -32001: Request timed out"}]}]}}""", "FailedConnection")]
+    [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"404 Not Found"}]}}""", "FailedOther")]
+    public void ProcessLine_ErrorToolResult_IncrementsCorrectFailureField(string userLine, string expectedField)
+    {
+        // First register t1 via a tool_use assistant message.
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__sonarqube__get_file_coverage_details","input":{}}]}}""",
+            _state);
+
+        var lines = ClaudeStreamJsonParser.ProcessLine(userLine, _state);
+
+        lines.Should().BeEmpty();
+        var counts = _state.ToolCalls["sonarqube/get_file_coverage_details"];
+        var failures = expectedField switch
+        {
+            "FailedAuth" => counts.FailedAuth,
+            "FailedConnection" => counts.FailedConnection,
+            _ => counts.FailedOther
+        };
+        failures.Should().Be(1);
+        _state.ToolFailures.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void ProcessLine_NonErrorToolResult_ChangesNothing()
+    {
+        // Register t1.
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__sonarqube__get_file_coverage_details","input":{}}]}}""",
+            _state);
+        var callsBefore = _state.ToolCalls["sonarqube/get_file_coverage_details"].Calls;
+
+        var lines = ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false,"content":"ok"}]}}""",
+            _state);
+
+        lines.Should().BeEmpty();
+        _state.ToolCalls["sonarqube/get_file_coverage_details"].Calls.Should().Be(callsBefore);
+        _state.ToolFailures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProcessLine_ErrorToolResultForUncountedTool_ChangesNothing()
+    {
+        // b1 was never registered (Bash id).
+        var lines = ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b1","is_error":true,"content":"boom"}]}}""",
+            _state);
+
+        lines.Should().BeEmpty();
+        _state.ToolCalls.Should().BeEmpty();
+        _state.ToolFailures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProcessLine_UserEvent_AlwaysReturnsNoLines()
+    {
+        var lines1 = ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"user","message":{"content":[]}}""", _state);
+        var lines2 = ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"x","is_error":false}]}}""", _state);
+
+        lines1.Should().BeEmpty();
+        lines2.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProcessLine_SystemInit_WithMcpServers_PopulatesUnavailable()
+    {
+        var lines = ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"system","subtype":"init","session_id":"s1","model":"m","mcp_servers":[{"name":"sonarqube","status":"connected"},{"name":"grafana","status":"failed"},{"name":"github","status":"needs-auth"},{"name":"x","status":"pending"}]}""",
+            _state);
+
+        lines.Should().BeEmpty();
+        _state.UnavailableMcpServers.Should().HaveCount(2);
+        _state.UnavailableMcpServers["grafana"].Should().Be("failed");
+        _state.UnavailableMcpServers["github"].Should().Be("needs-auth");
+        _state.UnavailableMcpServers.Should().NotContainKey("sonarqube");
+        _state.UnavailableMcpServers.Should().NotContainKey("x");
     }
 }

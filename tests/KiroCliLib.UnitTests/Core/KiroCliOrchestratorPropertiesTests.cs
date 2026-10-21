@@ -87,4 +87,81 @@ public class KiroCliOrchestratorPropertiesTests
         // _activeProcess is null after completion, so the property returns null
         _orchestrator.LastOutputTime.Should().BeNull();
     }
+
+    // ── LastRunToolCalls counter tests ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void LastRunToolCalls_IsEmptyBeforeFirstRun()
+    {
+        _orchestrator.LastRunToolCalls.Should().NotBeNull();
+        _orchestrator.LastRunToolCalls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LastRunToolCalls_CountsLinesFromErrorReceived()
+    {
+        // Two separate ErrorReceived events are required: one Running line and one status line.
+        // A single stderr string would only produce one ProcessLine call and miss the attribution.
+        var process = new Mock<IProcessWrapper>();
+        process.Setup(p => p.StartAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Callback(() =>
+            {
+                process.Raise(p => p.ErrorReceived += null, process.Object,
+                    "[tool] Running: @sonarqube/get_issues");
+                process.Raise(p => p.ErrorReceived += null, process.Object,
+                    "[tool] status: Failed");
+            })
+            .ReturnsAsync(0);
+
+        var config = new global::KiroCliLib.Configuration.Configuration();
+        var logger = new Mock<global::Serilog.ILogger>().Object;
+        var orchestrator = new KiroCliOrchestrator(config, logger, () => process.Object);
+
+        await orchestrator.ExecutePromptAsync("p", "/tmp", false, CancellationToken.None);
+
+        orchestrator.LastRunToolCalls.Should().ContainKey("sonarqube/get_issues");
+        orchestrator.LastRunToolCalls["sonarqube/get_issues"].Calls.Should().Be(1);
+        orchestrator.LastRunToolCalls["sonarqube/get_issues"].Failed.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task LastRunToolCalls_IsResetPerExecutePromptAsync()
+    {
+        // First run raises a Running line — counter should have one entry.
+        var processWithLine = new Mock<IProcessWrapper>();
+        processWithLine.Setup(p => p.StartAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Callback(() =>
+            {
+                processWithLine.Raise(p => p.ErrorReceived += null, processWithLine.Object,
+                    "[tool] Running: @sonarqube/a");
+                processWithLine.Raise(p => p.ErrorReceived += null, processWithLine.Object,
+                    "[tool] status: Completed");
+            })
+            .ReturnsAsync(0);
+
+        // Second run produces no ErrorReceived events.
+        var processClean = new Mock<IProcessWrapper>();
+        processClean.Setup(p => p.StartAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .ReturnsAsync(0);
+
+        var queue = new Queue<IProcessWrapper>([processWithLine.Object, processClean.Object]);
+        var config = new global::KiroCliLib.Configuration.Configuration();
+        var logger = new Mock<global::Serilog.ILogger>().Object;
+        var orchestrator = new KiroCliOrchestrator(config, logger, () => queue.Dequeue());
+
+        await orchestrator.ExecutePromptAsync("p", "/tmp", false, CancellationToken.None);
+        orchestrator.LastRunToolCalls.Should().ContainKey("sonarqube/a");
+
+        await orchestrator.ExecutePromptAsync("p", "/tmp", false, CancellationToken.None);
+        orchestrator.LastRunToolCalls.Should().BeEmpty();
+    }
 }
