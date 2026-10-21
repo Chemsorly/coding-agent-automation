@@ -383,7 +383,7 @@ public class MessageSerializationPropertyTests
         var original = new ConsolidationJobMessage
         {
             JobId = "consolidation-2",
-            Type = ConsolidationRunType.HarnessSuggestions,
+            Type = ConsolidationRunType.RefactoringDetection,
             ProviderConfigs = Array.Empty<ProviderConfig>(),
             PipelineConfiguration = new PipelineConfiguration()
         };
@@ -441,7 +441,7 @@ public class MessageSerializationPropertyTests
         // [5] PipelineConfiguration — serialize a default instance
         MessagePackSerializer.Serialize(ref writer, new PipelineConfiguration(), MsgPackOptions);
         writer.WriteNil();                                            // [6] LastSuccessfulRunUtc
-        writer.WriteNil();                                            // [7] FeedbackDataJson
+        writer.WriteNil();                                            // [7] retired
         writer.WriteNil();                                            // [8] retired (was WorkspacePath)
         writer.WriteNil();                                            // [9] TraceContext
 
@@ -535,7 +535,6 @@ public class MessageSerializationPropertyTests
     [Theory]
     [InlineData(ConsolidationRunType.BrainConsolidation)]
     [InlineData(ConsolidationRunType.RefactoringDetection)]
-    [InlineData(ConsolidationRunType.HarnessSuggestions)]
     public void JobAssignmentMessage_RoundTrip_AllConsolidationRunTypes(ConsolidationRunType runType)
     {
         var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Implementation) with

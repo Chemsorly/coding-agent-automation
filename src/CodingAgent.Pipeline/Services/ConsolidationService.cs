@@ -6,7 +6,7 @@ using Serilog;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
-/// Manages consolidation loop execution: triggering runs and managing harness suggestions.
+/// Manages consolidation loop execution: triggering runs.
 /// </summary>
 public sealed class ConsolidationService : IConsolidationService
 {
@@ -14,7 +14,6 @@ public sealed class ConsolidationService : IConsolidationService
 
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
-    private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IWorkDistributor? _workDistributor;
@@ -31,11 +30,9 @@ public sealed class ConsolidationService : IConsolidationService
         ArgumentNullException.ThrowIfNull(deps.Logger);
         ArgumentNullException.ThrowIfNull(deps.Config);
         ArgumentNullException.ThrowIfNull(deps.ProjectStore);
-        ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
 
         _logger = deps.Logger;
         _config = deps.Config;
-        _harnessSuggestionStore = deps.HarnessSuggestionStore;
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
         _workDistributor = deps.WorkDistributor;
@@ -217,8 +214,8 @@ public sealed class ConsolidationService : IConsolidationService
         string initiatedBy)
     {
         // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
-        // the brain for brain consolidation, the template (and so its repository) for a refactoring scan,
-        // "global" for harness suggestions. Many templates can share one brain, and two consolidations of
+        // the brain for brain consolidation, the template (and so its repository) for a refactoring scan.
+        // Many templates can share one brain, and two consolidations of
         // one brain would race to push to it, so templates that share a brain share the key.
         // This deterministic format feeds the partial unique index on
         // (IssueIdentifier, IssueProviderConfigId) for non-terminal statuses in
@@ -351,29 +348,6 @@ public sealed class ConsolidationService : IConsolidationService
                 type, templateIdValue ?? GlobalScopeName, result.ErrorMessage);
         }
         return null;
-    }
-
-    /// <inheritdoc />
-    public async Task<HarnessSuggestions?> GetHarnessSuggestionsAsync(CancellationToken ct)
-    {
-        try { return await _harnessSuggestionStore.LoadAsync(ct); }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to read harness suggestions"); return null; }
-    }
-
-    /// <inheritdoc />
-    public async Task SaveHarnessSuggestionsAsync(HarnessSuggestions suggestions, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(suggestions);
-        try
-        {
-            await _harnessSuggestionStore.SaveAsync(suggestions, ct);
-            _logger.Information("Harness suggestions saved");
-            OnChange?.Invoke();
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to save harness suggestions");
-        }
     }
 
     /// <summary>

@@ -68,20 +68,19 @@ public class ApplyProjectOverridesTests
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
         result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
         result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
-        // MinIssueSlots, MaxConcurrentDecompositions, and HarnessSuggestionsReviewEnabled were
+        // MinIssueSlots and MaxConcurrentDecompositions were
         // removed from PipelineProject (issue #3150) and their [ProjectOverridable] attributes were
         // stripped from PipelineConfiguration. The reflection-based merge no longer touches these
         // fields. Assert that the global values still pass through unchanged — i.e. the attribute
         // removal did not accidentally reset them to their type defaults (0 / false).
-        // TODO: TestPipelineConfig.Default() uses the property-level defaults for these three
-        // fields (MinIssueSlots=1, MaxConcurrentDecompositions=2, HarnessSuggestionsReviewEnabled=true).
-        // The assertions below are valid because those defaults are non-zero/non-false, but they
+        // TODO: TestPipelineConfig.Default() uses the property-level defaults for these two
+        // fields (MinIssueSlots=1, MaxConcurrentDecompositions=2).
+        // The assertions below are valid because those defaults are non-zero, but they
         // would be stronger with explicit non-default values (e.g. config with { MinIssueSlots = 5,
-        // MaxConcurrentDecompositions = 7, HarnessSuggestionsReviewEnabled = false }) to make it
+        // MaxConcurrentDecompositions = 7 }) to make it
         // impossible to confuse "correctly passed through" with "reset to type default".
         result.MinIssueSlots.Should().Be(config.MinIssueSlots);
         result.MaxConcurrentDecompositions.Should().Be(config.MaxConcurrentDecompositions);
-        result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────
@@ -787,7 +786,7 @@ public class ApplyProjectOverridesTests
     [Fact]
     public void StoredProject_WithRemovedOverrides_Loads()
     {
-        // MaxConcurrentDecompositions, MinIssueSlots and HarnessSuggestionsReviewEnabled are enforced for the whole loop
+        // MaxConcurrentDecompositions and MinIssueSlots are enforced for the whole loop
         // (or globally), and MaxConsolidationDispatchRetries had no reader; stored projects may still carry them.
         const string json = """
             {
@@ -796,7 +795,6 @@ public class ApplyProjectOverridesTests
               "maxRetries": 4,
               "maxConcurrentDecompositions": 3,
               "minIssueSlots": 2,
-              "harnessSuggestionsReviewEnabled": false,
               "maxConsolidationDispatchRetries": 7,
               "codeReview": { "maxIterations": 1, "reviewIsolation": "Shared" }
             }
@@ -814,7 +812,6 @@ public class ApplyProjectOverridesTests
     {
         typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MaxConcurrentDecompositions)).Should().BeNull();
         typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MinIssueSlots)).Should().BeNull();
-        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.HarnessSuggestionsReviewEnabled)).Should().BeNull();
         typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.DispatchOrder)).Should().BeNull();
     }
 }

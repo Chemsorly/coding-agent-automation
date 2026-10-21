@@ -43,7 +43,6 @@ public class AssignmentEnricher
     private readonly IProjectStore _projectStore;
     private readonly ConsolidationTemplateResolver _consolidationTemplateResolver;
     private readonly IPipelineRunHistoryService? _runHistory;
-    private readonly IHarnessSuggestionStore? _harnessSuggestions;
     private readonly ITriageStore? _triageStore;
     private readonly ILogger _logger;
 
@@ -78,7 +77,6 @@ public class AssignmentEnricher
         _projectStore = projectStore;
         _consolidationTemplateResolver = consolidationTemplateResolver;
         _runHistory = consolidationContext?.RunHistory;
-        _harnessSuggestions = consolidationContext?.HarnessSuggestions;
         _triageStore = triageStore;
         _logger = logger;
     }
@@ -498,7 +496,7 @@ public class AssignmentEnricher
             profile,
             ct);
 
-        var (lastSuccessfulRunUtc, feedbackDataJson) = await ReadConsolidationHistoryAsync(identity, runType, ct);
+        var lastSuccessfulRunUtc = await ReadConsolidationHistoryAsync(identity, ct);
 
         // ── Step 3: Build enriched JobDistributionRequest ─────────────────────────
         // QualityGateConfigs and ReviewerConfigs are intentionally not set —
@@ -518,45 +516,28 @@ public class AssignmentEnricher
             ProjectSteeringContent = project.SteeringContent,
             RepoSteeringContent = providerConfigs.TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
             ConsolidationLastSuccessfulRunUtc = lastSuccessfulRunUtc,
-            ConsolidationFeedbackDataJson = feedbackDataJson,
         };
     }
 
     /// <summary>
-    /// Reads the consolidation's last successful run of the same scope and, for harness suggestions, the run
-    /// feedback collected since the stored suggestions were generated. Best effort: a failure is logged and the
-    /// assignment goes out without them (brain consolidation then reviews the whole brain, harness suggestions
-    /// find no feedback).
+    /// Reads the consolidation's last successful run of the same scope. Best effort: a failure is logged
+    /// and the assignment goes out without it (brain consolidation then reviews the whole brain).
     /// </summary>
-    /// <remarks>
-    /// The feedback is anchored on the suggestions' generation time, not on the last successful harness run:
-    /// a run that found no feedback also succeeds, so that anchor would skip feedback no run has analyzed.
-    /// </remarks>
-    private async Task<(DateTimeOffset? LastSuccessfulRunUtc, string? FeedbackDataJson)> ReadConsolidationHistoryAsync(
-        JobDistributionRequest identity, ConsolidationRunType runType, CancellationToken ct)
+    private async Task<DateTimeOffset?> ReadConsolidationHistoryAsync(
+        JobDistributionRequest identity, CancellationToken ct)
     {
         if (_runHistory is null)
-            return (null, null);
+            return null;
 
         try
         {
-            var lastSuccess = await ConsolidationRunHistoryContext.GetLastSuccessfulRunAsync(_runHistory, identity.IssueIdentifier, ct);
-            string? feedbackJson = null;
-            if (runType == ConsolidationRunType.HarnessSuggestions)
-            {
-                var stored = _harnessSuggestions is null ? null : await _harnessSuggestions.LoadAsync(ct);
-                DateTimeOffset? since = stored is null
-                    ? null
-                    : new DateTimeOffset(DateTime.SpecifyKind(stored.GeneratedAtUtc, DateTimeKind.Utc));
-                feedbackJson = await ConsolidationRunHistoryContext.BuildFeedbackDataJsonAsync(_runHistory, since, ct);
-            }
-            return (lastSuccess, feedbackJson);
+            return await ConsolidationRunHistoryContext.GetLastSuccessfulRunAsync(_runHistory, identity.IssueIdentifier, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex, "AssignmentEnricher: could not read the run history for consolidation {Key}; dispatching without it",
                 identity.IssueIdentifier.Value);
-            return (null, null);
+            return null;
         }
     }
 
@@ -682,13 +663,8 @@ public class AssignmentEnricher
 /// Where <see cref="AssignmentEnricher"/> reads a consolidation assignment's run context from.
 /// </summary>
 /// <param name="RunHistory">
-/// The run history consolidation assignments read their last successful run and, for harness suggestions,
-/// the run feedback from. When null, consolidation assignments go out without them.
-/// </param>
-/// <param name="HarnessSuggestions">
-/// The stored harness suggestions: a harness suggestion run gets the feedback collected since they were
-/// generated. When null (or none are stored yet), it gets the newest feedback.
+/// The run history consolidation assignments read their last successful run from. When null,
+/// consolidation assignments go out without it.
 /// </param>
 public sealed record ConsolidationRunContextSources(
-    IPipelineRunHistoryService? RunHistory = null,
-    IHarnessSuggestionStore? HarnessSuggestions = null);
+    IPipelineRunHistoryService? RunHistory = null);

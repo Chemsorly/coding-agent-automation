@@ -23,7 +23,6 @@ Each run produces a `RunFeedback` record with two sections:
 - **Run page** — Collapsible "Feedback (n)" section at the bottom of the run's page (`/runs/{id}`), showing all fields. The Runs list has a "Feedback only" filter
 - **Insights page** — the "Harness feedback" and "Issue feedback" cards rank the feedback categories of the selected project and time window by the number of runs that reported them. Each category opens to its runs, with one line of text each and a link to the run page.
 - **GitHub issue** — If issue feedback has a description, a comment is posted with the `<!-- agent:issue-feedback -->` marker
-- **Harness suggestions** — Accumulated feedback feeds into the consolidation loops (see below)
 
 ### Category Reuse
 
@@ -31,7 +30,7 @@ The feedback prompt includes previously-used category labels from the last 50 ru
 
 ## Consolidation Loops
 
-Three maintenance loops that review accumulated state and produce improvements. Each is triggered from the **Consolidation** page, or automatically (see Automatic Start).
+Two maintenance loops that review accumulated state and produce improvements. Each is triggered from the **Consolidation** page, or automatically (see Automatic Start).
 
 ### Brain Consolidation (per brain)
 
@@ -96,42 +95,21 @@ The finding categories are one list from detection to issue (`RefactoringCategor
 
 Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversarial review step. `MaxRefactoringProposals` (default: 3, per-project overridable) caps both the prompt instruction and issue creation count. `HotspotAnalysisLookback` (default: 90 days) controls the git history window for hotspot analysis. `RefactoringOutcomeLookback` (default: 90 days) controls the window for querying past proposal outcomes.
 
-### Harness Suggestions (global)
-
-Analyzes accumulated `RunFeedback` from all pipeline runs to identify recurring patterns. Produces top 3-5 improvement opportunities ranked by frequency and impact, persisted to the database via `IHarnessSuggestionStore`.
-
-Each suggestion includes:
-- Concrete, actionable text (what to change)
-- Rationale (why, with references to specific feedback patterns)
-- Frequency (how many runs contributed to this observation)
-
-**Execution flow:**
-1. Early exit if no feedback data
-2. Write feedback JSON to workspace (`feedback-data.json`)
-3. Calculate feedback count and success rate from the data
-4. Execute agent to generate suggestions
-5. **Write-to-file step** — a follow-up agent call serializes suggestions to `.agent/harness-suggestions-output.json` (enables stable file for review)
-6. **Adversarial review** — evaluates suggestions against original feedback data. Checks for ungrounded suggestions, implausible frequency counts, and non-actionable advice.
-7. Parse final suggestions and persist to the database via `IHarnessSuggestionStore` (Postgres)
-
-Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the adversarial review step.
-
 ### Consolidation Dispatch
 
 Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. The Scheduler's `WorkItemDispatchLoop` dispatches consolidation `WorkItem` rows in the lowest-priority tier (4th, after Review, Decomposition, and Implementation). Like every work item, a consolidation Job is named `caa-{8 hex chars}`.
 
-- **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
-- **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
+- **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
+- **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override.
 - **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Scheduler's dispatch loop fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
 
 ### Automatic Start
 
-The Scheduler checks every 15 minutes whether any consolidation type has crossed its threshold. Three counters drive automatic triggers:
+The Scheduler checks every 15 minutes whether any consolidation type has crossed its threshold. Two counters drive automatic triggers:
 
 | Type | Counter (since last successful run of the same scope) | Scope | Setting (0 = off) |
 |---|---|---|---|
 | Brain consolidation | Runs that pushed lessons to the brain (`BrainUpdatesPushed` and `BrainProviderConfigId` = the brain) | Per brain | `AutoBrainConsolidationAfterRuns` |
-| Harness suggestions | Runs with feedback (`Feedback != null`) | Global | `AutoHarnessSuggestionsAfterFeedback` |
 | Refactoring scan | Closed issues of the template's tracker that the scan did not create | Per template | `AutoRefactoringScanAfterClosedIssues` |
 
 **Anti-churn rules for the refactoring scan:**
@@ -149,8 +127,7 @@ Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initi
 The page is reached through the "Consolidation" item in the sidebar navigation. It displays:
 
 - Per-template cards with trigger buttons and last-run status
-- Automatic-start counters per card and for harness suggestions, with the reason when an automatic start is paused or waiting (see Automatic Start)
-- Global harness suggestions section
+- Automatic-start counters per card, with the reason when an automatic start is paused or waiting (see Automatic Start)
 - Run history table across all consolidation types
 
 A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review), the auto-dispatch option and the focus before it starts. A focused scan (Structure, Correctness, Design or Tests) runs only that detection agent and proposes only its categories; Phase 0 runs the test coverage only for the All and Tests focus.
@@ -179,11 +156,9 @@ Consolidation runs report their steps and stream their agent output the same way
 
 The three Phase 1 detection agents (structural debt, correctness, design consistency) produce output prefixed `[A] `, `[B] ` and `[C] ` respectively. The test-gaps agent (when focus is `All` or `Tests`) produces output without a prefix. When a run has no proposals after Phase 2, steps 7 and 8 are skipped.
 
-Harness suggestion runs report no steps and keep their output in the pod log; that workflow is handled by a separate issue.
-
 ### Retention
 
 Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:
 
-- **PipelineRun records:** Consolidation runs are recorded as `PipelineRuns` when they are dispatched (`PipelineRunFactory.CreateFromWorkItem`) and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps. The last successful run of a scope and the feedback for harness suggestions are read from these records, so what is pruned no longer counts.
+- **PipelineRun records:** Consolidation runs are recorded as `PipelineRuns` when they are dispatched (`PipelineRunFactory.CreateFromWorkItem`) and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps. The last successful run of a scope is read from these records, so what is pruned no longer counts.
 - **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).

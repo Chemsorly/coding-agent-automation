@@ -55,7 +55,6 @@ public class PipelineConfigurationTests
             AcceptanceCriteriaPrompt = "Custom AC prompt",
             RefactoringReviewEnabled = false,
             BrainConsolidationReviewEnabled = false,
-            HarnessSuggestionsReviewEnabled = false,
             BaselineHealthCheckEnabled = false,
             ExternalCiTimeout = TimeSpan.FromMinutes(25),
             ExternalCiPollInterval = TimeSpan.FromSeconds(45),
@@ -108,7 +107,6 @@ public class PipelineConfigurationTests
             TriageReviewEnabled = false,
             TriageRetentionDays = 45,
             AutoBrainConsolidationAfterRuns = 5,
-            AutoHarnessSuggestionsAfterFeedback = 15,
             AutoRefactoringScanAfterClosedIssues = 8,
         };
 
@@ -129,7 +127,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(68,
+        keyPropertyCount.Should().Be(66,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -181,7 +179,6 @@ public class PipelineConfigurationTests
         config.BaselineHealthCheckEnabled.Should().BeTrue();
         config.RefactoringReviewEnabled.Should().BeTrue();
         config.BrainConsolidationReviewEnabled.Should().BeTrue();
-        config.HarnessSuggestionsReviewEnabled.Should().BeTrue();
         config.MaxRefactoringProposals.Should().Be(3);
         config.HotspotAnalysisLookback.Should().Be(TimeSpan.FromDays(90));
         config.MaxDecompositionSubIssues.Should().Be(10);
@@ -575,6 +572,17 @@ public class PipelineConfigurationTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxDecompositionSubIssueFiles.Should().Be(20);
+    }
+
+    [Fact]
+    public void Deserialize_IgnoresRetiredHarnessSuggestionsReviewEnabled()
+    {
+        const string json = """{"harnessSuggestionsReviewEnabled": false, "maxRetries": 4}""";
+
+        var config = JsonSerializer.Deserialize<PipelineConfiguration>(json, JsonOptions);
+
+        config.Should().NotBeNull();
+        config!.MaxRetries.Should().Be(4);
     }
 
 }

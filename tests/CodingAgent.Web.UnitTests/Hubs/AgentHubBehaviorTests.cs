@@ -544,34 +544,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
     }
 
     [Fact]
-    public async Task ReportConsolidationComplete_WithSuggestions_PersistsAndIncrementsBadge()
-    {
-        var agent = CreateAgent();
-        agent.ActiveJobId = "crun-1"; // agent must have matching ActiveJobId to pass the ownership check
-        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = DateTime.UtcNow,
-            BasedOnRunCount = 10,
-            SuccessRate = 0.8m,
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new() { Text = "S1", Rationale = "R1", Frequency = 5 },
-                new() { Text = "S2", Rationale = "R2", Frequency = 3 }
-            }
-        };
-
-        var hub = CreateHubWithOrchestration();
-        var result = new ConsolidationJobResult { JobId = "crun-1", Success = true, Summary = "OK", HarnessSuggestions = suggestions };
-
-        var act = async () => await hub.ReportConsolidationComplete(result);
-
-        // HarnessSuggestions persistence and badge counting are now inside IHubConsolidationOperations
-        await act.Should().NotThrowAsync();
-    }
-
-    [Fact]
     public async Task ReportConsolidationComplete_WithCreatedIssues_IncrementsBadge()
     {
         var agent = CreateAgent();

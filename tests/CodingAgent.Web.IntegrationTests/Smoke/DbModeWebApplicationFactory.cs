@@ -6,7 +6,6 @@ using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Api.Client.Stores;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -170,18 +169,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
                 .ReturnsAsync(Array.Empty<ActiveWorkItemDto>());
             services.RemoveAll<IPipelineApiWorkItemClient>();
             services.AddSingleton(workItemClientMock.Object);
-
-            // ApiBackedHarnessSuggestionStore delegates to IPipelineApiHarnessSuggestionClient.
-            // Use an in-memory store backed mock so the save+get roundtrip test can pass.
-            HarnessSuggestions? capturedSuggestions = null;
-            var harnessMock = new Mock<IPipelineApiHarnessSuggestionClient>();
-            harnessMock.Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
-                .Callback<HarnessSuggestions, CancellationToken>((s, _) => capturedSuggestions = s)
-                .Returns(Task.CompletedTask);
-            harnessMock.Setup(s => s.GetAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(() => capturedSuggestions);
-            services.RemoveAll<IPipelineApiHarnessSuggestionClient>();
-            services.AddSingleton(harnessMock.Object);
 
             // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
             // (mounted from the job-templates ConfigMap). ChatJobDispatcher takes it as a

@@ -215,7 +215,7 @@ public class HubMessageRoundtripPropertyTests
 
     /// <summary>
     /// ConsolidationJobMessage round-trip: all fields including the optional
-    /// LastSuccessfulRunUtc, FeedbackDataJson, and TraceContext.
+    /// LastSuccessfulRunUtc and TraceContext.
     /// </summary>
     [Property(MaxTest = 20)]
     public bool ConsolidationJobMessage_RoundTrip_PreservesAllProperties(
@@ -244,7 +244,6 @@ public class HubMessageRoundtripPropertyTests
                 WorkspaceBaseDirectory = "/tmp/test"
             },
             LastSuccessfulRunUtc = hasOptionals ? new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc) : null,
-            FeedbackDataJson = hasOptionals ? "{\"entries\":[]}" : null,
             TraceContext = hasOptionals
                 ? new Dictionary<string, string> { ["traceparent"] = "00-abc-def-01" }
                 : null
@@ -259,7 +258,6 @@ public class HubMessageRoundtripPropertyTests
             && deserialized.ProviderConfigs.Count == 1
             && deserialized.ProviderConfigs[0].Id == "pc-1"
             && deserialized.LastSuccessfulRunUtc == original.LastSuccessfulRunUtc
-            && deserialized.FeedbackDataJson == original.FeedbackDataJson
             && (deserialized.TraceContext == null) == (original.TraceContext == null);
     }
 
@@ -295,7 +293,7 @@ public class HubMessageRoundtripPropertyTests
 
         var gen =
             from jobId in Gen.Elements("job-a", "job-b", "consolidation-xyz")
-            from runType in Gen.Elements(ConsolidationRunType.BrainConsolidation, ConsolidationRunType.HarnessSuggestions)
+            from runType in Gen.Elements(ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection)
             from hasTemplate in Gen.Elements(true, false)
             from templateId in Gen.Elements("tmpl-1", "tmpl-2")
             from templateName in Gen.Elements("Brain sync", "Harness")
@@ -303,8 +301,6 @@ public class HubMessageRoundtripPropertyTests
             from providers in Gen.ListOf(providerGen)
             from pipelineConfig in pipelineConfigGen
             from hasLastRun in Gen.Elements(true, false)
-            from hasFeedback in Gen.Elements(true, false)
-            from feedbackJson in Gen.Elements("[{\"type\":\"positive\"}]", "[]")
             from hasTrace in Gen.Elements(true, false)
             from autoDispatch in Gen.Elements(true, false)
             from refactoringFocus in Gen.Elements(RefactoringScanFocus.All, RefactoringScanFocus.Structure, RefactoringScanFocus.Correctness, RefactoringScanFocus.Design, RefactoringScanFocus.Tests)
@@ -317,7 +313,6 @@ public class HubMessageRoundtripPropertyTests
                 ProviderConfigs = providers.Take(providerCount).ToList(),
                 PipelineConfiguration = pipelineConfig,
                 LastSuccessfulRunUtc = hasLastRun ? new DateTime(2026, 1, 15, 10, 0, 0, DateTimeKind.Utc) : null,
-                FeedbackDataJson = hasFeedback ? feedbackJson : null,
                 TraceContext = hasTrace
                     ? new Dictionary<string, string> { ["traceparent"] = "00-abc123-def456-01" }
                     : null,
@@ -353,7 +348,6 @@ public class HubMessageRoundtripPropertyTests
 
             // Optional fields preserved (null or value)
             deserialized.LastSuccessfulRunUtc.Should().Be(original.LastSuccessfulRunUtc);
-            deserialized.FeedbackDataJson.Should().Be(original.FeedbackDataJson);
             deserialized.AutoDispatch.Should().Be(original.AutoDispatch,
                 because: "Key(10) AutoDispatch bool must survive MessagePack roundtrip");
             deserialized.RefactoringFocus.Should().Be(original.RefactoringFocus,
@@ -386,7 +380,6 @@ public class HubMessageRoundtripPropertyTests
         deserialized.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
         deserialized.ProviderConfigs.Should().BeEmpty();
         deserialized.TemplateId.Should().BeNull();
-        deserialized.FeedbackDataJson.Should().BeNull();
         deserialized.TraceContext.Should().BeNull();
         deserialized.AutoDispatch.Should().BeFalse();
         // TODO [WARNING]: This assertion verifies that a C# default value (0 = All) survives a roundtrip,
@@ -623,7 +616,6 @@ public class HubMessageRoundtripPropertyTests
                 Summary = hasSummary ? "Completed 3 refactoring proposals" : null,
                 ErrorMessage = hasError ? "Agent timed out" : null,
                 CreatedIssues = issueCount > 0 ? issues.Take(issueCount).ToList() : null,
-                HarnessSuggestions = null, // tested separately below
                 ReviewTokenUsage = hasTokens ? tokens : null,
                 RefinementTokenUsage = hasTokens ? tokens : null,
                 DiffSummaryTokenUsage = null
@@ -666,59 +658,6 @@ public class HubMessageRoundtripPropertyTests
         });
     }
 
-    // ── HarnessSuggestions ───────────────────────────────────────────────
-
-    [Property(MaxTest = 20)]
-    public Property HarnessSuggestions_RoundTrip_PreservesFields()
-    {
-        var suggestionGen =
-            from freq in Gen.Choose(1, 50)
-            from text in Gen.Elements(
-                "Include tsconfig.json in initial context",
-                "Add retry for MCP tool calls",
-                "Provide DB schema upfront")
-            from rationale in Gen.Elements(
-                "Reported by 12 runs in last week",
-                "3 timeouts in last 24h",
-                "Agent asked for schema in 8/10 runs")
-            select new HarnessSuggestion
-            {
-                Frequency = freq,
-                Text = text,
-                Rationale = rationale
-            };
-
-        var gen =
-            from runCount in Gen.Choose(5, 200)
-            from successRate in Gen.Choose(0, 100).Select(i => (decimal)i / 100)
-            from suggCount in Gen.Choose(1, 5)
-            from suggestions in Gen.ListOf(suggestionGen)
-            select new HarnessSuggestions
-            {
-                BasedOnRunCount = runCount,
-                GeneratedAtUtc = new DateTime(2025, 6, 15, 12, 0, 0, DateTimeKind.Utc),
-                SuccessRate = successRate,
-                Suggestions = suggestions.Take(suggCount).ToList()
-            };
-
-        return Prop.ForAll(gen.ToArbitrary(), original =>
-        {
-            var deserialized = RoundTrip(original);
-
-            deserialized.BasedOnRunCount.Should().Be(original.BasedOnRunCount);
-            deserialized.GeneratedAtUtc.Should().Be(original.GeneratedAtUtc);
-            deserialized.SuccessRate.Should().Be(original.SuccessRate);
-            deserialized.Suggestions.Should().HaveCount(original.Suggestions.Count);
-
-            for (var i = 0; i < original.Suggestions.Count; i++)
-            {
-                deserialized.Suggestions[i].Frequency.Should().Be(original.Suggestions[i].Frequency);
-                deserialized.Suggestions[i].Text.Should().Be(original.Suggestions[i].Text);
-                deserialized.Suggestions[i].Rationale.Should().Be(original.Suggestions[i].Rationale);
-            }
-        });
-    }
-
     // ── TokenUsage (standalone) ──────────────────────────────────────────
 
     [Property(MaxTest = 20)]
@@ -755,34 +694,6 @@ public class HubMessageRoundtripPropertyTests
     }
 
     // ── Edge cases ───────────────────────────────────────────────────────
-
-    [Fact]
-    public void ConsolidationJobResult_WithHarnessSuggestions_SurvivesRoundTrip()
-    {
-        var original = new ConsolidationJobResult
-        {
-            JobId = "consolidation-123",
-            Success = true,
-            Summary = "Generated 3 suggestions",
-            HarnessSuggestions = new HarnessSuggestions
-            {
-                BasedOnRunCount = 50,
-                GeneratedAtUtc = new DateTime(2025, 7, 1, 0, 0, 0, DateTimeKind.Utc),
-                SuccessRate = 0.72m,
-                Suggestions =
-                [
-                    new HarnessSuggestion { Frequency = 15, Text = "Add DB schema", Rationale = "Frequent request" }
-                ]
-            }
-        };
-
-        var deserialized = RoundTrip(original);
-
-        deserialized.HarnessSuggestions.Should().NotBeNull();
-        deserialized.HarnessSuggestions!.BasedOnRunCount.Should().Be(50);
-        deserialized.HarnessSuggestions.Suggestions.Should().HaveCount(1);
-        deserialized.HarnessSuggestions.Suggestions[0].Text.Should().Be("Add DB schema");
-    }
 
     [Fact]
     public void DecompositionProjectContext_EmptyRepositories_SurvivesRoundTrip()

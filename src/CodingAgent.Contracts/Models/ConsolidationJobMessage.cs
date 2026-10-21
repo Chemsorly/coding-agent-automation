@@ -31,9 +31,7 @@ public sealed class ConsolidationJobMessage
     [Key(6)]
     public DateTime? LastSuccessfulRunUtc { get; init; }
 
-    /// <summary>For harness suggestions: serialized RunFeedback entries as JSON.</summary>
-    [Key(7)]
-    public string? FeedbackDataJson { get; init; }
+    // Key(7) is retired (was FeedbackDataJson). Do not reuse.
 
     // Key(8) is retired (was WorkspacePath; the agent now chooses the workspace itself). Do not reuse.
 

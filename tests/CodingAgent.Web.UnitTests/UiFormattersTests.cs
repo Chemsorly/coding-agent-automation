@@ -105,7 +105,6 @@ public class UiFormattersTests
     [InlineData(ConsolidationRunType.RefactoringDetection, "my-template", null, "Refactoring scan · my-template")]
     [InlineData(ConsolidationRunType.RefactoringDetection, null, "tpl-1", "Refactoring scan · tpl-1")]
     [InlineData(ConsolidationRunType.BrainConsolidation, "my-template", null, "Brain consolidation · my-template")]
-    [InlineData(ConsolidationRunType.HarnessSuggestions, "my-template", null, "Harness suggestions · all projects")]
     [InlineData(null, null, null, "Consolidation")]
     public void FormatConsolidationTitle_ReturnsExpected(ConsolidationRunType? type, string? templateName, string? templateId, string expected)
     {
@@ -115,7 +114,6 @@ public class UiFormattersTests
     [Theory]
     [InlineData(ConsolidationRunType.BrainConsolidation, "Brain Consolidation")]
     [InlineData(ConsolidationRunType.RefactoringDetection, "Refactoring Scan")]
-    [InlineData(ConsolidationRunType.HarnessSuggestions, "Harness Suggestions")]
     [InlineData(null, "Consolidation")]
     public void FormatConsolidationType_ReturnsExpected(ConsolidationRunType? type, string expected)
     {

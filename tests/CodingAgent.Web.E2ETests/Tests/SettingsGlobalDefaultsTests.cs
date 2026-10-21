@@ -188,7 +188,6 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         Assert.Contains("Refactoring Outcome Lookback", markup);
         Assert.Contains("Refactoring Review", markup);
         Assert.Contains("Brain Consolidation Review", markup);
-        Assert.Contains("Harness Suggestions Review", markup);
 
         var saveBtn = Page.Locator("button:has-text('Save Consolidation')");
         await saveBtn.ClickAsync();

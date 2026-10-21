@@ -50,19 +50,6 @@ public sealed class HubConsolidationOperationsTests
         _mockRunService.Object,
         _mockLogger.Object);
 
-    private static HarnessSuggestions MakeSuggestions(params string[] texts) => new()
-    {
-        BasedOnRunCount = 5,
-        GeneratedAtUtc = DateTime.UtcNow,
-        SuccessRate = 0.8m,
-        Suggestions = texts.Select(t => new HarnessSuggestion
-        {
-            Frequency = 1,
-            Rationale = "test",
-            Text = t
-        }).ToList()
-    };
-
     private static CreatedIssueInfo MakeIssue(string id) => new()
     {
         Identifier = id,
@@ -279,8 +266,6 @@ public sealed class HubConsolidationOperationsTests
     {
         // Use a strict mock so any unexpected call would throw
         var strictConsolidation = new Mock<IConsolidationService>(MockBehavior.Strict);
-        strictConsolidation.Setup(c => c.SaveHarnessSuggestionsAsync(
-            It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var sut = new HubConsolidationOperations(
             CreateModelFetchService(),
@@ -303,8 +288,7 @@ public sealed class HubConsolidationOperationsTests
     // HandleConsolidationComplete_UpdateRunThrows_DoesNotPropagate are now effectively duplicate
     // no-throw smoke tests — all three only assert NotThrowAsync() with no distinction between
     // success and failure paths. Consider collapsing into one smoke test or replacing with assertions
-    // on observable behavior (SaveHarnessSuggestionsAsync called on success, badge incremented,
-    // NotifyChange fired). (issue #3030)
+    // on observable behavior (badge incremented, NotifyChange fired). (issue #3030)
 
     [Fact]
     public async Task HandleConsolidationComplete_Success_CallsUpdateRunWithSucceeded()
@@ -408,62 +392,6 @@ public sealed class HubConsolidationOperationsTests
         await act.Should().NotThrowAsync("partial null token usage must not cause errors");
     }
 
-    // ── HandleConsolidationCompleteAsync — harness suggestions ───────────
-
-    [Fact]
-    public async Task HandleConsolidationComplete_WithHarnessSuggestions_SavesAndIncrementsBadge()
-    {
-        var suggestions = MakeSuggestions("Add test A", "Add test B", "Add test C");
-
-        var result = new ConsolidationJobResult
-        {
-            JobId = "crun-suggestions",
-            Success = true,
-            HarnessSuggestions = suggestions
-        };
-        var sut = CreateSut();
-
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        _mockConsolidation.Verify(c => c.SaveHarnessSuggestionsAsync(
-            suggestions, It.IsAny<CancellationToken>()), Times.Once);
-        _badgeService.BadgeCount.Should().Be(3, "badge must be incremented by the suggestion count");
-    }
-
-    [Fact]
-    public async Task HandleConsolidationComplete_NullHarnessSuggestions_SkipsSaveAndLeaveBadgeUnchanged()
-    {
-        var before = _badgeService.BadgeCount;
-        var result = new ConsolidationJobResult { JobId = "crun-1", Success = true, HarnessSuggestions = null };
-        var sut = CreateSut();
-
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        _mockConsolidation.Verify(c => c.SaveHarnessSuggestionsAsync(
-            It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()), Times.Never);
-        _badgeService.BadgeCount.Should().Be(before, "null suggestions must not change badge count");
-    }
-
-    [Fact]
-    public async Task HandleConsolidationComplete_SaveHarnessSuggestionsThrows_DoesNotPropagate()
-    {
-        _mockConsolidation
-            .Setup(c => c.SaveHarnessSuggestionsAsync(
-                It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("storage error"));
-
-        var result = new ConsolidationJobResult
-        {
-            JobId = "crun-save-throws",
-            Success = true,
-            HarnessSuggestions = MakeSuggestions("X")
-        };
-        var sut = CreateSut();
-
-        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
-        await act.Should().NotThrowAsync("SaveHarnessSuggestionsAsync failure is caught and logged");
-    }
-
     // ── HandleConsolidationCompleteAsync — created issues / badge ────────
 
     [Fact]
@@ -544,27 +472,6 @@ public sealed class HubConsolidationOperationsTests
         var debugInfo = await sut.HandleConsolidationCompleteAsync(result, null);
 
         debugInfo.Should().Contain("agentFound=False");
-    }
-
-    // ── Both badge increments: harness + created issues ───────────────────
-
-    [Fact]
-    public async Task HandleConsolidationComplete_HarnessSuggestionsAndCreatedIssues_BothAddToBadge()
-    {
-        var result = new ConsolidationJobResult
-        {
-            JobId = "crun-both",
-            Success = true,
-            HarnessSuggestions = MakeSuggestions("A", "B"),
-            CreatedIssues = new List<CreatedIssueInfo> { MakeIssue("5") }
-        };
-        var sut = CreateSut();
-
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        // 2 harness suggestions + 1 created issue = 3 total badge increments
-        _badgeService.BadgeCount.Should().Be(3,
-            "2 harness suggestions + 1 created issue = badge 3");
     }
 
     // ── HandleConsolidationCompleteAsync — lifecycle manager ──────────────

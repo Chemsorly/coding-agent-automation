@@ -497,8 +497,8 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Consolidation scheduling: automatic start after N, without autonomous churn
 <!-- 2026-10-10 -->
-**Rule:** The three consolidation counters and thresholds (0 = off): `AutoBrainConsolidationAfterRuns`, `AutoHarnessSuggestionsAfterFeedback`, `AutoRefactoringScanAfterClosedIssues`. All default to 0 — nothing starts automatically until an operator sets a threshold.
-**Why:** People forget to run consolidation; the owner wants all three to start automatically, but without self-feeding code churn. The refactoring scan never auto-dispatches issues (no `agent:next`), counts only issues it did not create, and is suppressed by backpressure when open proposals are at the limit.
+**Rule:** The two consolidation counters and thresholds (0 = off): `AutoBrainConsolidationAfterRuns`, `AutoRefactoringScanAfterClosedIssues`. All default to 0 — nothing starts automatically until an operator sets a threshold.
+**Why:** People forget to run consolidation; the owner wants both to start automatically, but without self-feeding code churn. The refactoring scan never auto-dispatches issues (no `agent:next`), counts only issues it did not create, and is suppressed by backpressure when open proposals are at the limit.
 **Accepting:** The refactoring counter counts closed issues updated since the last scan (the tracker filters by update date, not close date).
 **Not:** A fixed timer; counting the scan's own issues; auto-dispatch from automatic scans.
 **Revisit when:** Automatic scans pile up unreviewed issues despite the backpressure.

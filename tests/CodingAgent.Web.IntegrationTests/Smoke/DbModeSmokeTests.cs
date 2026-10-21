@@ -19,7 +19,7 @@ namespace CodingAgent.Web.IntegrationTests.Smoke;
 /// These tests would have caught the bugs from the Postgres introduction:
 /// - "Ensure dbmode writes to db and not fs" (ConsolidationRunStore wiring)
 /// - "hide Data Management section in JSON-file mode to prevent circuit crash" (FeatureFlags)
-/// - Missing IConsolidationRunStore, ILoopStateStore, IHarnessSuggestionStore registrations
+/// - Missing IConsolidationRunStore, ILoopStateStore registrations
 /// </summary>
 [Collection("SmokeTests")]
 public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>

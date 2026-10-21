@@ -10,8 +10,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Tests for the remaining zero-coverage API clients:
-/// PipelineApiRunHistoryClient, PipelineApiAgentClient, PipelineApiConsolidationRunClient,
-/// PipelineApiHarnessSuggestionClient, PipelineApiHealthClient.
+/// PipelineApiRunHistoryClient, PipelineApiAgentClient,
+/// PipelineApiHealthClient.
 /// </summary>
 public sealed class PipelineApiRemainingClientsTests
 {
@@ -184,50 +184,6 @@ public sealed class PipelineApiRemainingClientsTests
 
         var result = await client.GetAgentsAsync();
         result.Should().BeEmpty();
-    }
-
-    private static HarnessSuggestions MakeHarnessSuggestions() => new()
-    {
-        BasedOnRunCount = 5,
-        GeneratedAtUtc = DateTime.UtcNow,
-        SuccessRate = 0.8m,
-        Suggestions = []
-    };
-
-    // ─────────────────────────────────────────────────────────────────────
-    // PipelineApiHarnessSuggestionClient
-    // ─────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task HarnessSuggestionClient_GetAsync_WhenNoContent_ReturnsNull()
-    {
-        var (client, handler) = Create(h => new PipelineApiHarnessSuggestionClient(h));
-        handler.Respond = _ => Empty(HttpStatusCode.NoContent);
-
-        var result = await client.GetAsync();
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task HarnessSuggestionClient_GetAsync_WhenNotFound_ReturnsNull()
-    {
-        var (client, handler) = Create(h => new PipelineApiHarnessSuggestionClient(h));
-        handler.Respond = _ => Empty(HttpStatusCode.NotFound);
-
-        var result = await client.GetAsync();
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task HarnessSuggestionClient_SaveAsync_UsesPut()
-    {
-        var (client, handler) = Create(h => new PipelineApiHarnessSuggestionClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.SaveAsync(MakeHarnessSuggestions());
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Put);
-        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/harness-suggestions");
     }
 
     // ─────────────────────────────────────────────────────────────────────
