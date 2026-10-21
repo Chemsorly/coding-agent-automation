@@ -235,6 +235,8 @@ sum by (McpServer, McpFailureCategory) (count_over_time({service_name="coding-ag
 
 There is no metric for tool calls, to keep active series low.
 
+**OpenCode** sources tool-call data from SSE `message.part.updated` tool parts (call counts and error texts) and server statuses from `GET /mcp`; when `GET /mcp` is unavailable the provider falls back to the configured server names in `McpConfigPath` to perform tool-key matching.
+
 ### LLM Usage Telemetry Architecture
 
 1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-invocation span (see "Session Spans" below) and adds the session count and elapsed time to `PipelineRun.Metrics.PhaseBreakdown` under the invocation's phase key. The calling phase executors add the tokens and cost with `AccumulateTokenUsage` under the same key.
