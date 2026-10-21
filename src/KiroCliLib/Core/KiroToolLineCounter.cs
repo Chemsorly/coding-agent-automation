@@ -12,7 +12,7 @@ public sealed record KiroToolCallCount(int Calls, int Failed);
 public sealed class KiroToolLineCounter
 {
     private static readonly Regex McpRunPattern =
-        new(@"^\[tool\] Running: @([^/\s]+)/(\S+)$", RegexOptions.Compiled);
+        new(@"^\[tool\] Running: @([^/\s]+)/(\S+)$", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     private readonly object _lock = new();
     private readonly Dictionary<string, int> _calls = new();
