@@ -21,6 +21,9 @@ namespace CodingAgent.Orchestration;
 ///   <item><c>_startedAtLock</c>, <c>Metrics</c> internal fields — <c>Metrics.PhaseBreakdown</c> is stored as <c>phaseBreakdown</c>; other <c>Metrics</c> fields are not serialized.</item>
 /// </list>
 /// </para>
+/// <para>
+/// <c>ToHashEntries_StoresEveryWritableProperty</c> fails when a writable <see cref="PipelineRun"/> property is neither stored here nor listed as intentionally absent.
+/// </para>
 /// </summary>
 public static class PipelineRunHashExtensions
 {
@@ -81,6 +84,7 @@ public static class PipelineRunHashExtensions
             F("repositoryName",             run.RepositoryName ?? ""),
             F("codegenSessionId",           run.CodegenSessionId ?? ""),
             F("finalLabel",                 run.FinalLabel ?? ""),
+            F("harnessVersion",             run.HarnessVersion ?? ""),
             F("codeReviewChangeSummary",    run.CodeReviewChangeSummary ?? ""),
             F("codeReviewVerdictSummary",   run.CodeReviewVerdictSummary ?? ""),
             F("resolvedProfileId",          run.ResolvedProfileId ?? ""),
@@ -126,6 +130,8 @@ public static class PipelineRunHashExtensions
             J("latestQualityReport",        run.LatestQualityReport),
             J("linkedPullRequest",          run.LinkedPullRequest),
             JEnum("analysisRecommendation", run.AnalysisRecommendation),
+            JEnum("runMode",                (RunMode?)run.RunMode),
+            JEnum("failureCategory",        run.FailureCategory),
             J("acceptanceCriteriaReport",   run.AcceptanceCriteriaReport),
             J("brainValidation",            run.BrainValidation),
             J("feedback",                   run.Feedback),
@@ -257,6 +263,7 @@ public static class PipelineRunHashExtensions
         run.RepositoryName = r.OptionalString("repositoryName");
         run.CodegenSessionId = r.OptionalString("codegenSessionId");
         run.FinalLabel = r.OptionalString("finalLabel");
+        run.HarnessVersion = r.OptionalString("harnessVersion");
         run.CodeReviewChangeSummary = r.OptionalString("codeReviewChangeSummary");
         run.CodeReviewVerdictSummary = r.OptionalString("codeReviewVerdictSummary");
         run.ResolvedProfileId = r.OptionalString("resolvedProfileId");
@@ -317,6 +324,8 @@ public static class PipelineRunHashExtensions
         run.LatestQualityReport = r.Json<QualityGateReport>("latestQualityReport");
         run.LinkedPullRequest = r.Json<LinkedPullRequest>("linkedPullRequest");
         run.AnalysisRecommendation = r.EnumOrNull<AnalysisGateResult>("analysisRecommendation");
+        run.RunMode = r.EnumOrNull<RunMode>("runMode") ?? RunMode.New;
+        run.FailureCategory = r.EnumOrNull<FailureReason>("failureCategory");
         run.AcceptanceCriteriaReport = r.Json<AcceptanceCriteriaReport>("acceptanceCriteriaReport");
         run.BrainValidation = r.Json<BrainValidationResult>("brainValidation");
         run.Feedback = r.Json<RunFeedback>("feedback");
