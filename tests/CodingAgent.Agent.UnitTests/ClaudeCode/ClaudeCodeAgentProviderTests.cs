@@ -52,7 +52,10 @@ public class ClaudeCodeAgentProviderTests : IDisposable
 
     private static string Init(string sessionId) => JsonSerializer.Serialize(new
     {
-        type = "system", subtype = "init", session_id = sessionId, model = "claude-opus-5-5"
+        type = "system",
+        subtype = "init",
+        session_id = sessionId,
+        model = "claude-opus-5-5"
     });
 
     private static string Text(string text) => JsonSerializer.Serialize(new
@@ -235,7 +238,11 @@ public class ClaudeCodeAgentProviderTests : IDisposable
 
         result.Usage.Should().BeEquivalentTo(new TokenUsage
         {
-            InputTokens = 1000, OutputTokens = 250, ReasoningTokens = 150, CacheReadTokens = 9000, CacheWriteTokens = 700
+            InputTokens = 1000,
+            OutputTokens = 250,
+            ReasoningTokens = 150,
+            CacheReadTokens = 9000,
+            CacheWriteTokens = 700
         });
         result.Cost.Should().Be(0.42m);
         var details = result.UsageDetails!;
@@ -245,8 +252,13 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         details.WebSearchRequests.Should().Be(1);
         details.ModelUsage["claude-opus-5-5"].Should().BeEquivalentTo(new AgentModelUsage
         {
-            InputTokens = 1000, OutputTokens = 250, ReasoningTokens = 150, CacheReadTokens = 9000,
-            CacheWriteTokens = 700, WebSearchRequests = 1, CostUsd = 0.42m
+            InputTokens = 1000,
+            OutputTokens = 250,
+            ReasoningTokens = 150,
+            CacheReadTokens = 9000,
+            CacheWriteTokens = 700,
+            WebSearchRequests = 1,
+            CostUsd = 0.42m
         });
     }
 
@@ -263,7 +275,10 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         result.UsageDetails!.RateLimits.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new AgentRateLimitObservation
             {
-                Provider = "claude", Window = "five_hour", Status = "allowed", Utilization = 0.3
+                Provider = "claude",
+                Window = "five_hour",
+                Status = "allowed",
+                Utilization = 0.3
             });
     }
 

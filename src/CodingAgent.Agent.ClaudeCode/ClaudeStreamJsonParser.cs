@@ -509,9 +509,9 @@ internal static class ClaudeStreamJsonParser
         category switch
         {
             McpFailureCategory.Connection => counts with { FailedConnection = counts.FailedConnection + 1 },
-            McpFailureCategory.Auth       => counts with { FailedAuth       = counts.FailedAuth       + 1 },
-            McpFailureCategory.Unknown    => counts with { FailedUnknown    = counts.FailedUnknown    + 1 },
-            _                             => counts with { FailedOther      = counts.FailedOther      + 1 }
+            McpFailureCategory.Auth => counts with { FailedAuth = counts.FailedAuth + 1 },
+            McpFailureCategory.Unknown => counts with { FailedUnknown = counts.FailedUnknown + 1 },
+            _ => counts with { FailedOther = counts.FailedOther + 1 }
         };
 
     /// <summary>Picks the most telling input field of a tool call for a one-line summary.</summary>

@@ -195,11 +195,15 @@ public class ClaudeStreamJsonParserTests
         lines.Should().BeEmpty();
         _state.RateLimits["five_hour"].Should().BeEquivalentTo(new
         {
-            Status = "allowed", Utilization = 0.73, ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1791669600)
+            Status = "allowed",
+            Utilization = 0.73,
+            ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1791669600)
         });
         _state.RateLimits["seven_day"].Should().BeEquivalentTo(new
         {
-            Status = "allowed", Utilization = 0.46, ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1792069200)
+            Status = "allowed",
+            Utilization = 0.46,
+            ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1792069200)
         });
         _state.RateLimits["overage"].Status.Should().Be("rejected");
     }
@@ -293,13 +297,13 @@ public class ClaudeStreamJsonParserTests
     }
 
     [Theory]
-    [InlineData("Bash",        false, null)]
-    [InlineData("Edit",        false, null)]
-    [InlineData("Read",        false, null)]
-    [InlineData("TodoWrite",   false, null)]
-    [InlineData("Task",        false, null)]
-    [InlineData("WebSearch",   true,  "web/search")]
-    [InlineData("WebFetch",    true,  "web/fetch")]
+    [InlineData("Bash", false, null)]
+    [InlineData("Edit", false, null)]
+    [InlineData("Read", false, null)]
+    [InlineData("TodoWrite", false, null)]
+    [InlineData("Task", false, null)]
+    [InlineData("WebSearch", true, "web/search")]
+    [InlineData("WebFetch", true, "web/fetch")]
     [InlineData("mcp__broken", false, null)]         // no second __
     [InlineData("mcp____tool", false, null)]         // empty server segment
     [InlineData("mcp__server__", false, null)]       // empty tool segment
@@ -333,9 +337,9 @@ public class ClaudeStreamJsonParserTests
     }
 
     [Theory]
-    [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Error: 401 Unauthorized"}]}}""",         "FailedAuth")]
+    [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Error: 401 Unauthorized"}]}}""", "FailedAuth")]
     [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":[{"type":"text","text":"MCP error -32001: Request timed out"}]}]}}""", "FailedConnection")]
-    [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"404 Not Found"}]}}""",                  "FailedOther")]
+    [InlineData("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"404 Not Found"}]}}""", "FailedOther")]
     public void ProcessLine_ErrorToolResult_IncrementsCorrectFailureField(string userLine, string expectedField)
     {
         // First register t1 via a tool_use assistant message.
@@ -349,9 +353,9 @@ public class ClaudeStreamJsonParserTests
         var counts = _state.ToolCalls["sonarqube/get_file_coverage_details"];
         var failures = expectedField switch
         {
-            "FailedAuth"       => counts.FailedAuth,
+            "FailedAuth" => counts.FailedAuth,
             "FailedConnection" => counts.FailedConnection,
-            _                  => counts.FailedOther
+            _ => counts.FailedOther
         };
         failures.Should().Be(1);
         _state.ToolFailures.Should().ContainSingle();
