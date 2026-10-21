@@ -43,14 +43,17 @@ public sealed class TriageTrackerOperationsTests
     public TriageTrackerOperationsTests()
     {
         _config.Setup(c => c.GetProjectByIdAsync(Project.Id, It.IsAny<CancellationToken>())).ReturnsAsync(Project);
-        _config.Setup(c => c.LoadTemplatesForProjectAsync(Project.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new PipelineJobTemplate { Id = "t-api", Name = "api", RepoProviderId = "rp-api", IssueProviderId = "tracker-1" }]);
-        _config.Setup(c => c.GetProviderConfigByIdAsync("rp-api", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProviderConfig
+        // A repository's secrets live on its template since #3575; the connection stores none (spec 053 req 10.8).
+        _config.Setup(c => c.LoadTemplatesForProjectAsync(Project.Id, It.IsAny<CancellationToken>())).ReturnsAsync(
+        [
+            new PipelineJobTemplate
             {
-                Id = "rp-api", DisplayName = "api", ProviderType = "GitHub", Kind = ProviderKind.Repository,
+                Id = "t-api", Name = "api", RepoProviderId = "rp-api", IssueProviderId = "tracker-1",
                 Secrets = new Dictionary<string, string> { ["TOKEN"] = RepoSecret },
-            });
+            },
+        ]);
+        _config.Setup(c => c.GetProviderConfigByIdAsync("rp-api", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "rp-api", DisplayName = "api", ProviderType = "GitHub", Kind = ProviderKind.Repository });
         _config.Setup(c => c.GetProviderConfigByIdAsync("tracker-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProviderConfig { Id = "tracker-1", DisplayName = "tracker", ProviderType = "GitHub", Kind = ProviderKind.Issue });
         _config.Setup(c => c.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
