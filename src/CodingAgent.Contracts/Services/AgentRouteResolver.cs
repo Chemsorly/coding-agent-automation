@@ -31,6 +31,13 @@ public static class AgentRouteRefusalReason
 
     /// <summary>The text shown and logged when no route resolves (req 2.9).</summary>
     public const string NoRouteText = "No agent route: set the default route in Settings → Agents → Routing";
+
+    /// <summary>
+    /// The work item payload property that holds the reason code of a refused claim. A refused item is Failed with
+    /// <c>InfrastructureFailure</c> (req 4.5, no new enum value), the class a late Running report recovers; the code tells
+    /// the recovery that no retry changes this failure.
+    /// </summary>
+    public const string PayloadProperty = "routeRefusal";
 }
 
 /// <summary>

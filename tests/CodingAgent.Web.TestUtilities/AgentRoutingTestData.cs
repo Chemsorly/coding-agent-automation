@@ -1,4 +1,9 @@
+using System.Text;
+using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Web.TestUtilities;
 
@@ -52,5 +57,26 @@ public static class AgentRoutingTestData
     {
         var pairs = templates.Length == 0 ? [(DefaultJobTemplate, DefaultTool)] : templates;
         return pairs.ToDictionary(t => t.JobTemplateKey, t => t.Tool, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// A job template store with one template per key and tool, as the Helm values define them. With no arguments:
+    /// <see cref="DefaultJobTemplate"/> on <see cref="DefaultTool"/>. A claim is refused with <c>no_tool</c> on a
+    /// template without a <c>providerType</c> (design DD4), so test hosts register these.
+    /// </summary>
+    public static JobTemplateStore JobTemplates(params (string JobTemplateKey, string Tool)[] templates)
+    {
+        var yaml = new StringBuilder();
+        foreach (var (key, tool) in ToolsByKey(templates))
+            yaml.Append("- labels: \"").Append(key).Append("\"\n  image: agent:test\n  providerType: ").Append(tool).Append('\n');
+        return JobTemplateStore.LoadFromYaml(yaml.ToString());
+    }
+
+    /// <summary>Stores <paramref name="routing"/>, by default <see cref="Routing"/> with its defaults, as the global routing table.</summary>
+    public static Task SeedRoutingAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory, AgentRouting? routing = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dbFactory);
+        return new AgentRoutingStore(dbFactory).SaveAsync(routing ?? Routing(), ct);
     }
 }

@@ -9,6 +9,4 @@ namespace CodingAgent.Orchestration.Dispatch;
 public sealed record DispatchOrchestrationServiceDependencies(
     DispatchInfrastructure Infra,
     IWorkDistributor WorkDistributor,
-    IAgentProfileStore AgentProfileStore,
-    IProviderConfigStore ProviderConfigStore,
-    IPipelineConfigStore PipelineConfigStore);
+    IProviderConfigStore ProviderConfigStore);

@@ -260,7 +260,20 @@ public sealed class AutoConsolidationService : BackgroundService
                 "Auto consolidation: starting {Type} for {Scope} ({Count} since the last run, threshold {Threshold})",
                 type, scopeKey, count, threshold);
 
-            var result = await _consolidation.TriggerAutomaticAsync(type, templateId, ct);
+            ConsolidationTriggerResult? result;
+            try
+            {
+                result = await _consolidation.TriggerAutomaticAsync(type, templateId, ct);
+            }
+            catch (WorkItemRefusedException ex)
+            {
+                // Spec 053 req 2.9: the API refused the run (no agent route, or one that cannot run). No run exists,
+                // so the next check tries again; a run refused when an agent claims it fails and pauses the scope.
+                _logger.Warning(
+                    "Auto consolidation: {Type} for {Scope} was refused: {RefusalText}",
+                    type, scopeKey, ex.Message);
+                return;
+            }
 
             if (result is null)
             {

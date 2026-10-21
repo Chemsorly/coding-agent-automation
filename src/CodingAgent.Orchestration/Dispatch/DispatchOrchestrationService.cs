@@ -10,7 +10,8 @@ namespace CodingAgent.Orchestration.Dispatch;
 
 /// <summary>
 /// Standalone dispatch orchestration service.
-/// Performs: issue fetching, label swapping, profile/QG resolution, and provider config preparation.
+/// Performs: issue fetching, label swapping, and provider config preparation. The API routes the work item to an
+/// agent profile when it creates it, and resolves the quality gates and reviewers when an agent claims it (spec 053).
 /// </summary>
 /// <remarks>
 /// Run materialisation (creating the in-memory <see cref="PipelineRun"/> in
@@ -22,9 +23,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 {
     private readonly DispatchInfrastructure _infra;
     private readonly IWorkDistributor _workDistributor;
-    private readonly IAgentProfileStore _agentProfileStore;
     private readonly IProviderConfigStore _providerConfigStore;
-    private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
@@ -36,9 +35,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         _infra = deps.Infra;
         _workDistributor = deps.WorkDistributor;
-        _agentProfileStore = deps.AgentProfileStore;
         _providerConfigStore = deps.ProviderConfigStore;
-        _pipelineConfigStore = deps.PipelineConfigStore;
         _logger = logger;
     }
 
@@ -52,7 +49,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// <param name="brainProviderId">Optional brain provider config ID.</param>
     /// <param name="pipelineProviderId">Optional pipeline provider config ID.</param>
     /// <param name="initiatedBy">Who initiated the dispatch.</param>
-    /// <param name="requiredLabels">Resolved required labels for agent matching.</param>
     /// <param name="project">The project context for this dispatch.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Preparation result or null if orchestration failed.</returns>
@@ -63,7 +59,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(request.InitiatedBy);
-        ArgumentNullException.ThrowIfNull(request.RequiredLabels);
         ArgumentNullException.ThrowIfNull(request.Project);
 
         try
@@ -87,20 +82,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var repoProviderId = request.RepoProviderId;
         var brainProviderId = request.BrainProviderId;
         var pipelineProviderId = request.PipelineProviderId;
-        var requiredLabels = request.RequiredLabels;
         var project = request.Project;
-        // Resolve profile using required labels (no agent entry — DB mode has no connected agents)
-        var profile = await ResolveProfileByLabelsAsync(requiredLabels, ct);
-        if (profile is null)
-            return null;
 
-        var agentProviderId = profile.AgentProviderConfigId;
-
-        // Shared dispatch preparation: QG/reviewer resolution, issue context, config, staleness
+        // Shared dispatch preparation: issue context, config, token vending, staleness. The route, the stack labels'
+        // quality gates and reviewers, and the agent config are resolved by the API: the route when it creates the
+        // work item, the rest when an agent claims it (spec 053 DD1, DD7).
         var preparation = await _infra.PrepareDispatchCoreAsync(
             new DispatchCoreRequest(
-                requiredLabels, issueIdentifier, issueProviderId,
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
+                StackLabels: null, issueIdentifier, issueProviderId,
+                repoProviderId, AgentConfig: null, brainProviderId, pipelineProviderId,
                 project, _logger, PullRequest: request.PullRequest),
             ct);
         if (preparation is null)
@@ -112,7 +102,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // Build the run locally for metadata propagation — NOT registered in any in-memory
         // registry. The API's POST /api/work-items handler calls PipelineRunFactory.CreateFromWorkItem
         // and registers it in the API's IOrchestratorRunService (Req 1a.1 Option A).
-        var run = BuildLocalRun(request, agentProviderId);
+        var run = BuildLocalRun(request);
 
         if (run is null)
         {
@@ -125,17 +115,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // Set project context and resolved metadata on the run
         run.ProjectId = project.Id;
         run.ProjectName = project.Name;
-        run.ResolvedProfileId = profile.Id;
         run.PipelineProviderConfigId = pipelineProviderId;
-        run.ResolvedQualityGateConfigIds = resolvedQgcs
-            .Select(q => q.Id).ToList().AsReadOnly();
-        run.ResolvedReviewerConfigIds = resolvedReviewerConfigs
-            .Select(r => r.Id).ToList().AsReadOnly();
         run.IssueTitle = issueContext.IssueDetail.Title;
 
         return new DispatchPreparationResult
         {
-            ResolvedProfile = profile,
             QualityGateConfigs = resolvedQgcs,
             ReviewerConfigs = resolvedReviewerConfigs,
             ProviderConfigs = providerConfigs,
@@ -149,31 +133,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             AnalysisRefreshCount = refreshCount,
             CreatedRun = run,
             Project = project,
-            McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
+            McpServers = project.McpServers,
             TraceContext = PipelineTelemetry.CaptureTraceContext("DispatchOrchestration")
         };
-    }
-
-    /// <summary>
-    /// Resolves agent profile by matching required labels against all profiles.
-    /// Used in DB mode where there is no specific connected agent at orchestration time.
-    /// </summary>
-    private async Task<AgentProfile?> ResolveProfileByLabelsAsync(
-        IReadOnlyList<string> requiredLabels, CancellationToken ct)
-    {
-        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-
-        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, requiredLabels);
-
-        if (profile is null)
-        {
-            var labelsStr = string.Join(", ", requiredLabels);
-            _logger.Warning(
-                "No profile matches required labels [{Labels}] for DB-mode dispatch",
-                labelsStr);
-        }
-
-        return profile;
     }
 
     /// <summary>
@@ -181,10 +143,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// in any in-memory run registry. The API registers the run when the WorkItem is persisted.
     /// </summary>
     /// <summary>
-    /// Builds the run whose metadata is serialised into the WorkItem payload.
-    ///
-    /// <paramref name="agentProviderId"/> comes from the resolved profile rather than the request,
-    /// which is why it is a separate parameter.
+    /// Builds the run whose metadata is serialised into the WorkItem payload. It carries no agent: the API routes
+    /// the work item when it creates it (spec 053 DD1).
     ///
     /// <c>BrainProviderConfigId</c> is load-bearing, not decorative: <c>AgentHubFacade</c> reads it
     /// back out of the payload to answer <c>RequestTokenRefresh(ProviderKind.Brain)</c>, and throws
@@ -193,9 +153,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// left brain sync unable to obtain a token on any dispatch, even though the brain provider's
     /// config (token included) was resolved and embedded in the same payload.
     /// </summary>
-    private static PipelineRun? BuildLocalRun(
-        OrchestratorPreparationRequest request,
-        string? agentProviderId)
+    private static PipelineRun? BuildLocalRun(OrchestratorPreparationRequest request)
     {
         var runId = Guid.NewGuid().ToString();
         try
@@ -212,7 +170,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 RepoProviderConfigId = request.RepoProviderId.Value,
                 RunType = runType,
                 InitiatedBy = request.InitiatedBy,
-                AgentProviderConfigId = agentProviderId,
                 BrainProviderConfigId = request.BrainProviderId
             };
 
@@ -236,13 +193,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var requiredLabels = await ResolveRequiredLabelsInternalAsync(request.RepoProviderId, ct);
-
         var result = await PrepareAsync(
             new OrchestratorPreparationRequest(
                 request.IssueIdentifier, request.IssueProviderId, request.RepoProviderId,
                 request.BrainProviderId, request.PipelineProviderId, request.InitiatedBy,
-                requiredLabels, request.Project, request.RunType),
+                request.Project, request.RunType),
             ct);
 
         return result is null ? null : MapToRequest(result, request.TaskType, request.RunType, _logger);
@@ -256,8 +211,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         ArgumentNullException.ThrowIfNull(reviewRequest);
         ArgumentNullException.ThrowIfNull(project);
-
-        var requiredLabels = await ResolveRequiredLabelsInternalAsync(reviewRequest.RepoProviderId, ct);
 
         // A pull request is identified by its repository and number, an issue by its tracker and number.
         // In GitLab, and whenever the tracker is a different system than the repository, pull request !N and
@@ -279,7 +232,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 reviewRequest.BrainProviderId,
                 null, // pipelineProviderId
                 reviewRequest.InitiatedBy,
-                requiredLabels, project, PipelineRunType.Review, pullRequest),
+                project, PipelineRunType.Review, pullRequest),
             ct);
 
         if (result is null) return null;
@@ -447,13 +400,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Project);
 
-        var requiredLabels = await ResolveRequiredLabelsInternalAsync(request.RepoProviderId, ct);
-
         var result = await PrepareAsync(
             new OrchestratorPreparationRequest(
                 request.EpicIdentifier, request.IssueProviderId, request.RepoProviderId,
                 request.BrainProviderId, null, request.InitiatedBy,
-                requiredLabels, request.Project, request.PhaseType),
+                request.Project, request.PhaseType),
             ct);
 
         if (result is null) return null;
@@ -479,13 +430,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Project);
 
-        var requiredLabels = await ResolveRequiredLabelsInternalAsync(request.RepoProviderId, ct);
-
         var result = await PrepareAsync(
             new OrchestratorPreparationRequest(
                 request.IssueIdentifier, request.IssueProviderId, request.RepoProviderId,
                 request.BrainProviderId, null, request.InitiatedBy,
-                requiredLabels, request.Project, PipelineRunType.Triage),
+                request.Project, PipelineRunType.Triage),
             ct);
 
         if (result is null) return null;
@@ -499,22 +448,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     }
 
     /// <summary>
-    /// Resolves required labels from the repo's pipeline job template, falling back to global config defaults.
-    /// </summary>
-    private async Task<IReadOnlyList<string>> ResolveRequiredLabelsInternalAsync(
-        ProviderConfigId repoProviderId, CancellationToken ct)
-    {
-        var repoConfig = await _providerConfigStore
-            .GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-        var pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-        var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
-        var enrichedRepoConfig = repoConfig is not null
-            ? RepositorySettings.WithTemplateSettings(repoConfig, RepositorySettings.TemplateFor(repoProviderId.Value, templates))
-            : null;
-        return LabelResolver.ResolveRequiredLabels(enrichedRepoConfig, pipelineConfig);
-    }
-
-    /// <summary>
     /// Maps a <see cref="DispatchPreparationResult"/> to a <see cref="JobDistributionRequest"/>.
     /// </summary>
     private static JobDistributionRequest MapToRequest(
@@ -523,8 +456,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         PipelineRunType runType,
         ILogger logger)
     {
-        var agentSelector = result.ResolvedProfile.JobTemplateKey();
-
+        // No agent selector, profile or agent config: the API routes the work item when it creates it (spec 053 DD1).
         return new JobDistributionRequest
         {
             IssueIdentifier = result.IssueDetail.Identifier,
@@ -534,7 +466,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             PipelineProviderConfigId = result.CreatedRun.PipelineProviderConfigId,
             InitiatedBy = result.CreatedRun.InitiatedBy ?? InitiatedByConstants.Rehydrated,
             TaskType = taskType,
-            AgentSelector = agentSelector,
             TimeoutSeconds = (int)result.PipelineConfiguration.AgentTimeout.TotalSeconds,
             ProjectId = ParseProjectId(result.Project.Id, logger),
             ProjectName = result.Project.Name,
@@ -548,8 +479,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             AnalysisRefreshCount = result.AnalysisRefreshCount,
             ProviderConfigs = result.ProviderConfigs,
             PipelineConfiguration = result.PipelineConfiguration,
-            ResolvedProfileId = result.ResolvedProfile.Id,
-            AgentProviderConfigId = result.ResolvedProfile.AgentProviderConfigId,
             QualityGateConfigs = result.QualityGateConfigs,
             ReviewerConfigs = result.ReviewerConfigs,
             McpServers = result.McpServers,
@@ -570,7 +499,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         if (!result.Success)
         {
             await RevertFailedDistributionAsync(request, ct);
-            return new DispatchOutcome(false, false, result.ErrorMessage);
+            return new DispatchOutcome(false, false, result.ErrorMessage) { IsRefused = result.IsPermanentFailure };
         }
 
         if (result.Queued)

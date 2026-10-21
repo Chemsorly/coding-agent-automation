@@ -1,7 +1,9 @@
 using System.Text.Json;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
 using Serilog;
@@ -24,6 +26,10 @@ public static class ConfigEndpoints
 {
     /// <summary>Valid secret key names: must start with a letter or underscore, followed by letters, digits, underscores.</summary>
     private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+
+    /// <summary>The 400 for an agent provider config read or write: agent configs are built per route (spec 053).</summary>
+    internal const string AgentProviderConfigsRetired =
+        "Agent provider configs no longer exist: the tool settings are on the agent profile (Settings → Agents → Agent Profiles).";
 
     private static readonly JsonSerializerOptions ExportOptions = new()
     {
@@ -61,9 +67,6 @@ public static class ConfigEndpoints
 
         // ── Provider configs ────────────────────────────────────────────
         group.MapGet("/provider-configs", GetProviderConfigs);
-
-        // ── Agent profiles ──────────────────────────────────────────────
-        group.MapGet("/agent-profiles", GetAgentProfiles);
 
         // ── Quality gate configs ────────────────────────────────────────
         group.MapGet("/quality-gate-configs", GetQualityGateConfigs);
@@ -111,6 +114,8 @@ public static class ConfigEndpoints
         CancellationToken ct,
         bool includeSecrets = false)
     {
+        if (kind == ProviderKind.Agent)
+            return TypedResults.BadRequest(AgentProviderConfigsRetired);
         var configs = await store.LoadProviderConfigsAsync(kind, ct);
         if (includeSecrets)
             return TypedResults.Ok(configs.ToList());
@@ -122,8 +127,6 @@ public static class ConfigEndpoints
     internal static async Task<IResult> SaveProviderConfig(
         [FromBody] ProviderConfig config,
         IProviderConfigStore store,
-        JobTemplateStore templates,
-        IAgentProfileStore profileStore,
         CancellationToken ct)
     {
         if (config.Kind == ProviderKind.Repository)
@@ -139,22 +142,10 @@ public static class ConfigEndpoints
                     "Agent labels, secrets, setup steps, steering and the commit blacklist are set on the pipeline job template.");
         }
 
+        // Spec 053 req 7.13: the agent config is built from the profile and its route; a previous-release tab
+        // must fail rather than store one.
         if (config.Kind == ProviderKind.Agent)
-        {
-            // TODO: TOCTOU race — a concurrent SaveAgentProfile call may insert a new profile that
-            // links to this provider ID after this snapshot is taken but before SaveProviderConfigAsync
-            // commits. The new profile would bypass both endpoints' mismatch validation, producing a
-            // stored type mismatch. Fixing this requires a distributed lock or a database-side
-            // constraint check (e.g. a CHECK trigger or a read-modify-write transaction). Tracked for
-            // post-launch hardening; the window is narrow and requires concurrent admin requests.
-            var profiles = await profileStore.LoadAgentProfilesAsync(ct);
-            foreach (var profile in profiles.Where(p => p.AgentProviderConfigId == config.Id))
-            {
-                var message = templates.FindProviderTypeMismatch(profile, config);
-                if (message is not null)
-                    return TypedResults.BadRequest(message);
-            }
-        }
+            return TypedResults.BadRequest(AgentProviderConfigsRetired);
         return await SaveAsync(() => store.SaveProviderConfigAsync(config, ct));
     }
 
@@ -170,25 +161,12 @@ public static class ConfigEndpoints
 
     // ── Agent profiles ─────────────────────────────────────────────────────
 
-    internal static async Task<IResult> GetAgentProfiles(
-        IAgentProfileStore store, CancellationToken ct)
-    {
-        var profiles = await store.LoadAgentProfilesAsync(ct);
-        return TypedResults.Ok(profiles);
-    }
-
     internal static async Task<IResult> SaveAgentProfile(
         [FromBody] AgentProfile profile,
         IAgentProfileStore store,
         JobTemplateStore templates,
-        IProviderConfigStore providerStore,
         CancellationToken ct)
     {
-        var provider = await providerStore.GetProviderConfigByIdAsync(profile.AgentProviderConfigId, ProviderKind.Agent, ct);
-        var message = templates.FindProviderTypeMismatch(profile, provider);
-        if (message is not null)
-            return TypedResults.BadRequest(message);
-
         if (!string.IsNullOrWhiteSpace(profile.JobTemplate) && templates.GetAllTemplates().Count > 0)
         {
             var key = profile.JobTemplateKey();
@@ -345,6 +323,15 @@ public static class ConfigEndpoints
         if (await store.GetProjectByIdAsync(projectId, ct) is null)
             return TypedResults.NotFound($"Project {projectId} does not exist.");
 
+        // Spec 053: a body without routes keeps the stored ones, so a page that does not edit routes cannot drop rows
+        // saved after it loaded; an empty dictionary clears them.
+        if (template.AgentRoutes is null)
+        {
+            var stored = (await store.LoadTemplatesForProjectAsync(projectId, ct)).FirstOrDefault(t => t.Id == template.Id);
+            if (stored?.AgentRoutes is not null)
+                template = template with { AgentRoutes = stored.AgentRoutes };
+        }
+
         var conflict = await FindTemplateConflictAsync(template, projectId, store, ct);
         if (conflict is not null)
             return TypedResults.BadRequest(conflict);
@@ -489,7 +476,11 @@ public static class ConfigEndpoints
                 ProjectId = e.ProjectId,
                 Name = e.Name,
                 Configuration = e.Configuration
-            }).ToListAsync(ct)
+            }).ToListAsync(ct),
+            AgentRouting = await db.KeyValueStore.AsNoTracking()
+                .Where(kv => kv.Key == AgentRouting.StorageKey)
+                .Select(kv => kv.Value)
+                .FirstOrDefaultAsync(ct)
         };
 
         var json = JsonSerializer.Serialize(bundle, ExportOptions);
@@ -505,16 +496,27 @@ public static class ConfigEndpoints
     /// bundle. Clears ALL existing config before inserting — operation is transactional.
     /// Requires OperatorApiKey policy (042 Req 6.5, Tier 2) — agent-derived keys receive 403.
     /// WARNING: This is destructive — run history and work items are preserved, but all config
-    /// (providers, profiles, quality gate configs, reviewer configs, projects, templates) is erased.
+    /// (providers, profiles, quality gate configs, reviewer configs, projects, templates, agent routing) is erased.
+    /// An older bundle is converted inside the same transaction: the repository-settings move and the agent routing
+    /// move (spec 053) run after the bundle is written, so no reader sees the old shapes, and a failed move rolls the
+    /// whole import back. It holds <see cref="DatabaseStartupService.MigrationLockKey"/> throughout, so it cannot
+    /// interleave with a replica's startup moves.
     /// </summary>
     internal static async Task<IResult> ImportConfigAsync(
         IFormFile file,
         IDbContextFactory<PipelineDbContext> dbFactory,
         IConfigurationStore configStore,
+        IDistributedLockProvider lockProvider,
+        JobTemplateStore jobTemplates,
         CancellationToken ct)
     {
-        var (bundle, error) = await ValidateAndDeserializeBundle(file, ct);
+        var toolsByKey = jobTemplates.ToolsByKey();
+        var (bundle, error) = await ValidateAndDeserializeBundle(file, toolsByKey, ct);
         if (error is not null) return error;
+
+        // The moves' lock is not reentrant, so the import takes it once and runs the moves without their own.
+        await using var lockHandle = await lockProvider.AcquireAsync(DatabaseStartupService.MigrationLockKey, ct);
+        AgentRoutingMoveSummary? moveSummary = null;
 
         // Obtain the execution strategy from a short-lived context that is properly disposed.
         // CreateDbContext() checks out a pooled slot — callers must dispose it to return the slot.
@@ -539,6 +541,11 @@ public static class ConfigEndpoints
             await ClearExistingConfig(db, cancellationToken);
             await ApplyBundle(db, bundle, cancellationToken);
 
+            // Older bundles: repository settings move from the connections onto the templates, then label routing
+            // becomes agent routing. Both are idempotent, so a bundle of this release passes through unchanged.
+            await DatabaseStartupService.ApplyRepositorySettingsMigrationAsync(db, Log.Logger, cancellationToken);
+            moveSummary = await AgentRoutingMove.RunAsync(db, toolsByKey, Log.Logger, cancellationToken);
+
             await transaction.CommitAsync(cancellationToken);
         }, ct);
 
@@ -546,10 +553,8 @@ public static class ConfigEndpoints
         // This must run AFTER the ExecuteAsync wrapper so it fires exactly once on commit,
         // not inside the retry lambda where it could fire on a failed attempt before rollback.
         configStore.InvalidateCaches();
-
-        // Move repository settings from any provider configs that still carry them (older bundles)
-        // onto the templates that reference those providers. Idempotent.
-        await MigrateRepositorySettingsFromProvidersAsync(dbFactory, ct);
+        if (moveSummary is not null)
+            AgentRoutingMove.LogSummary(Log.Logger, moveSummary);
 
         return TypedResults.Ok(new ImportExportResult
         {
@@ -561,20 +566,6 @@ public static class ConfigEndpoints
                       $"{bundle.Projects?.Count ?? 0} projects, " +
                       $"{bundle.JobTemplates?.Count ?? 0} templates"
         });
-    }
-
-    /// <summary>
-    /// Moves repository settings (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths)
-    /// from repository <see cref="ProviderConfig"/> records onto the templates that reference them.
-    /// Delegates to <see cref="DatabaseStartupService.ApplyRepositorySettingsMigrationAsync"/> to avoid
-    /// duplicating the migration logic. Idempotent.
-    /// </summary>
-    private static async Task MigrateRepositorySettingsFromProvidersAsync(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        await DatabaseStartupService.ApplyRepositorySettingsMigrationAsync(db, Log.Logger, ct);
     }
 
     /// <summary>
@@ -591,6 +582,7 @@ public static class ConfigEndpoints
     // See Issue #3267 review findings (DotNetSpecialist [WARNING], Correctness [SUGGESTION]).
     private static async Task<(ConfigBundle bundle, IResult? error)> ValidateAndDeserializeBundle(
         IFormFile file,
+        IReadOnlyDictionary<string, string> toolsByKey,
         CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -614,7 +606,47 @@ public static class ConfigEndpoints
         if (settingsErrors.Count > 0)
             return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid settings: {string.Join(" ", settingsErrors)}" }));
 
+        var routingErrors = ValidateImportedRouting(bundle, toolsByKey);
+        if (routingErrors.Count > 0)
+            return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid agent routing: {string.Join(" ", routingErrors)}" }));
+
         return (bundle, null);
+    }
+
+    /// <summary>
+    /// The routing problems in an import bundle (spec 053 req 7.12). Only its shape is checked: task types, models,
+    /// efforts when the tool is known, and that each route's profile is in the bundle. A job template this cluster does
+    /// not have is not refused, so a bundle from another cluster imports; the Agent Profiles page flags it.
+    /// </summary>
+    private static IReadOnlyList<string> ValidateImportedRouting(ConfigBundle bundle, IReadOnlyDictionary<string, string> toolsByKey)
+    {
+        AgentRouting? routing;
+        try
+        {
+            routing = AgentRoutingStore.Deserialize(bundle.AgentRouting);
+        }
+        catch (JsonException ex)
+        {
+            return [$"The agent routing cannot be read: {ex.Message}"];
+        }
+        if (routing is null)
+            return [];
+
+        var profiles = new List<AgentProfile>();
+        foreach (var dto in bundle.AgentProfiles ?? [])
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(dto.Configuration)
+                    && JsonSerializer.Deserialize<AgentProfile>(dto.Configuration, PipelineJsonOptions.Lenient) is { } profile)
+                    profiles.Add(profile);
+            }
+            catch (JsonException)
+            {
+                // A profile that cannot be read is not in the bundle for a route that names it.
+            }
+        }
+        return AgentRouteValidator.ValidateImport(routing, profiles, toolsByKey);
     }
 
     /// <summary>
@@ -639,6 +671,8 @@ public static class ConfigEndpoints
         db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
         db.Projects.RemoveRange(db.Projects);
         db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
+        // Of the key-value rows only the routing table is configuration; loop state and the rest stay.
+        db.KeyValueStore.RemoveRange(db.KeyValueStore.Where(kv => kv.Key == AgentRouting.StorageKey));
         await db.SaveChangesAsync(ct);
     }
 
@@ -724,6 +758,10 @@ public static class ConfigEndpoints
                 Configuration = t.Configuration
             });
         }
+
+        // Validated before anything was cleared (ValidateImportedRouting); stored in this release's shape.
+        if (AgentRoutingStore.Deserialize(bundle.AgentRouting) is { } routing)
+            db.KeyValueStore.Add(new KeyValueEntity { Key = AgentRouting.StorageKey, Value = AgentRoutingStore.Serialize(routing) });
 
         await db.SaveChangesAsync(ct);
     }
@@ -847,6 +885,9 @@ public sealed class ConfigBundle
     public List<NamedConfigDto>? ReviewerConfigs { get; set; }
     public List<ProjectDto>? Projects { get; set; }
     public List<JobTemplateDto>? JobTemplates { get; set; }
+
+    /// <summary>The global routing table as its stored JSON (spec 053); absent in older bundles, which the move converts.</summary>
+    public string? AgentRouting { get; set; }
 }
 
 /// <summary>Provider config row — Configuration is a serialized ProviderConfig JSON blob.</summary>

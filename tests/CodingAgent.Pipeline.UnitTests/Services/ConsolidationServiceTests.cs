@@ -22,7 +22,6 @@ public sealed class ConsolidationServiceTests
     private readonly string _tempDir;
     private readonly ILogger _logger;
     private readonly Mock<IProjectStore> _mockProjectStore;
-    private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
     private readonly PipelineConfiguration _config;
     private readonly List<PipelineJobTemplate> _templates;
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
@@ -33,14 +32,6 @@ public sealed class ConsolidationServiceTests
         Directory.CreateDirectory(_tempDir);
 
         _logger = new LoggerConfiguration().CreateLogger();
-
-        // Default: return ProviderConfig with no RequiredLabels so existing tests continue to
-        // exercise DefaultRequiredAgentLabels fallback. Tests that need repo-scoped labels set
-        // up their own mock.
-        _mockProviderConfigStore = new Mock<IProviderConfigStore>();
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProviderConfig?)null);
 
         _templates = new List<PipelineJobTemplate>
         {
@@ -66,11 +57,6 @@ public sealed class ConsolidationServiceTests
         _config = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = _tempDir,
-            // Most tests need runs to succeed. DefaultRequiredAgentLabels must be set so
-            // TriggerAsync passes the fail-fast label-resolution check added in issue #2536.
-            // Tests that specifically test the "no labels" rejection path create their own
-            // PipelineConfiguration instance without DefaultRequiredAgentLabels.
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
 
         // Mock IProjectStore to return a default project owning all templates
@@ -100,7 +86,6 @@ public sealed class ConsolidationServiceTests
         _logger,
         _config,
         _mockProjectStore.Object,
-        _mockProviderConfigStore.Object,
         WorkDistributor: _mockWorkDistributor.Object));
 
     #region TriggerAsync — creates run and persists
@@ -153,20 +138,13 @@ public sealed class ConsolidationServiceTests
     }
 
     [Fact]
-    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_CreatesPendingRun()
+    public async Task TriggerAsync_WithoutWorkDistributor_Throws()
     {
-        // When DefaultRequiredAgentLabels is not configured and no SelectorResolver is injected,
-        // TriggerAsync uses LabelResolver (returns empty labels) and still creates a Pending run.
-        // The distributor receives an empty selector and may return 422 — but that's the new
-        // synchronous error path (null return), not the old "stays Queued forever" path.
-        // Use a dedicated SUT without DefaultRequiredAgentLabels and without a WorkDistributor
-        // (to test the fallback path that uses LabelResolver directly).
         var configWithoutLabels = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
         var sutWithoutLabels = new ConsolidationService(new ConsolidationServiceDependencies(
             _logger,
             configWithoutLabels,
-            _mockProjectStore.Object,
-            _mockProviderConfigStore.Object));
+            _mockProjectStore.Object));
 
         // Without a WorkDistributor injected, TriggerAsync throws InvalidOperationException.
         // This verifies the guard is in place (no silent no-op).
@@ -350,7 +328,6 @@ public sealed class ConsolidationServiceTests
                 _logger,
                 _config,
                 _mockProjectStore.Object,
-                _mockProviderConfigStore.Object,
                 WorkDistributor: _mockWorkDistributor.Object));
 
         var run = await sut.TriggerAsync(
@@ -372,7 +349,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             _config,
             _mockProjectStore.Object,
-            _mockProviderConfigStore.Object,
             WorkDistributor: _mockWorkDistributor.Object));
 
         var run = await sut.TriggerAsync(
@@ -411,7 +387,6 @@ public sealed class ConsolidationServiceTests
             capturingLogger,
             _config,
             _mockProjectStore.Object,
-            _mockProviderConfigStore.Object,
             WorkDistributor: _mockWorkDistributor.Object));
 
         var run = await sut.TriggerAsync(

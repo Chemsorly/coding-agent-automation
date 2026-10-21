@@ -12,6 +12,8 @@ namespace CodingAgent.Api.Chat;
 /// <param name="ProjectId">The project whose MCP servers, secrets and steering the chat runs with, or null.</param>
 /// <param name="ChatWindowId">Stable for the life of the pod; the agent keeps one conversation per window.</param>
 /// <param name="Prompted">A prompt has been delivered, so later ones resume the conversation.</param>
+/// <param name="Model">The model the chat was started with (spec 053 req 6.1); null for sessions stored before.</param>
+/// <param name="Effort">The effort the chat was started with; null for sessions stored before.</param>
 internal sealed record ChatSessionRecord(
     string AgentId,
     string? OwnerIdentitySource,
@@ -19,7 +21,9 @@ internal sealed record ChatSessionRecord(
     string? ProjectId,
     string ProfileId,
     string ChatWindowId,
-    bool Prompted = false);
+    bool Prompted = false,
+    string? Model = null,
+    string? Effort = null);
 
 /// <summary>
 /// Holds <see cref="ChatSessionRecord"/>s by agent ID: in Redis when the API runs with it, so every

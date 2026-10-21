@@ -126,6 +126,7 @@ public static class ApiServiceCollectionExtensions
             Serilog.Log.Logger));
         services.AddSingleton(sp => new CodingAgent.Api.Triage.TriageTrackerOperations(
             sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
             Serilog.Log.Logger));
@@ -135,10 +136,12 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<CodingAgent.Api.Triage.TriageTrackerOperations>(),
+            sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemRouter>(),
             Serilog.Log.Logger));
         services.AddSingleton(sp => new CodingAgent.Api.Triage.TriageIssueCreator(
             sp.GetRequiredService<ITriageStore>(),
             sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<CodingAgent.Infrastructure.Locking.IDistributedLockProvider>(),
             sp.GetRequiredService<CodingAgent.Api.Triage.TriageTrackerOperations>(),
@@ -430,26 +433,12 @@ public static class ApiServiceCollectionExtensions
         // that could not trigger. A trigger enqueues through ApiWorkDistributor (AddDispatch) and reads
         // the saved settings from IPipelineConfigStore; the empty configuration is only the fallback for
         // a host without that store.
-        // TODO [WARNING]: When the job-templates file is absent, the API registers JobTemplateStore.CreateEmpty()
-        // (a non-null store with zero templates). ConsolidationSelectorResolver treats any non-null store as
-        // "Kubernetes mode" and builds an empty dispatchableSelectors set, causing every enabled profile to fail
-        // the Contains check and returning null for global consolidation triggers in non-Kubernetes deployments
-        // (e.g. local development). The null-means-no-filtering guard in Resolve() is effectively unreachable
-        // from the API. A clean fix is to treat an empty store the same as no store (pass null when
-        // GetAllTemplates().Count == 0), or to distinguish "no file" from "file with zero templates" in
-        // CreateEmpty() vs LoadFromFile(), so the resolver can skip filtering only when no file is configured.
-        services.AddSingleton<IConsolidationSelectorResolver>(sp => new ConsolidationSelectorResolver(
-            sp.GetRequiredService<IAgentProfileStore>(),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<JobTemplateStore>()));
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new ConsolidationServiceDependencies(
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IProviderConfigStore>(),
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
-                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
                 PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
 
         // ── IAgentCommunication → SignalRAgentCommunication ──────────────────
@@ -632,6 +621,9 @@ public static class ApiServiceCollectionExtensions
         // WorkItemStore backs the /api/work-items enqueue, status and dedup handlers. ApiWorkDistributor
         // is IWorkDistributor in this process, over the same store, for the dispatch logic that moves
         // into the API; nothing here resolved an IWorkDistributor before.
+        // Spec 053: the routing table, and the router that pins a route on every work item when it is created.
+        services.AddSingleton<AgentRoutingStore>();
+        services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemRouter>();
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
         services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
 
@@ -648,9 +640,7 @@ public static class ApiServiceCollectionExtensions
             new DispatchOrchestrationServiceDependencies(
                 sp.GetRequiredService<DispatchInfrastructure>(),
                 sp.GetRequiredService<IWorkDistributor>(),
-                sp.GetRequiredService<IAgentProfileStore>(),
-                sp.GetRequiredService<IProviderConfigStore>(),
-                sp.GetRequiredService<IPipelineConfigStore>()),
+                sp.GetRequiredService<IProviderConfigStore>()),
             Log.Logger));
         services.AddSingleton<CodingAgent.Api.Dispatch.ManualDispatchService>();
 
@@ -678,6 +668,8 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IConsolidationJobPreparationService>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ConsolidationTemplateResolver>(),
+            sp.GetRequiredService<AgentRoutingStore>(),
+            sp.GetRequiredService<JobTemplateStore>(),
             Log.Logger,
             new ConsolidationRunContextSources(
                 sp.GetRequiredService<IPipelineRunHistoryService>()),
@@ -685,7 +677,6 @@ public static class ApiServiceCollectionExtensions
 
         // ── Pending dispatch services (POST /api/work-items/{id}/dispatch) ───────────────────
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
-        // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
         // Used by WorkItemDispatchLoop (Scheduler) via POST /api/work-items/{id}/dispatch.
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
@@ -701,10 +692,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<WorkItemTransitionService>(),
                 options);
         });
-        services.AddSingleton<CodingAgent.Api.Dispatch.DispatchTemplateResolver>(sp =>
-            new CodingAgent.Api.Dispatch.DispatchTemplateResolver(
-                sp.GetService<IAgentProfileStore>(),
-                sp.GetRequiredService<JobTemplateStore>()));
+        // Spec 053 DD10: routes a Pending item a previous-release API stored without a selector.
+        services.AddSingleton<CodingAgent.Api.Dispatch.RolloutRouting>();
 
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
         // The dispatch of a Pending item (DispatchPendingWorkItem): concurrency-snapshot query,

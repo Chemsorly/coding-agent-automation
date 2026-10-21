@@ -1,8 +1,6 @@
 using AwesomeAssertions;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.TestUtilities;
-using Moq;
 
 namespace CodingAgent.Web.UnitTests.TestUtilitiesTests;
 
@@ -124,29 +122,8 @@ public class TestOrchestrationFactoryTests
     // ── TestOrchestrationFactory.CreateMinimalRunCreator ─────────────────
 
     [Fact]
-    public void CreateMinimalRunCreator_NullConfigStore_Throws()
+    public void CreateMinimalRunCreator_WithDefaults_ReturnsInstance()
     {
-        var act = () => TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: null,
-            providerFactory: Mock.Of<IProviderFactory>());
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void CreateMinimalRunCreator_NullProviderFactory_Throws()
-    {
-        var act = () => TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: Mock.Of<IConfigurationStore>(),
-            providerFactory: null);
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void CreateMinimalRunCreator_WithRequiredDeps_ReturnsInstance()
-    {
-        var creator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: Mock.Of<IConfigurationStore>(),
-            providerFactory: Mock.Of<IProviderFactory>());
-        creator.Should().NotBeNull();
+        TestOrchestrationFactory.CreateMinimalRunCreator().Should().NotBeNull();
     }
 }

@@ -1,9 +1,19 @@
+using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Kubernetes;
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Serilog.Core;
 using Serilog.Events;
+using RoutingTable = CodingAgent.Pipeline.Models.AgentRouting;
 
 namespace CodingAgent.Api.IntegrationTests.AgentRouting;
 
@@ -11,6 +21,40 @@ namespace CodingAgent.Api.IntegrationTests.AgentRouting;
 internal static class AgentRoutingTestSupport
 {
     public static PipelineDbContext NewDb(string? name = null) => InMemoryFactory.Create(name ?? Guid.NewGuid().ToString());
+
+    /// <summary>
+    /// A <see cref="WorkItemRouter"/> over the routing table in <paramref name="dbFactory"/> (spec 053 task 4.0). With the
+    /// defaults, every task type routes to <see cref="AgentRoutingTestData.Profile"/> on
+    /// <see cref="AgentRoutingTestData.DefaultJobTemplate"/> once the table is seeded (<see cref="SeedRouting"/>).
+    /// </summary>
+    public static WorkItemRouter Router(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IReadOnlyList<AgentProfile>? profiles = null,
+        IReadOnlyList<PipelineJobTemplate>? templates = null,
+        JobTemplateStore? jobTemplates = null)
+    {
+        var profileStore = new Mock<IAgentProfileStore>();
+        profileStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(profiles ?? [AgentRoutingTestData.Profile()]);
+        var projectStore = new Mock<IProjectStore>();
+        projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(templates ?? []);
+        return new WorkItemRouter(
+            profileStore.Object, new AgentRoutingStore(dbFactory), projectStore.Object,
+            jobTemplates ?? AgentRoutingTestData.JobTemplates(), NullLogger<WorkItemRouter>.Instance);
+    }
+
+    /// <summary>Stores <paramref name="routing"/> (by default <see cref="AgentRoutingTestData.Routing"/>) synchronously, for test constructors.</summary>
+    public static void SeedRouting(IDbContextFactory<PipelineDbContext> dbFactory, RoutingTable? routing = null)
+    {
+        using var db = dbFactory.CreateDbContext();
+        db.KeyValueStore.Add(new KeyValueEntity
+        {
+            Key = RoutingTable.StorageKey,
+            Value = AgentRoutingStore.Serialize(routing ?? AgentRoutingTestData.Routing()),
+        });
+        db.SaveChanges();
+    }
 
     /// <summary>A Serilog logger that adds every event to <paramref name="events"/>.</summary>
     public static Serilog.ILogger Logger(List<LogEvent> events) =>

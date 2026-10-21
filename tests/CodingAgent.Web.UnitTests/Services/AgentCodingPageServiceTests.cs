@@ -122,8 +122,6 @@ public class AgentCodingPageServiceTests
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         _mockConfigClient.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
 
         var error = await _service.InitializeAsync();
 
@@ -595,8 +593,6 @@ public class AgentCodingPageServiceTests
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         _mockConfigClient.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
     }
 
     // ── Spec 049: project scope and guards ──
@@ -623,8 +619,6 @@ public class AgentCodingPageServiceTests
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         _mockConfigClient.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
     }
 
     [Fact]

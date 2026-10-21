@@ -7,6 +7,7 @@ using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.Ui;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -56,6 +57,8 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
             BrainProviderId = "brain-delta",
             Enabled = true,
             RequiredLabels = [.. Labels],
+            // Spec 053: the template's Consolidation row routes its consolidations.
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route(Profile) },
         }, CancellationToken.None);
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(new ProviderConfig
@@ -65,14 +68,8 @@ public sealed class UiConsolidationEndpointTests(ApiWebApplicationFactory factor
             ProviderType = "GitHub",
             DisplayName = "Delta repo",
         }, CancellationToken.None);
-        await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = Profile,
-            DisplayName = "Delta agent",
-            AgentProviderConfigId = "agent-cfg",
-            MatchLabels = Labels,
-            Enabled = true,
-        }, CancellationToken.None);
+        await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(Profile, displayName: "Delta agent"), CancellationToken.None);
     }
 
     [IdorCase("GET /api/ui/consolidation/templates/{templateId}/refactoring-scan")]

@@ -24,7 +24,8 @@ public sealed class DatabaseStartupService
     private readonly IDatabaseProbe? _probe;
     private readonly TimeProvider _timeProvider;
 
-    internal const string MigrationLockKey = "caa_schema_migration";
+    /// <summary>The advisory lock every startup step and the config import hold around their writes.</summary>
+    public const string MigrationLockKey = "caa_schema_migration";
 
     /// <summary>
     /// ID of the baseline migration that replaced the original migrations in October 2026. It reuses the ID of
@@ -184,11 +185,14 @@ public sealed class DatabaseStartupService
     ///   <item>Ensures the Default project row exists (<see cref="SeedDefaultProjectIfNeededAsync"/>).</item>
     ///   <item>Seeds the default reviewer configurations when the table is empty (<see cref="SeedDefaultReviewerConfigsIfNeededAsync"/>).</item>
     ///   <item>Reparents orphaned templates to the Default project (<see cref="ClaimOrphanedTemplatesAsync"/>).</item>
+    ///   <item>Moves repository settings from connections to templates (<see cref="MoveRepositorySettingsToTemplatesAsync"/>).</item>
+    ///   <item>Moves label routing to agent routing (<see cref="AgentRoutingMove.RunWithLockAsync"/>, spec 053).</item>
     /// </list>
     /// Idempotent — safe to run on every startup. Step 1 must precede step 3 because
     /// <see cref="ClaimOrphanedTemplatesAsync"/> skips repair when the Default project is absent.
     /// </summary>
-    public async Task RunStartupSeedingAsync(CancellationToken ct)
+    /// <param name="toolsByKey">Job template key → <c>providerType</c> (<c>JobTemplateStore.ToolsByKey()</c>), for the routing move.</param>
+    public async Task RunStartupSeedingAsync(IReadOnlyDictionary<string, string> toolsByKey, CancellationToken ct)
     {
         // Each step holds MigrationLockKey around both its existence check and its write, so concurrent
         // replicas serialize per step: a second replica's check runs only after the first replica's write
@@ -202,6 +206,7 @@ public sealed class DatabaseStartupService
         await SeedDefaultReviewerConfigsIfNeededAsync(ct);
         await ClaimOrphanedTemplatesAsync(ct);
         await MoveRepositorySettingsToTemplatesAsync(ct);
+        await AgentRoutingMove.RunWithLockAsync(_dbFactory, _lockProvider, toolsByKey, _logger, ct);
     }
 
     /// <summary>

@@ -188,11 +188,11 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
 
         try
         {
-            var (duration, runTypeTag, _, projectName) =
+            var (duration, runTypeTag, _, projectName, providerTag, modelTag) =
                 await RunOutcomeTelemetry.ResolveRunContextAsync(workItemId, _dbFactory, CancellationToken.None);
             var (outcome, failureReasonTag) =
                 RunOutcomeTelemetry.DeriveOutcome(status, payload: null, failureReason);
-            RunOutcomeTelemetry.RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
+            RunOutcomeTelemetry.RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration, providerTag, modelTag);
         }
         catch (Exception ex)
         {

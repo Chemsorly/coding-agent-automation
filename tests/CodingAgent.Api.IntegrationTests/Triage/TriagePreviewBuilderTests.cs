@@ -2,6 +2,8 @@ using AwesomeAssertions;
 using CodingAgent.Api.Triage;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.TestUtilities;
 using Xunit;
 
 namespace CodingAgent.Api.IntegrationTests.Triage;
@@ -18,11 +20,10 @@ public class TriagePreviewBuilderTests
     private static readonly PipelineJobTemplate Api = new() { Id = "t-api", Name = "checkout-api", IssueProviderId = "ip-api", RepoProviderId = "rp-api", Enabled = true, BrainProviderId = "brain" };
     private static readonly PipelineJobTemplate Off = new() { Id = "t-off", Name = "admin", IssueProviderId = "ip-api", RepoProviderId = "rp-off", Enabled = false };
 
-    private static readonly AgentProfile Profile = new()
-    {
-        Id = "p1", DisplayName = "default", AgentProviderConfigId = "ap-1", Enabled = true, MatchLabels = ["dotnet"],
-        McpServers = [new McpServerConfig { Name = "grafana" }, new McpServerConfig { Name = "sonarqube" }, new McpServerConfig { Name = "old", Disabled = true }],
-    };
+    private static readonly AgentProfile Profile = AgentRoutingTestData.Profile("p1", displayName: "default",
+        mcpServers: [new McpServerConfig { Name = "grafana" }, new McpServerConfig { Name = "sonarqube" }, new McpServerConfig { Name = "old", Disabled = true }]);
+
+    private static readonly CodingAgent.Pipeline.Models.AgentRouting RoutingTableWithoutRows = CodingAgent.Pipeline.Models.AgentRouting.Empty;
 
     private static PipelineProject Project(string? epicTracker = "ip-epics") => new()
     {
@@ -42,7 +43,8 @@ public class TriagePreviewBuilderTests
     [Fact]
     public void Preview_MergesProfileAndProjectServers_ProjectWinsAndDisabledAreLeftOut()
     {
-        var preview = TriagePreviewBuilder.Build(Project(), [Web, Api, Off], null, [], [Profile], new PipelineConfiguration { DefaultRequiredAgentLabels = "dotnet" });
+        var preview = TriagePreviewBuilder.Build(
+            Project(), [Web, Api, Off], null, [Profile], AgentRoutingTestData.Routing("p1"), AgentRoutingTestData.ToolsByKey(), new PipelineConfiguration());
 
         preview.Problem.Should().BeNull();
         preview.McpServers.Should().Equal(
@@ -56,20 +58,36 @@ public class TriagePreviewBuilderTests
     }
 
     [Fact]
-    public void Preview_NoMatchingProfile_IsAProblem()
+    public void Preview_NoRoute_IsAProblem_WithTheRefusalText()
     {
-        var preview = TriagePreviewBuilder.Build(Project(), [Web], null, [], [Profile], new PipelineConfiguration { DefaultRequiredAgentLabels = "python" });
+        var preview = TriagePreviewBuilder.Build(
+            Project(), [Web], null, [Profile], RoutingTableWithoutRows, AgentRoutingTestData.ToolsByKey(), new PipelineConfiguration());
 
-        preview.Problem.Should().Contain("No agent profile matches");
+        preview.Problem.Should().Be(AgentRouteRefusalReason.NoRouteText);
+    }
+
+    [Fact]
+    public void Preview_UsesTheExecutorsTriageRow()
+    {
+        // Spec 053 req 4.3: the executor template's repository row wins over the global default.
+        var other = AgentRoutingTestData.Profile("p2", displayName: "other", mcpServers: [new McpServerConfig { Name = "jira" }]);
+        var web = Web with { AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Triage] = AgentRoutingTestData.Route("p2") } };
+
+        var preview = TriagePreviewBuilder.Build(
+            Project(), [web], null, [Profile, other], AgentRoutingTestData.Routing("p1"), AgentRoutingTestData.ToolsByKey(), new PipelineConfiguration());
+
+        preview.Problem.Should().BeNull();
+        preview.McpServers.Should().Contain(new TriagePreviewServer("jira", "profile"))
+            .And.NotContain(s => s.Name == "sonarqube");
     }
 
     [Fact]
     public void Preview_NoEnabledTemplate_IsAProblem()
     {
-        var preview = TriagePreviewBuilder.Build(Project(), [Off], null, [], [Profile], new PipelineConfiguration());
+        var preview = TriagePreviewBuilder.Build(
+            Project(), [Off], null, [Profile], AgentRoutingTestData.Routing("p1"), AgentRoutingTestData.ToolsByKey(), new PipelineConfiguration());
 
         preview.Problem.Should().Contain("no enabled template");
         preview.Repositories.Should().BeEmpty();
     }
-
 }

@@ -10,53 +10,6 @@ namespace CodingAgent.Pipeline.UnitTests.Models;
 /// </summary>
 public class DispatchRequestRecordTests
 {
-    // ── DispatchRunRequest ──────────────────────────────────────────────────
-
-    [Fact]
-    public void DispatchRunRequest_RequiredPropertiesAreSet()
-    {
-        var req = new DispatchRunRequest
-        {
-            IssueProviderId    = new ProviderConfigId("issue-cfg"),
-            RepoProviderId     = new ProviderConfigId("repo-cfg"),
-            IssueIdentifier    = "owner/repo#99",
-            AgentProviderId    = new ProviderConfigId("agent-cfg"),
-        };
-
-        req.IssueProviderId.Value.Should().Be("issue-cfg");
-        req.RepoProviderId.Value.Should().Be("repo-cfg");
-        req.IssueIdentifier.Value.Should().Be("owner/repo#99");
-        req.AgentProviderId.Value.Should().Be("agent-cfg");
-        req.AgentId.Should().BeNull();
-        req.BrainProviderId.Should().BeNull();
-        req.PipelineProviderId.Should().BeNull();
-        req.InitiatedBy.Should().Be("dispatch");           // default value
-        req.RunType.Should().Be(PipelineRunType.Implementation); // default value
-    }
-
-    [Fact]
-    public void DispatchRunRequest_OptionalPropertiesCanBeSet()
-    {
-        var req = new DispatchRunRequest
-        {
-            IssueProviderId   = new ProviderConfigId("issue-cfg"),
-            RepoProviderId    = new ProviderConfigId("repo-cfg"),
-            IssueIdentifier   = "owner/repo#1",
-            AgentProviderId   = new ProviderConfigId("agent-cfg"),
-            AgentId           = "agent-instance-42",
-            BrainProviderId   = "brain-cfg",
-            PipelineProviderId = "pipeline-cfg",
-            InitiatedBy       = "loop",
-            RunType           = PipelineRunType.Review,
-        };
-
-        req.AgentId.Should().Be("agent-instance-42");
-        req.BrainProviderId.Should().Be("brain-cfg");
-        req.PipelineProviderId.Should().Be("pipeline-cfg");
-        req.InitiatedBy.Should().Be("loop");
-        req.RunType.Should().Be(PipelineRunType.Review);
-    }
-
     // ── ImplementationDispatchOrchestrationRequest ──────────────────────────
 
     [Fact]

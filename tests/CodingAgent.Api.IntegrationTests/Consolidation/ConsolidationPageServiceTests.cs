@@ -126,7 +126,8 @@ public sealed class ConsolidationPageServiceTests
         Mock<ConsolidationStalenessService> mockStaleness,
         PipelineConfiguration config,
         PipelineProject[] projects,
-        PipelineJobTemplate[] templates)
+        PipelineJobTemplate[] templates,
+        IConsolidationService? consolidation = null)
     {
         var mockConfigStore = new Mock<IPipelineConfigStore>();
         mockConfigStore
@@ -144,7 +145,7 @@ public sealed class ConsolidationPageServiceTests
         return new ConsolidationPageService(
             mockProjectStore.Object,
             mockConfigStore.Object,
-            new Mock<IConsolidationService>().Object,
+            consolidation ?? new Mock<IConsolidationService>().Object,
             mockStaleness.Object);
     }
 
@@ -294,5 +295,24 @@ public sealed class ConsolidationPageServiceTests
         result.BrainCounters.Should().BeEmpty("brain counter failed — the exception must suppress only the brain counter");
         result.RefactoringCounters.Should().ContainKey("t2",
             "refactoring counter must still be populated even when the brain counter threw");
+    }
+
+    [Fact]
+    public async Task Trigger_ARefusedWorkItem_ShowsTheApisReason()
+    {
+        // Spec 053 req 2.9: the Consolidation page shows why the run cannot start.
+        var consolidation = new Mock<IConsolidationService>();
+        consolidation.Setup(c => c.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(), It.IsAny<RefactoringScanFocus>()))
+            .ThrowsAsync(new WorkItemRefusedException(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText));
+        var service = BuildService(new Mock<ConsolidationStalenessService>(), new PipelineConfiguration(),
+            [Project("p", templateIds: ["t1"])], [Template("t1")], consolidation.Object);
+
+        var act = () => service.TriggerAsync(
+            new UiConsolidationTriggerRequest(ConsolidationRunType.BrainConsolidation, "t1", false), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<CodingAgent.Api.Dispatch.DispatchRefusedException>())
+            .WithMessage(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText);
     }
 }

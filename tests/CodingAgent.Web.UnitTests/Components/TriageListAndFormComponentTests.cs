@@ -7,6 +7,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.UnitTests.Auth;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,8 +38,8 @@ public class TriageListAndFormComponentTests : BunitContext
     ];
     private static readonly List<AgentProfile> Profiles =
     [
-        new() { Id = "p1", DisplayName = "default", AgentProviderConfigId = "ap-1", Enabled = true, MatchLabels = ["dotnet"],
-            McpServers = [new McpServerConfig { Name = "sonarqube" }, new McpServerConfig { Name = "grafana" }] },
+        AgentRoutingTestData.Profile("p1", displayName: "default",
+            mcpServers: [new McpServerConfig { Name = "sonarqube" }, new McpServerConfig { Name = "grafana" }]),
     ];
 
     public TriageListAndFormComponentTests()
@@ -51,8 +52,8 @@ public class TriageListAndFormComponentTests : BunitContext
         // Spec 051 2.7: the API builds the preview; here the same builder answers from the arranged data.
         _triages.Setup(t => t.GetPreviewAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns((string projectId, string? startIn, CancellationToken _) => Task.FromResult(projectId == ShopProjectId
-                ? TriagePreviewBuilder.Build(Shop, ShopTemplates, startIn, [], Profiles, new PipelineConfiguration())
-                : TriagePreviewBuilder.Build(Billing, [], startIn, [], Profiles, new PipelineConfiguration())));
+                ? TriagePreviewBuilder.Build(Shop, ShopTemplates, startIn, Profiles, AgentRoutingTestData.Routing("p1"), AgentRoutingTestData.ToolsByKey(), new PipelineConfiguration())
+                : TriagePreviewBuilder.Build(Billing, [], startIn, Profiles, AgentRoutingTestData.Routing("p1"), AgentRoutingTestData.ToolsByKey(), new PipelineConfiguration())));
         _config.Setup(c => c.GetPipelineSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiPipelineSettings(3, new PipelineConfiguration().TriageRetentionDays));
         _config.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([

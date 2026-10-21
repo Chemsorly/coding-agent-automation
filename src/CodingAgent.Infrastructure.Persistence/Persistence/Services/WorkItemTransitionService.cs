@@ -1,6 +1,7 @@
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Polly;
@@ -389,7 +390,27 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         // Only recover race-induced failures (delivery timeouts, reconciliation-loop timeouts),
         // not legitimate agent errors. Both InfrastructureFailure and Timeout represent
         // "server gave up waiting, but agent may still succeed" — recovery semantics are identical.
-        return item.FailureReason is FailureReason.InfrastructureFailure or FailureReason.Timeout;
+        // A claim refused for a routing reason is InfrastructureFailure too (spec 053 req 4.5), but no retry changes it.
+        return item.FailureReason is FailureReason.InfrastructureFailure or FailureReason.Timeout
+            && !IsRoutingRefusal(item.Payload);
+    }
+
+    /// <summary>Whether the payload records a refused claim (<see cref="AgentRouteRefusalReason.PayloadProperty"/>).</summary>
+    private static bool IsRoutingRefusal(string? payload)
+    {
+        if (string.IsNullOrEmpty(payload))
+            return false;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payload);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(AgentRouteRefusalReason.PayloadProperty, out var reason)
+                && reason.ValueKind == System.Text.Json.JsonValueKind.String;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

@@ -1,6 +1,5 @@
 GET /api/agents/ -> Service: OperatorApiKey
 GET /api/agents/credential-pool -> Service: OperatorApiKey
-GET /api/config/agent-profiles -> Service: OperatorApiKey
 GET /api/config/export -> Service: OperatorApiKey
 POST /api/config/import -> Service: OperatorApiKey
 GET /api/config/pipeline -> Service: OperatorApiKey

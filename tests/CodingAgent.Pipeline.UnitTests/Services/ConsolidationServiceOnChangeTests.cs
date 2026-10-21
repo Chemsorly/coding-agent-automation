@@ -45,7 +45,6 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
 
         _sut.OnChange += () => _onChangeLog.Add(DateTime.UtcNow.ToString("O"));

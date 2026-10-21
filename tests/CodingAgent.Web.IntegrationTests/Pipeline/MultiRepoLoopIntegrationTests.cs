@@ -115,8 +115,6 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: ConfigStore,
-            providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
@@ -208,8 +206,6 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             CancellationToken.None);
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: ConfigStore,
-            providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(new PipelineLoopServiceDependencies

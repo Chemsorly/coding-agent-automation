@@ -5,6 +5,7 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -41,10 +42,11 @@ public static class WorkItemAgentEndpoints
                    [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
                    [FromServices] IProjectStore projectStore,
                    [FromServices] AssignmentEnricher? assignmentEnricher,
+                   [FromServices] WorkItemStatusTransitionService statusTransitionService,
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await GetAssignment(id, dbFactory, projectStore, assignmentEnricher, ct));
+                    ?? await GetAssignment(id, dbFactory, projectStore, assignmentEnricher, ct, statusTransitionService));
 
         group.MapPost("/{id:guid}/status",
             async (Guid id, [FromBody] WorkItemStatusRequest request,
@@ -119,8 +121,8 @@ public static class WorkItemAgentEndpoints
     /// <summary>
     /// GET /api/work-items/{id}/assignment
     /// Returns the job assignment payload for an agent.
-    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal,
-    /// 503 when the assignment can't be enriched (the agent retries).
+    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal or refused for a routing reason
+    /// (the work item is then Failed, spec 053 req 4.5), 503 when the assignment can't be enriched for now (the agent retries).
     /// <para>
     /// The payload contains only identity fields (<c>PayloadSchemaVersion == 1</c>). Mutable config
     /// is fetched fresh from the database at assignment time via <see cref="AssignmentEnricher"/>,
@@ -132,7 +134,8 @@ public static class WorkItemAgentEndpoints
         IDbContextFactory<PipelineDbContext> dbFactory,
         IProjectStore projectStore,
         AssignmentEnricher? assignmentEnricher = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        WorkItemStatusTransitionService? statusTransitions = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var item = await db.WorkItems
@@ -225,17 +228,30 @@ public static class WorkItemAgentEndpoints
             return EnrichmentFailed();
         }
 
+        EnrichmentResult enrichment;
         try
         {
-            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+            enrichment = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // EnrichAsync logs its own transient failures; this also covers the permanent ones
-            // (no matching profile, deleted provider) that surface as InvalidOperationException.
+            // EnrichAsync logs its own transient failures (DB timeout, network error).
             Log.Error(ex, "GetAssignment {WorkItemId}: assignment enrichment failed; returning 503", id);
             return EnrichmentFailed();
         }
+
+        switch (enrichment)
+        {
+            case EnrichmentResult.Refused refused:
+                // Spec 053 req 4.5: the route can no longer run, and no retry changes that. The item fails with the
+                // reason, and 410 makes an agent of any release exit 0 (WorkItemHttpClient).
+                await FailRefusedAsync(id, refused, statusTransitions, dbFactory, ct);
+                return TypedResults.StatusCode(StatusCodes.Status410Gone);
+            case EnrichmentResult.Unavailable:
+                Log.Error("GetAssignment {WorkItemId}: the assignment cannot be enriched now; returning 503", id);
+                return EnrichmentFailed();
+        }
+        request = ((EnrichmentResult.Enriched)enrichment).Request;
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
         // Secret injection delegates to AssignmentEnricher.InjectProjectSecretsAsync (issue #2914),
@@ -260,12 +276,8 @@ public static class WorkItemAgentEndpoints
     /// <remarks>
     /// Any exception from <see cref="AssignmentEnricher.EnrichAsync"/> (other than
     /// <see cref="OperationCanceledException"/>) propagates to the caller so it can return HTTP 503.
-    /// When <see cref="AssignmentEnricher.EnrichAsync"/> returns <c>null</c> (permanent failure —
-    /// profile not found, provider config removed), this also surfaces as a 503 via
-    /// <see cref="InvalidOperationException"/> so the agent retries rather than proceeding with
-    /// an incomplete job spec.
     /// </remarks>
-    private static async Task<JobDistributionRequest> EnrichRequestAsync(
+    private static async Task<EnrichmentResult> EnrichRequestAsync(
         JobDistributionRequest request,
         IProjectStore projectStore,
         AssignmentEnricher assignmentEnricher,
@@ -283,25 +295,54 @@ public static class WorkItemAgentEndpoints
         }
 
         // EnrichAsync propagates transient failures (DB timeout, etc.) — let them bubble up.
-        // A null return indicates a permanent/configuration failure (no profile matched).
-        var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
-        if (enriched is null)
-        {
-            // Profile resolution failure is permanent but should still be treated as a 503 so
-            // the reconciler TTL can expire the work item rather than the agent silently using
-            // an identity-only payload with no configs.
-            // TODO: [WARNING] This InvalidOperationException propagates to the GetAssignment catch block
-            // which does not log it at Error level (the comment there says "EnrichAsync already logged at
-            // Error level", which is true for the transient-exception path but NOT for the null-return
-            // path — EnrichCoreAsync only logs at Warning for no-profile-matched). Add Error-level logging
-            // here or in the catch block so permanent config failures are visible without querying Warning
-            // logs.
-            throw new InvalidOperationException(
-                $"AssignmentEnricher returned null for IssueIdentifier {request.IssueIdentifier}; " +
-                "no agent profile matched the selector. Cannot serve a valid job spec.");
-        }
+        return await assignmentEnricher.EnrichAsync(request, project, ct);
+    }
 
-        return enriched;
+    /// <summary>
+    /// Fails a work item whose claim was refused for a routing reason (spec 053 req 4.5): Failed with
+    /// <see cref="FailureReason.InfrastructureFailure"/> and the refusal text. The HTTP pre-read guard keeps it Failed
+    /// when the Job Controller later reports Succeeded, and the reason code in the payload
+    /// (<see cref="AgentRouteRefusalReason.PayloadProperty"/>) keeps a late Running report from recovering it.
+    /// </summary>
+    private static async Task FailRefusedAsync(
+        Guid id, EnrichmentResult.Refused refused, WorkItemStatusTransitionService? statusTransitions,
+        IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    {
+        if (statusTransitions is null)
+        {
+            Log.Error("GetAssignment {WorkItemId}: refused ({RefusalReason}) but no transition service is registered; the item is not failed", id, refused.Reason);
+            return;
+        }
+        await RecordRefusalAsync(id, refused.Reason, dbFactory, ct);
+        var outcome = await statusTransitions.TransitionAsync(id, new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            ErrorMessage = refused.Text,
+            FailureReason = nameof(FailureReason.InfrastructureFailure),
+        }, ct);
+        Log.Warning(
+            "GetAssignment {WorkItemId}: refused for a routing reason ({RefusalReason}: {RefusalText}); work item failed ({Outcome}), returning 410",
+            id, refused.Reason, refused.Text, outcome);
+    }
+
+    /// <summary>Writes the refusal's reason code into the work item's payload; the claim reads nothing else from it later.</summary>
+    private static async Task RecordRefusalAsync(
+        Guid id, string reason, IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var entity = await db.WorkItems.FindAsync([id], ct);
+        if (entity?.Payload is null || System.Text.Json.Nodes.JsonNode.Parse(entity.Payload) is not System.Text.Json.Nodes.JsonObject payload)
+            return;
+        payload[AgentRouteRefusalReason.PayloadProperty] = reason;
+        entity.Payload = payload.ToJsonString();
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Another writer moved the item meanwhile; the transition below decides what it becomes.
+        }
     }
 
     /// <summary>

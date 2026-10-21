@@ -616,6 +616,38 @@ public sealed class AgentOrphanRecoveryServiceTests
     }
 
     /// <summary>
+    /// Spec 053 req 8.1: the restored run takes its profile and effort from the route pinned on the work item; agents
+    /// do not report them. The model the agent reports wins over the route's, which may be <c>auto</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("claude-sonnet-4-6", "claude-sonnet-4-6")]
+    [InlineData(null, "auto")]
+    public async Task VerifiedClaim_RestoresTheProfileAndEffortOfThePinnedRoute(string? reportedModel, string expectedModel)
+    {
+        const string agentId = "caa-ffff6666";
+        const string runId = "run-routed";
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(agentId) with
+        {
+            Route = new AgentRouteSnapshot("profile-kiro", "Kiro", JobTemplateProviderType.Kiro, "auto", "high", AgentRouteSource.Repository),
+        });
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+        PipelineRun? restored = null;
+        _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
+
+        await _service.RecoverOrphanedStateAsync(
+            CreateMessage(agentId, CreateActiveJob(runId) with { ModelName = reportedModel }), agentId);
+
+        restored.Should().BeEquivalentTo(new
+        {
+            AgentProfileId = "profile-kiro", AgentProfileName = "Kiro", AgentEffort = "high", ModelName = expectedModel,
+        });
+    }
+
+    /// <summary>
     /// Whether the claim is a consolidation run is decided by the work item's task type, not by the
     /// agent's report.
     /// </summary>

@@ -1,11 +1,16 @@
+using System.Text.Json;
 using CodingAgent.Api;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -41,6 +46,30 @@ public class ApiWebApplicationFactory : WebApplicationFactory<Program>
     public const string UserTokenSigningKey = "test-user-token-signing-key-0123456789abcdef";
 
     private readonly string _dbName = $"ApiIntegration-{Guid.NewGuid():N}";
+
+    /// <summary>The Id of the agent profile <see cref="SeedDefaultRoute"/> stores; profile Ids are GUIDs in the database.</summary>
+    public const string DefaultProfileId = "0e5e0000-0000-4000-8000-000000000053";
+
+    /// <summary>
+    /// Spec 053 task 4.0: stores an agent profile on <see cref="AgentRoutingTestData.DefaultJobTemplate"/> and a global
+    /// default route to it, so the API routes the work items a test creates. Idempotent. Test classes that create work
+    /// items call it in their constructor, because a config import in another test replaces the routing.
+    /// </summary>
+    public void SeedDefaultRoute()
+    {
+        using var db = CreateDbContext();
+        var profileId = Guid.Parse(DefaultProfileId);
+        var profile = db.AgentProfiles.FirstOrDefault(p => p.Id == profileId);
+        if (profile is null)
+            db.AgentProfiles.Add(profile = new AgentProfileEntity { Id = profileId, Name = "Test agent" });
+        profile.Configuration = JsonSerializer.Serialize(
+            AgentRoutingTestData.Profile(DefaultProfileId, displayName: "Test agent"), PipelineJsonOptions.Default);
+        var routing = db.KeyValueStore.FirstOrDefault(kv => kv.Key == CodingAgent.Pipeline.Models.AgentRouting.StorageKey);
+        if (routing is null)
+            db.KeyValueStore.Add(routing = new KeyValueEntity { Key = CodingAgent.Pipeline.Models.AgentRouting.StorageKey });
+        routing.Value = AgentRoutingStore.Serialize(AgentRoutingTestData.Routing(DefaultProfileId));
+        db.SaveChanges();
+    }
 
     /// <summary>
     /// Creates a fresh InMemory DbContext for seeding test data directly.
@@ -155,6 +184,11 @@ public class ApiWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IKubernetesJobClient>();
             services.AddSingleton(new Mock<IKubernetesJobClient>().Object);
 
+            // Spec 053 task 4.0: job templates with a tool, as the Helm values define them. The default route
+            // (SeedDefaultRoute) names a profile on the first one.
+            services.RemoveAll<JobTemplateStore>();
+            services.AddSingleton(AgentRoutingTestData.JobTemplates());
+
             ConfigureTestServices(services);
         });
     }
@@ -241,7 +275,8 @@ public class ApiWebApplicationFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>
-    /// Passthrough AssignmentEnricher for integration tests. Returns the identity request as-is.
+    /// Passthrough AssignmentEnricher for integration tests. Returns the identity request as-is, with the agent config Id
+    /// the real enricher always sets (spec 053: the claim builds the agent config from the route).
     /// Replaces the real <see cref="AssignmentEnricher"/> which depends on DispatchInfrastructure,
     /// IProviderFactory, and IAgentProfileStore — none of which are available in the test environment.
     /// </summary>
@@ -249,8 +284,11 @@ public class ApiWebApplicationFactory : WebApplicationFactory<Program>
     {
         public PassthroughAssignmentEnricher() : base(Serilog.Log.Logger) { }
 
-        public override Task<JobDistributionRequest?> EnrichAsync(
+        public override Task<EnrichmentResult> EnrichAsync(
             JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
-            => Task.FromResult<JobDistributionRequest?>(identity);
+            => Task.FromResult<EnrichmentResult>(new EnrichmentResult.Enriched(identity with
+            {
+                AgentProviderConfigId = identity.AgentProviderConfigId ?? identity.ResolvedProfileId ?? DefaultProfileId,
+            }));
     }
 }

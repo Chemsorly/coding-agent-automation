@@ -142,9 +142,7 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             configClientMock.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
             // Spec 045: additional setup for ApiConfigurationStore which resolves
-            // IAgentProfileStore, IQualityGateConfigStore, IReviewerConfigStore
-            configClientMock.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<AgentProfile>());
+            // IQualityGateConfigStore, IReviewerConfigStore
             configClientMock.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
             configClientMock.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))

@@ -30,7 +30,7 @@ public static class ConfigBackedPipelinesClients
                     await config.Object.GetProviderConfigsAsync(ProviderKind.Pipeline, ct) ?? [],
                     await config.Object.GetQualityGateConfigsAsync(ct) ?? [],
                     await config.Object.GetReviewerConfigsAsync(ct) ?? [],
-                    await config.Object.GetAgentProfilesAsync(ct) ?? [],
+                    [], // agent profiles: the Pipeline API client no longer serves them (spec 053)
                     settings.DefaultRequiredAgentLabels,
                     settings.MaxRetries);
             });

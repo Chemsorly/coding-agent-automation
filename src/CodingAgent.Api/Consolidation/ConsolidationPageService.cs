@@ -187,16 +187,25 @@ internal sealed class ConsolidationPageService(
     }
 
     /// <summary>
-    /// Queues the run and returns the message to show. A refused trigger (already running, a configuration
-    /// error, or an unknown template; <see cref="IConsolidationService"/> logs which) throws
-    /// <see cref="DispatchRefusedException"/>.
+    /// Queues the run and returns the message to show. A refused trigger throws <see cref="DispatchRefusedException"/>:
+    /// with the API's reason when the work item was refused (no agent route, or one that cannot run, spec 053
+    /// req 2.9), otherwise with the possible causes (already running, a configuration error, an unknown template;
+    /// <see cref="IConsolidationService"/> logs which).
     /// </summary>
     public async Task<string> TriggerAsync(UiConsolidationTriggerRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
         TemplateId? templateId = string.IsNullOrEmpty(request.TemplateId) ? (TemplateId?)null : new TemplateId(request.TemplateId);
 
-        var run = await consolidation.TriggerAsync(request.Type, templateId, ct, request.AutoDispatch, request.RefactoringFocus);
+        ConsolidationTriggerResult? run;
+        try
+        {
+            run = await consolidation.TriggerAsync(request.Type, templateId, ct, request.AutoDispatch, request.RefactoringFocus);
+        }
+        catch (WorkItemRefusedException ex)
+        {
+            throw new DispatchRefusedException(ex.Message);
+        }
         if (run is not null)
             return $"{FormatRunType(request.Type)} queued — waiting for an idle agent.";
 
@@ -205,8 +214,8 @@ internal sealed class ConsolidationPageService(
             : (await projects.LoadAllTemplatesAsync(ct)).FirstOrDefault(t => t.Id == request.TemplateId)?.Name ?? request.TemplateId;
         throw new DispatchRefusedException(request.Type switch
         {
-            ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
-            ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, no job template matches the agent profile, or template not found.",
+            ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running, a configuration error occurred, or template not found.",
+            ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, or template not found.",
             _ => "Consolidation rejected.",
         });
     }

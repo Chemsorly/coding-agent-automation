@@ -341,8 +341,8 @@ public static class WorkDistributionTelemetry
     /// </summary>
     /// <param name="result">One of: <c>dispatched</c>, <c>deferred</c>, <c>transient</c>.</param>
     /// <param name="reason">
-    /// One of: <c>none</c>, <c>not_pending</c>, <c>no_template</c>, <c>concurrency_limit</c>,
-    /// <c>pvc_unavailable</c>, <c>lock_timeout</c>, <c>k8s_error</c>.
+    /// One of: <c>none</c>, <c>not_pending</c>, <c>no_template</c>, <c>no_route</c> (an item stored without a selector
+    /// whose route is refused, spec 053), <c>concurrency_limit</c>, <c>pvc_unavailable</c>, <c>lock_timeout</c>, <c>k8s_error</c>.
     /// </param>
     public static void RecordDispatchAttempt(string result, string reason)
     {

@@ -12,7 +12,7 @@ namespace CodingAgent.Api.Triage;
 internal static class TriageSecrets
 {
     public static async Task<IReadOnlyCollection<KeyValuePair<string, string>>> LoadAsync(
-        IConfigurationStore config, string projectId, CancellationToken ct)
+        IConfigurationStore config, IAgentProfileStore profiles, string projectId, CancellationToken ct)
     {
         var secrets = new Dictionary<string, string>(StringComparer.Ordinal);
         void Add(string source, IEnumerable<KeyValuePair<string, string>>? values)
@@ -29,7 +29,7 @@ internal static class TriageSecrets
         foreach (var template in await config.LoadTemplatesForProjectAsync(projectId, ct))
             Add($"repo:{template.Id}", template.Secrets);
 
-        foreach (var profile in await config.LoadAgentProfilesAsync(ct))
+        foreach (var profile in await profiles.LoadAgentProfilesAsync(ct))
             Add($"profile-mcp:{profile.Id}", TriageSecretMasking.McpSecrets(profile.McpServers));
 
         return secrets;

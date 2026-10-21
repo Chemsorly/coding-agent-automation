@@ -1,13 +1,15 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Api;
 using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Persistence;
-using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
@@ -16,19 +18,18 @@ using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
-// ── Issue #3642: CreateWorkItem refuses a consolidation run that has no job template ──
+// ── Spec 053 / issue #3642: CreateWorkItem routes the request, and refuses what cannot run ──
 
 /// <summary>
-/// <c>POST /api/work-items</c> used to enqueue every task type as Pending without looking at job templates. A
-/// consolidation run whose agent selector has no template then sat Pending for ever (the dispatcher answers
-/// 200/deferred <c>no_template</c> every cycle). <see cref="WorkItemDispatchEndpoints.CreateWorkItem"/> now
-/// answers 422 for such a Consolidation request, before any row or in-memory run exists. The template is resolved
-/// exactly as the dispatcher does (direct lookup, then the profile fallback), so a run the dispatcher can
-/// dispatch is never refused. Other task types are not checked.
+/// <see cref="WorkItemDispatchEndpoints.CreateWorkItem"/> routes every request when it creates the work item (spec 053
+/// DD1): the row carries the routed profile's job template as its selector and the route in its payload. A request no
+/// route resolves for is answered 422 with the reason as ProblemDetails <c>detail</c>, before any row or in-memory run
+/// exists (D15). A consolidation run whose routed profile has no job template is refused the same way, because the
+/// dispatcher could never start it (#3642); other task types are not checked against the job templates.
 /// </summary>
-public sealed class CreateWorkItemConsolidationTemplateGateTests
+public sealed class CreateWorkItemRoutingTests
 {
-    private readonly string _dbName = $"create-work-item-template-gate-{Guid.NewGuid():N}";
+    private readonly string _dbName = $"create-work-item-routing-{Guid.NewGuid():N}";
 
     private IDbContextFactory<PipelineDbContext> CreateDbFactory()
     {
@@ -42,54 +43,22 @@ public sealed class CreateWorkItemConsolidationTemplateGateTests
     private static IOrchestratorRunService CreateRunService() =>
         new OrchestratorRunService(Mock.Of<Serilog.ILogger>());
 
-    private static JobTemplateStore CreateTemplateStore(string labels = "kiro,dotnet") =>
-        JobTemplateStore.LoadFromYaml($"""
-            - labels: "{labels}"
-              image: "test-image:latest"
-              imagePullPolicy: "Always"
-              providerType: "kiro"
-              maxConcurrent: 5
-            """);
-
-    private static JobDistributionRequest MakeRequest(WorkItemTaskType taskType, string selector) => new()
+    private static JobDistributionRequest MakeRequest(WorkItemTaskType taskType) => new()
     {
         IssueIdentifier = new IssueIdentifier($"{taskType}:{Guid.NewGuid():N}"),
         IssueProviderConfigId = taskType == WorkItemTaskType.Consolidation ? ConsolidationConstants.ProviderConfigId : "prov-1",
         RepoProviderConfigId = "repo-1",
         InitiatedBy = "test",
         TaskType = taskType,
-        AgentSelector = selector,
         TimeoutSeconds = 3600,
         RunId = Guid.NewGuid().ToString()
     };
 
-    private static Mock<IAgentProfileStore> CreateProfileStore(params string[] matchLabels)
-    {
-        var store = new Mock<IAgentProfileStore>();
-        store.Setup(ps => ps.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new AgentProfile
-                {
-                    DisplayName = "Kiro+Dotnet",
-                    AgentProviderConfigId = "agent-kiro",
-                    MatchLabels = matchLabels.ToList(),
-                    Enabled = true
-                }
-            });
-        return store;
-    }
-
     private Task<IResult> CreateAsync(
-        JobDistributionRequest request,
-        IOrchestratorRunService runService,
-        JobTemplateStore templateStore,
-        IAgentProfileStore? profileStore = null) =>
+        JobDistributionRequest request, IOrchestratorRunService runService, JobTemplateStore? jobTemplates = null) =>
         WorkItemDispatchEndpoints.CreateWorkItem(
             request,
-            new WorkItemStore(CreateDbFactory(), runService),
-            new DispatchWorkItemService(templateStore),
-            new DispatchTemplateResolver(profileStore, templateStore),
+            new WorkItemStore(CreateDbFactory(), runService, TestWorkItemRouter.Create(CreateDbFactory(), jobTemplates)),
             CancellationToken.None);
 
     private async Task<int> CountWorkItemsAsync()
@@ -98,123 +67,96 @@ public sealed class CreateWorkItemConsolidationTemplateGateTests
         return await db.WorkItems.CountAsync();
     }
 
-    private static void ShouldBe422(IResult result)
+    private static string ShouldBeRefused(IResult result)
     {
-        var status = result as StatusCodeHttpResult;
-        status.Should().NotBeNull("a consolidation run without a job template is refused with a bare status code");
-        status!.StatusCode.Should().Be(StatusCodes.Status422UnprocessableEntity);
+        var problem = result as ProblemHttpResult;
+        problem.Should().NotBeNull("a refused request is answered with ProblemDetails");
+        problem!.StatusCode.Should().Be(StatusCodes.Status422UnprocessableEntity);
+        return problem.ProblemDetails.Detail!;
     }
 
-    // ── 422: no template, no row, no run ─────────────────────────────────────
-
-    [Fact]
-    public async Task Consolidation_NoTemplateForSelector_Returns422_AndInsertsNoRowAndRegistersNoRun()
-    {
-        var runService = CreateRunService();
-        var request = MakeRequest(WorkItemTaskType.Consolidation, "kiro,python,python312");
-
-        // The store only has kiro,dotnet — nothing for the requested selector.
-        var result = await CreateAsync(request, runService, CreateTemplateStore("kiro,dotnet"));
-
-        ShouldBe422(result);
-        (await CountWorkItemsAsync()).Should().Be(0, "the refusal comes before any row is inserted");
-        runService.GetRun(new RunId(request.RunId!)).Should().BeNull("no in-memory run may be registered for a refused request");
-        runService.GetActiveRuns().Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task Consolidation_EmptySelector_Returns422()
-    {
-        // No labels means no template can match, directly or through a profile: the run could never be dispatched.
-        var result = await CreateAsync(
-            MakeRequest(WorkItemTaskType.Consolidation, ""), CreateRunService(), CreateTemplateStore());
-
-        ShouldBe422(result);
-        (await CountWorkItemsAsync()).Should().Be(0);
-    }
-
-    [Fact]
-    public async Task Consolidation_ProfileDoesNotCoverSelector_Returns422()
-    {
-        // A profile exists, but its labels do not cover the selector, so the fallback finds no template either.
-        var profiles = CreateProfileStore("kiro", "dotnet");
-
-        var result = await CreateAsync(
-            MakeRequest(WorkItemTaskType.Consolidation, "opencode,java"), CreateRunService(),
-            CreateTemplateStore("kiro,dotnet"), profiles.Object);
-
-        ShouldBe422(result);
-        (await CountWorkItemsAsync()).Should().Be(0);
-    }
-
-    [Fact]
-    public async Task Consolidation_ProfileCoversSelectorButItsTemplateIsMissing_Returns422()
-    {
-        // The profile expands "dotnet" to "dotnet,kiro", but no template is keyed on that either.
-        var profiles = CreateProfileStore("dotnet", "kiro");
-
-        var result = await CreateAsync(
-            MakeRequest(WorkItemTaskType.Consolidation, "dotnet"), CreateRunService(),
-            CreateTemplateStore("opencode,java"), profiles.Object);
-
-        ShouldBe422(result);
-        (await CountWorkItemsAsync()).Should().Be(0);
-    }
-
-    // ── 201: a template exists ───────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("kiro,dotnet")]
-    [InlineData("dotnet,kiro")] // the template key is normalized, so label order does not matter
-    public async Task Consolidation_DirectTemplate_Returns201_AndInsertsTheRow(string selector)
-    {
-        var runService = CreateRunService();
-        var request = MakeRequest(WorkItemTaskType.Consolidation, selector);
-
-        var result = await CreateAsync(request, runService, CreateTemplateStore("kiro,dotnet"));
-
-        var created = result as Created<Guid>;
-        created.Should().NotBeNull("a consolidation run with a job template is enqueued as before");
-        created!.Value.Should().Be(Guid.Parse(request.RunId!));
-        (await CountWorkItemsAsync()).Should().Be(1);
-        runService.GetRun(new RunId(request.RunId!)).Should().NotBeNull("the run is registered so the Consolidation page shows it");
-    }
-
-    [Fact]
-    public async Task Consolidation_ProfileFallbackFindsTemplate_Returns201()
-    {
-        // Selector "dotnet" is a partial subset of the profile's MatchLabels ["dotnet","kiro"],
-        // which maps to the "kiro,dotnet" template — so the run is allowed.
-        var profiles = CreateProfileStore("dotnet", "kiro");
-        var runService = CreateRunService();
-        var request = MakeRequest(WorkItemTaskType.Consolidation, "dotnet");
-
-        var result = await CreateAsync(request, runService, CreateTemplateStore("kiro,dotnet"), profiles.Object);
-
-        var created = result as Created<Guid>;
-        created.Should().NotBeNull("the profile fallback found a template, so the run is enqueued");
-        (await CountWorkItemsAsync()).Should().Be(1);
-    }
-
-    // ── Other task types: template check is skipped ──────────────────────────
+    // ── 422: no route, no row, no run (D15) ──────────────────────────────────
 
     [Theory]
     [InlineData(WorkItemTaskType.Implementation)]
     [InlineData(WorkItemTaskType.Review)]
     [InlineData(WorkItemTaskType.Decomposition)]
     [InlineData(WorkItemTaskType.Triage)]
-    public async Task NonConsolidationTaskTypes_WithNoMatchingTemplate_StillReturn201(WorkItemTaskType taskType)
+    [InlineData(WorkItemTaskType.Consolidation)]
+    public async Task NoRoute_Returns422WithTheReason_AndInsertsNoRowAndRegistersNoRun(WorkItemTaskType taskType)
     {
-        // The template store has "kiro,dotnet" but the request uses a selector with no matching template.
-        // Non-consolidation task types are not checked at enqueue: they follow the pending-dispatch path.
         var runService = CreateRunService();
-        var request = MakeRequest(taskType, "kiro,python,python312");
+        var request = MakeRequest(taskType);
 
-        // Store has kiro,dotnet only — no match for kiro,python,python312
-        var result = await CreateAsync(request, runService, CreateTemplateStore("kiro,dotnet"));
+        var result = await CreateAsync(request, runService);
+
+        ShouldBeRefused(result).Should().Be(AgentRouteRefusalReason.NoRouteText);
+        (await CountWorkItemsAsync()).Should().Be(0, "the refusal comes before any row is inserted");
+        runService.GetRun(new RunId(request.RunId!)).Should().BeNull("no in-memory run may be registered for a refused request");
+        runService.GetActiveRuns().Should().BeEmpty();
+    }
+
+    // ── 422: a consolidation run whose job template is missing ───────────────
+
+    [Fact]
+    public async Task Consolidation_RoutedProfileHasNoJobTemplate_Returns422_AndInsertsNoRow()
+    {
+        await AgentRoutingTestData.SeedRoutingAsync(CreateDbFactory());
+        var runService = CreateRunService();
+
+        // The routed profile runs on "dotnet,kiro"; the Helm values only have "java,opencode".
+        var result = await CreateAsync(
+            MakeRequest(WorkItemTaskType.Consolidation), runService,
+            AgentRoutingTestData.JobTemplates(("java,opencode", JobTemplateProviderType.Opencode)));
+
+        ShouldBeRefused(result).Should().Contain("dotnet,kiro").And.Contain("does not exist in the Helm values");
+        (await CountWorkItemsAsync()).Should().Be(0);
+        runService.GetActiveRuns().Should().BeEmpty();
+    }
+
+    // ── 201: routed ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Routed_Returns201_AndStoresTheProfilesJobTemplateAndTheRoute()
+    {
+        await AgentRoutingTestData.SeedRoutingAsync(
+            CreateDbFactory(), AgentRoutingTestData.Routing(model: "claude-opus-4", effort: "high"));
+        var runService = CreateRunService();
+        var request = MakeRequest(WorkItemTaskType.Consolidation);
+
+        var result = await CreateAsync(request, runService);
 
         var created = result as Created<Guid>;
-        created.Should().NotBeNull($"{taskType} must be enqueued as Pending regardless of template availability");
+        created.Should().NotBeNull("a routed consolidation run with a job template is enqueued");
+        created!.Value.Should().Be(Guid.Parse(request.RunId!));
+        runService.GetRun(new RunId(request.RunId!)).Should().NotBeNull("the run is registered so the Consolidation page shows it");
+
+        await using var db = await CreateDbFactory().CreateDbContextAsync();
+        var row = await db.WorkItems.SingleAsync();
+        row.AgentSelector.Should().Be(AgentRoutingTestData.DefaultJobTemplate);
+        var payload = JsonSerializer.Deserialize<JobDistributionRequest>(row.Payload!, PipelineJsonOptions.Default)!;
+        payload.ResolvedProfileId.Should().Be("profile-kiro");
+        payload.Route.Should().BeEquivalentTo(new AgentRouteSnapshot(
+            "profile-kiro", "profile-kiro", JobTemplateProviderType.Kiro, "claude-opus-4", "high", AgentRouteSource.GlobalDefault));
+    }
+
+    // ── Other task types: the job template is not checked at creation ────────
+
+    [Theory]
+    [InlineData(WorkItemTaskType.Implementation)]
+    [InlineData(WorkItemTaskType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition)]
+    [InlineData(WorkItemTaskType.Triage)]
+    public async Task NonConsolidationTaskTypes_WithTheJobTemplateMissing_StillReturn201(WorkItemTaskType taskType)
+    {
+        // They follow the pending-dispatch path, which defers work without a job template and alerts.
+        await AgentRoutingTestData.SeedRoutingAsync(CreateDbFactory());
+
+        var result = await CreateAsync(
+            MakeRequest(taskType), CreateRunService(),
+            AgentRoutingTestData.JobTemplates(("java,opencode", JobTemplateProviderType.Opencode)));
+
+        result.Should().BeOfType<Created<Guid>>($"{taskType} must be enqueued as Pending regardless of template availability");
         (await CountWorkItemsAsync()).Should().Be(1);
     }
 }

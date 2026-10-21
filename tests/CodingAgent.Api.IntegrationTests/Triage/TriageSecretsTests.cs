@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Api.Triage;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -18,6 +19,7 @@ public sealed class TriageSecretsTests
     private static readonly PipelineProject Project = new() { Id = Guid.NewGuid().ToString(), Name = "Shop" };
 
     private readonly Mock<IConfigurationStore> _config = new();
+    private readonly Mock<IAgentProfileStore> _profiles = new();
 
     public TriageSecretsTests()
     {
@@ -30,20 +32,16 @@ public sealed class TriageSecretsTests
                 Secrets = new Dictionary<string, string> { ["DB_PASSWORD"] = TemplateSecret },
             },
         ]);
-        _config.Setup(c => c.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
+        _profiles.Setup(c => c.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
         [
-            new AgentProfile
-            {
-                Id = "p", DisplayName = "p", AgentProviderConfigId = "a", Enabled = true,
-                McpServers = [new McpServerConfig { Name = "db", Env = new Dictionary<string, string> { ["DB_PASSWORD"] = ProfileMcpPassword } }],
-            },
+            AgentRoutingTestData.Profile("p", mcpServers: [new McpServerConfig { Name = "db", Env = new Dictionary<string, string> { ["DB_PASSWORD"] = ProfileMcpPassword } }]),
         ]);
     }
 
     [Fact]
     public async Task LoadAsync_ContainsTheTemplatesSecrets_Req10_8()
     {
-        var secrets = await TriageSecrets.LoadAsync(_config.Object, Project.Id, CancellationToken.None);
+        var secrets = await TriageSecrets.LoadAsync(_config.Object, _profiles.Object, Project.Id, CancellationToken.None);
 
         secrets.Should().Contain(new KeyValuePair<string, string>("repo:t-api:DB_PASSWORD", TemplateSecret));
     }
@@ -51,7 +49,7 @@ public sealed class TriageSecretsTests
     [Fact]
     public async Task LoadAsync_DoesNotReadTheRepositoryConnection_Req10_8()
     {
-        await TriageSecrets.LoadAsync(_config.Object, Project.Id, CancellationToken.None);
+        await TriageSecrets.LoadAsync(_config.Object, _profiles.Object, Project.Id, CancellationToken.None);
 
         _config.Verify(
             c => c.GetProviderConfigByIdAsync(It.IsAny<string>(), ProviderKind.Repository, It.IsAny<CancellationToken>()),
@@ -61,7 +59,7 @@ public sealed class TriageSecretsTests
     [Fact]
     public async Task LoadAsync_StillContainsTheProfilesMcpSecrets_Req10_6()
     {
-        var secrets = await TriageSecrets.LoadAsync(_config.Object, Project.Id, CancellationToken.None);
+        var secrets = await TriageSecrets.LoadAsync(_config.Object, _profiles.Object, Project.Id, CancellationToken.None);
 
         secrets.Select(s => s.Value).Should().Contain(ProfileMcpPassword);
     }

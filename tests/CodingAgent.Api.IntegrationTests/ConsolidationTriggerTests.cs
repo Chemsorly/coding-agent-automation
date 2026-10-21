@@ -1,7 +1,9 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -20,7 +22,7 @@ public sealed class ConsolidationTriggerTests(ApiWebApplicationFactory factory)
     private const string Template = "7a000000-0000-0000-0000-0000000000c1";
     private const string RepoProvider = "8b000000-0000-0000-0000-0000000000c1";
     private static readonly string[] RequiredLabels = ["consolidation-trigger-test"];
-    private static readonly string[] ProfileLabels = ["consolidation-trigger-test", "kiro"];
+    private const string Profile = "9c000000-0000-0000-0000-0000000000c1";
 
     private IConsolidationService Consolidation => factory.Services.GetRequiredService<IConsolidationService>();
 
@@ -36,6 +38,8 @@ public sealed class ConsolidationTriggerTests(ApiWebApplicationFactory factory)
             RepoProviderId = RepoProvider,
             Enabled = true,
             RequiredLabels = [.. RequiredLabels],
+            // Spec 053: the template's Consolidation row routes its consolidations.
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route(Profile) },
         }, CancellationToken.None);
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(new ProviderConfig
@@ -45,14 +49,8 @@ public sealed class ConsolidationTriggerTests(ApiWebApplicationFactory factory)
             ProviderType = "GitHub",
             DisplayName = "Charlie repo",
         }, CancellationToken.None);
-        await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "9c000000-0000-0000-0000-0000000000c1",
-            DisplayName = "Charlie agent",
-            AgentProviderConfigId = "agent-cfg",
-            MatchLabels = ProfileLabels,
-            Enabled = true,
-        }, CancellationToken.None);
+        await factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(Profile, displayName: "Charlie agent"), CancellationToken.None);
     }
 
     [Fact]
@@ -70,8 +68,9 @@ public sealed class ConsolidationTriggerTests(ApiWebApplicationFactory factory)
         item.TaskType.Should().Be(WorkItemTaskType.Consolidation);
         item.IssueIdentifier.Should().Be($"{ConsolidationRunType.RefactoringDetection}:{Template}");
         item.IssueProviderConfigId.Should().Be(ConsolidationConstants.ProviderConfigId);
-        item.AgentSelector.Should().Be(AgentSelectorKey.From(ProfileLabels));
+        item.AgentSelector.Should().Be(AgentRoutingTestData.DefaultJobTemplate, "the routed profile's job template");
         item.ProjectId.Should().Be(Guid.Parse(Project));
+        JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload!, PipelineJsonOptions.Default)!.ResolvedProfileId.Should().Be(Profile);
 
         // The same scope is live now, so a second trigger is refused as a duplicate.
         (await Consolidation.TriggerAsync(ConsolidationRunType.RefactoringDetection, new TemplateId(Template), CancellationToken.None))

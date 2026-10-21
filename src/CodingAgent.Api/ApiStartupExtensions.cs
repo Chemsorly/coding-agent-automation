@@ -1,6 +1,7 @@
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -55,7 +56,8 @@ internal static class ApiStartupExtensions
         // through all three calls to allow graceful shutdown during startup.
         await startupService.WaitForDatabaseConnectionAsync(CancellationToken.None);
         await startupService.HandleMigrationsAsync(CancellationToken.None);
-        await startupService.RunStartupSeedingAsync(CancellationToken.None);
+        var toolsByKey = app.Services.GetRequiredService<JobTemplateStore>().ToolsByKey();
+        await startupService.RunStartupSeedingAsync(toolsByKey, CancellationToken.None);
     }
 
     /// <summary>

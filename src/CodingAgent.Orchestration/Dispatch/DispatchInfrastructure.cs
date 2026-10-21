@@ -77,7 +77,7 @@ public class DispatchInfrastructure
     /// </summary>
     internal async Task<(IReadOnlyList<ProviderConfig> ProviderConfigs, PipelineConfiguration Config)> PrepareAndResolveConfigAsync(
         ProviderConfigId repoProviderId,
-        string agentProviderId,
+        ProviderConfig? agentConfig,
         string? brainProviderId,
         string? pipelineProviderId,
         PipelineProject project,
@@ -88,7 +88,7 @@ public class DispatchInfrastructure
         // without having tokens in the settings (vending only adds/replaces Token and TokenExpiresAt
         // and removes PrivateKeyBase64 — none of those affect blacklist resolution).
         var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
+            repoProviderId, agentConfig, brainProviderId, pipelineProviderId, logger, ct);
 
         // Resolve pipeline config (including BrainReadOnly) before vending tokens.
         var config = await PipelineConfigurationResolver.ResolveAsync(
@@ -145,7 +145,7 @@ public class DispatchInfrastructure
     // PrepareAgentConfigsAsync (DotNetSpecialist finding).
     internal async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
         ProviderConfigId repoProviderId,
-        string agentProviderId,
+        ProviderConfig? agentConfig,
         string? brainProviderId,
         string? pipelineProviderId,
         ILogger logger,
@@ -153,7 +153,7 @@ public class DispatchInfrastructure
         IEnumerable<string>? additionalRepoProviderIds = null)
     {
         var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
+            repoProviderId, agentConfig, brainProviderId, pipelineProviderId, logger, ct);
         var jobConfigs = await TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId.Value, ct);
 
         if (additionalRepoProviderIds is null)
@@ -171,10 +171,12 @@ public class DispatchInfrastructure
     /// The repository config is enriched with the five repository settings
     /// (RequiredLabels, Secrets, SetupSteps, SteeringContent, BlacklistedPaths)
     /// from the template that owns the repository.
+    /// <paramref name="agentConfig"/> is the agent provider config built from the routed profile and route (spec 053
+    /// DD5), added as given; null at dispatch time, where the agent receives none yet.
     /// </summary>
     internal async Task<IReadOnlyList<ProviderConfig>> BuildAgentProviderConfigsAsync(
         ProviderConfigId repoProviderId,
-        string agentProviderId,
+        ProviderConfig? agentConfig,
         string? brainProviderId,
         string? pipelineProviderId,
         ILogger logger,
@@ -190,10 +192,8 @@ public class DispatchInfrastructure
         configs.Add(RepositorySettings.WithTemplateSettings(
             repoConfig!, RepositorySettings.TemplateFor(repoProviderId.Value, templates)));
 
-        var agentConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var agentConfig = await ProviderConfigResolver.ResolveAsync(
-            Resolution.ConfigStore, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, logger, ct);
-        configs.Add(agentConfig!);
+        if (agentConfig is not null)
+            configs.Add(agentConfig);
 
         var brainConfig = await ResolveOptionalProviderConfigAsync(brainProviderId, ProviderKind.Repository, repoConfigs, logger, ct);
         if (brainConfig is not null)
@@ -609,18 +609,20 @@ public class DispatchInfrastructure
         DispatchCoreRequest request,
         CancellationToken ct)
     {
-        var requiredLabels = request.RequiredLabels;
         var issueIdentifier = request.IssueIdentifier;
         var issueProviderId = request.IssueProviderId;
         var repoProviderId = request.RepoProviderId;
-        var agentProviderId = request.AgentProviderId;
         var brainProviderId = request.BrainProviderId;
         var pipelineProviderId = request.PipelineProviderId;
         var project = request.Project;
         var logger = request.Logger;
-        // ── Step 1: Resolve quality gate and reviewer configurations ──
-        var resolvedQgcs = await Resolution.ResolveQualityGatesAsync(requiredLabels, ct);
-        var resolvedReviewerConfigs = await Resolution.ResolveReviewersAsync(requiredLabels, ct);
+        // ── Step 1: Resolve quality gate and reviewer configurations from the stack labels (claim only) ──
+        IReadOnlyList<QualityGateConfiguration> resolvedQgcs = request.StackLabels is { } stackLabels
+            ? await Resolution.ResolveQualityGatesAsync(stackLabels, ct)
+            : [];
+        IReadOnlyList<ReviewerConfiguration> resolvedReviewerConfigs = request.StackLabels is { } reviewerLabels
+            ? await Resolution.ResolveReviewersAsync(reviewerLabels, ct)
+            : [];
 
         // ── Step 2: Build issue context (pre-fetch details, comments, basic staleness) ──
         // A review is about a pull request, so its context comes from the pull request, never from the tracker.
@@ -639,7 +641,7 @@ public class DispatchInfrastructure
         // vending (which adds Token/TokenExpiresAt and removes PrivateKeyBase64) does not change
         // the blacklist, so passing raw configs is safe.
         var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
+            repoProviderId, request.AgentConfig, brainProviderId, pipelineProviderId, logger, ct);
 
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,

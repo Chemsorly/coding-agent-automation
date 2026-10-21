@@ -1,11 +1,14 @@
 using AwesomeAssertions;
 using CodingAgent.Api;
+using CodingAgent.Api.IntegrationTests.AgentRouting;
 using CodingAgent.Api.Triage;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.TestUtilities;
 using Moq;
 
 namespace CodingAgent.Api.IntegrationTests.Triage;
@@ -59,12 +62,18 @@ public sealed class AssignmentEnricherTriageTests
     {
         var profiles = new Mock<IAgentProfileStore>();
         profiles.Setup(p => p.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new AgentProfile { Id = "p1", DisplayName = "p", AgentProviderConfigId = "a1", MatchLabels = ["dotnet"], Enabled = true }]);
+            .ReturnsAsync([AgentRoutingTestData.Profile("p1")]);
         var projects = new Mock<IProjectStore>();
+        projects.Setup(p => p.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         return new AssignmentEnricher(
             _infra, profiles.Object, Mock.Of<IConsolidationJobPreparationService>(), projects.Object,
-            new ConsolidationTemplateResolver(projects.Object), Serilog.Log.Logger, triageStore: store);
+            new ConsolidationTemplateResolver(projects.Object),
+            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
+            AgentRoutingTestData.JobTemplates(), Serilog.Log.Logger, triageStore: store);
     }
+
+    private static JobDistributionRequest Enriched(EnrichmentResult result) =>
+        result.Should().BeOfType<EnrichmentResult.Enriched>().Subject.Request;
 
     private static JobDistributionRequest Identity(string tracker, string identifier, string runId = "run-2") => new()
     {
@@ -74,7 +83,8 @@ public sealed class AssignmentEnricherTriageTests
         InitiatedBy = InitiatedByConstants.Manual,
         TaskType = WorkItemTaskType.Triage,
         RunType = PipelineRunType.Triage,
-        AgentSelector = "dotnet",
+        AgentSelector = AgentRoutingTestData.DefaultJobTemplate,
+        Route = new AgentRouteSnapshot("p1", "p1", JobTemplateProviderType.Kiro, "auto", "auto", AgentRouteSource.GlobalDefault),
         TimeoutSeconds = 1800,
         RunId = runId,
     };
@@ -113,13 +123,13 @@ public sealed class AssignmentEnricherTriageTests
         var result = await Enricher(_store.Object).EnrichAsync(
             Identity(TriageConstants.ProviderConfigId, TriageConstants.IssueIdentifierFor(triage.Id)), Project, CancellationToken.None);
 
-        result.Should().NotBeNull();
+        var request = Enriched(result);
         _infra.Captured!.PullRequest!.Description.Should().Contain("Paid but Pending").And.Contain("production");
         _infra.Captured.AdditionalRepoProviderIds.Should().BeEquivalentTo("rp-api", "rp-web");
         _infra.Captured.NewestComments.Should().BeTrue();
-        result!.ProjectContext!.Repositories.Should().HaveCount(2);
-        result.TriageContextMarkdown.Should().Contain("No order id in logs").And.Contain("The worker logs ref=");
-        result.ProjectReviewers.Should().BeEmpty();
+        request.ProjectContext!.Repositories.Should().HaveCount(2);
+        request.TriageContextMarkdown.Should().Contain("No order id in logs").And.Contain("The worker logs ref=");
+        request.ProjectReviewers.Should().BeEmpty();
     }
 
     [Fact]
@@ -131,9 +141,9 @@ public sealed class AssignmentEnricherTriageTests
 
         var result = await Enricher(_store.Object).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None);
 
-        result.Should().NotBeNull();
+        var request = Enriched(result);
         _infra.Captured!.PullRequest.Should().BeNull("a tracker triage's report comes from the tracker");
-        result!.TriageContextMarkdown.Should().Contain("None: this is the first attempt.");
+        request.TriageContextMarkdown.Should().Contain("None: this is the first attempt.");
     }
 
     [Fact]
@@ -180,7 +190,7 @@ public sealed class AssignmentEnricherTriageTests
 
         var result = await Enricher(_store.Object).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None);
 
-        result!.TriageContextMarkdown.Should().NotContain("The other project's secret summary")
+        Enriched(result).TriageContextMarkdown.Should().NotContain("The other project's secret summary")
             .And.Contain("None: this is the first attempt.");
     }
 
@@ -192,16 +202,16 @@ public sealed class AssignmentEnricherTriageTests
         var result = await Enricher(_store.Object).EnrichAsync(
             Identity(TriageConstants.ProviderConfigId, TriageConstants.IssueIdentifierFor(Guid.NewGuid())), Project, CancellationToken.None);
 
-        result.Should().BeNull();
+        result.Should().Be(EnrichmentResult.Unavailable.Instance);
     }
 
     [Fact]
     public async Task WithoutRepositoryListOrStore_CannotBeEnriched()
     {
-        (await Enricher(store: null).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None)).Should().BeNull();
+        (await Enricher(store: null).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None)).Should().Be(EnrichmentResult.Unavailable.Instance);
 
         _infra.ProjectContext = null;
-        (await Enricher(_store.Object).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None)).Should().BeNull();
+        (await Enricher(_store.Object).EnrichAsync(Identity("t-api", "431"), Project, CancellationToken.None)).Should().Be(EnrichmentResult.Unavailable.Instance);
     }
 
     [Fact]

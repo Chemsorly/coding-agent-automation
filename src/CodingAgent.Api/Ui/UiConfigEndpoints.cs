@@ -51,7 +51,8 @@ internal static class UiConfigEndpoints
     /// quality gates, reviewers and agent profiles.
     /// </summary>
     internal static async Task<IResult> GetPipelinesPage(
-        IUserAccess access, IProjectStore projects, IProviderConfigStore providers, IConfigurationStore config, CancellationToken ct)
+        IUserAccess access, IProjectStore projects, IProviderConfigStore providers, IConfigurationStore config,
+        IAgentProfileStore profiles, CancellationToken ct)
     {
         var global = access.CanRead(null);
         var readable = (await projects.LoadProjectsAsync(ct)).Where(p => access.CanRead(p.Id)).ToList();
@@ -79,7 +80,7 @@ internal static class UiConfigEndpoints
             await ProvidersAsync(ProviderKind.Pipeline),
             global ? await config.LoadQualityGateConfigsAsync(ct) : [],
             global ? await config.LoadReviewerConfigsAsync(ct) : [],
-            global ? (await config.LoadAgentProfilesAsync(ct)).Select(UiSecretMask.Redact).ToList() : [],
+            global ? (await profiles.LoadAgentProfilesAsync(ct)).Select(UiSecretMask.Redact).ToList() : [],
             settings.DefaultRequiredAgentLabels,
             settings.MaxRetries));
     }

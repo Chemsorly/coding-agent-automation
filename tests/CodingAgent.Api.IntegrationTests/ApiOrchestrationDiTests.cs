@@ -142,7 +142,9 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         sp.GetRequiredService<ConsolidationTemplateResolver>().Should().NotBeNull();
         sp.GetRequiredService<AssignmentEnricher>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchLifecycleService>().Should().NotBeNull();
-        sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchTemplateResolver>().Should().NotBeNull();
+        sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemRouter>().Should().NotBeNull();
+        sp.GetRequiredService<CodingAgent.Api.Dispatch.RolloutRouting>().Should().NotBeNull();
+        sp.GetRequiredService<CodingAgent.Infrastructure.Persistence.Services.AgentRoutingStore>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchWorkItemService>().Should().NotBeNull();
 
         // Chat dispatch
@@ -354,7 +356,9 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         services.AddScoped(sp => sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>().CreateDbContext());
 
         // ── IConfigurationStore (mock) + sub-interface forwarding ────────────
+        // The API's store also stores agent profiles (spec 053: they are not part of IConfigurationStore).
         var configStoreMock = new Mock<IConfigurationStore>();
+        configStoreMock.As<IAgentProfileStore>();
         services.AddSingleton<IConfigurationStore>(configStoreMock.Object);
         services.RegisterConfigStoreSubInterfaces();
 

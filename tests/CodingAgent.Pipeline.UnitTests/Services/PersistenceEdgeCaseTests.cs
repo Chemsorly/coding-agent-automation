@@ -62,7 +62,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
 
         var first = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);

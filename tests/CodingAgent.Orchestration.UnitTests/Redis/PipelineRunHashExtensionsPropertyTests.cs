@@ -424,6 +424,31 @@ public class PipelineRunHashExtensionsPropertyTests
         summary.PhaseBreakdown!["analysis"].Cost.Should().Be(0.99m);
     }
 
+    // ── Spec 053: the routed profile, model and effort ─────────────────────────
+
+    [Fact]
+    public void RouteFields_SurviveRoundTrip_AndReachTheSummary()
+    {
+        var run = MakeMinimalRun();
+        run.AgentProfileId = "profile-kiro";
+        run.AgentProfileName = "Kiro";
+        run.AgentEffort = "high";
+        run.ModelName = "claude-opus-4";
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.Should().BeEquivalentTo(new { AgentProfileId = "profile-kiro", AgentProfileName = "Kiro", AgentEffort = "high", ModelName = "claude-opus-4" });
+        restored.ToSummary().Should().BeEquivalentTo(new { AgentProfileId = "profile-kiro", AgentProfileName = "Kiro", AgentEffort = "high" });
+    }
+
+    [Fact]
+    public void RouteFields_Null_SurviveAsNull()
+    {
+        var restored = PipelineRunHashExtensions.FromHash(MakeMinimalRun().ToHashEntries())!;
+
+        restored.Should().BeEquivalentTo(new { AgentProfileId = (string?)null, AgentProfileName = (string?)null, AgentEffort = (string?)null });
+    }
+
     // ── McpServers roundtrip ───────────────────────────────────────────────
 
     [Fact]

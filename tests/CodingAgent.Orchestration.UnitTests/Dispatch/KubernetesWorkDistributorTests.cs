@@ -3,6 +3,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -173,44 +174,38 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     /// <summary>
-    /// 422 from CreateAsync = <c>POST /api/work-items</c> refused the run because its agent selector has no
-    /// job template. Templates are read at start-up, so a retry cannot succeed: permanent failure, selector in the message.
+    /// <c>POST /api/work-items</c> refused the run (422, spec 053 DD2): no agent route resolves, or the routed
+    /// consolidation has no job template. No retry changes that: permanent failure with the API's reason.
     /// </summary>
     [Fact]
-    public async Task DistributeAsync_Consolidation_When422_ReturnsPermanentFailureNamingTheSelector()
+    public async Task DistributeAsync_Consolidation_WhenRefused_ReturnsPermanentFailureWithTheReason()
     {
-        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation, agentSelector: "kiro,python,python312");
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
         _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null,
-                System.Net.HttpStatusCode.UnprocessableEntity));
+            .ThrowsAsync(new WorkItemRefusedException("Job template dotnet,kiro of agent profile 'Kiro' does not exist in the Helm values"));
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.IsPermanentFailure.Should().BeTrue("a missing job template cannot be fixed by retrying");
+        result.IsPermanentFailure.Should().BeTrue("a refused work item cannot be fixed by retrying");
         result.Queued.Should().BeFalse("nothing was enqueued");
         result.AlreadyExists.Should().BeFalse();
         result.WorkItemId.Should().BeNull();
-        result.ErrorMessage.Should().Contain("kiro,python,python312", "the operator needs the selector that has no template");
-        result.ErrorMessage.Should().Contain("job template");
+        result.ErrorMessage.Should().Be("Job template dotnet,kiro of agent profile 'Kiro' does not exist in the Helm values");
     }
 
-    /// <summary>
-    /// The mapping is by status code, not by task type: only Consolidation requests get a 422 from the API today,
-    /// but a 422 from the enqueue call is permanent whichever task type sent it.
-    /// </summary>
+    /// <summary>The mapping is by the refusal, not by task type: every task type is routed when it is created.</summary>
     [Fact]
-    public async Task DistributeAsync_Implementation_When422_ReturnsPermanentFailure()
+    public async Task DistributeAsync_Implementation_WhenRefused_ReturnsPermanentFailure()
     {
         _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null,
-                System.Net.HttpStatusCode.UnprocessableEntity));
+            .ThrowsAsync(new WorkItemRefusedException(AgentRouteRefusalReason.NoRouteText));
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
 
         result.Success.Should().BeFalse();
         result.IsPermanentFailure.Should().BeTrue();
-        result.ErrorMessage.Should().Contain("'kiro'");
+        result.ErrorMessage.Should().Be(AgentRouteRefusalReason.NoRouteText);
     }
 
     /// <summary>

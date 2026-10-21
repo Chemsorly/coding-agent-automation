@@ -29,8 +29,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             new TestOrchestrationFactory.NullHistoryService(), null, _mockLogger.Object);
 
         _runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
             lifecycle: _lifecycle,
             logger: _mockLogger.Object);
 

@@ -41,7 +41,9 @@ public static class JobAssignmentMessageFactory
             LinkedPullRequest = request.LinkedPullRequest,
             LinkedIssueContexts = request.LinkedIssueContexts,
             RepoProviderConfigId = request.RepoProviderConfigId,
-            AgentProviderConfigId = request.AgentProviderConfigId ?? request.RepoProviderConfigId,
+            // The claim always sets it to the routed profile's Id (spec 053 req 4.7); no other config stands in (D15).
+            AgentProviderConfigId = request.AgentProviderConfigId
+                ?? throw new InvalidOperationException("The assignment has no agent config; the claim builds it from the route."),
             BrainProviderConfigId = request.BrainProviderConfigId,
             PipelineProviderConfigId = request.PipelineProviderConfigId,
             ProviderConfigs = request.ProviderConfigs ?? [],

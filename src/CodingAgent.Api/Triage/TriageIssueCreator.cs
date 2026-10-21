@@ -17,6 +17,7 @@ public sealed class TriageIssueCreator
 {
     private readonly ITriageStore _store;
     private readonly IConfigurationStore _config;
+    private readonly IAgentProfileStore _profiles;
     private readonly IProviderFactory _providers;
     private readonly IDistributedLockProvider _locks;
     private readonly TriageTrackerOperations _tracker;
@@ -25,6 +26,7 @@ public sealed class TriageIssueCreator
     public TriageIssueCreator(
         ITriageStore store,
         IConfigurationStore config,
+        IAgentProfileStore profiles,
         IProviderFactory providers,
         IDistributedLockProvider locks,
         TriageTrackerOperations tracker,
@@ -32,6 +34,7 @@ public sealed class TriageIssueCreator
     {
         _store = store;
         _config = config;
+        _profiles = profiles;
         _providers = providers;
         _locks = locks;
         _tracker = tracker;
@@ -64,7 +67,7 @@ public sealed class TriageIssueCreator
         // The attempt as the triage page numbers it: its position among all attempts
         var draftsAttempt = triage.Attempts.ToList().FindIndex(a => a.WorkItemId == triage.DraftsFromWorkItemId);
         var attemptNumber = draftsAttempt >= 0 ? draftsAttempt + 1 : triage.Attempts.Count;
-        var secrets = await TriageSecrets.LoadAsync(_config, project.Id, ct);
+        var secrets = await TriageSecrets.LoadAsync(_config, _profiles, project.Id, ct);
 
         foreach (var draftId in request.DraftIds.Distinct(StringComparer.Ordinal))
         {

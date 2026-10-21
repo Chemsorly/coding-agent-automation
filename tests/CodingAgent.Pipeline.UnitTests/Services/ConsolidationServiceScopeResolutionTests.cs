@@ -13,7 +13,6 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// issue #3475. These tests lock down behaviors that were not directly asserted elsewhere:
 ///
 /// <list type="number">
-///   <item>repoConfig is fetched using the exact template.RepoProviderId value</item>
 ///   <item>global run (null templateId) skips template/project resolution entirely</item>
 ///   <item>BuildConsolidationDistributionRequest forwards all required fields correctly</item>
 ///   <item>ProjectId is null when project.Id is not a valid GUID</item>
@@ -32,9 +31,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
     };
 
     private readonly Mock<IProjectStore> _projectStore = new();
-    private readonly Mock<IProviderConfigStore> _providerConfigStore = new();
     private readonly Mock<IWorkDistributor> _distributor = new();
-    private readonly Mock<IConsolidationSelectorResolver> _selectorResolver = new();
     private readonly List<JobDistributionRequest> _requests = [];
 
     private PipelineProject _project = new()
@@ -50,14 +47,6 @@ public sealed class ConsolidationServiceScopeResolutionTests
             .ReturnsAsync(() => new List<PipelineProject> { _project });
         _projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => new List<PipelineJobTemplate> { Template });
-
-        _providerConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProviderConfig?)null);
-
-        _selectorResolver
-            .Setup(r => r.ResolveAsync(It.IsAny<ProviderConfig?>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(["dotnet", "kiro"]), null));
 
         _distributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -77,63 +66,10 @@ public sealed class ConsolidationServiceScopeResolutionTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _projectStore.Object,
-            _providerConfigStore.Object,
-            WorkDistributor: _distributor.Object,
-            SelectorResolver: _selectorResolver.Object));
+            WorkDistributor: _distributor.Object));
     }
 
-    // ── 1. repoConfig is fetched using the exact template.RepoProviderId ─────
-
-    [Fact]
-    public async Task TriggerAsync_WithTemplate_FetchesRepoConfigUsingTemplateRepoProviderId()
-    {
-        // Characterizes: ResolveConsolidationScopeAsync fetches repoConfig with the exact
-        // template.RepoProviderId value, not a default or fallback.
-        var sut = CreateSut();
-
-        await sut.TriggerAsync(ConsolidationRunType.RefactoringDetection, new TemplateId(Template.Id), CancellationToken.None);
-
-        _providerConfigStore.Verify(
-            s => s.GetProviderConfigByIdAsync(
-                Template.RepoProviderId,
-                ProviderKind.Repository,
-                It.IsAny<CancellationToken>()),
-            Times.Once,
-            $"must fetch ProviderConfig using the template's exact RepoProviderId '{Template.RepoProviderId}'");
-    }
-
-    [Fact]
-    public async Task TriggerAsync_WithTemplate_ForwardsResolvedRepoConfigToSelectorResolver()
-    {
-        // Characterizes: the repoConfig resolved from the provider store (enriched with template
-        // settings) is forwarded to ResolveSelectorLabelsAsync (and thus to
-        // IConsolidationSelectorResolver.ResolveAsync). After issue #3575 the repoConfig is a
-        // copy enriched by RepositorySettings.WithTemplateSettings; the Id is the same.
-        var rawConfig = new ProviderConfig { Id = "rp-scope-exact", Kind = ProviderKind.Repository, DisplayName = "Scope Repo", ProviderType = "GitHub" };
-        _providerConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync(Template.RepoProviderId, ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(rawConfig);
-
-        var sut = CreateSut();
-
-        await sut.TriggerAsync(ConsolidationRunType.RefactoringDetection, new TemplateId(Template.Id), CancellationToken.None);
-
-        _selectorResolver.Verify(
-            r => r.ResolveAsync(
-                It.Is<ProviderConfig>(c => c.Id == rawConfig.Id),
-                It.IsAny<PipelineConfiguration>(),
-                It.IsAny<CancellationToken>()),
-            Times.Once,
-            "the repoConfig (enriched with template settings) must be passed to the selector resolver");
-        // TODO: [WARNING] The matcher It.Is<ProviderConfig>(c => c.Id == rawConfig.Id) accepts both
-        // the raw config and the enriched copy from RepositorySettings.WithTemplateSettings because
-        // both share the same Id. If the WithTemplateSettings call in ConsolidationService were
-        // removed and the raw config passed directly, this test would still pass. Assert a
-        // template-sourced field (e.g. RequiredLabels) on the captured config to verify enrichment
-        // actually occurred (TestQualityReviewer finding).
-    }
-
-    // ── 2. global run skips template/project resolution ──────────────────────
+    // ── 1. global run skips template/project resolution ──────────────────────
 
     [Fact]
     public async Task TriggerAsync_NullTemplateId_DoesNotCallLoadProjectsAsync()
@@ -155,20 +91,6 @@ public sealed class ConsolidationServiceScopeResolutionTests
     }
 
     [Fact]
-    public async Task TriggerAsync_NullTemplateId_DoesNotFetchRepoProviderConfig()
-    {
-        // Characterizes: when templateId is null, GetProviderConfigByIdAsync is never called.
-        var sut = CreateSut();
-
-        await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, null, CancellationToken.None);
-
-        _providerConfigStore.Verify(
-            s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "global runs (null templateId) must not call GetProviderConfigByIdAsync — no template to resolve from");
-    }
-
-    [Fact]
     public async Task TriggerAsync_GlobalRun_SendsNoTemplateName()
     {
         // Verifies: global consolidation runs (no template) must not propagate a template
@@ -182,7 +104,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
                 "global consolidation runs have no template; ConsolidationTemplateName must be null");
     }
 
-    // ── 3. BuildConsolidationDistributionRequest forwards all required fields ─
+    // ── 2. BuildConsolidationDistributionRequest forwards all required fields ─
 
     [Fact]
     public async Task TriggerAsync_RequestHasCorrectInitiatedBy()
@@ -279,7 +201,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
                 "autoDispatch=true must be forwarded to the JobDistributionRequest");
     }
 
-    // ── 4. ProjectId is null when project.Id is not a valid GUID ─────────────
+    // ── 3. ProjectId is null when project.Id is not a valid GUID ─────────────
 
     [Fact]
     public async Task TriggerAsync_InvalidProjectGuid_ProjectIdIsNull()

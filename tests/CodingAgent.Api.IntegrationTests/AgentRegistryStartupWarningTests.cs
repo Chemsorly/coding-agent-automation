@@ -419,7 +419,7 @@ internal sealed class RegistryWarnPassthroughEnricher : AssignmentEnricher
 {
     public RegistryWarnPassthroughEnricher() : base(Serilog.Log.Logger) { }
 
-    public override Task<JobDistributionRequest?> EnrichAsync(
+    public override Task<EnrichmentResult> EnrichAsync(
         JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
-        => Task.FromResult<JobDistributionRequest?>(identity);
+        => Task.FromResult<EnrichmentResult>(new EnrichmentResult.Enriched(identity with { AgentProviderConfigId = identity.AgentProviderConfigId ?? "test-agent-config" }));
 }

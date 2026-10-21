@@ -32,8 +32,11 @@ public record JobDistributionRequest
     /// <summary>Type of work to perform.</summary>
     public required WorkItemTaskType TaskType { get; init; }
 
-    /// <summary>Sorted comma-joined agent labels for dispatch routing.</summary>
-    public required string AgentSelector { get; init; }
+    /// <summary>
+    /// The job template key the work runs on: set by the API's router when it creates the work item (spec 053 DD1).
+    /// Callers leave it empty.
+    /// </summary>
+    public string AgentSelector { get; init; } = "";
 
     /// <summary>Maximum execution time in seconds before timeout.</summary>
     public required int TimeoutSeconds { get; init; }

@@ -228,6 +228,9 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 QualityGateValidator = _qualityGateValidator
             },
             issueProvider: issueProvider);
+        // An agent gets the reviewers the API resolved when it claimed the work (spec 053 DD7). This runner has no API,
+        // so it resolves the configured reviewers itself, as for a repository without stack labels.
+        ctx.PreResolvedReviewerConfigs = new ReviewerResolver().Resolve(await _configStore.LoadReviewerConfigsAsync(ct), []);
 
         var steps = BuildStepPipeline();
 

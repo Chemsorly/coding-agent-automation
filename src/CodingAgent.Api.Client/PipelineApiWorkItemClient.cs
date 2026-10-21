@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using ILogger = Serilog.ILogger;
@@ -94,8 +95,35 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
             req.Headers.Add("X-Idempotency-Key", request.RunId);
         req.Content = JsonContent.Create(request, options: PipelineJsonOptions.Default);
         var response = await _http.SendAsync(req, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+            throw new WorkItemRefusedException(await RefusalReasonAsync(response, ct));
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
+    }
+
+    /// <summary>The text shown when a 422 carries no ProblemDetails <c>detail</c> (a previous-release API).</summary>
+    internal const string RefusedWithoutReason = "The API refused the work item (422)";
+
+    /// <summary>
+    /// The ProblemDetails <c>detail</c> of a refused create (spec 053 DD2), or <see cref="RefusedWithoutReason"/> when the
+    /// body has none: a previous-release API replica answers a consolidation it cannot route with a bare 422.
+    /// </summary>
+    private static async Task<string> RefusalReasonAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            return body.RootElement.ValueKind == JsonValueKind.Object
+                && body.RootElement.TryGetProperty("detail", out var detail)
+                && detail.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(detail.GetString())
+                    ? detail.GetString()!
+                    : RefusedWithoutReason;
+        }
+        catch (JsonException)
+        {
+            return RefusedWithoutReason;
+        }
     }
 
     public async Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, string? projectId = null, CancellationToken ct = default)

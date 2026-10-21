@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Api.Triage;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
@@ -35,6 +36,7 @@ public sealed class TriageTrackerOperationsTests
     };
 
     private readonly Mock<IConfigurationStore> _config = new();
+    private readonly Mock<IAgentProfileStore> _profiles = new();
     private readonly Mock<IProviderFactory> _providers = new();
     private readonly Mock<IIssueProvider> _issues = new();
     private readonly Mock<ILabelService> _labels = new();
@@ -56,13 +58,9 @@ public sealed class TriageTrackerOperationsTests
             .ReturnsAsync(new ProviderConfig { Id = "rp-api", DisplayName = "api", ProviderType = "GitHub", Kind = ProviderKind.Repository });
         _config.Setup(c => c.GetProviderConfigByIdAsync("tracker-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProviderConfig { Id = "tracker-1", DisplayName = "tracker", ProviderType = "GitHub", Kind = ProviderKind.Issue });
-        _config.Setup(c => c.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
+        _profiles.Setup(c => c.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
         [
-            new AgentProfile
-            {
-                Id = "p", DisplayName = "p", AgentProviderConfigId = "a", Enabled = true,
-                McpServers = [new McpServerConfig { Name = "db", Env = new Dictionary<string, string> { ["DB_PASSWORD"] = ProfileMcpPassword } }],
-            },
+            AgentRoutingTestData.Profile("p", mcpServers: [new McpServerConfig { Name = "db", Env = new Dictionary<string, string> { ["DB_PASSWORD"] = ProfileMcpPassword } }]),
         ]);
 
         _providers.Setup(p => p.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(_issues.Object);
@@ -72,7 +70,7 @@ public sealed class TriageTrackerOperationsTests
             .ReturnsAsync("c1");
     }
 
-    private TriageTrackerOperations Operations() => new(_config.Object, _providers.Object, _labels.Object, Serilog.Log.Logger);
+    private TriageTrackerOperations Operations() => new(_config.Object, _profiles.Object, _providers.Object, _labels.Object, Serilog.Log.Logger);
 
     // ── Re-run ───────────────────────────────────────────────────────────────
 

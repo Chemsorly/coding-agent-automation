@@ -252,8 +252,6 @@ public class DecompositionTemplatePropertyTests
     {
         var mockLogger = new Mock<Serilog.ILogger>();
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: mockStore.Object,
-            providerFactory: mockFactory.Object,
             logger: mockLogger.Object);
 
         return new PipelineLoopService(new PipelineLoopServiceDependencies

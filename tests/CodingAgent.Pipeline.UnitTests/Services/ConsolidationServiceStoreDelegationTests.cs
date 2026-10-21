@@ -47,7 +47,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
             _mockProjectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
     }
 
@@ -67,7 +66,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), DefaultRequiredAgentLabels = "kiro" },
             _mockProjectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
 
         var result = await sut.TriggerAsync(

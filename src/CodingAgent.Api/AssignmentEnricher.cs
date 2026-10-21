@@ -1,10 +1,14 @@
+using System.Diagnostics;
 using CodingAgent.Api.Triage;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Api;
@@ -42,10 +46,14 @@ public class AssignmentEnricher
     private readonly IConsolidationJobPreparationService _consolidationPreparer;
     private readonly IProjectStore _projectStore;
     private readonly ConsolidationTemplateResolver _consolidationTemplateResolver;
+    private readonly AgentRoutingStore _routing;
+    private readonly JobTemplateStore _jobTemplates;
     private readonly IPipelineRunHistoryService? _runHistory;
     private readonly ITriageStore? _triageStore;
     private readonly ILogger _logger;
 
+    /// <param name="routing">The global routing table, for work items queued before spec 053 (req 4.6).</param>
+    /// <param name="jobTemplates">The Helm job templates: the tool of the routed profile's template.</param>
     /// <param name="consolidationContext">
     /// Where consolidation assignments read their run context from (see <see cref="ConsolidationRunContextSources"/>).
     /// When null, consolidation assignments go out without it.
@@ -60,6 +68,8 @@ public class AssignmentEnricher
         IConsolidationJobPreparationService consolidationPreparer,
         IProjectStore projectStore,
         ConsolidationTemplateResolver consolidationTemplateResolver,
+        AgentRoutingStore routing,
+        JobTemplateStore jobTemplates,
         ILogger logger,
         ConsolidationRunContextSources? consolidationContext = null,
         ITriageStore? triageStore = null)
@@ -69,6 +79,8 @@ public class AssignmentEnricher
         ArgumentNullException.ThrowIfNull(consolidationPreparer);
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(consolidationTemplateResolver);
+        ArgumentNullException.ThrowIfNull(routing);
+        ArgumentNullException.ThrowIfNull(jobTemplates);
         ArgumentNullException.ThrowIfNull(logger);
 
         _infra = infra;
@@ -76,6 +88,8 @@ public class AssignmentEnricher
         _consolidationPreparer = consolidationPreparer;
         _projectStore = projectStore;
         _consolidationTemplateResolver = consolidationTemplateResolver;
+        _routing = routing;
+        _jobTemplates = jobTemplates;
         _runHistory = consolidationContext?.RunHistory;
         _triageStore = triageStore;
         _logger = logger;
@@ -108,28 +122,8 @@ public class AssignmentEnricher
         // or enforcing storeOverride is non-null when called from a null-_projectStore instance.
         _projectStore = null!;
         _consolidationTemplateResolver = null!;
-        _logger = logger ?? Serilog.Log.Logger;
-    }
-
-    /// <summary>
-    /// Protected constructor for test subclasses that need a real profile store alongside the
-    /// default no-op consolidation preparer. Use this overload when the test exercises a
-    /// Consolidation task type path that calls <see cref="IAgentProfileStore.LoadAgentProfilesAsync"/>
-    /// but does not supply a real <see cref="IConsolidationJobPreparationService"/>.
-    /// </summary>
-    protected internal AssignmentEnricher(
-        ILogger logger,
-        IAgentProfileStore agentProfileStore,
-        IConsolidationJobPreparationService? consolidationPreparer = null)
-    {
-        _infra = null!;
-        _agentProfileStore = agentProfileStore ?? throw new ArgumentNullException(nameof(agentProfileStore));
-        _consolidationPreparer = consolidationPreparer ?? NoOpConsolidationPreparer.Instance;
-        // TODO: [WARNING] Same null-store caveat as the logger-only constructor above: _projectStore and
-        // _consolidationTemplateResolver are null here. Any call to InjectProjectSecretsAsync on an
-        // instance built via this constructor without a storeOverride will silently skip secret injection.
-        _projectStore = null!;
-        _consolidationTemplateResolver = null!;
+        _routing = null!;
+        _jobTemplates = null!;
         _logger = logger ?? Serilog.Log.Logger;
     }
 
@@ -151,10 +145,11 @@ public class AssignmentEnricher
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
-    /// The enriched <see cref="JobDistributionRequest"/> with fresh provider configs, QGs,
-    /// reviewers, MCP servers, and issue context; or <c>null</c> if the profile cannot be
-    /// resolved or <see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/> returns null
-    /// (permanent configuration failure — profile not found, provider config removed, etc.).
+    /// <see cref="EnrichmentResult.Enriched"/> with fresh provider configs, QGs, reviewers, MCP servers and issue
+    /// context; <see cref="EnrichmentResult.Refused"/> when the work item's route can no longer run (spec 053 req
+    /// 4.5–4.7: its profile is gone or disabled, its job template changed or has no tool, no route resolves for an
+    /// item queued before spec 053, or the agent config's Id collides); <see cref="EnrichmentResult.Unavailable"/> for
+    /// every other reason to serve no assignment (DD6).
     /// </returns>
     /// <exception cref="Exception">
     /// Propagates any exception thrown by <see cref="EnrichCoreAsync"/> that is not an
@@ -163,7 +158,7 @@ public class AssignmentEnricher
     /// re-thrown so the caller can return HTTP 503, allowing the agent to retry rather than proceeding
     /// with an invalid job spec.
     /// </exception>
-    public virtual async Task<JobDistributionRequest?> EnrichAsync(
+    public virtual async Task<EnrichmentResult> EnrichAsync(
         JobDistributionRequest identity,
         PipelineProject project,
         CancellationToken ct)
@@ -186,26 +181,107 @@ public class AssignmentEnricher
         }
     }
 
-    private async Task<JobDistributionRequest?> EnrichCoreAsync(
+    /// <summary>The route a claim runs on: the profile, the route, the agent config built from both, the template.</summary>
+    private sealed record ClaimRoute(
+        AgentProfile Profile, AgentRouteSnapshot Route, ProviderConfig AgentConfig, PipelineJobTemplate? Template);
+
+    /// <summary>
+    /// Spec 053 design "Claim": the pinned route, or for a work item queued before spec 053 the current routing
+    /// (source <c>claim</c>); then the profile must exist and be enabled, its job template key must still be the one
+    /// the item was queued for, and the template must have a tool. Never re-resolves a pinned route, and never picks a
+    /// profile no route names (D15).
+    /// </summary>
+    private async Task<(ClaimRoute? Route, EnrichmentResult.Refused? Refusal)> ResolveClaimRouteAsync(
+        JobDistributionRequest identity, CancellationToken ct)
+    {
+        var templates = await _projectStore.LoadAllTemplatesAsync(ct);
+        var template = identity.TaskType == WorkItemTaskType.Consolidation
+            ? templates.FirstOrDefault(t => string.Equals(t.Id, identity.ConsolidationTemplateId, StringComparison.Ordinal))
+            : RepositorySettings.TemplateFor(identity.RepoProviderConfigId, templates);
+        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
+        var toolsByKey = _jobTemplates.ToolsByKey();
+
+        AgentRouteSnapshot route;
+        if (identity.Route is { } pinned)
+        {
+            route = pinned;
+        }
+        else
+        {
+            var routing = await _routing.LoadAsync(ct) ?? AgentRouting.Empty;
+            var resolved = AgentRouteResolver.Resolve(identity.TaskType, template, routing, profiles, toolsByKey);
+            if (resolved.IsRefused)
+                return Refuse(identity, template, resolved.RefusalReason!, resolved.RefusalText!);
+            route = resolved.Snapshot! with { Source = AgentRouteSource.Claim };
+            _logger.Information(
+                "Routed {TaskType} work for {TemplateName} at claim to {AgentProfile} · {Model} · {Effort} ({RouteSource}; queued before agent routing, profile {AgentProfileId})",
+                identity.TaskType, template?.Name ?? "no template", route.ProfileName, route.Model, route.Effort,
+                AgentRouteLabels.Source(route.Source), route.ProfileId);
+        }
+
+        var profile = profiles.FirstOrDefault(p => string.Equals(p.Id, route.ProfileId, StringComparison.Ordinal) && p.Enabled);
+        if (profile is null)
+        {
+            return Refuse(identity, template, AgentRouteRefusalReason.ProfileUnavailable,
+                $"agent profile '{(string.IsNullOrEmpty(route.ProfileName) ? route.ProfileId : route.ProfileName)}' no longer exists");
+        }
+
+        var key = profile.JobTemplateKey();
+        if (!string.Equals(JobTemplateStore.NormalizeLabels(key), JobTemplateStore.NormalizeLabels(identity.AgentSelector ?? ""), StringComparison.Ordinal))
+        {
+            return Refuse(identity, template, AgentRouteRefusalReason.TemplateChanged,
+                $"the route now names job template {key}; the work was queued for {identity.AgentSelector}");
+        }
+
+        if (!toolsByKey.TryGetValue(key, out var providerType) || AgentToolCatalog.Find(providerType) is not { } tool)
+            return Refuse(identity, template, AgentRouteRefusalReason.NoTool, AgentRouteResolver.NoToolText(key, profile));
+
+        var agentConfig = AgentProviderConfigFactory.Build(profile, tool.Id, route.Model, route.Effort);
+        PipelineTelemetry.SetRouteAttributes(Activity.Current, route.ProfileName, route.Model, route.Effort, AgentRouteLabels.Source(route.Source));
+        return (new ClaimRoute(profile, route, agentConfig, template), null);
+    }
+
+    /// <summary>
+    /// Req 4.7: the built agent config's Id must be unique among the assignment's provider configs, because the agent
+    /// looks its config up by Id and takes the first match.
+    /// </summary>
+    private (ClaimRoute? Route, EnrichmentResult.Refused? Refusal)? CheckConfigCollision(
+        JobDistributionRequest identity, ClaimRoute claim, IReadOnlyList<ProviderConfig> providerConfigs)
+    {
+        if (providerConfigs.Count(c => string.Equals(c.Id, claim.AgentConfig.Id, StringComparison.Ordinal)) <= 1)
+            return null;
+        _logger.Error(
+            "AssignmentEnricher: agent config Id {AgentConfigId} of {IssueIdentifier} collides with another provider config of the assignment",
+            claim.AgentConfig.Id, identity.IssueIdentifier);
+        return Refuse(identity, claim.Template, AgentRouteRefusalReason.ConfigCollision,
+            $"agent config Id {claim.AgentConfig.Id} collides with another provider config");
+    }
+
+    private (ClaimRoute? Route, EnrichmentResult.Refused? Refusal) Refuse(
+        JobDistributionRequest identity, PipelineJobTemplate? template, string reason, string text)
+    {
+        _logger.Warning(
+            "Refused {TaskType} work for {TemplateName} at claim: {RefusalText} ({RefusalReason}, issue {IssueIdentifier}, template {TemplateId})",
+            identity.TaskType, template?.Name ?? "no template", text, reason, identity.IssueIdentifier, template?.Id);
+        PipelineTelemetry.RecordRoutingRefusal(identity.TaskType, PipelineTelemetry.RoutingStages.Claim, reason);
+        PipelineTelemetry.SetRouteRefusal(Activity.Current, reason, text);
+        return (null, new EnrichmentResult.Refused(reason, text));
+    }
+
+    private async Task<EnrichmentResult> EnrichCoreAsync(
         JobDistributionRequest identity,
         PipelineProject project,
         CancellationToken ct)
     {
+        // ── Step 1: The route (spec 053): pinned at creation, or routed now for an item queued before ──
+        var (claim, refusal) = await ResolveClaimRouteAsync(identity, ct);
+        if (refusal is not null)
+            return refusal;
+
         // ── Route consolidation items to the consolidation-specific enrichment path ──
         if (identity.TaskType == WorkItemTaskType.Consolidation)
-            return await EnrichConsolidationCoreAsync(identity, project, ct);
-
-        // ── Step 1: Resolve agent profile ──────────────────────────────────────────
-        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-        var profile = ResolveProfile(identity, profiles, ct);
-
-        if (profile is null)
-        {
-            _logger.Warning(
-                "AssignmentEnricher: no profile matches selector [{Selector}]; cannot enrich assignment",
-                identity.AgentSelector ?? "");
-            return null;
-        }
+            return await EnrichConsolidationCoreAsync(identity, project, claim!, ct);
+        var profile = claim!.Profile;
 
         // ── Step 2: Re-derive a decomposition's scope from the current configuration ──
         // Only a project epic (in its project's epic tracker) gets the project's repo list. The scope is
@@ -223,7 +299,7 @@ public class AssignmentEnricher
                     _logger.Error(
                         "AssignmentEnricher: project epic {IssueIdentifier} has no usable repository list in project {ProjectId}; cannot enrich assignment",
                         identity.IssueIdentifier, project.Id);
-                    return null;
+                    return EnrichmentResult.Unavailable.Instance;
                 }
             }
             else if (!await IsTemplateTrackerAsync(project, identity.IssueProviderConfigId, ct))
@@ -234,7 +310,7 @@ public class AssignmentEnricher
                 _logger.Error(
                     "AssignmentEnricher: epic {IssueIdentifier} is in neither the epic tracker nor a template tracker of project {ProjectId}; cannot enrich assignment",
                     identity.IssueIdentifier, project.Id);
-                return null;
+                return EnrichmentResult.Unavailable.Instance;
             }
         }
 
@@ -246,7 +322,7 @@ public class AssignmentEnricher
         {
             var triage = await PrepareTriageAsync(identity, project, ct);
             if (triage is null)
-                return null;
+                return EnrichmentResult.Unavailable.Instance;
             (projectContext, prebuiltSubject, triageContextMarkdown) = triage.Value;
         }
 
@@ -261,14 +337,15 @@ public class AssignmentEnricher
             : null;
 
         // ── Step 3: Prepare dispatch core (QGs, reviewers, issue context, provider configs, pipeline config) ──
-        // A project epic's other repositories, or the project review's, get clone-only provider configs so the agent
-        // can read them.
+        // The repository template's stack labels pick the quality gates and reviewers (spec 053 DD7); the agent config
+        // is built from the routed profile and route (DD5). A project epic's other repositories, or the project
+        // review's, get clone-only provider configs so the agent can read them.
         var coreRequest = new DispatchCoreRequest(
-            RequiredLabels: profile.MatchLabels,
+            StackLabels: claim.Template?.RequiredLabels ?? [],
             IssueIdentifier: identity.IssueIdentifier,
             IssueProviderId: new ProviderConfigId(identity.IssueProviderConfigId),
             RepoProviderId: new ProviderConfigId(identity.RepoProviderConfigId),
-            AgentProviderId: profile.AgentProviderConfigId ?? "",
+            AgentConfig: claim.AgentConfig,
             BrainProviderId: identity.BrainProviderConfigId,
             PipelineProviderId: identity.PipelineProviderConfigId,
             Project: project,
@@ -284,11 +361,13 @@ public class AssignmentEnricher
             _logger.Warning(
                 "AssignmentEnricher: PrepareDispatchCoreAsync returned null for IssueIdentifier {IssueIdentifier}",
                 identity.IssueIdentifier);
-            return null;
+            return EnrichmentResult.Unavailable.Instance;
         }
 
         var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount) = core.Value;
+        if (CheckConfigCollision(identity, claim, providerConfigs) is { Refusal: { } collision })
+            return collision;
 
         // A tracker issue's triage attempt is recorded when it is claimed, so one that ends without a result still
         // shows (an operator triage's attempt was recorded when it was started)
@@ -311,7 +390,7 @@ public class AssignmentEnricher
         }
 
         // ── Step 4: Build enriched JobDistributionRequest from identity + fresh data ──
-        return identity with
+        return new EnrichmentResult.Enriched(identity with
         {
             // Fresh-fetched mutable fields
             ProviderConfigs = providerConfigs,
@@ -323,7 +402,8 @@ public class AssignmentEnricher
             ProjectReviewRepositories = projectReviewRepositories,
             McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
             ResolvedProfileId = profile.Id,
-            AgentProviderConfigId = profile.AgentProviderConfigId,
+            AgentProviderConfigId = claim.AgentConfig.Id,
+            Route = claim.Route,
             ProjectSteeringContent = project.SteeringContent,
             RepoSteeringContent = providerConfigs
                 .TryGetProviderConfig(identity.RepoProviderConfigId)?.SteeringContent,
@@ -337,7 +417,7 @@ public class AssignmentEnricher
             StalenessSignal = stalenessSignal,
             AnalysisRefreshCount = refreshCount,
             TriageContextMarkdown = triageContextMarkdown,
-        };
+        });
     }
 
     /// <summary>
@@ -419,70 +499,20 @@ public class AssignmentEnricher
     }
 
     /// <summary>
-    /// Resolves the agent profile for a work item at claim time.
-    /// <para>
-    /// Primary path: finds the enabled profile whose <see cref="AgentProfile.Id"/> equals
-    /// <paramref name="identity"/>'s <see cref="JobDistributionRequest.ResolvedProfileId"/>.
-    /// </para>
-    /// <para>
-    /// Fallback (work item queued before this change, or the profile was deleted/disabled):
-    /// re-resolves via <see cref="ProfileResolver.ResolveByRequiredLabels"/> from the agent
-    /// selector labels and logs an Information message so the operator can diagnose stale items.
-    /// </para>
-    /// </summary>
-    private AgentProfile? ResolveProfile(
-        JobDistributionRequest identity,
-        IReadOnlyList<AgentProfile> profiles,
-        CancellationToken ct)
-    {
-        // TODO: [WARNING] `ct` is never used — this method is entirely synchronous (in-memory LINQ + Split).
-        // The parameter is misleading because callers pass `ct` expecting the call to be cancellable.
-        // Remove it when the caller sites are adjusted (they currently pass `ct` as the third argument).
-        if (!string.IsNullOrEmpty(identity.ResolvedProfileId))
-        {
-            var found = profiles.FirstOrDefault(p => p.Enabled && p.Id == identity.ResolvedProfileId);
-            if (found is not null)
-                return found;
-
-            _logger.Information(
-                "AssignmentEnricher: profile '{ProfileId}' not found or disabled; re-resolving from selector [{Selector}]",
-                identity.ResolvedProfileId, identity.AgentSelector ?? "");
-        }
-
-        // TODO: [WARNING] When ResolvedProfileId is null (work items queued before this change), the
-        // fallback to label resolution happens silently. Requirement 5 says to log at Information for
-        // ALL fallback cases, including null ID. During an upgrade, every in-flight pre-change work item
-        // will fall back without any observable trace. Add a log entry here for the null-ID case.
-        var selectorLabels = (identity.AgentSelector ?? "")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-        return ProfileResolver.ResolveByRequiredLabels(profiles, selectorLabels);
-    }
-
-    /// <summary>
     /// Consolidation-specific enrichment path. Delegates to
     /// <see cref="IConsolidationJobPreparationService.PrepareAsync"/> to resolve provider
     /// configs, vend short-lived tokens, and determine the per-template pipeline configuration.
     /// Issue-fetch infrastructure (<see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/>)
     /// is intentionally bypassed — consolidation agents do not process issues and have no
-    /// quality gates.
+    /// quality gates. <paramref name="claim"/> is the route <see cref="ResolveClaimRouteAsync"/> resolved.
     /// </summary>
-    private async Task<JobDistributionRequest?> EnrichConsolidationCoreAsync(
+    private async Task<EnrichmentResult> EnrichConsolidationCoreAsync(
         JobDistributionRequest identity,
         PipelineProject project,
+        ClaimRoute claim,
         CancellationToken ct)
     {
-        // ── Step 1: Resolve agent profile ────────────────────────────────────────
-        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-        var profile = ResolveProfile(identity, profiles, ct);
-
-        if (profile is null)
-        {
-            _logger.Warning(
-                "AssignmentEnricher: no profile matches selector [{Selector}] for consolidation assignment; cannot enrich",
-                identity.AgentSelector ?? "");
-            return null;
-        }
+        var profile = claim.Profile;
 
         // ── Step 2: Resolve provider configs and vend tokens via consolidation service ──
         var templateId = string.IsNullOrEmpty(identity.ConsolidationTemplateId)
@@ -493,7 +523,7 @@ public class AssignmentEnricher
         var preparation = await _consolidationPreparer.PrepareAsync(
             runType,
             templateId,
-            profile,
+            claim.AgentConfig,
             ct);
 
         var lastSuccessfulRunUtc = await ReadConsolidationHistoryAsync(identity, ct);
@@ -504,19 +534,22 @@ public class AssignmentEnricher
         // IssueDetail, ParsedIssue, IssueComments are identity-preserved (null in minimal
         // payload) — consolidation agents do not fetch or process issues.
         var providerConfigs = preparation.ProviderConfigs ?? [];
-        return identity with
+        if (CheckConfigCollision(identity, claim, providerConfigs) is { Refusal: { } collision })
+            return collision;
+        return new EnrichmentResult.Enriched(identity with
         {
             ProviderConfigs = providerConfigs,
             RepoProviderConfigId = preparation.RepoProviderConfigId,
             BrainProviderConfigId = preparation.BrainProviderConfigId,
             PipelineConfiguration = preparation.PipelineConfiguration,
             ResolvedProfileId = profile.Id,
-            AgentProviderConfigId = profile.AgentProviderConfigId,
+            AgentProviderConfigId = claim.AgentConfig.Id,
+            Route = claim.Route,
             McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
             ProjectSteeringContent = project.SteeringContent,
             RepoSteeringContent = providerConfigs.TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
             ConsolidationLastSuccessfulRunUtc = lastSuccessfulRunUtc,
-        };
+        });
     }
 
     /// <summary>
@@ -650,7 +683,7 @@ public class AssignmentEnricher
         public Task<ConsolidationJobPreparationResult> PrepareAsync(
             ConsolidationRunType type,
             TemplateId? templateId,
-            AgentProfile? profile,
+            ProviderConfig? agentConfig,
             CancellationToken ct)
             => throw new InvalidOperationException(
                 "IConsolidationJobPreparationService is not available in this context. " +

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgent.Api.IntegrationTests.AgentRouting;
 using CodingAgent.Api.Triage;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
@@ -8,6 +9,8 @@ using CodingAgent.Orchestration;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
@@ -35,8 +38,8 @@ public sealed class TriageServiceTests
     private readonly Mock<ITriageStore> _store = new();
     private readonly Mock<IConfigurationStore> _config = new();
     private readonly Mock<IOrchestratorRunService> _runs = new();
-    private readonly Mock<TriageTrackerOperations> _tracker = new(Mock.Of<IConfigurationStore>(), Mock.Of<IProviderFactory>(),
-        Mock.Of<ILabelService>(), Serilog.Log.Logger);
+    private readonly Mock<TriageTrackerOperations> _tracker = new(Mock.Of<IConfigurationStore>(), Mock.Of<IAgentProfileStore>(),
+        Mock.Of<IProviderFactory>(), Mock.Of<ILabelService>(), Serilog.Log.Logger);
     private readonly Mock<IProviderFactory> _providers = new();
     private readonly Mock<IIssueProvider> _issues = new();
     private readonly Dictionary<Guid, TriageRecord> _records = [];
@@ -50,8 +53,8 @@ public sealed class TriageServiceTests
             .ReturnsAsync((string id, ProviderKind kind, CancellationToken _) =>
                 new ProviderConfig { Id = id, DisplayName = id, ProviderType = "GitHub", Kind = kind, RequiredLabels = ["dotnet"] });
         _config.Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
-        _config.Setup(c => c.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new AgentProfile { Id = "p", DisplayName = "p", AgentProviderConfigId = "a", MatchLabels = ["dotnet"], Enabled = true }]);
+        // Spec 053: the triage is routed when it starts, by the global default row.
+        AgentRoutingTestSupport.SeedRouting(new Factory(_db));
 
         // The store mock keeps records in memory and applies updates
         _store.Setup(s => s.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -71,10 +74,18 @@ public sealed class TriageServiceTests
     }
 
     private TriageService Service() => new(
-        new Factory(_db), _store.Object, _config.Object, _runs.Object, _tracker.Object, Serilog.Log.Logger);
+        new Factory(_db), _store.Object, _config.Object, _runs.Object, _tracker.Object,
+        AgentRoutingTestSupport.Router(new Factory(_db)), Serilog.Log.Logger);
 
     private TriageIssueCreator Creator() => new(
-        _store.Object, _config.Object, _providers.Object, new NoLocks(), _tracker.Object, Serilog.Log.Logger);
+        _store.Object, _config.Object, NoProfiles(), _providers.Object, new NoLocks(), _tracker.Object, Serilog.Log.Logger);
+
+    private static IAgentProfileStore NoProfiles()
+    {
+        var profiles = new Mock<IAgentProfileStore>();
+        profiles.Setup(p => p.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        return profiles.Object;
+    }
 
     // ── Create ───────────────────────────────────────────────────────────────
 
@@ -93,7 +104,7 @@ public sealed class TriageServiceTests
         workItem.TaskType.Should().Be(WorkItemTaskType.Triage);
         workItem.TimeoutSeconds.Should().Be(45 * 60, "the project's AgentTimeout override applies");
         workItem.PriorityWeight.Should().Be(100, "an operator triage is a manual dispatch");
-        workItem.AgentSelector.Should().Be("dotnet");
+        workItem.AgentSelector.Should().Be(AgentRoutingTestData.DefaultJobTemplate, "the routed profile's job template runs it");
         detail.Record.Attempts.Single().WorkItemId.Should().Be(workItem.Id.ToString());
 
         var payload = JsonSerializer.Deserialize<JobDistributionRequest>(workItem.Payload!, PipelineJsonOptions.Lenient)!;
@@ -101,6 +112,27 @@ public sealed class TriageServiceTests
         payload.RunType.Should().Be(PipelineRunType.Triage);
         payload.InitiatedBy.Should().Be(InitiatedByConstants.Manual);
         _runs.Verify(r => r.AddRun(It.Is<PipelineRun>(run => run.RunId == workItem.Id.ToString())), Times.Once);
+    }
+
+    [Fact]
+    public async Task Create_WithoutAnAgentRoute_IsRefusedWithTheReason_AndInsertsNothing()
+    {
+        // Spec 053 req 2.9, 4.12: nothing picks a profile no route names.
+        await using (var db = new Factory(_db).CreateDbContext())
+        {
+            db.KeyValueStore.RemoveRange(db.KeyValueStore);
+            await db.SaveChangesAsync();
+        }
+
+        var act = () => Service().CreateAsync(Request(), CancellationToken.None);
+
+        var refusal = (await act.Should().ThrowAsync<TriageRequestException>()).Which;
+        refusal.StatusCode.Should().Be(400);
+        refusal.Message.Should().Contain(AgentRouteRefusalReason.NoRouteText);
+        await using var check = new Factory(_db).CreateDbContext();
+        (await check.Triages.AnyAsync()).Should().BeFalse();
+        (await check.WorkItems.AnyAsync()).Should().BeFalse();
+        _runs.Verify(r => r.AddRun(It.IsAny<PipelineRun>()), Times.Never);
     }
 
     [Fact]

@@ -226,8 +226,6 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
                 sp.GetRequiredService<ApiProjectStore>()) { CacheTtlSeconds = 0 });
             services.RemoveAll<IConfigurationStore>();
             services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
-            services.RemoveAll<IAgentProfileStore>();
-            services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
             services.RemoveAll<IQualityGateConfigStore>();
             services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
             services.RemoveAll<IReviewerConfigStore>();

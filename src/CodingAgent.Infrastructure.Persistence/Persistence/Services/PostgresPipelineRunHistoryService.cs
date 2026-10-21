@@ -362,13 +362,13 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             existing.CompletedAt = entity.CompletedAt;
             existing.RetryCount = entity.RetryCount;
             existing.PullRequestUrl = entity.PullRequestUrl;
-            existing.ModelName = entity.ModelName;
+            existing.SummaryJson = KeepStoredModel(entity, existing.ModelName);
+            existing.ModelName = entity.ModelName ?? existing.ModelName;
             existing.AgentId = entity.AgentId;
             existing.ProjectId = entity.ProjectId;
             existing.ProjectName = entity.ProjectName;
             existing.RunType = entity.RunType;
             existing.IssueProviderConfigId = entity.IssueProviderConfigId;
-            existing.SummaryJson = entity.SummaryJson;
             existing.HarnessVersion = entity.HarnessVersion;
             existing.WorkItemId = entity.WorkItemId;
         }
@@ -396,13 +396,13 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 retry.CompletedAt = entity.CompletedAt;
                 retry.RetryCount = entity.RetryCount;
                 retry.PullRequestUrl = entity.PullRequestUrl;
-                retry.ModelName = entity.ModelName;
+                retry.SummaryJson = KeepStoredModel(entity, retry.ModelName);
+                retry.ModelName = entity.ModelName ?? retry.ModelName;
                 retry.AgentId = entity.AgentId;
                 retry.ProjectId = entity.ProjectId;
                 retry.ProjectName = entity.ProjectName;
                 retry.RunType = entity.RunType;
                 retry.IssueProviderConfigId = entity.IssueProviderConfigId;
-                retry.SummaryJson = entity.SummaryJson;
                 retry.HarnessVersion = entity.HarnessVersion;
                 retry.WorkItemId = entity.WorkItemId;
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -411,6 +411,19 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     // ── Mapping ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The summary to store when <paramref name="entity"/> updates a row whose model is <paramref name="storedModel"/>: a run
+    /// created from a route has its model (spec 053), and an agent that reports none (auto) must not erase it.
+    /// </summary>
+    private static string? KeepStoredModel(PipelineRunEntity entity, string? storedModel)
+    {
+        if (entity.ModelName is not null || storedModel is null || entity.SummaryJson is null
+            || System.Text.Json.Nodes.JsonNode.Parse(entity.SummaryJson) is not System.Text.Json.Nodes.JsonObject summary)
+            return entity.SummaryJson;
+        summary[JsonOptions.PropertyNamingPolicy?.ConvertName(nameof(PipelineRunSummary.ModelName)) ?? nameof(PipelineRunSummary.ModelName)] = storedModel;
+        return summary.ToJsonString(JsonOptions);
+    }
 
     private static PipelineRunEntity ToEntity(PipelineRunSummary summary)
     {
