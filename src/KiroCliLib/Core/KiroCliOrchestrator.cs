@@ -31,6 +31,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     private volatile IProcessWrapper? _activeProcess;
     private volatile bool _lastRunStartedFreshSession;
     private volatile bool _lastRunRejectedConfiguration;
+    private volatile KiroToolLineCounter _toolCounter = new();
     private bool _disposed;
 
     public bool IsExecuting => _activeProcess != null;
@@ -40,6 +41,9 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 
     /// <inheritdoc />
     public bool LastRunRejectedConfiguration => _lastRunRejectedConfiguration;
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, KiroToolCallCount> LastRunToolCalls => _toolCounter.Snapshot();
     public int? ActiveProcessId
     {
         get
@@ -140,6 +144,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 
             _lastRunStartedFreshSession = false;
             _lastRunRejectedConfiguration = false;
+            _toolCounter = new KiroToolLineCounter();
             var (exitCode, sessionNotLoaded) = await RunProcessAsync(
                 prompt, workspaceDirectory, useResume, resumeSessionId, environmentVariables, channel?.Writer, cancellationToken);
 
@@ -208,6 +213,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             {
                 var clean = AnsiStripper.Strip(line);
                 _logger.Debug("Kiro (stderr): {Line}", clean);
+                _toolCounter.ProcessLine(clean);
                 outputParser.ProcessLine(line);
                 var trimmed = clean.TrimStart();
                 if (!trimmed.StartsWith(ErrorLinePrefix, StringComparison.OrdinalIgnoreCase))

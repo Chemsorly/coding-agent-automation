@@ -229,6 +229,8 @@ Two Warning log lines are emitted from agent pods (starting when each provider s
 
 `McpError` is masked (secrets replaced with `***`) and cut to 200 characters before logging.
 
+**Kiro** populates `ToolCalls` from kiro-cli's stderr `[tool]` lines. Limitations: the CLI reports no failure reason (all failures count as `FailedUnknown`); status lines carry no call ID, so a failure is only attributed to a key when exactly one call was outstanding at the time (parallel calls are counted but not attributed); `UnavailableMcpServers` is always null for Kiro.
+
 **LogQL example** — total failed calls by server and cause over 24 hours:
 
 ```logql
