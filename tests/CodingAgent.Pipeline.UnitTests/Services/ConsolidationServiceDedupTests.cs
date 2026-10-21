@@ -146,7 +146,8 @@ public sealed class ConsolidationServiceDedupTests
     /// IssueIdentifier for global runs is "{type}:global".
     /// </summary>
     [Fact]
-    public async Task TriggerAsync_SecondTrigger_GlobalRun_WhileFirstNonTerminal_ReturnsNull()    {
+    public async Task TriggerAsync_SecondTrigger_GlobalRun_WhileFirstNonTerminal_ReturnsNull()
+    {
         var mockDistributor = new Mock<IWorkDistributor>();
         mockDistributor
             .SetupSequence(d => d.DistributeAsync(

@@ -21,12 +21,20 @@ public sealed class ConsolidationServiceBrainScopeTests
 
     private static readonly PipelineJobTemplate TemplateA = new()
     {
-        Id = "tmpl-a", Name = "Repo A", IssueProviderId = "ip-a", RepoProviderId = "rp-a", BrainProviderId = SharedBrain
+        Id = "tmpl-a",
+        Name = "Repo A",
+        IssueProviderId = "ip-a",
+        RepoProviderId = "rp-a",
+        BrainProviderId = SharedBrain
     };
 
     private static readonly PipelineJobTemplate TemplateB = new()
     {
-        Id = "tmpl-b", Name = "Repo B", IssueProviderId = "ip-b", RepoProviderId = "rp-b", BrainProviderId = SharedBrain
+        Id = "tmpl-b",
+        Name = "Repo B",
+        IssueProviderId = "ip-b",
+        RepoProviderId = "rp-b",
+        BrainProviderId = SharedBrain
     };
 
     private readonly Mock<IProjectStore> _projectStore = new();

@@ -35,7 +35,10 @@ public class ConsolidationActionsColumnTests : BunitContext
             .Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
-                Items = Array.Empty<PipelineRunSummary>().ToList(), Page = 1, PageSize = 200, HasMore = false
+                Items = Array.Empty<PipelineRunSummary>().ToList(),
+                Page = 1,
+                PageSize = 200,
+                HasMore = false
             });
 
         Services.AddSingleton(_mockConsolidationClient.Object);
@@ -84,7 +87,10 @@ public class ConsolidationActionsColumnTests : BunitContext
             .Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
-                Items = runs.ToList(), Page = 1, PageSize = 200, HasMore = false
+                Items = runs.ToList(),
+                Page = 1,
+                PageSize = 200,
+                HasMore = false
             });
     }
 
