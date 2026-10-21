@@ -727,6 +727,142 @@ public sealed class DispatchWorkItemServiceTests
             "caller owns the lock on the Pending success path — DisposeAsync must not be called inside TryEnterSelectorDispatchAsync");
     }
 
+    // ── PrepareDispatchVariantAsync ───────────────────────────────────────────
+
+    /// <summary>
+    /// Regression test for issue #3758 (AC3).
+    /// When the work item has a non-null <see cref="WorkItemEntity.ProjectId"/>, and the project
+    /// row exists in the database with a <c>Secrets</c> entry in its Settings JSON,
+    /// <see cref="WorkItemDispatchEndpoints.PrepareDispatchVariantAsync"/> must return
+    /// <c>shouldContinue = true</c> and a non-null <c>projectSecrets</c> dictionary populated
+    /// with the project's secrets.
+    /// </summary>
+    [Fact]
+    public async Task PrepareDispatchVariantAsync_WithNonNullProjectId_PopulatesProjectSecretsFromDb()
+    {
+        // Arrange — seed a ProjectEntity with a Secrets entry in its Settings JSON.
+        var projectId = Guid.NewGuid();
+        var dbFactory = CreateDbFactory();
+
+        await using (var seedCtx = await dbFactory.CreateDbContextAsync())
+        {
+            seedCtx.Projects.Add(new ProjectEntity
+            {
+                Id = projectId,
+                Name = "Test Project",
+                Enabled = true,
+                Settings = "{\"Secrets\":{\"MY_KEY\":\"my_value\"}}"
+            });
+            await seedCtx.SaveChangesAsync();
+        }
+
+        // WorkItemEntity is constructed in memory — PrepareDispatchVariantAsync only reads
+        // workItem.ProjectId and calls DispatchLifecycleService.LoadProjectSecretsAsync(db, ...)
+        // which queries db.Projects. It never queries db.WorkItems, so no DB insert is needed.
+        var workItem = new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"secrets-test-{Guid.NewGuid():N}",
+            IssueProviderConfigId = "prov-1",
+            Status = WorkItemStatus.Pending,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Payload = "{}",
+            ProjectId = projectId
+        };
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // Act
+        var (shouldContinue, projectSecrets) = await WorkItemDispatchEndpoints
+            .PrepareDispatchVariantAsync(db, workItem, CancellationToken.None);
+
+        // Assert
+        shouldContinue.Should().BeTrue("the variant preparation must proceed when ProjectId is set");
+        projectSecrets.Should().NotBeNull("a project with a Secrets entry must produce a non-null dictionary");
+        projectSecrets!.Should().ContainKey("MY_KEY", "the key from the project's Secrets JSON must be present");
+        projectSecrets["MY_KEY"].Should().Be("my_value", "the value must match the project's Secrets JSON");
+    }
+
+    /// <summary>
+    /// Complementary test: when <see cref="WorkItemEntity.ProjectId"/> is null,
+    /// <see cref="WorkItemDispatchEndpoints.PrepareDispatchVariantAsync"/> must return
+    /// <c>shouldContinue = true</c> and a null <c>projectSecrets</c> — the project-secrets
+    /// loading branch is not entered.
+    /// </summary>
+    [Fact]
+    public async Task PrepareDispatchVariantAsync_WithNullProjectId_ReturnsNullSecrets()
+    {
+        // Arrange — work item with no project association.
+        var workItem = new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"no-project-{Guid.NewGuid():N}",
+            IssueProviderConfigId = "prov-1",
+            Status = WorkItemStatus.Pending,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Payload = "{}",
+            ProjectId = null
+        };
+
+        var dbFactory = CreateDbFactory();
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // Act
+        var (shouldContinue, projectSecrets) = await WorkItemDispatchEndpoints
+            .PrepareDispatchVariantAsync(db, workItem, CancellationToken.None);
+
+        // Assert
+        shouldContinue.Should().BeTrue("null ProjectId is not a failure — dispatch proceeds normally");
+        projectSecrets.Should().BeNull("no project is associated — projectSecrets must remain null");
+    }
+
+    /// <summary>
+    /// Complementary test: when <see cref="WorkItemEntity.ProjectId"/> is non-null but the
+    /// referenced project row does not exist in the database, <c>LoadProjectSecretsAsync</c>
+    /// returns null via the <c>FirstOrDefaultAsync</c> → <c>settingsJson is null</c> exit path,
+    /// and <see cref="WorkItemDispatchEndpoints.PrepareDispatchVariantAsync"/> must therefore
+    /// return <c>shouldContinue = true</c> and a null <c>projectSecrets</c>.
+    /// A regression that returns an empty dictionary or throws instead of null would be caught here.
+    /// </summary>
+    [Fact]
+    public async Task PrepareDispatchVariantAsync_WithNonNullProjectId_ProjectNotInDb_ReturnsNullSecrets()
+    {
+        // Arrange — ProjectId points to a GUID that has no corresponding row in the DB.
+        var missingProjectId = Guid.NewGuid();
+        var workItem = new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"missing-project-{Guid.NewGuid():N}",
+            IssueProviderConfigId = "prov-1",
+            Status = WorkItemStatus.Pending,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Payload = "{}",
+            ProjectId = missingProjectId
+        };
+
+        // Empty DB — no ProjectEntity for missingProjectId.
+        var dbFactory = CreateDbFactory();
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // Act
+        var (shouldContinue, projectSecrets) = await WorkItemDispatchEndpoints
+            .PrepareDispatchVariantAsync(db, workItem, CancellationToken.None);
+
+        // Assert
+        shouldContinue.Should().BeTrue("a missing project row is not a hard failure — dispatch proceeds");
+        projectSecrets.Should().BeNull(
+            "LoadProjectSecretsAsync returns null when FirstOrDefaultAsync finds no project row");
+    }
+
     /// <summary>
     /// AC3 — TimeoutException path unchanged.
     /// When AcquireAsync throws TimeoutException the method must return (null, 503) without
