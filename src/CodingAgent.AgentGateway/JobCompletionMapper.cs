@@ -54,5 +54,24 @@ internal static class JobCompletionMapper
         run.TotalCost = payload.TotalCost;
         run.FinalLabel = payload.FinalLabel;
         run.HarnessVersion = payload.HarnessVersion;
+        if (payload.PhaseBreakdown is not null)
+        {
+            run.Metrics.PhaseBreakdown.Clear();
+            foreach (var (phase, usage) in payload.PhaseBreakdown)
+                run.Metrics.PhaseBreakdown[phase] = ToPhaseUsage(usage);
+        }
     }
+
+    private static PhaseUsage ToPhaseUsage(PhaseUsagePayload p) =>
+        new(p.Tokens, p.Cost, p.SessionCount, p.AgentTimeSeconds, p.Provider, p.Model)
+        {
+            InputTokens = p.InputTokens,
+            OutputTokens = p.OutputTokens,
+            ReasoningTokens = p.ReasoningTokens,
+            CacheReadTokens = p.CacheReadTokens,
+            CacheWriteTokens = p.CacheWriteTokens,
+            Turns = p.Turns,
+            WebSearchRequests = p.WebSearchRequests,
+            BillingMode = p.BillingMode
+        };
 }
