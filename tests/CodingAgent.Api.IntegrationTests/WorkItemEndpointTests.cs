@@ -1063,7 +1063,7 @@ public sealed class WorkItemEndpointTests
     {
         var request = new JobDistributionRequest
         {
-            IssueIdentifier = new IssueIdentifier($"HarnessSuggestions:{Guid.NewGuid():N}"),
+            IssueIdentifier = new IssueIdentifier($"BrainConsolidation:{Guid.NewGuid():N}"),
             IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
             RepoProviderConfigId = "repo-1",
             InitiatedBy = "test",

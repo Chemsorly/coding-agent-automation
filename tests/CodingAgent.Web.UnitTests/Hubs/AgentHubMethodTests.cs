@@ -289,40 +289,6 @@ public sealed class AgentHubMethodTests
     }
 
     [Fact]
-    public async Task ReportConsolidationComplete_WithHarnessSuggestions_SavesAndIncrementsBadge()
-    {
-        var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeJobId: "job-55");
-        _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(agent);
-
-        var suggestions = new HarnessSuggestions
-        {
-            BasedOnRunCount = 10,
-            GeneratedAtUtc = DateTime.UtcNow,
-            SuccessRate = 0.8m,
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new() { Frequency = 3, Rationale = "reason A", Text = "do A" },
-                new() { Frequency = 2, Rationale = "reason B", Text = "do B" },
-            },
-        };
-
-        var result = new ConsolidationJobResult
-        {
-            JobId = "job-55",
-            Success = true,
-            HarnessSuggestions = suggestions,
-        };
-
-        var hub = CreateHub();
-        await hub.ReportConsolidationComplete(result);
-
-        // HarnessSuggestions and badge count are now handled inside HandleConsolidationCompleteAsync
-        _mockConsolidationOps.Verify(c => c.HandleConsolidationCompleteAsync(
-            It.Is<ConsolidationJobResult>(r => r.HarnessSuggestions != null),
-            It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
     public async Task ReportConsolidationComplete_WithCreatedIssues_IncrementsBadge()
     {
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeJobId: "job-66");

@@ -1046,9 +1046,9 @@ public class PostgresConfigurationStoreTests : IDisposable
     [Fact]
     public async Task GetProjectByIdAsync_StoredJsonWithRemovedFields_LoadsWithoutError()
     {
-        // Arrange: construct Settings JSON that still contains the three fields removed from
-        // PipelineProject in issue #3150 (MaxConcurrentDecompositions, MinIssueSlots,
-        // HarnessSuggestionsReviewEnabled). This simulates a row that was written before the
+        // Arrange: construct Settings JSON that still contains fields removed from
+        // PipelineProject in issue #3150 (MaxConcurrentDecompositions and MinIssueSlots,
+        // among others). This simulates a row that was written before the
         // upgrade and now loads into the trimmed model.
         var projectId = Guid.NewGuid();
         var legacyJson = $$"""
@@ -1057,8 +1057,7 @@ public class PostgresConfigurationStoreTests : IDisposable
               "name": "LegacyProject",
               "enabled": true,
               "maxConcurrentDecompositions": 5,
-              "minIssueSlots": 2,
-              "harnessSuggestionsReviewEnabled": false
+              "minIssueSlots": 2
             }
             """;
 

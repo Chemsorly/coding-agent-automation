@@ -2,12 +2,12 @@ namespace CodingAgent.Infrastructure.Persistence.Entities;
 
 /// <summary>
 /// Generic key-value store for small data that doesn't warrant its own table.
-/// Used for: loop state, harness suggestions, etc.
+/// Used for: loop state, etc.
 /// Maps to the "KeyValueStore" table.
 /// </summary>
 public class KeyValueEntity
 {
-    /// <summary>Well-known string key (e.g., "loop-state", "harness-suggestions").</summary>
+    /// <summary>Well-known string key (e.g., "loop-state").</summary>
     public required string Key { get; set; }
 
     /// <summary>JSONB payload.</summary>

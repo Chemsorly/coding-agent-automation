@@ -35,7 +35,7 @@ public static class ApiServiceCollectionExtensions
     /// <summary>
     /// Registers infrastructure services for the Pipeline API:
     /// EF pooled factory, distributed lock, resilience pipelines, config store,
-    /// run history, consolidation/harness/loop-state stores, key-value store.
+    /// run history, consolidation/loop-state stores, key-value store.
     /// </summary>
     public static IServiceCollection AddApiInfrastructure(
         this IServiceCollection services,
@@ -104,10 +104,6 @@ public static class ApiServiceCollectionExtensions
         // ── ILoopStateStore ─────────────────────────────────────────────────
         services.AddSingleton<ILoopStateStore>(sp =>
             new PostgresLoopStateStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-
-        // ── IHarnessSuggestionStore ─────────────────────────────────────────
-        services.AddSingleton<IHarnessSuggestionStore>(sp =>
-            new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // ── IKeyValueStore ──────────────────────────────────────────────────
         services.AddScoped<IKeyValueStore, PostgresKeyValueStore>();
@@ -451,7 +447,6 @@ public static class ApiServiceCollectionExtensions
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>(),
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
                 SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
@@ -685,8 +680,7 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<ConsolidationTemplateResolver>(),
             Log.Logger,
             new ConsolidationRunContextSources(
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>()),
+                sp.GetRequiredService<IPipelineRunHistoryService>()),
             sp.GetRequiredService<ITriageStore>()));
 
         // ── Pending dispatch services (POST /api/work-items/{id}/dispatch) ───────────────────

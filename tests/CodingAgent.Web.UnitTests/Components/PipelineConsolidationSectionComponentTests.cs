@@ -46,7 +46,6 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
 
         Assert.Contains("Refactoring Review", cut.Markup);
         Assert.Contains("Brain Consolidation Review", cut.Markup);
-        Assert.Contains("Harness Suggestions Review", cut.Markup);
     }
 
     [Fact]
@@ -59,8 +58,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
                 HotspotAnalysisLookback = TimeSpan.FromDays(60),
                 RefactoringOutcomeLookback = TimeSpan.FromDays(45),
                 RefactoringReviewEnabled = false,
-                BrainConsolidationReviewEnabled = false,
-                HarnessSuggestionsReviewEnabled = false
+                BrainConsolidationReviewEnabled = false
             });
 
         var cut = Render<PipelineConsolidationSection>(p =>
@@ -122,6 +120,5 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
         Assert.Equal(TimeSpan.FromDays(90), saved.RefactoringOutcomeLookback);
         Assert.True(saved.RefactoringReviewEnabled);
         Assert.True(saved.BrainConsolidationReviewEnabled);
-        Assert.True(saved.HarnessSuggestionsReviewEnabled);
     }
 }

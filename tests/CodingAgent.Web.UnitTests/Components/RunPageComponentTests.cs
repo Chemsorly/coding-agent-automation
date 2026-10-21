@@ -1307,31 +1307,31 @@ public class RunPageComponentTests : BunitContext
     }
 
     /// <summary>
-    /// A harness-suggestions run with ConsolidationResultSummary and no structured outcomes
+    /// A consolidation run with ConsolidationResultSummary and no structured outcomes
     /// must still show the plain "Result" section.
     /// </summary>
     [Fact]
-    public void HarnessRun_KeepsResultSection()
+    public void ConsolidationRunWithSummaryOnly_KeepsResultSection()
     {
         var summary = new PipelineRunSummary
         {
             RunId = Guid.NewGuid().ToString(),
             RunType = PipelineRunType.Consolidation,
-            ConsolidationType = ConsolidationRunType.HarnessSuggestions,
-            IssueIdentifier = "HarnessSuggestions:global",
-            IssueTitle = "HarnessSuggestions:global",
+            ConsolidationType = ConsolidationRunType.BrainConsolidation,
+            IssueIdentifier = "BrainConsolidation:global",
+            IssueTitle = "BrainConsolidation:global",
             FinalStep = PipelineStep.Completed,
             LastActiveStep = PipelineStep.PushingBrainChanges,
             StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CompletedAtOffset = DateTimeOffset.UtcNow,
-            ConsolidationResultSummary = "Suggested 4 harness updates.",
+            ConsolidationResultSummary = "Consolidated 4 brain updates.",
             // No RefactoringScanOutcome, no BrainConsolidationOutcome
         };
         RegisterServices(summary);
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
 
-        cut.Find("[data-testid='consolidation-result']").TextContent.Should().Contain("Suggested 4 harness updates.");
+        cut.Find("[data-testid='consolidation-result']").TextContent.Should().Contain("Consolidated 4 brain updates.");
     }
 
     /// <summary>

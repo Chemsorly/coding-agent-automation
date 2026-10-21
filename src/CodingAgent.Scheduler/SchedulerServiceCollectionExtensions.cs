@@ -65,9 +65,6 @@ public static class SchedulerServiceCollectionExtensions
         services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(configurePipelineApiClient)
             .AddStandardResilienceHandler(configureResilienceOptions);
 
-        services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(configurePipelineApiClient)
-            .AddStandardResilienceHandler(configureResilienceOptions);
-
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
@@ -135,8 +132,6 @@ public static class SchedulerServiceCollectionExtensions
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
 
         // ── Consolidation services ────────────────────────────────────────────
-        services.AddSingleton<IHarnessSuggestionStore>(sp =>
-            new ApiBackedHarnessSuggestionStore(sp.GetRequiredService<IPipelineApiHarnessSuggestionClient>()));
         services.AddSingleton<IConsolidationSelectorResolver>(sp =>
             new ConsolidationSelectorResolver(
                 sp.GetRequiredService<IAgentProfileStore>(),
@@ -411,7 +406,6 @@ public static class SchedulerServiceCollectionExtensions
             Log.Logger,
             new PipelineConfiguration(),
             sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<IHarnessSuggestionStore>(),
             sp.GetRequiredService<IProviderConfigStore>(),
             WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
             SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),

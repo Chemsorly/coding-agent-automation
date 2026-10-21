@@ -209,7 +209,7 @@ public sealed class PipelineRunSummary
     public string? ConsolidationResultSummary { get; init; }
 
     /// <summary>
-    /// Consolidation template display name (e.g. "My Repo"), or null for global/harness-suggestions runs
+    /// Consolidation template display name (e.g. "My Repo"), or null for global-scope runs
     /// and for runs persisted before this field was introduced.
     /// Stored in the JSONB SummaryJson column; no DB migration needed.
     /// </summary>

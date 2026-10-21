@@ -8,12 +8,11 @@ namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for the consolidation dispatch flow — verifying that
-/// <c>ReportConsolidationComplete</c> correctly persists harness suggestions
-/// and increments the badge count.
+/// <c>ReportConsolidationComplete</c> correctly increments the badge count for created issues.
 /// Since <see cref="CodingAgent.AgentGateway.AgentHub"/> depends on sealed/complex services
 /// that cannot be easily mocked in isolation, these tests validate the dispatch logic
 /// through the service layer contracts.
-/// Validates: Requirements 3.1, 8.1, 10.1
+/// Validates: Requirements 3.1, 10.1
 /// </summary>
 public sealed class ConsolidationDispatchTests
 {
@@ -24,90 +23,6 @@ public sealed class ConsolidationDispatchTests
     {
         _mockConsolidationService = new Mock<IConsolidationService>();
         _badgeService = new ConsolidationBadgeService();
-    }
-
-    // ── Harness suggestions are persisted on completion ──────────────────
-
-    // TODO [WARNING]: The tests in this class are tautological — they simulate the hub's dispatch logic
-    // inline (e.g. the if-block calling SaveHarnessSuggestionsAsync, IncrementBy, etc.) rather than
-    // invoking the actual SUT (HubConsolidationOperations). Moq.Verify then confirms the test's own
-    // inline code ran, not production behavior. If the production code were changed, these tests would
-    // still pass. They should be rewritten to call HubConsolidationOperations.HandleConsolidationCompleteAsync
-    // directly and assert on observable side-effects (suggestions saved, badge incremented, OnChange fired).
-    // See review-findings-testqualityreviewer.md for details. (issue #3030)
-
-    [Fact]
-    public async Task ReportConsolidationComplete_WithHarnessSuggestions_PersistsSuggestions()
-    {
-        // Validates: Requirement 8.1
-        var suggestions = new HarnessSuggestions
-        {
-            GeneratedAtUtc = new DateTime(2026, 7, 15, 10, 0, 0, DateTimeKind.Utc),
-            BasedOnRunCount = 20,
-            SuccessRate = 0.75m,
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new()
-                {
-                    Text = "Increase timeout for large repos",
-                    Rationale = "5 of 20 runs timed out on repos > 500 files",
-                    Frequency = 5
-                },
-                new()
-                {
-                    Text = "Add explicit file context for config files",
-                    Rationale = "Agents miss appsettings.json in 3 runs",
-                    Frequency = 3
-                }
-            }
-        };
-
-        var result = new ConsolidationJobResult
-        {
-            JobId = "run-003",
-            Success = true,
-            Summary = "Generated 2 suggestions from 20 runs",
-            HarnessSuggestions = suggestions
-        };
-
-        // Simulate the hub's behavior: persist suggestions when present
-        if (result.HarnessSuggestions is not null)
-        {
-            await _mockConsolidationService.Object.SaveHarnessSuggestionsAsync(
-                result.HarnessSuggestions, CancellationToken.None);
-        }
-
-        _mockConsolidationService.Verify(
-            s => s.SaveHarnessSuggestionsAsync(
-                It.Is<HarnessSuggestions>(h =>
-                    h.BasedOnRunCount == 20 &&
-                    h.SuccessRate == 0.75m &&
-                    h.Suggestions.Count == 2),
-                CancellationToken.None),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task ReportConsolidationComplete_WithoutHarnessSuggestions_DoesNotPersist()
-    {
-        // Validates: Requirement 8.1 — only persists when suggestions are present
-        var result = new ConsolidationJobResult
-        {
-            JobId = "run-004",
-            Success = true,
-            Summary = "Brain consolidation complete"
-        };
-
-        // Simulate the hub's behavior: only persist if suggestions present
-        if (result.HarnessSuggestions is not null)
-        {
-            await _mockConsolidationService.Object.SaveHarnessSuggestionsAsync(
-                result.HarnessSuggestions, CancellationToken.None);
-        }
-
-        _mockConsolidationService.Verify(
-            s => s.SaveHarnessSuggestionsAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()),
-            Times.Never);
     }
 
     // ── Badge incremented on refactoring issues created ──────────────────
@@ -156,38 +71,6 @@ public sealed class ConsolidationDispatchTests
         }
 
         _badgeService.BadgeCount.Should().Be(0);
-    }
-
-    [Fact]
-    public void ReportConsolidationComplete_WithHarnessSuggestions_IncrementsBadgeBySuggestionCount()
-    {
-        // Validates: Requirement 10.1 — badge includes harness suggestions count
-        var result = new ConsolidationJobResult
-        {
-            JobId = "run-007",
-            Success = true,
-            Summary = "Generated 3 suggestions",
-            HarnessSuggestions = new HarnessSuggestions
-            {
-                GeneratedAtUtc = DateTime.UtcNow,
-                BasedOnRunCount = 10,
-                SuccessRate = 0.8m,
-                Suggestions = new List<HarnessSuggestion>
-                {
-                    new() { Text = "Suggestion 1", Rationale = "Reason 1", Frequency = 5 },
-                    new() { Text = "Suggestion 2", Rationale = "Reason 2", Frequency = 3 },
-                    new() { Text = "Suggestion 3", Rationale = "Reason 3", Frequency = 2 }
-                }
-            }
-        };
-
-        // Simulate the hub's behavior: increment badge for harness suggestions
-        if (result.HarnessSuggestions is not null)
-        {
-            _badgeService.IncrementBy(result.HarnessSuggestions.Suggestions.Count);
-        }
-
-        _badgeService.BadgeCount.Should().Be(3);
     }
 
     // ── Combined scenario: issues + suggestions ─────────────────────────

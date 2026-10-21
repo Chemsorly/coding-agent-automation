@@ -603,9 +603,9 @@ The Consolidation page's API. Several templates and projects can share one brain
 
 | Path | Returns |
 |---|---|
-| `GET /api/ui/consolidation` | `{ templates, brainProviderByTemplate, harnessSuggestions }`. `templates` lists the enabled templates of enabled projects, by project name, as `{ id, name, supportsBrainConsolidation, supportsRefactoringDetection, brainReadOnly }`. `brainProviderByTemplate` maps every template that has a brain to its brain provider. `harnessSuggestions` is `null` until suggestions have been generated. |
+| `GET /api/ui/consolidation` | `{ templates, brainProviderByTemplate }`. `templates` lists the enabled templates of enabled projects, by project name, as `{ id, name, supportsBrainConsolidation, supportsRefactoringDetection, brainReadOnly }`. `brainProviderByTemplate` maps every template that has a brain to its brain provider. |
 | `GET /api/ui/consolidation/templates/{templateId}/refactoring-scan` | `{ maxProposals, maxProposalsIsProjectOverride, hotspotLookbackDays, reviewEnabled, reviewEnabledIsProjectOverride }`: the values a refactoring scan of the template runs with, which are the global settings with the template's project overrides. |
-| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch }`. `type` is `BrainConsolidation`, `RefactoringDetection` or `HarnessSuggestions`. `templateId` is `null` for harness suggestions. `autoDispatch` labels a refactoring scan's issues `agent:next`. Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
+| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch }`. `type` is `BrainConsolidation` or `RefactoringDetection`. `autoDispatch` labels a refactoring scan's issues `agent:next`. Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
 
 ### Pipeline loop
 
@@ -742,7 +742,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET, POST | `/api/ui/chat/options`, `/api/ui/chat` | User token, operator of the chosen project (global operator without one) | Launchable chat profiles; launch a chat pod |
 | POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |
 | GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |
-| POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation, refactoring scan or harness suggestions run |
+| POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation or refactoring scan run |
 | GET | `/api/ui/loop/status` | User token | Pipeline loop status (template entries filtered for scoped users) |
 | POST | `/api/ui/loop/start`, `/stop`, `/resume` | User token, global operator | Ask the Scheduler leader to start, stop or resume the loop |
 | PUT | `/api/scheduler/loop-status` | OperatorApiKey | The Scheduler leader pushes the loop status |

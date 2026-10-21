@@ -113,33 +113,6 @@ public sealed class ConsolidationStalenessServiceTests
         count.Should().Be(0);
     }
 
-    // ── CountFeedbackSinceLastHarnessSuggestionsAsync ──────────────────────
-
-    [Fact]
-    public async Task CountFeedbackSinceLastHarnessSuggestions_CountsOnlyRunsWithFeedback()
-    {
-        _history
-            .Setup(h => h.GetRunHistoryAsync(
-                It.Is<RunHistoryQuery>(q => q.FinalStep == PipelineStep.Completed && q.RunType == PipelineRunType.Consolidation),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(PageOf());
-
-        _history
-            .Setup(h => h.GetRunHistoryAsync(
-                It.Is<RunHistoryQuery>(q => q.FeedbackOnly == true),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(PageOf([
-                MakeSummary(feedback: new RunFeedback { Outcome = FeedbackOutcome.Success, CollectedAtUtc = DateTime.UtcNow, Harness = new HarnessFeedback() }),
-                MakeSummary(feedback: new RunFeedback { Outcome = FeedbackOutcome.Failure, CollectedAtUtc = DateTime.UtcNow, Harness = new HarnessFeedback() }),
-                MakeSummary(feedback: null), // should not be counted
-            ]));
-
-        var sut = CreateSut();
-        var count = await sut.CountFeedbackSinceLastHarnessSuggestionsAsync(CancellationToken.None);
-
-        count.Should().Be(2);
-    }
-
     // ── CountClosedIssuesSinceLastScanAsync ────────────────────────────────
 
     [Fact]

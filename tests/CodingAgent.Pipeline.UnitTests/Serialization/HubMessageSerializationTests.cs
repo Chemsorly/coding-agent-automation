@@ -708,7 +708,7 @@ public class HubMessageSerializationTests
         var original = new ConsolidationJobMessage
         {
             JobId = "consolidation-job-xyz-789",
-            Type = ConsolidationRunType.HarnessSuggestions,
+            Type = ConsolidationRunType.RefactoringDetection,
             TemplateId = "template-dotnet-10",
             TemplateName = "dotnet-10-backend",
             ProviderConfigs = new List<ProviderConfig>
@@ -761,7 +761,6 @@ public class HubMessageSerializationTests
                 BrainReadOnly = false
             },
             LastSuccessfulRunUtc = lastSuccess,
-            FeedbackDataJson = "[{\"Outcome\":\"Success\",\"Category\":\"missing context\"}]",
             TraceContext = new Dictionary<string, string>
             {
                 ["traceparent"] = "00-abcdef1234567890abcdef1234567890-1234567890abcdef-01",
@@ -773,11 +772,10 @@ public class HubMessageSerializationTests
 
         // Top-level scalar properties
         deserialized.JobId.Should().Be("consolidation-job-xyz-789");
-        deserialized.Type.Should().Be(ConsolidationRunType.HarnessSuggestions);
+        deserialized.Type.Should().Be(ConsolidationRunType.RefactoringDetection);
         deserialized.TemplateId.Should().Be("template-dotnet-10");
         deserialized.TemplateName.Should().Be("dotnet-10-backend");
         deserialized.LastSuccessfulRunUtc.Should().Be(lastSuccess);
-        deserialized.FeedbackDataJson.Should().Be("[{\"Outcome\":\"Success\",\"Category\":\"missing context\"}]");
 
         // ProviderConfigs
         deserialized.ProviderConfigs.Should().HaveCount(2);

@@ -172,7 +172,6 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
         deserialized.BrainReadOnly.Should().Be(config.BrainReadOnly);
         deserialized.RefactoringReviewEnabled.Should().Be(config.RefactoringReviewEnabled);
         deserialized.BrainConsolidationReviewEnabled.Should().Be(config.BrainConsolidationReviewEnabled);
-        deserialized.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
     }
 
     /// <summary>

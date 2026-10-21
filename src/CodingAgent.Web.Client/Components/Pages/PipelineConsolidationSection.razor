@@ -2,7 +2,7 @@
 
 <section class="settings-section">
     <h2>Consolidation</h2>
-    <p class="section-description">Controls for the consolidation loops: refactoring detection, brain consolidation, and harness suggestions.</p>
+    <p class="section-description">Controls for the consolidation loops: refactoring detection and brain consolidation.</p>
     <div class="provider-form">
         <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxRefactoringProposals)">
             <div class="label-with-hint">
@@ -34,12 +34,6 @@
                     Brain Consolidation Review
                 </label>
             </div>
-            <div class="form-group form-checkbox" data-setting="@nameof(PipelineConfiguration.HarnessSuggestionsReviewEnabled)">
-                <label>
-                    <input type="checkbox" @bind="_harnessSuggestionsReviewEnabled" />
-                    Harness Suggestions Review
-                </label>
-            </div>
         </div>
         <div class="form-group" data-setting="@nameof(PipelineConfiguration.HotspotAnalysisLookback)">
             <div class="label-with-hint">
@@ -65,13 +59,6 @@
                 </div>
                 <input type="number" @bind="_autoBrainConsolidationAfterRuns" min="@SettingLimits.Min(nameof(PipelineConfiguration.AutoBrainConsolidationAfterRuns))" max="@SettingLimits.Max(nameof(PipelineConfiguration.AutoBrainConsolidationAfterRuns))" />
             </div>
-            <div class="form-group" data-setting="@nameof(PipelineConfiguration.AutoHarnessSuggestionsAfterFeedback)">
-                <div class="label-with-hint">
-                    <label>Harness suggestions after N feedback entries</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Start harness suggestions once this many runs have collected feedback since the last run. 0 = off.">?</span>
-                </div>
-                <input type="number" @bind="_autoHarnessSuggestionsAfterFeedback" min="@SettingLimits.Min(nameof(PipelineConfiguration.AutoHarnessSuggestionsAfterFeedback))" max="@SettingLimits.Max(nameof(PipelineConfiguration.AutoHarnessSuggestionsAfterFeedback))" />
-            </div>
             <div class="form-group" data-setting="@nameof(PipelineConfiguration.AutoRefactoringScanAfterClosedIssues)">
                 <div class="label-with-hint">
                     <label>Refactoring scan after N closed issues</label>
@@ -95,10 +82,8 @@
     private int _refactoringOutcomeLookbackDays = 90;
     private bool _refactoringReviewEnabled = true;
     private bool _brainConsolidationReviewEnabled = true;
-    private bool _harnessSuggestionsReviewEnabled = true;
     private bool _showAdvanced;
     private int _autoBrainConsolidationAfterRuns;
-    private int _autoHarnessSuggestionsAfterFeedback;
     private int _autoRefactoringScanAfterClosedIssues;
 
     protected override async Task OnInitializedAsync()
@@ -109,9 +94,7 @@
         _refactoringOutcomeLookbackDays = (int)config.RefactoringOutcomeLookback.TotalDays;
         _refactoringReviewEnabled = config.RefactoringReviewEnabled;
         _brainConsolidationReviewEnabled = config.BrainConsolidationReviewEnabled;
-        _harnessSuggestionsReviewEnabled = config.HarnessSuggestionsReviewEnabled;
         _autoBrainConsolidationAfterRuns = config.AutoBrainConsolidationAfterRuns;
-        _autoHarnessSuggestionsAfterFeedback = config.AutoHarnessSuggestionsAfterFeedback;
         _autoRefactoringScanAfterClosedIssues = config.AutoRefactoringScanAfterClosedIssues;
     }
 
@@ -127,9 +110,7 @@
                     RefactoringOutcomeLookback = TimeSpan.FromDays(_refactoringOutcomeLookbackDays),
                     RefactoringReviewEnabled = _refactoringReviewEnabled,
                     BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
-                    HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled,
                     AutoBrainConsolidationAfterRuns = _autoBrainConsolidationAfterRuns,
-                    AutoHarnessSuggestionsAfterFeedback = _autoHarnessSuggestionsAfterFeedback,
                     AutoRefactoringScanAfterClosedIssues = _autoRefactoringScanAfterClosedIssues
                 },
                 CancellationToken.None);

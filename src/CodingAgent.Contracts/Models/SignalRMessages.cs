@@ -229,7 +229,7 @@ public sealed record JobAssignmentMessage
     [Key(32)]
     public WorkItemTaskType TaskType { get; init; } = WorkItemTaskType.Implementation;
 
-    /// <summary>Consolidation run type (Brain, RefactoringDetection, HarnessSuggestions). Only set for consolidation tasks.</summary>
+    /// <summary>Consolidation run type (Brain, RefactoringDetection). Only set for consolidation tasks.</summary>
     [Key(33)]
     public ConsolidationRunType? ConsolidationRunType { get; init; }
 
@@ -277,9 +277,7 @@ public sealed record JobAssignmentMessage
     [Key(41)]
     public DateTimeOffset? ConsolidationLastSuccessfulRunUtc { get; init; }
 
-    /// <summary>For harness suggestions: the run feedback collected since the last successful run, as JSON.</summary>
-    [Key(42)]
-    public string? ConsolidationFeedbackDataJson { get; init; }
+    // Key(42) is retired (was ConsolidationFeedbackDataJson). Do not reuse.
 
     /// <summary>
     /// For triage runs: the triage's earlier attempts and the project's other triages, as Markdown for

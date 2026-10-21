@@ -64,7 +64,6 @@ public class BackwardCompatibilityPropertyTests
         Assert.Equal(originalConfig.MaxRefactoringProposals, result.MaxRefactoringProposals);
         Assert.Equal(originalConfig.RefactoringReviewEnabled, result.RefactoringReviewEnabled);
         Assert.Equal(originalConfig.BrainConsolidationReviewEnabled, result.BrainConsolidationReviewEnabled);
-        Assert.Equal(originalConfig.HarnessSuggestionsReviewEnabled, result.HarnessSuggestionsReviewEnabled);
         Assert.Equal(originalConfig.BlacklistedPaths, result.BlacklistedPaths);
         Assert.Equal(originalConfig.BrainReadOnly, result.BrainReadOnly);
 
@@ -137,7 +136,6 @@ public class PipelineConfigArbitraries
             from maxRefactoring in Gen.Choose(1, 10)
             from refactoringReview in Gen.Elements(true, false)
             from brainConsolidationReview in Gen.Elements(true, false)
-            from harnessSuggestionsReview in Gen.Elements(true, false)
             from blacklistCount in Gen.Choose(1, 4)
             from blacklistedPaths in Gen.ArrayOf(Gen.Elements(PathPool)).Resize(blacklistCount)
             from brainReadOnly in Gen.Elements(true, false)
@@ -169,7 +167,6 @@ public class PipelineConfigArbitraries
                 MaxRefactoringProposals = maxRefactoring,
                 RefactoringReviewEnabled = refactoringReview,
                 BrainConsolidationReviewEnabled = brainConsolidationReview,
-                HarnessSuggestionsReviewEnabled = harnessSuggestionsReview,
                 BlacklistedPaths = blacklistedPaths.Distinct().ToList(),
                 BrainReadOnly = brainReadOnly,
                 WorkspaceBaseDirectory = workspaceDir,

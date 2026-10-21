@@ -79,7 +79,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.AcceptanceCriteriaPrompt.Should().Be("Custom AC prompt");
         deserialized.RefactoringReviewEnabled.Should().BeFalse();
         deserialized.BrainConsolidationReviewEnabled.Should().BeFalse();
-        deserialized.HarnessSuggestionsReviewEnabled.Should().BeFalse();
         deserialized.BaselineHealthCheckEnabled.Should().BeFalse();
         deserialized.ExternalCiTimeout.Should().Be(TimeSpan.FromMinutes(25));
         deserialized.ExternalCiPollInterval.Should().Be(TimeSpan.FromSeconds(45));
@@ -152,7 +151,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         AcceptanceCriteriaPrompt = "Custom AC prompt",
         RefactoringReviewEnabled = false,
         BrainConsolidationReviewEnabled = false,
-        HarnessSuggestionsReviewEnabled = false,
         BaselineHealthCheckEnabled = false,
         ExternalCiTimeout = TimeSpan.FromMinutes(25),
         ExternalCiPollInterval = TimeSpan.FromSeconds(45),

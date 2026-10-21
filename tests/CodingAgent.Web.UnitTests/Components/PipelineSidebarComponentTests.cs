@@ -758,16 +758,6 @@ public class PipelineSidebarComponentTests : BunitContext
     }
 
     [Fact]
-    public void HarnessSuggestions_HasNoPhases()
-    {
-        var run = CreateConsolidationRun(ConsolidationRunType.HarnessSuggestions);
-        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
-
-        Assert.Empty(cut.FindAll("[data-testid^='phase-']"));
-        Assert.Empty(cut.FindAll("#step-GeneratingCode"));
-    }
-
-    [Fact]
     public void ConsolidationRun_Completed_TicksOnlyItsOwnSteps()
     {
         var run = CreateConsolidationRun(

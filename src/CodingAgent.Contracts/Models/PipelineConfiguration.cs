@@ -313,12 +313,7 @@ public sealed record PipelineConfiguration
     [ProjectOverridable(Order = 24)]
     public bool BrainConsolidationReviewEnabled { get; init; } = true;
 
-    /// <summary>
-    /// When true, harness suggestions are reviewed by an isolated discriminator agent
-    /// before being persisted. Default: true. Harness suggestions are global, so projects cannot override this.
-    /// </summary>
-    [Key(28)]
-    public bool HarnessSuggestionsReviewEnabled { get; init; } = true;
+    // Key(28) retired — HarnessSuggestionsReviewEnabled removed with the harness suggestions loop. Do NOT reuse this Key index.
 
     /// <summary>
     /// When true, the pipeline runs a baseline health check (agent environment + workspace build)
@@ -614,13 +609,7 @@ public sealed record PipelineConfiguration
     [Range(0, 100)]
     public int AutoBrainConsolidationAfterRuns { get; init; }
 
-    /// <summary>
-    /// Harness suggestions start automatically once this many runs have collected feedback since the last
-    /// successful harness suggestion run. 0 turns it off. Default: 0.
-    /// </summary>
-    [Key(87)]
-    [Range(0, 200)]
-    public int AutoHarnessSuggestionsAfterFeedback { get; init; }
+    // Key(87) retired — removed with the consolidation simplification in issue #3581. Do NOT reuse this Key index.
 
     /// <summary>
     /// A refactoring scan of a template starts automatically once this many issues of its tracker that the scan

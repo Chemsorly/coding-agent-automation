@@ -14,7 +14,7 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// <summary>
 /// Tests for AgentHub.Consolidation.cs paths not covered by AgentHubBehaviorTests.
 /// Covers: job-id mismatch → REJECTED, agent null (no status transition),
-/// no HarnessSuggestions (skip save), no CreatedIssues (skip badge increment).
+/// no CreatedIssues (skip badge increment).
 /// T10: ModelFetchService and ConsolidationService now behind IHubConsolidationOperations —
 /// the sealed-type null! workaround is no longer needed.
 /// </summary>
@@ -160,10 +160,10 @@ public sealed class AgentHubConsolidationTests
         returnValue.Should().StartWith("REJECTED:");
     }
 
-    // ── ReportConsolidationComplete — no HarnessSuggestions ─────────────
+    // ── ReportConsolidationComplete — delegates to consolidation ops ─────────────
 
     [Fact]
-    public async Task ReportConsolidationComplete_NoHarnessSuggestions_SkipsSaveAndBadge()
+    public async Task ReportConsolidationComplete_DelegatesToConsolidationOps()
     {
         var agent = CreateAgent();
         agent.ActiveJobId = "crun-1";
@@ -174,8 +174,7 @@ public sealed class AgentHubConsolidationTests
         {
             JobId = "crun-1",
             Success = true,
-            Summary = "OK",
-            HarnessSuggestions = null   // no suggestions
+            Summary = "OK"
         };
 
         await hub.ReportConsolidationComplete(result);
@@ -183,7 +182,6 @@ public sealed class AgentHubConsolidationTests
         _mockConsolidationOps.Verify(c =>
             c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Once);
-        // Badge counting is now inside HandleConsolidationCompleteAsync — no suggestions means badge count not incremented
     }
 
     // ── ReportConsolidationComplete — no CreatedIssues ───────────────────

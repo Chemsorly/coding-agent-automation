@@ -25,7 +25,6 @@ public static class TestPipelineConfig
         AnalysisReviewEnabled = false,
         RefactoringReviewEnabled = false,
         BrainConsolidationReviewEnabled = false,
-        HarnessSuggestionsReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,
@@ -58,7 +57,6 @@ public static class TestPipelineConfig
         ClosedLoopAutoStart = true,
         MinIssueSlots = 1,
         AutoBrainConsolidationAfterRuns = 0,
-        AutoHarnessSuggestionsAfterFeedback = 0,
         AutoRefactoringScanAfterClosedIssues = 0,
     };
 
@@ -75,7 +73,6 @@ public static class TestPipelineConfig
         AnalysisReviewEnabled = false,
         RefactoringReviewEnabled = false,
         BrainConsolidationReviewEnabled = false,
-        HarnessSuggestionsReviewEnabled = false,
         CodeReview = new CodeReviewConfiguration
         {
             MaxIterations = 2,
@@ -108,7 +105,6 @@ public static class TestPipelineConfig
         ClosedLoopAutoStart = true,
         MinIssueSlots = 1,
         AutoBrainConsolidationAfterRuns = 0,
-        AutoHarnessSuggestionsAfterFeedback = 0,
         AutoRefactoringScanAfterClosedIssues = 0,
     };
 

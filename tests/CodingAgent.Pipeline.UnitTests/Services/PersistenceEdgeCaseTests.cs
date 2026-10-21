@@ -41,7 +41,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
     [Fact]
     public async Task ConsolidationService_ConcurrencyGuard_RejectsDuplicateTrigger()
     {
-        var harnessStore = new InMemoryHarnessSuggestionStore();
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>
@@ -63,7 +62,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
-            harnessStore,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
 

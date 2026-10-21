@@ -25,9 +25,7 @@ public sealed class ConsolidationJobResult
     [Key(4)]
     public IReadOnlyList<CreatedIssueInfo>? CreatedIssues { get; init; }
 
-    /// <summary>For harness suggestions: the generated suggestions object.</summary>
-    [Key(5)]
-    public HarnessSuggestions? HarnessSuggestions { get; init; }
+    // Key(5) is retired (was HarnessSuggestions). Do not reuse.
 
     /// <summary>Token usage from the discriminator review agent call.</summary>
     [Key(6)]
