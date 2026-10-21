@@ -276,7 +276,10 @@ public class TriagePageComponentTests : BunitContext
         // The loop starts a tracker triage's attempt from the issue's label, so the returned record shows no new attempt
         var tracker = OperatorRecord(ShopProjectId, Attempt("wi-1", CauseFound(Draft("d1", "Fix")))) with
         {
-            Source = TriageSource.Issue, IssueProviderConfigId = "ip-1", IssueIdentifier = "431", Request = null,
+            Source = TriageSource.Issue,
+            IssueProviderConfigId = "ip-1",
+            IssueIdentifier = "431",
+            Request = null,
         };
         Returns(Detail(tracker));
         _triages.Setup(t => t.RerunAsync(TriageId, It.IsAny<RerunTriageRequest>(), It.IsAny<CancellationToken>()))
