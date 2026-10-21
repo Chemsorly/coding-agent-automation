@@ -1,0 +1,1052 @@
+[
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Implementation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Review",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Decomposition",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Triage",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Consolidation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Implementation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Review",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Decomposition",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Triage",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Consolidation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Implementation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Review",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Decomposition",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Triage",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Consolidation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Implementation",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Review",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Decomposition",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Triage",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Consolidation",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Implementation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Review",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Decomposition",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Triage",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Consolidation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Implementation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Review",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Decomposition",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Triage",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Consolidation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "agentName": "dev",
+      "effort": "high",
+      "model": "claude-sonnet-4-6"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Implementation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Review",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Decomposition",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Triage",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Consolidation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "",
+      "model": "auto"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Implementation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Review",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Decomposition",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Triage",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Consolidation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Implementation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Review",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Decomposition",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Triage",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Consolidation",
+    "providerType": "KiroCli",
+    "settings": {
+      "effort": "max",
+      "model": "claude-opus-4-8"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Implementation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Review",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Decomposition",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Triage",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Consolidation",
+    "providerType": null,
+    "settings": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Implementation",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Review",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Decomposition",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Triage",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Consolidation",
+    "providerType": "OpenCode",
+    "settings": {
+      "baseUrl": "http://opencode.example.test:4096",
+      "effort": "turbo",
+      "model": ""
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Implementation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Review",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Decomposition",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Triage",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Consolidation",
+    "providerType": "ClaudeCode",
+    "settings": {
+      "authMode": "subscription",
+      "effort": "xhigh",
+      "legacyFlag": "1",
+      "mcpConfigPath": "/home/ubuntu/.claude/custom-mcp.json",
+      "model": "opus"
+    }
+  }
+]

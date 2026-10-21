@@ -32,6 +32,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Spec 053: what agents received before agent routing, written once from the old code. -->
+    <None Include="AgentRouting\Golden\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Web.Client\CodingAgent.Web.Client.csproj" />

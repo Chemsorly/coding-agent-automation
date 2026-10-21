@@ -24,7 +24,7 @@ public sealed class DatabaseStartupService
     private readonly IDatabaseProbe? _probe;
     private readonly TimeProvider _timeProvider;
 
-    private const string MigrationLockKey = "caa_schema_migration";
+    internal const string MigrationLockKey = "caa_schema_migration";
 
     /// <summary>
     /// ID of the baseline migration that replaced the original migrations in October 2026. It reuses the ID of
