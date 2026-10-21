@@ -19,8 +19,12 @@ public sealed record AgentProfile
     [Key(2)]
     public IReadOnlyList<string> MatchLabels { get; init; } = [];
 
+    /// <summary>
+    /// The agent provider config of a profile from before spec 053. Not <c>required</c> any more, so a converted
+    /// profile is written with an empty value; the configuration move treats a non-empty value as legacy data.
+    /// </summary>
     [Key(3)]
-    public required string AgentProviderConfigId { get; init; }
+    public string AgentProviderConfigId { get; init; } = "";
 
     [Key(4)]
     public bool Enabled { get; init; } = true;
@@ -37,6 +41,15 @@ public sealed record AgentProfile
     /// </summary>
     [Key(7)]
     public string? JobTemplate { get; init; }
+
+    /// <summary>
+    /// Tool settings (spec 053 req 1.1): the <see cref="ProviderSettingKeys"/> of the job template's tool, such as
+    /// <c>agentName</c> (Kiro), <c>baseUrl</c> (OpenCode), <c>authMode</c> (Claude Code) and <c>mcpConfigPath</c>.
+    /// Never a model or an effort: the route names those. Null in a save body means the form is out of date; readers
+    /// treat null as empty.
+    /// </summary>
+    [Key(8)]
+    public IReadOnlyDictionary<string, string>? Settings { get; init; }
 
     /// <summary>
     /// Returns the canonical agent selector key for this profile. This is the single way to get a

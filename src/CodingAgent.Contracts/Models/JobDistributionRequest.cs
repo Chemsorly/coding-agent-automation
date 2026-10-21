@@ -94,6 +94,12 @@ public record JobDistributionRequest
     /// <summary>Resolved agent profile ID for this work item.</summary>
     public string? ResolvedProfileId { get; init; }
 
+    /// <summary>
+    /// The route the API pinned when it created the work item (spec 053 req 4.4): profile, tool, model, effort and
+    /// source. Null for a work item created before spec 053; such an item is routed at claim.
+    /// </summary>
+    public AgentRouteSnapshot? Route { get; init; }
+
     /// <summary>Resolved agent provider config ID from the agent profile.</summary>
     public string? AgentProviderConfigId { get; init; }
 

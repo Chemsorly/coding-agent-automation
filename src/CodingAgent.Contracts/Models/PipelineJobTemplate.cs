@@ -132,4 +132,12 @@ public sealed record PipelineJobTemplate
     /// </summary>
     [Key(19)]
     public IReadOnlyList<string>? BlacklistedPaths { get; init; }
+
+    /// <summary>
+    /// Repository rows (spec 053 req 3.1): routes that replace the global routes for this repository's work, per task
+    /// type. There is no repository default row. Null means none stored; in a save body null means "keep the stored
+    /// rows", and an empty dictionary clears them.
+    /// </summary>
+    [Key(20)]
+    public IReadOnlyDictionary<WorkItemTaskType, AgentRoute>? AgentRoutes { get; init; }
 }

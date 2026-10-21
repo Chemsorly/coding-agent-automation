@@ -35,8 +35,6 @@ internal sealed class ChatService(
     DispatchServiceOptions options,
     ILogger<ChatService> logger)
 {
-    private const string DefaultMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
-
     /// <summary>
     /// The profiles a chat can be launched for: enabled, with labels that name a job template, the same
     /// profile → template lookup pipeline dispatch uses. A profile without labels has no selector.
@@ -149,9 +147,9 @@ internal sealed class ChatService(
                 "Fix it in Settings → Label Routing → Agent Profiles.");
 
     /// <summary>
-    /// Where the agent writes the MCP servers: the provider's setting, otherwise the default of its type.
-    /// The type is stored PascalCase ("OpenCode"), hence the lower-casing. Without a type the Kiro path is
-    /// used, which leaves an OpenCode or Claude pod without its MCP servers, so that is logged.
+    /// Where the agent writes the MCP servers: the provider's setting, otherwise the default of its tool
+    /// (<see cref="AgentToolCatalog"/>). Without a known type the Kiro path is used, which leaves an OpenCode or
+    /// Claude pod without its MCP servers, so that is logged.
     /// </summary>
     private string McpConfigPath(ProviderConfig agentConfig)
     {
@@ -159,11 +157,6 @@ internal sealed class ChatService(
             return path;
         if (string.IsNullOrWhiteSpace(agentConfig.ProviderType))
             logger.LogWarning("Agent provider config {ProviderConfig} has no provider type; using the Kiro MCP config path", agentConfig.Id);
-        return agentConfig.ProviderType?.ToLowerInvariant() switch
-        {
-            "opencode" => "/home/ubuntu/.opencode/opencode.json",
-            "claudecode" => AgentDefaults.ClaudeMcpConfigPath,
-            _ => DefaultMcpConfigPath,
-        };
+        return (AgentToolCatalog.Find(agentConfig.ProviderType) ?? AgentToolCatalog.Kiro).DefaultMcpConfigPath;
     }
 }

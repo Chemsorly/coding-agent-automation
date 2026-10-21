@@ -644,4 +644,43 @@ public sealed class JobTemplateStoreTests
         result.Should().Be(
             "Agent profile 'Kiro Profile' uses agent provider 'Claude Agent' of type ClaudeCode, but the job template for labels [dotnet,kiro] starts kiro pods. Choose an agent provider of the matching type, or change the job template's providerType in the Helm values.");
     }
+
+    // ── ToolsByKey (spec 053 DD4) ────────────────────────────────────────────
+
+    [Fact]
+    public void ToolsByKey_EmptyStore_IsEmpty()
+        => JobTemplateStore.CreateEmpty().ToolsByKey().Should().BeEmpty();
+
+    [Fact]
+    public void ToolsByKey_MapsTheNormalizedKeyToTheProviderType()
+    {
+        const string yaml = """
+            - labels: " kiro , dotnet "
+              image: agent:latest
+              providerType: kiro
+            - labels: claude,dotnet,dotnet10
+              image: claude:latest
+              providerType: claude
+            """;
+
+        var tools = JobTemplateStore.LoadFromYaml(yaml).ToolsByKey();
+
+        tools.Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            [JobTemplateStore.NormalizeLabels("kiro,dotnet")] = "kiro",
+            ["claude,dotnet,dotnet10"] = "claude",
+        });
+        tools.Should().ContainKey("dotnet,kiro", "keys are sorted and trimmed like every selector");
+    }
+
+    [Fact]
+    public void ToolsByKey_TemplateWithoutProviderType_KeepsAnEmptyTool()
+    {
+        const string yaml = """
+            - labels: dotnet
+              image: agent:latest
+            """;
+
+        JobTemplateStore.LoadFromYaml(yaml).ToolsByKey().Should().Equal(new Dictionary<string, string> { ["dotnet"] = "" });
+    }
 }

@@ -133,6 +133,13 @@ public sealed class JobTemplateStore
     }
 
     /// <summary>
+    /// Every template's normalized key and its <c>providerType</c> (spec 053 DD4). An unset <c>providerType</c> stays an
+    /// empty string, which names no tool. Empty when no templates are loaded.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ToolsByKey() =>
+        _templates.ToDictionary(t => t.Key, t => t.Value.ProviderType ?? "", StringComparer.Ordinal);
+
+    /// <summary>
     /// Normalizes a comma-separated label string: splits, trims, sorts, re-joins.
     /// </summary>
     public static string NormalizeLabels(string labels)
