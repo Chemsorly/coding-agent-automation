@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using KiroCliLib.Core;
 
 namespace CodingAgent.Agent.ClaudeCode;
@@ -98,6 +99,18 @@ internal sealed class ClaudeStreamState
     /// <summary>Latest rate-limit reading per window.</summary>
     public Dictionary<string, AgentRateLimitObservation> RateLimits { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Counted MCP and web tool calls by <c>server/tool</c>.</summary>
+    public Dictionary<string, McpCallCounts> ToolCalls { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The <c>server/tool</c> key of every counted <c>tool_use</c>, by its id, to attribute its result.</summary>
+    public Dictionary<string, string> CountedToolUseIds { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>MCP servers the <c>init</c> event reported as unusable, with a <see cref="McpServerStatuses"/> value.</summary>
+    public Dictionary<string, string> UnavailableMcpServers { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Failed counted calls in order, for logging after the run.</summary>
+    public List<(string Key, McpFailureCategory Category, string Error)> ToolFailures { get; } = [];
+
     /// <summary>Classifies a failed invocation as a provider-side error, from what the stream reported.</summary>
     public AgentErrorCategory ClassifyFailure()
     {
@@ -155,6 +168,7 @@ internal static class ClaudeStreamJsonParser
             {
                 "system" => ProcessSystem(root, state),
                 "assistant" => ProcessAssistant(root, state),
+                "user" => ProcessUser(root, state),
                 "result" => ProcessResult(root, state),
                 "rate_limit_event" or "rate_limit" => ProcessRateLimit(root, state),
                 _ => []
@@ -174,6 +188,19 @@ internal static class ClaudeStreamJsonParser
                 state.TurnInProgress = true;
                 state.SessionId = GetString(root, "session_id") ?? state.SessionId;
                 state.Model = GetString(root, "model") ?? state.Model;
+                if (root.TryGetProperty("mcp_servers", out var mcpServers) && mcpServers.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var server in mcpServers.EnumerateArray())
+                    {
+                        var serverName = GetString(server, "name");
+                        var serverStatus = GetString(server, "status");
+                        if (serverName is null) continue;
+                        if (serverStatus == "failed")
+                            state.UnavailableMcpServers[serverName] = McpServerStatuses.Failed;
+                        else if (serverStatus == "needs-auth")
+                            state.UnavailableMcpServers[serverName] = McpServerStatuses.NeedsAuth;
+                    }
+                }
                 return [];
 
             case "api_retry":
@@ -219,6 +246,15 @@ internal static class ClaudeStreamJsonParser
                     var name = GetString(block, "name") ?? "tool";
                     var summary = block.TryGetProperty("input", out var input) ? SummarizeToolInput(name, input) : null;
                     lines.Add(string.IsNullOrEmpty(summary) ? $"{indent}▶ {name}" : $"{indent}▶ {name}: {summary}");
+                    var key = ToolKey(name);
+                    if (key is not null)
+                    {
+                        state.ToolCalls[key] = state.ToolCalls.TryGetValue(key, out var existing)
+                            ? existing with { Calls = existing.Calls + 1 }
+                            : new McpCallCounts { Calls = 1 };
+                        if (GetString(block, "id") is { } toolUseId)
+                            state.CountedToolUseIds[toolUseId] = key;
+                    }
                     break;
             }
         }
@@ -408,6 +444,75 @@ internal static class ClaudeStreamJsonParser
             WebSearchRequests = webSearches
         };
     }
+
+    /// <summary>
+    /// Maps a tool name to its <c>server/tool</c> key for counting, or null when the tool is not counted.
+    /// </summary>
+    internal static string? ToolKey(string name)
+    {
+        if (name == "WebSearch") return McpToolKeys.WebSearch;
+        if (name == "WebFetch") return McpToolKeys.WebFetch;
+        if (name.StartsWith("mcp__", StringComparison.Ordinal))
+        {
+            var rest = name["mcp__".Length..];
+            var sep = rest.IndexOf("__", StringComparison.Ordinal);
+            if (sep < 0) return null;
+            var server = rest[..sep];
+            var tool = rest[(sep + 2)..];
+            if (string.IsNullOrEmpty(server) || string.IsNullOrEmpty(tool)) return null;
+            return McpToolKeys.Of(server, tool);
+        }
+        return null;
+    }
+
+    private static IReadOnlyList<string> ProcessUser(JsonElement root, ClaudeStreamState state)
+    {
+        if (!root.TryGetProperty("message", out var message)
+            || !message.TryGetProperty("content", out var content)
+            || content.ValueKind != JsonValueKind.Array)
+            return [];
+
+        foreach (var block in content.EnumerateArray())
+        {
+            if (GetString(block, "type") != "tool_result") continue;
+            if (!block.TryGetProperty("is_error", out var isErr) || isErr.ValueKind != JsonValueKind.True) continue;
+            var toolUseId = GetString(block, "tool_use_id");
+            if (toolUseId is null || !state.CountedToolUseIds.TryGetValue(toolUseId, out var key)) continue;
+
+            string errorText;
+            if (block.TryGetProperty("content", out var c))
+            {
+                if (c.ValueKind == JsonValueKind.String)
+                    errorText = c.GetString() ?? string.Empty;
+                else if (c.ValueKind == JsonValueKind.Array)
+                    errorText = string.Join("\n", c.EnumerateArray()
+                        .Where(b => GetString(b, "type") == "text")
+                        .Select(b => GetString(b, "text") ?? string.Empty));
+                else
+                    errorText = string.Empty;
+            }
+            else
+            {
+                errorText = string.Empty;
+            }
+
+            var category = McpFailureClassifier.Classify(errorText);
+            state.ToolCalls[key] = state.ToolCalls.TryGetValue(key, out var counts)
+                ? IncrementFailure(counts, category)
+                : IncrementFailure(new McpCallCounts(), category);
+            state.ToolFailures.Add((key, category, errorText));
+        }
+        return [];
+    }
+
+    private static McpCallCounts IncrementFailure(McpCallCounts counts, McpFailureCategory category) =>
+        category switch
+        {
+            McpFailureCategory.Connection => counts with { FailedConnection = counts.FailedConnection + 1 },
+            McpFailureCategory.Auth => counts with { FailedAuth = counts.FailedAuth + 1 },
+            McpFailureCategory.Unknown => counts with { FailedUnknown = counts.FailedUnknown + 1 },
+            _ => counts with { FailedOther = counts.FailedOther + 1 }
+        };
 
     /// <summary>Picks the most telling input field of a tool call for a one-line summary.</summary>
     internal static string? SummarizeToolInput(string toolName, JsonElement input)
