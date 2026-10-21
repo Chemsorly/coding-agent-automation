@@ -235,6 +235,8 @@ sum by (McpServer, McpFailureCategory) (count_over_time({service_name="coding-ag
 
 There is no metric for tool calls, to keep active series low.
 
+**Attention page — MCP servers.** The Attention page lists each MCP server whose most recent non-neutral run had a problem: the server was unavailable in any phase (`UnavailableMcpServers`), or every call to it failed with only connection/auth/unknown causes across all phases (`FailedOther == 0` and `Failed == Calls`). The section shows the server name, the failure reason, the count of consecutive problem runs, and a link to the newest problem run; it is absent when all servers' most recent non-neutral runs are OK.
+
 ### LLM Usage Telemetry Architecture
 
 1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-invocation span (see "Session Spans" below) and adds the session count and elapsed time to `PipelineRun.Metrics.PhaseBreakdown` under the invocation's phase key. The calling phase executors add the tokens and cost with `AccumulateTokenUsage` under the same key.
