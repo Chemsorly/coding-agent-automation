@@ -682,6 +682,102 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         provider.McpConfigPath.Should().Be(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "pipeline-mcp.json"));
     }
+
+    // ── MCP tool call counting ───────────────────────────────────────────
+
+    private (ClaudeCodeAgentProvider Provider, Mock<Serilog.ILogger> LoggerMock) CreateProviderWithMock(
+        string? authMode = ClaudeCodeAuthModes.Auto)
+    {
+        var loggerMock = new Mock<Serilog.ILogger>();
+        var provider = new ClaudeCodeAgentProvider(
+            loggerMock.Object,
+            new ClaudeCodeSettings("claude-opus-5-5", "/opt/claude", AgentEffortLevel.High, authMode, _mcpConfigPath),
+            _launcher, name => _env.GetValueOrDefault(name));
+        return (provider, loggerMock);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_McpToolCalls_AreSetFromStream()
+    {
+        var (provider, _) = CreateProviderWithMock();
+        _launcher.Enqueue(new FakeClaudeRun([
+            """{"type":"system","subtype":"init","session_id":"s1","model":"m","mcp_servers":[{"name":"brokenserver","status":"failed"}]}""",
+            """{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__sonarqube__get_issues","input":{}}]}}""",
+            """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"404 Not Found"}]}}""",
+            Result("s1", 10, 5, 0, 0.01m, 1)
+        ]));
+
+        var result = await provider.ExecuteAsync(Request(), CancellationToken.None);
+
+        result.ToolCalls.Should().NotBeNull();
+        result.ToolCalls!["sonarqube/get_issues"].Calls.Should().Be(1);
+        result.ToolCalls["sonarqube/get_issues"].FailedOther.Should().Be(1);
+        result.UnavailableMcpServers.Should().NotBeNull();
+        result.UnavailableMcpServers!["brokenserver"].Should().Be("failed");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoMcpToolCalls_ToolCallsAndUnavailableAreNull()
+    {
+        var (provider, _) = CreateProviderWithMock();
+        _launcher.Enqueue(new FakeClaudeRun([
+            Init("s1"),
+            Text("just text"),
+            Result("s1", 10, 5, 0, 0.01m, 1)
+        ]));
+
+        var result = await provider.ExecuteAsync(Request(), CancellationToken.None);
+
+        result.ToolCalls.Should().BeNull();
+        result.UnavailableMcpServers.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FailedMcpCall_LogsOneWarning()
+    {
+        var (provider, loggerMock) = CreateProviderWithMock();
+        _launcher.Enqueue(new FakeClaudeRun([
+            """{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__sonarqube__get_issues","input":{}}]}}""",
+            """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Request failed"}]}}""",
+            Result("s1", 10, 5, 0, 0.01m, 1)
+        ]));
+
+        await provider.ExecuteAsync(Request(), CancellationToken.None);
+
+        loggerMock.Verify(
+            l => l.Warning(It.Is<string>(s => s.Contains("MCP call failed")), It.IsAny<object?[]>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FailedMcpCall_SecretInErrorTextIsMasked()
+    {
+        var (provider, loggerMock) = CreateProviderWithMock();
+        _launcher.Enqueue(new FakeClaudeRun([
+            """{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__sonarqube__get_issues","input":{}}]}}""",
+            """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"secretValue123 was rejected"}]}}""",
+            Result("s1", 10, 5, 0, 0.01m, 1)
+        ]));
+
+        object?[]? capturedArgs = null;
+        loggerMock
+            .Setup(l => l.Warning(It.Is<string>(s => s.Contains("MCP call failed")), It.IsAny<object?[]>()))
+            .Callback<string, object?[]?>((_, args) => capturedArgs = args);
+
+        var request = new AgentRequest
+        {
+            Prompt = "do it",
+            WorkspacePath = _workspace,
+            Timeout = TimeSpan.FromMinutes(1),
+            EnvironmentVariables = new Dictionary<string, string> { ["MY_TOKEN"] = "secretValue123" }
+        };
+        await provider.ExecuteAsync(request, CancellationToken.None);
+
+        capturedArgs.Should().NotBeNull();
+        // Index 3 = error text (server, tool, category, error)
+        capturedArgs![3].As<string>().Should().NotContain("secretValue123");
+        capturedArgs[3].As<string>().Should().Contain("***");
+    }
 }
 
 internal static class FakeClaudeProcessLauncherExtensions

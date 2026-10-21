@@ -206,6 +206,20 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
 
         LogInvocation(state, exitCode, stopwatch.Elapsed, usage, cost, details, errorCategory);
 
+        foreach (var (key, category, error) in state.ToolFailures)
+        {
+            var slash = key.IndexOf('/');
+            var server = slash >= 0 ? key[..slash] : key;
+            var tool = slash >= 0 ? key[(slash + 1)..] : string.Empty;
+            // TODO: masking only covers values present in request.EnvironmentVariables; bearer tokens
+            // or other secrets obtained at runtime by the MCP server are logged unredacted. A more
+            // comprehensive redaction strategy (e.g. regex-based token scrubbing) would require
+            // changes to McpCallLog.Failed and SecretMasker.
+            McpCallLog.Failed(_logger, server, tool, category, error, request.EnvironmentVariables);
+        }
+        foreach (var (name, status) in state.UnavailableMcpServers)
+            McpCallLog.Unavailable(_logger, name, status);
+
         IReadOnlyList<string> lines;
         lock (outputLines)
             lines = outputLines.ToList().AsReadOnly();
@@ -217,7 +231,13 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             Usage = usage,
             Cost = cost,
             UsageDetails = details,
-            ErrorCategory = errorCategory
+            ErrorCategory = errorCategory,
+            ToolCalls = state.ToolCalls.Count > 0
+                ? new Dictionary<string, McpCallCounts>(state.ToolCalls)
+                : null,
+            UnavailableMcpServers = state.UnavailableMcpServers.Count > 0
+                ? new Dictionary<string, string>(state.UnavailableMcpServers)
+                : null
         };
     }
 
