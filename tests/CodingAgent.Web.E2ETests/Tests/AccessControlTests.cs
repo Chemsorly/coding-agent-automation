@@ -99,7 +99,7 @@ public sealed partial class AccessControlTests : IAsyncLifetime
 
         var options = _page.Locator(".cockpit-project-switcher option");
         await Assertions.Expect(options).ToHaveCountAsync(1);
-        await Assertions.Expect(options.First).ToHaveTextAsync("Default");
+        await Assertions.Expect(options.First).ToHaveTextAsync("E2E Team");
         await Assertions.Expect(_page.Locator(".cockpit-nav-link[aria-label='Fleet']")).ToHaveCountAsync(0);
         await Assertions.Expect(_page.Locator(".cockpit-nav-link[aria-label='Agent Chat']")).ToHaveCountAsync(1);
     }
@@ -113,7 +113,7 @@ public sealed partial class AccessControlTests : IAsyncLifetime
         await _page.WaitForURLAsync(url => url.EndsWith("/user"));
 
         await Assertions.Expect(_page.Locator("[data-testid=profile-bindings]"))
-            .ToContainTextAsync($"Project Default ({WellKnownIds.DefaultProjectId})");
+            .ToContainTextAsync($"Project E2E Team ({E2ETestSignIn.TeamProjectId})");
         await Assertions.Expect(_page.Locator("[data-testid=profile-projects-unavailable]")).ToHaveCountAsync(0);
     }
 
