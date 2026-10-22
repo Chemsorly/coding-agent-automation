@@ -133,4 +133,33 @@ public class AccessServicesTests
         AuthPrincipals.GetSessionExpiry(admin).Should().Be(expires);
         AuthPrincipals.GetGroups(admin).Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task CanAdminister_ProjectAdmin_TrueForBoundProject_FalseForOther()
+    {
+        var access = new CurrentAccess(
+            new SettableAuthenticationStateProvider(TestAccess.User()),
+            Evaluator(_ => TestAccess.Scoped((ProjectP, AccessRole.Admin))).Object);
+        await access.InitializeAsync();
+
+        access.CanAdminister(ProjectP).Should().BeTrue();
+        access.CanAdminister(Guid.Parse(ProjectP)).Should().BeTrue();
+        access.CanAdminister(ProjectQ).Should().BeFalse();
+        access.CanAdminister((string?)null).Should().BeFalse("global objects need a global admin role");
+        access.IsAdmin.Should().BeFalse("project admin does not give global admin");
+    }
+
+    [Fact]
+    public async Task CanAdminister_GlobalAdmin_TrueForAnyProject()
+    {
+        var access = new CurrentAccess(
+            new SettableAuthenticationStateProvider(TestAccess.User()),
+            Evaluator(_ => TestAccess.Global(AccessRole.Admin)).Object);
+        await access.InitializeAsync();
+
+        access.CanAdminister(ProjectP).Should().BeTrue();
+        access.CanAdminister(ProjectQ).Should().BeTrue();
+        access.CanAdminister((string?)null).Should().BeTrue("global admin covers global objects too");
+        access.IsAdmin.Should().BeTrue();
+    }
 }

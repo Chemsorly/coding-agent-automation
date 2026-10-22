@@ -183,7 +183,7 @@ public class CockpitLayoutAccessTests : BunitContext
         var cut = RenderLayout(TestAccess.Scoped((PaymentsId, AccessRole.Operator)));
 
         cut.WaitForAssertion(() => NavLabels(cut).Should().Equal(
-            "Overview", "Work", "Runs", "Triage", "Attention", "Insights", "Pipelines", "Knowledge", "Agent Chat", "About"));
+            "Overview", "Work", "Runs", "Triage", "Attention", "Insights", "Pipelines", "Project settings", "Knowledge", "Agent Chat", "About"));
     }
 
     [Fact]

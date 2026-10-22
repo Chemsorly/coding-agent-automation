@@ -3,6 +3,8 @@
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
 @inject IUiProviderClient ProviderConfigs
+@inject IAccessGuard Guard
+@inject CurrentAccess Access
 
 <section class="settings-section">
     <h2>@_project.Name</h2>
@@ -198,15 +200,36 @@
             </div>
             <div class="form-group">
                 <label>Name</label>
-                <input type="text" @bind="_name" maxlength="128" />
+                @if (Access.CanAdminister(ProjectId))
+                {
+                    <input type="text" @bind="_name" maxlength="128" />
+                }
+                else
+                {
+                    <span>@_name</span>
+                }
             </div>
             <div class="form-group">
                 <label>Description</label>
-                <textarea @bind="_description" rows="3" maxlength="512"></textarea>
+                @if (Access.CanAdminister(ProjectId))
+                {
+                    <textarea @bind="_description" rows="3" maxlength="512"></textarea>
+                }
+                else
+                {
+                    <span>@(_description is { Length: > 0 } ? _description : "—")</span>
+                }
             </div>
             <div class="form-group form-checkbox">
                 <label>
-                    <input type="checkbox" @bind="_enabled" />
+                    @if (Access.IsAdmin)
+                    {
+                        <input type="checkbox" @bind="_enabled" />
+                    }
+                    else
+                    {
+                        <input type="checkbox" checked="@_enabled" disabled />
+                    }
                     Enabled
                 </label>
             </div>
@@ -215,17 +238,27 @@
                     <label>Epic Issue Provider</label>
                     <span class="form-hint-icon" aria-hidden="true" title="Optional centralized issue tracker for cross-repo epic decomposition. When set, the loop polls this provider for agent:epic issues.">?</span>
                 </div>
-                <select @bind="_epicIssueProviderId">
-                    <option value="">— None —</option>
-                    @foreach (var provider in _issueProviders)
-                    {
-                        <option value="@provider.Id">@provider.DisplayName</option>
-                    }
-                </select>
+                @if (Access.IsAdmin)
+                {
+                    <select @bind="_epicIssueProviderId">
+                        <option value="">— None —</option>
+                        @foreach (var provider in _issueProviders)
+                        {
+                            <option value="@provider.Id">@provider.DisplayName</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <span>@(_issueProviders.FirstOrDefault(p => p.Id == _epicIssueProviderId)?.DisplayName ?? "— None —")</span>
+                }
             </div>
-            <div class="pipeline-form-actions">
-                <button class="btn-save" @onclick="SaveOverviewAsync">Save Overview</button>
-            </div>
+            @if (Access.CanAdminister(ProjectId))
+            {
+                <div class="pipeline-form-actions">
+                    <button class="btn-save" @onclick="SaveOverviewAsync">Save Overview</button>
+                </div>
+            }
         </div>
     };
 
@@ -248,16 +281,19 @@
                 </div>
             }
 
-            <div class="template-add-row">
-                <select @bind="_selectedTemplateToAdd">
-                    <option value="">— Select template to add —</option>
-                    @foreach (var template in GetAvailableTemplates())
-                    {
-                        <option value="@template.Id">@template.Name</option>
-                    }
-                </select>
-                <button class="btn-save" disabled="@(string.IsNullOrEmpty(_selectedTemplateToAdd))" @onclick="AddTemplate">Add</button>
-            </div>
+            @if (Access.IsAdmin)
+            {
+                <div class="template-add-row">
+                    <select @bind="_selectedTemplateToAdd">
+                        <option value="">— Select template to add —</option>
+                        @foreach (var template in GetAvailableTemplates())
+                        {
+                            <option value="@template.Id">@template.Name</option>
+                        }
+                    </select>
+                    <button class="btn-save" disabled="@(string.IsNullOrEmpty(_selectedTemplateToAdd))" @onclick="AddTemplate">Add</button>
+                </div>
+            }
         </div>
     };
 
@@ -269,19 +305,22 @@
 
         <div class="template-row">
             <span class="template-name">@displayName</span>
-            <div class="template-actions">
-                <select class="template-move-select" @onchange="e => MoveTemplateToProject(templateId, e.Value?.ToString())">
-                    <option value="">Move to…</option>
-                    @foreach (var proj in _allProjects.Where(p => p.Id != _project.Id))
+            @if (Access.IsAdmin)
+            {
+                <div class="template-actions">
+                    <select class="template-move-select" @onchange="e => MoveTemplateToProject(templateId, e.Value?.ToString())">
+                        <option value="">Move to…</option>
+                        @foreach (var proj in _allProjects.Where(p => p.Id != _project.Id))
+                        {
+                            <option value="@proj.Id">@proj.Name</option>
+                        }
+                    </select>
+                    @if (_project.Id != WellKnownIds.DefaultProjectId)
                     {
-                        <option value="@proj.Id">@proj.Name</option>
+                        <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove from project (moves to Default)">✕</button>
                     }
-                </select>
-                @if (_project.Id != WellKnownIds.DefaultProjectId)
-                {
-                    <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove from project (moves to Default)">✕</button>
-                }
-            </div>
+                </div>
+            }
         </div>
     };
 
@@ -290,36 +329,58 @@
         <div class="provider-form">
             <h3>🔐 Project Secrets</h3>
             <p class="form-hint">Environment variables injected into every run for this project. Merged with repo-level secrets (repo wins on key collision).</p>
-            <div class="secrets-section-body">
-                @for (var i = 0; i < _secrets.Count; i++)
-                {
-                    var index = i;
-                    var secret = _secrets[index];
-                    var isRevealed = _revealedSecrets.Contains(index);
-                    <div class="secret-row">
-                        <input type="text"
-                               class="secret-key-input"
-                               value="@secret.Key"
-                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
-                               placeholder="ENV_VAR_NAME" />
-                        <input type="@(isRevealed ? "text" : "password")"
-                               class="secret-value-input"
-                               value="@secret.Value"
-                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
-                               placeholder="secret value" />
-                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
-                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
-                    </div>
-                    @if (!string.IsNullOrEmpty(secret.ValidationError))
+            @if (Access.CanAdminister(ProjectId))
+            {
+                <div class="secrets-section-body">
+                    @for (var i = 0; i < _secrets.Count; i++)
                     {
-                        <div class="secret-validation-error">@secret.ValidationError</div>
+                        var index = i;
+                        var secret = _secrets[index];
+                        var isRevealed = _revealedSecrets.Contains(index);
+                        <div class="secret-row">
+                            <input type="text"
+                                   class="secret-key-input"
+                                   value="@secret.Key"
+                                   @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
+                                   placeholder="ENV_VAR_NAME" />
+                            <input type="@(isRevealed ? "text" : "password")"
+                                   class="secret-value-input"
+                                   value="@secret.Value"
+                                   @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                                   placeholder="secret value" />
+                            <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
+                            <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(secret.ValidationError))
+                        {
+                            <div class="secret-validation-error">@secret.ValidationError</div>
+                        }
                     }
-                }
-                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
-            </div>
-            <div class="pipeline-form-actions">
-                <button class="btn-save" @onclick="SaveSecretsAsync">Save Secrets</button>
-            </div>
+                    <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+                </div>
+                <div class="pipeline-form-actions">
+                    <button class="btn-save" @onclick="SaveSecretsAsync">Save Secrets</button>
+                </div>
+            }
+            else
+            {
+                <div class="secrets-section-body">
+                    @if (_secrets.Count == 0)
+                    {
+                        <p class="form-hint">No secrets configured.</p>
+                    }
+                    else
+                    {
+                        @foreach (var secret in _secrets)
+                        {
+                            <div class="secret-row">
+                                <span class="secret-key-input monitoring-mono">@secret.Key</span>
+                                <span class="monitoring-muted" style="font-size:0.8rem;">••••••••</span>
+                            </div>
+                        }
+                    }
+                </div>
+            }
         </div>
     };
 
@@ -329,29 +390,43 @@
         <div class="provider-form project-review">
             <h3>Project Review</h3>
             <p class="form-hint">A project reviewer joins every code review in this project's repositories, in implementation runs and PR review runs, and runs alongside the reviewers the repository's labels pick. It reads the project's other repositories and the connected MCP servers, and checks the change against the whole project: the contracts between the repositories, the project's decisions and its documentation.</p>
-            <div class="form-group form-checkbox">
-                <input type="checkbox" id="project-review-enabled" @bind="_projectReviewEnabled" />
-                <label for="project-review-enabled">Enable project review</label>
-            </div>
-            <p class="form-hint">
-                @if (repositories.Count > 1)
-                {
-                    @($"Each review clones the other repositories of this project, read-only and without push access: {string.Join(", ", repositories)}.")
-                }
-                else
-                {
-                    @("This project has one repository, so the project reviewer checks a change against the project's decisions and documentation only.")
-                }
-            </p>
-            <div class="form-group">
-                <label for="project-review-prompt">Reviewer Instructions</label>
-                <textarea id="project-review-prompt" @bind="_projectReviewPrompt" rows="20"></textarea>
-                <button type="button" class="btn-revert" disabled="@IsDefaultReviewPrompt" @onclick="() => _projectReviewPrompt = PipelineConfigurationDefaults.DefaultProjectReviewPrompt">Reset to default</button>
-                <p class="form-hint">Each run adds the list of the cloned repositories to these instructions.</p>
-            </div>
-            <div class="pipeline-form-actions">
-                <button class="btn-save" @onclick="SaveProjectReviewAsync">Save Project Review</button>
-            </div>
+            @if (Access.CanAdminister(ProjectId))
+            {
+                <div class="form-group form-checkbox">
+                    <input type="checkbox" id="project-review-enabled" @bind="_projectReviewEnabled" />
+                    <label for="project-review-enabled">Enable project review</label>
+                </div>
+                <p class="form-hint">
+                    @if (repositories.Count > 1)
+                    {
+                        @($"Each review clones the other repositories of this project, read-only and without push access: {string.Join(", ", repositories)}.")
+                    }
+                    else
+                    {
+                        @("This project has one repository, so the project reviewer checks a change against the project's decisions and documentation only.")
+                    }
+                </p>
+                <div class="form-group">
+                    <label for="project-review-prompt">Reviewer Instructions</label>
+                    <textarea id="project-review-prompt" @bind="_projectReviewPrompt" rows="20"></textarea>
+                    <button type="button" class="btn-revert" disabled="@IsDefaultReviewPrompt" @onclick="() => _projectReviewPrompt = PipelineConfigurationDefaults.DefaultProjectReviewPrompt">Reset to default</button>
+                    <p class="form-hint">Each run adds the list of the cloned repositories to these instructions.</p>
+                </div>
+                <div class="pipeline-form-actions">
+                    <button class="btn-save" @onclick="SaveProjectReviewAsync">Save Project Review</button>
+                </div>
+            }
+            else
+            {
+                <div class="form-group">
+                    <label>Project Review</label>
+                    <span class="feature-badge @(_projectReviewEnabled ? "feature-on" : "feature-off")">@(_projectReviewEnabled ? "Enabled" : "Disabled")</span>
+                </div>
+                <div class="form-group">
+                    <label>Reviewer Instructions</label>
+                    <pre class="monitoring-mono" style="white-space:pre-wrap; font-size:0.8rem;">@_projectReviewPrompt</pre>
+                </div>
+            }
         </div>
     };
 
@@ -407,8 +482,11 @@
             <h3>Consolidation</h3>
             @RenderIntOverride("Max Refactoring Proposals", nameof(PipelineConfiguration.MaxRefactoringProposals), () => _draft.MaxRefactoringProposals, v => _draft = _draft with { MaxRefactoringProposals = v }, _globalConfig.MaxRefactoringProposals)
             @RenderBoolOverride("Refactoring Review Enabled", nameof(PipelineConfiguration.RefactoringReviewEnabled), () => _draft.RefactoringReviewEnabled, v => _draft = _draft with { RefactoringReviewEnabled = v }, _globalConfig.RefactoringReviewEnabled)
-            @RenderBoolOverride("Brain Consolidation Review Enabled", nameof(PipelineConfiguration.BrainConsolidationReviewEnabled), () => _draft.BrainConsolidationReviewEnabled, v => _draft = _draft with { BrainConsolidationReviewEnabled = v }, _globalConfig.BrainConsolidationReviewEnabled)
-            @RenderBoolOverride("Brain Read-Only", nameof(PipelineConfiguration.BrainReadOnly), () => _draft.BrainReadOnly, v => _draft = _draft with { BrainReadOnly = v }, _globalConfig.BrainReadOnly)
+            @if (Access.IsAdmin)
+            {
+                @RenderBoolOverride("Brain Consolidation Review Enabled", nameof(PipelineConfiguration.BrainConsolidationReviewEnabled), () => _draft.BrainConsolidationReviewEnabled, v => _draft = _draft with { BrainConsolidationReviewEnabled = v }, _globalConfig.BrainConsolidationReviewEnabled)
+                @RenderBoolOverride("Brain Read-Only", nameof(PipelineConfiguration.BrainReadOnly), () => _draft.BrainReadOnly, v => _draft = _draft with { BrainReadOnly = v }, _globalConfig.BrainReadOnly)
+            }
 
             <h3>Triage</h3>
             @RenderBoolOverride("Triage Review Enabled", nameof(PipelineConfiguration.TriageReviewEnabled), () => _draft.TriageReviewEnabled, v => _draft = _draft with { TriageReviewEnabled = v }, _globalConfig.TriageReviewEnabled)
@@ -451,7 +529,10 @@
             </div>
 
             <div class="pipeline-form-actions">
-                <button class="btn-save" @onclick="SaveSettingsAsync">Save Settings</button>
+                @if (Access.CanAdminister(ProjectId))
+                {
+                    <button class="btn-save" @onclick="SaveSettingsAsync">Save Settings</button>
+                }
             </div>
         </div>
     };
@@ -589,11 +670,16 @@
 
         try
         {
+            await Guard.DemandAsync(AccessRole.Admin, null, "AddTemplate");
             await ConfigClient.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, _cts.Token);
             _selectedTemplateToAdd = null;
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Template added to project.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (OperationCanceledException)
         {
@@ -617,10 +703,15 @@
 
         try
         {
+            await Guard.DemandAsync(AccessRole.Admin, null, "RemoveTemplate");
             await ConfigClient.MoveTemplateAsync(_project.Id, WellKnownIds.DefaultProjectId, templateId, _cts.Token);
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Template moved to Default project.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (OperationCanceledException)
         {
@@ -638,10 +729,15 @@
 
         try
         {
+            await Guard.DemandAsync(AccessRole.Admin, null, "MoveTemplateToProject");
             await ConfigClient.MoveTemplateAsync(_project.Id, targetProjectId, templateId, CancellationToken.None);
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Template moved to another project.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (Exception ex)
         {
@@ -653,17 +749,49 @@
     {
         try
         {
-            _project = _project with
+            await Guard.DemandAsync(AccessRole.Admin, ProjectId, "SaveOverview");
+
+            var toSave = _project with
             {
                 Name = _name,
                 Description = string.IsNullOrWhiteSpace(_description) ? null : _description,
-                Enabled = _enabled,
-                EpicIssueProviderId = string.IsNullOrEmpty(_epicIssueProviderId) ? null : _epicIssueProviderId
             };
 
+            // Preserve operator-only fields when the caller is a project admin (not a global admin).
+            if (!Access.IsAdmin)
+            {
+                var stored = await ConfigClient.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+                if (stored is null)
+                {
+                    await OnShowStatus.InvokeAsync(("Failed to save: project no longer exists.", true));
+                    return;
+                }
+
+                toSave = toSave with
+                {
+                    Enabled = stored.Enabled,
+                    EpicIssueProviderId = stored.EpicIssueProviderId,
+                    BrainReadOnly = stored.BrainReadOnly,
+                    BrainConsolidationReviewEnabled = stored.BrainConsolidationReviewEnabled,
+                };
+            }
+            else
+            {
+                toSave = toSave with
+                {
+                    Enabled = _enabled,
+                    EpicIssueProviderId = string.IsNullOrEmpty(_epicIssueProviderId) ? null : _epicIssueProviderId,
+                };
+            }
+
+            _project = toSave;
             await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project overview saved.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (Exception ex)
         {
@@ -677,10 +805,37 @@
 
         try
         {
-            _project = _project with { Secrets = BuildSecretsDictionary() };
+            await Guard.DemandAsync(AccessRole.Admin, ProjectId, "SaveSecrets");
+
+            var toSave = _project with { Secrets = BuildSecretsDictionary() };
+
+            // Preserve operator-only fields when the caller is a project admin (not a global admin).
+            if (!Access.IsAdmin)
+            {
+                var stored = await ConfigClient.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+                if (stored is null)
+                {
+                    await OnShowStatus.InvokeAsync(("Failed to save: project no longer exists.", true));
+                    return;
+                }
+
+                toSave = toSave with
+                {
+                    Enabled = stored.Enabled,
+                    EpicIssueProviderId = stored.EpicIssueProviderId,
+                    BrainReadOnly = stored.BrainReadOnly,
+                    BrainConsolidationReviewEnabled = stored.BrainConsolidationReviewEnabled,
+                };
+            }
+
+            _project = toSave;
             await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project secrets saved.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (Exception ex)
         {
@@ -692,6 +847,8 @@
     {
         try
         {
+            await Guard.DemandAsync(AccessRole.Admin, ProjectId, "SaveProjectReview");
+
             // The default instructions are stored as empty, so a project follows later changes to them
             var prompt = IsDefaultReviewPrompt ? "" : _projectReviewPrompt.Trim();
             var name = _project.ProjectReviewers.FirstOrDefault()?.Name is { } existing && !string.IsNullOrWhiteSpace(existing)
@@ -703,11 +860,34 @@
                 ProjectReviewers = [new ReviewAgent { Name = name, Prompt = prompt }, .. _project.ProjectReviewers.Skip(1)]
             };
 
+            // Preserve operator-only fields when the caller is a project admin (not a global admin).
+            if (!Access.IsAdmin)
+            {
+                var stored = await ConfigClient.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+                if (stored is null)
+                {
+                    await OnShowStatus.InvokeAsync(("Failed to save: project no longer exists.", true));
+                    return;
+                }
+
+                updated = updated with
+                {
+                    Enabled = stored.Enabled,
+                    EpicIssueProviderId = stored.EpicIssueProviderId,
+                    BrainReadOnly = stored.BrainReadOnly,
+                    BrainConsolidationReviewEnabled = stored.BrainConsolidationReviewEnabled,
+                };
+            }
+
             await ConfigClient.SaveProjectAsync(updated, CancellationToken.None);
             _project = updated;
             _draft = _draft with { ProjectReviewEnabled = updated.ProjectReviewEnabled, ProjectReviewers = updated.ProjectReviewers };
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project review saved.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (Exception ex)
         {
@@ -721,6 +901,8 @@
         {
             if (!ValidateSecrets())
                 return;
+
+            await Guard.DemandAsync(AccessRole.Admin, ProjectId, "SaveSettings");
 
             // The draft holds the overrides; everything the other tabs own comes from the project as last saved.
             var updated = _draft with
@@ -738,11 +920,34 @@
                 SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()
             };
 
+            // Preserve operator-only fields when the caller is a project admin (not a global admin).
+            if (!Access.IsAdmin)
+            {
+                var stored = await ConfigClient.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+                if (stored is null)
+                {
+                    await OnShowStatus.InvokeAsync(("Failed to save: project no longer exists.", true));
+                    return;
+                }
+
+                updated = updated with
+                {
+                    Enabled = stored.Enabled,
+                    EpicIssueProviderId = stored.EpicIssueProviderId,
+                    BrainReadOnly = stored.BrainReadOnly,
+                    BrainConsolidationReviewEnabled = stored.BrainConsolidationReviewEnabled,
+                };
+            }
+
             await ConfigClient.SaveProjectAsync(updated, CancellationToken.None);
             _project = updated;
             _draft = updated;
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project settings saved.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (Exception ex)
         {
@@ -894,11 +1099,14 @@
             <p class="form-hint">Project MCP servers are merged with the profile's servers at dispatch time. Servers with the same name override the profile configuration; others are added. Leave empty to use the profile's MCP servers unchanged.</p>
 
             @RenderMcpServerTable()
-            @RenderMcpServerFormOrAddButton()
+            @if (Access.CanAdminister(ProjectId))
+            {
+                @RenderMcpServerFormOrAddButton()
 
-            <div class="pipeline-form-actions">
-                <button class="btn-save" @onclick="SaveMcpServersAsync">Save MCP Servers</button>
-            </div>
+                <div class="pipeline-form-actions">
+                    <button class="btn-save" @onclick="SaveMcpServersAsync">Save MCP Servers</button>
+                </div>
+            }
         </div>
     };
 
@@ -1073,6 +1281,8 @@
     {
         try
         {
+            await Guard.DemandAsync(AccessRole.Admin, ProjectId, "SaveMcpServers");
+
             var servers = _mcpServers.Select(s =>
             {
                 string? command;
@@ -1093,10 +1303,35 @@
                 };
             }).ToList();
 
-            _project = _project with { McpServers = servers.Count > 0 ? servers : null };
+            var toSave = _project with { McpServers = servers.Count > 0 ? servers : null };
+
+            // Preserve operator-only fields when the caller is a project admin (not a global admin).
+            if (!Access.IsAdmin)
+            {
+                var stored = await ConfigClient.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+                if (stored is null)
+                {
+                    await OnShowStatus.InvokeAsync(("Failed to save: project no longer exists.", true));
+                    return;
+                }
+
+                toSave = toSave with
+                {
+                    Enabled = stored.Enabled,
+                    EpicIssueProviderId = stored.EpicIssueProviderId,
+                    BrainReadOnly = stored.BrainReadOnly,
+                    BrainConsolidationReviewEnabled = stored.BrainConsolidationReviewEnabled,
+                };
+            }
+
+            _project = toSave;
             await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project MCP servers saved.", false));
+        }
+        catch (AccessDeniedException)
+        {
+            await OnShowStatus.InvokeAsync((AccessDeniedException.UserMessage, true));
         }
         catch (Exception ex)
         {

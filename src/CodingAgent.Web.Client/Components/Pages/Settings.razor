@@ -27,16 +27,7 @@
 
         <div class="settings-content">
             <InlineStatus Message="@_statusMessage" IsError="@_isError" OnDismissed="ClearStatus" />
-            @if (_selectedNode.StartsWith($"{SettingsNodes.ProjectDetail}:", StringComparison.Ordinal))
-            {
-                var projectId = _selectedNode[$"{SettingsNodes.ProjectDetail}:".Length..];
-                <ProjectDetailSection
-                    ProjectId="@projectId"
-                    ConfigClient="SettingsClient"
-                    OnProjectSaved="RefreshTreeNavProjects"
-                    OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
-            }
-            else switch (_selectedNode)
+            @switch (_selectedNode)
             {
                 case SettingsNodes.Projects:
                     <ProjectsListSection
@@ -180,7 +171,6 @@
 
     /// <summary>
     /// Returns true if <paramref name="section"/> is a recognised SettingsNodes constant.
-    /// ProjectDetail nodes have the form "project-detail:{id}" and are allowed when the prefix matches.
     /// </summary>
     private static bool IsKnownSection(string section) =>
         section == SettingsNodes.ProvidersIssue ||
@@ -201,8 +191,7 @@
         section == SettingsNodes.QualityGateConfigs ||
         section == SettingsNodes.ReviewerConfigs ||
         section == SettingsNodes.Projects ||
-        section == SettingsNodes.ConfigImportExport ||
-        section.StartsWith(SettingsNodes.ProjectDetail + ":", StringComparison.Ordinal);
+        section == SettingsNodes.ConfigImportExport;
 
     protected override async Task OnInitializedAsync()
     {
@@ -337,8 +326,7 @@
 
     private async Task NavigateToProjectDetail(string projectId)
     {
-        var nodeId = $"{SettingsNodes.ProjectDetail}:{projectId}";
-        NavigationManager.NavigateTo($"settings?section={Uri.EscapeDataString(nodeId)}");
+        NavigationManager.NavigateTo($"projects/{projectId}");
         if (_treeNav is not null)
             await _treeNav.RefreshProjectsAsync();
     }

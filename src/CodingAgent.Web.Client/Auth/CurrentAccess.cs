@@ -61,6 +61,11 @@ public sealed class CurrentAccess : IDisposable
 
     public bool CanOperate(Guid? projectId) => CanOperate(ProjectIds.Normalize(projectId));
 
+    /// <summary>Project <c>admin</c> or higher: project settings, steering, secrets, MCP servers, repository behaviour.</summary>
+    public bool CanAdminister(string? projectId) => Grant.RoleFor(projectId) >= AccessRole.Admin;
+
+    public bool CanAdminister(Guid? projectId) => CanAdminister(ProjectIds.Normalize(projectId));
+
     /// <summary>Evaluates the principal once; later calls return the same task.</summary>
     public Task InitializeAsync() => _initialization ??= LoadAsync();
 

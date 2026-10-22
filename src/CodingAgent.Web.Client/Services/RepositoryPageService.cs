@@ -217,7 +217,8 @@ public class RepositoryPageService : DrawerStateAccessorBase
     public async Task<(bool Success, string? Error, string? SuccessMessage)> SaveBindingAsync(
         BindingFormModel form)
     {
-        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
+        // Binding card is global-admin-only: pass null to enforce a global (non-project-scoped) check.
+        if (await DeniedGlobalAdminAsync() is { } denied) return (false, denied, null);
         if (Template is null || Project is null) return (false, TemplateNotFoundMessage, null);
 
         var updated = ApplyBindingEdit(Template, form);
@@ -310,12 +311,7 @@ public class RepositoryPageService : DrawerStateAccessorBase
 
     public async Task<string?> TriggerRefactoringScanAsync(string templateId, bool autoDispatch, RefactoringScanFocus focus)
     {
-        // NOTE: DeniedAsync(AccessRole.Operator) passes Project?.Id to _guard.DemandAsync, making this a
-        // project-scoped operator check. The UI gate (Access.HasGlobalOperate) and the issue requirement both
-        // specify a global operator. A project-level operator (not a global operator) cannot see the button in
-        // the UI, but this service-level check would still permit the trigger if invoked outside the component.
-        // Change to DemandAsync(AccessRole.Operator, null, action) for global-scope enforcement matching the
-        // Consolidation page behaviour. (Correctness review finding, issue #3576)
+        // Req 9: a project operator on the template's project may start a refactoring scan.
         if (await DeniedAsync(AccessRole.Operator) is { } denied) return denied;
         try
         {
@@ -412,6 +408,20 @@ public class RepositoryPageService : DrawerStateAccessorBase
         try
         {
             await _guard.DemandAsync(required, Project?.Id, action);
+            return null;
+        }
+        catch (AccessDeniedException)
+        {
+            return AccessDeniedException.UserMessage;
+        }
+    }
+
+    /// <summary>Global admin check (null project ID). Used for Binding card saves which are operator-only.</summary>
+    private async Task<string?> DeniedGlobalAdminAsync([CallerMemberName] string action = "")
+    {
+        try
+        {
+            await _guard.DemandAsync(AccessRole.Admin, null, action);
             return null;
         }
         catch (AccessDeniedException)

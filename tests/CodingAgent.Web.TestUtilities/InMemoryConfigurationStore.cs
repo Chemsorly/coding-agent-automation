@@ -94,6 +94,16 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore, IAgentProf
             Enabled = true,
             TemplateIds = new List<string>()
         });
+
+        // Stable project for the E2E scoped-operator binding. The Default project (all-zeros GUID)
+        // takes no project bindings, so this non-default project is used instead.
+        _projects.Add(new PipelineProject
+        {
+            Id = "e2e00000-0000-0000-0000-000000000001",
+            Name = "E2E Team",
+            Enabled = true,
+            TemplateIds = new List<string>()
+        });
     }
 
     // Pipeline config

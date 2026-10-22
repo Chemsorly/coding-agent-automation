@@ -80,6 +80,12 @@
                     <span class="cockpit-nav-icon"><Icon Name="settings" Size="18" /></span><span class="cockpit-nav-text">Settings</span>
                 </NavLink>
             }
+            @if (!string.IsNullOrEmpty(State.SelectedProjectId) && Access.CanRead(State.SelectedProjectId))
+            {
+                <NavLink class="cockpit-nav-link" href="@($"projects/{State.SelectedProjectId}")" Match="NavLinkMatch.Prefix" aria-label="Project settings" title="Project settings">
+                    <span class="cockpit-nav-icon"><Icon Name="sliders" Size="18" /></span><span class="cockpit-nav-text">Project settings</span>
+                </NavLink>
+            }
 
             @if (Access.Grant.HasAnyAccess)
             {

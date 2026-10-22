@@ -44,7 +44,7 @@
                 {
                     var nodeId = $"{SettingsNodes.ProjectDetail}:{project.Id}";
                     var isDefault = project.Id == WellKnownIds.DefaultProjectId;
-                    <a class="@NodeClass(nodeId)" href="@Href(nodeId)" aria-current="@AriaCurrent(nodeId)">
+                    <a class="@NodeClass(nodeId)" href="/projects/@project.Id" aria-current="@AriaCurrent(nodeId)">
                         @project.Name
                         @if (isDefault)
                         {

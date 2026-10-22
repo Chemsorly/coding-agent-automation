@@ -56,9 +56,10 @@ Probe responses carry only status fields. Every host listens on port 8080 only. 
 |---|---|
 | `readonly` | View pages and runs |
 | `operator` | `readonly`, plus dispatch, cancel, re-dispatch, change priority and use Agent Chat |
-| `admin` | Everything, including Settings and pipeline templates |
+| `admin` on a project | Edit that project's settings, steering, secrets, MCP servers and project review; edit the behaviour of its repositories |
+| global `admin` | Everything else, including Settings, creating and enabling projects, and managing pipeline templates |
 
-A **binding** gives a role to an OIDC group or user, either **globally** or for **one project**. `admin` can only be bound globally: template and settings changes reach the global provider credentials.
+A **binding** gives a role to an OIDC group or user, either **globally** or for **one project**. The Default project (all-zeros ID) takes no project bindings; bind the role globally or move the repositories to a project.
 
 | Action | Needs |
 |---|---|
@@ -69,6 +70,9 @@ A **binding** gives a role to an OIDC group or user, either **globally** or for 
 | Agent Chat without a project | global `operator` |
 | View Fleet, Consolidation, About statistics, health indicators and loop details | global `readonly` |
 | Start, stop or resume the pipeline loop; trigger or cancel consolidation | global `operator` |
+| Edit a project's settings, steering, secrets, MCP servers or project review | `admin` on that project |
+| Edit a repository's behaviour | `admin` on its project |
+| Start or cancel a refactoring scan from a repository page | `operator` on its project |
 | Settings; create, edit, enable, move or delete pipeline templates | global `admin` |
 
 Work and runs without a project count as global and need a global role.
@@ -119,7 +123,7 @@ auth:
 - A user's role is the highest of `defaultRole` and every matching binding; on a project it is the highest of the global role and the project's bindings.
 - A project binding names the project by its ID, shown on the project's Overview tab (Settings → Projects → project → Overview). Renaming a project does not change who can access it. Bindings are not checked against the project list: a binding to an ID that no project has opens nothing, and the profile page flags it.
 - Binding changes take effect when the web pods restart. The chart annotates the pods with a checksum of the auth configuration, so `helm upgrade` restarts them.
-- Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, `admin` bound to a project, or `project` used instead of `projectId`. The web host also stops on an unknown role or a `projectId` that is not a valid GUID.
+- Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, a binding to the Default project (`00000000-0000-0000-0000-000000000000`), or `project` used instead of `projectId`. The web host also stops on an unknown role or a `projectId` that is not a valid GUID.
 - **Upgrade note:** Bindings that still use `project:` stop `helm template` and the web host at startup; replace them with `projectId: <id>` (the ID is shown on the project's Overview tab).
 
 ### Local admin password

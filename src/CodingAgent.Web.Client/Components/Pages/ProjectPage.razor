@@ -1,0 +1,55 @@
+@page "/projects/{ProjectId}"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
+@layout CockpitLayout
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Web.Components.Shared
+@inject CurrentAccess Access
+@inject IUiSettingsClient ConfigClient
+@inject NavigationManager Nav
+
+<PageTitle>Project Settings - Coding Agent</PageTitle>
+
+@if (!Access.IsReady)
+{
+    <div class="cockpit-page">
+        <div class="monitoring-empty">Loading…</div>
+    </div>
+}
+else if (!Access.CanRead(ProjectId))
+{
+    <div class="cockpit-page">
+        <div class="monitoring-empty" data-testid="project-not-found">Project not found.</div>
+    </div>
+}
+else
+{
+    <div class="cockpit-page settings-page">
+        <InlineStatus Message="@_statusMessage" IsError="@_isError" OnDismissed="ClearStatus" />
+        <ProjectDetailSection
+            ProjectId="@ProjectId"
+            ConfigClient="ConfigClient"
+            OnProjectSaved="HandleProjectSaved"
+            OnShowStatus="HandleShowStatus" />
+    </div>
+}
+
+@code {
+    [Parameter] public string ProjectId { get; set; } = default!;
+
+    private string? _statusMessage;
+    private bool _isError;
+
+    private void HandleProjectSaved() { }
+
+    private void HandleShowStatus((string Message, bool IsError) args)
+    {
+        _statusMessage = args.Message;
+        _isError = args.IsError;
+    }
+
+    private void ClearStatus()
+    {
+        _statusMessage = null;
+        StateHasChanged();
+    }
+}
