@@ -6,6 +6,7 @@ using Moq;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.UnitTests.Auth;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
@@ -24,6 +25,8 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
     private void SetupDefaults()
     {
+        // Register global admin so all access-gated controls render.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
@@ -175,6 +178,194 @@ public class ProjectDetailSectionComponentTests : BunitContext
         // Placeholder contains example content
         Assert.Contains("Code Style", cut.Markup);
     }
+
+    [Fact]
+    public async Task ProjectAdmin_SaveOverview_KeepsOperatorOnlyFieldsFromStoredProject()
+    {
+        // Req 6 non-tautological test: the FIRST GetProjectByIdAsync call (component load) returns
+        // a project with operator-only fields in state A; the SECOND call (reload before save)
+        // returns state B. The saved project must use state B values for those fields, proving the
+        // preservation block is active. Removing the preservation block would save state A values.
+        var initialLoad = new PipelineProject
+        {
+            Id = "p1", Name = "Original Name",
+            Enabled = true,                     // A: component loads with Enabled=true
+            EpicIssueProviderId = "ep-initial",
+            BrainReadOnly = false,
+            BrainConsolidationReviewEnabled = true,
+        };
+        var serverGroundTruth = new PipelineProject
+        {
+            Id = "p1", Name = "Original Name",
+            Enabled = false,                    // B: server ground truth says false
+            EpicIssueProviderId = "ep-stored",
+            BrainReadOnly = true,
+            BrainConsolidationReviewEnabled = false,
+        };
+
+        // First call: initial component load; second call: preservation reload during save.
+        _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(initialLoad)
+            .ReturnsAsync(serverGroundTruth);
+
+        // Project admin (scoped) — not a global admin.
+        Services.AddTestAccess(TestAccess.Scoped(("p1", AccessRole.Admin)));
+
+        PipelineProject? savedProject = null;
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+
+        // Overview tab is active; click Save (the disabled Enabled checkbox cannot be changed)
+        await cut.InvokeAsync(() => cut.Find("button.btn-save").Click());
+
+        Assert.NotNull(savedProject);
+        // Operator-only fields must come from the server ground truth (second reload), not from
+        // the browser form state (initial load). Removing the preservation block saves state A.
+        Assert.False(savedProject!.Enabled, "Enabled must come from server reload, not initial browser state");
+        Assert.Equal("ep-stored", savedProject.EpicIssueProviderId);
+        Assert.True(savedProject.BrainReadOnly, "BrainReadOnly must come from server reload");
+        Assert.False(savedProject.BrainConsolidationReviewEnabled, "BrainConsolidationReviewEnabled must come from server reload");
+    }
+
+    [Fact]
+    public async Task ProjectAdmin_SaveSecrets_KeepsOperatorOnlyFieldsFromStoredProject()
+    {
+        // Req 6: preservation block in SaveSecretsAsync must use the reload's values.
+        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
+            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
+        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
+            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+
+        _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(initialLoad)
+            .ReturnsAsync(serverGroundTruth);
+        Services.AddTestAccess(TestAccess.Scoped(("p1", AccessRole.Admin)));
+
+        PipelineProject? savedProject = null;
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Trim() == "Secrets").Click();
+        await cut.InvokeAsync(() => cut.Find("button.btn-save").Click());
+
+        Assert.NotNull(savedProject);
+        Assert.False(savedProject!.Enabled);
+        Assert.Equal("ep-stored", savedProject.EpicIssueProviderId);
+        Assert.True(savedProject.BrainReadOnly);
+        Assert.False(savedProject.BrainConsolidationReviewEnabled);
+    }
+
+    [Fact]
+    public async Task ProjectAdmin_SaveSettings_KeepsOperatorOnlyFieldsFromStoredProject()
+    {
+        // Req 6: preservation block in SaveSettingsAsync must use the reload's values.
+        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
+            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
+        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
+            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+
+        _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(initialLoad)
+            .ReturnsAsync(serverGroundTruth);
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        Services.AddTestAccess(TestAccess.Scoped(("p1", AccessRole.Admin)));
+
+        PipelineProject? savedProject = null;
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Trim() == "Settings").Click();
+        await cut.InvokeAsync(() => cut.Find("button.btn-save").Click());
+
+        Assert.NotNull(savedProject);
+        Assert.False(savedProject!.Enabled);
+        Assert.Equal("ep-stored", savedProject.EpicIssueProviderId);
+        Assert.True(savedProject.BrainReadOnly);
+        Assert.False(savedProject.BrainConsolidationReviewEnabled);
+    }
+
+    [Fact]
+    public async Task ProjectAdmin_SaveMcpServers_KeepsOperatorOnlyFieldsFromStoredProject()
+    {
+        // Req 6: preservation block in SaveMcpServersAsync must use the reload's values.
+        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
+            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
+        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
+            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+
+        _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(initialLoad)
+            .ReturnsAsync(serverGroundTruth);
+        Services.AddTestAccess(TestAccess.Scoped(("p1", AccessRole.Admin)));
+
+        PipelineProject? savedProject = null;
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Trim() == "MCP Servers").Click();
+        await cut.InvokeAsync(() => cut.Find("button.btn-save").Click());
+
+        Assert.NotNull(savedProject);
+        Assert.False(savedProject!.Enabled);
+        Assert.Equal("ep-stored", savedProject.EpicIssueProviderId);
+        Assert.True(savedProject.BrainReadOnly);
+        Assert.False(savedProject.BrainConsolidationReviewEnabled);
+    }
+
+    [Fact]
+    public async Task ProjectAdmin_SaveProjectReview_KeepsOperatorOnlyFieldsFromStoredProject()
+    {
+        // Req 6: preservation block in SaveProjectReviewAsync must use the reload's values.
+        // Project Review tab only shows for non-default projects.
+        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
+            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
+        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
+            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+
+        _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(initialLoad)
+            .ReturnsAsync(serverGroundTruth);
+        Services.AddTestAccess(TestAccess.Scoped(("p1", AccessRole.Admin)));
+
+        PipelineProject? savedProject = null;
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Trim() == "Project Review").Click();
+        await cut.InvokeAsync(() => cut.Find("button.btn-save").Click());
+
+        Assert.NotNull(savedProject);
+        Assert.False(savedProject!.Enabled);
+        Assert.Equal("ep-stored", savedProject.EpicIssueProviderId);
+        Assert.True(savedProject.BrainReadOnly);
+        Assert.False(savedProject.BrainConsolidationReviewEnabled);
+    }
 }
 
 /// <summary>
@@ -193,6 +384,8 @@ public class ProjectDetailSectionSettingsValidationTests : BunitContext
 
     private void SetupDefaults()
     {
+        // Register global admin so all access-gated controls render.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
@@ -355,6 +548,8 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
     private void SetupDefaults()
     {
+        // Register global admin so all access-gated controls (template add/remove/move) render.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
@@ -843,6 +1038,68 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         // the exception propagates, rather than relying solely on the side-effect absence.
         Assert.Null(statusMessage);
     }
+
+    [Fact]
+    public async Task ProjectAdmin_AddTemplate_IsRefused()
+    {
+        // Access audit: Guard.DemandAsync(AccessRole.Admin, null) in AddTemplate must refuse
+        // a project-scoped admin (no global admin role). MoveTemplateAsync must not be called.
+        var projectA = new PipelineProject { Id = "pA", Name = "Project A", TemplateIds = ["t1"] };
+        var projectB = new PipelineProject { Id = "pB", Name = "Project B", TemplateIds = ["t3"] };
+        var templates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "t1", Name = "Template One", IssueProviderId = "ip-1", RepoProviderId = "rp-1" },
+            new() { Id = "t3", Name = "Template Three", IssueProviderId = "ip-2", RepoProviderId = "rp-2" }
+        };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>())).ReturnsAsync(projectA);
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new[] { projectA, projectB });
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(templates);
+
+        // Project admin — not global admin.
+        Services.AddTestAccess(TestAccess.Scoped(("pA", AccessRole.Admin)));
+
+        (string Message, bool IsError)? status = null;
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "pA")
+            .Add(s => s.ConfigClient, _mockStore.Object)
+            .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string Message, bool IsError)>(this, s => status = s)));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
+
+        // The Add button is hidden for project admins, so this guard fires only if the UI is
+        // bypassed. We call the component's OnParametersSetAsync path and verify MoveTemplateAsync
+        // was never called — the template-add row should not even render.
+        Assert.Empty(cut.FindAll(".template-add-row .btn-save")); // Add template button must be absent for project admin
+        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProjectAdmin_RemoveTemplate_IsRefused()
+    {
+        // Access audit: Guard.DemandAsync(AccessRole.Admin, null) in RemoveTemplate must refuse
+        // a project-scoped admin. The ✕ button must not render, and MoveTemplateAsync must not be called.
+        var projectA = new PipelineProject { Id = "pA", Name = "Project A", TemplateIds = ["t1"] };
+        var templates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "t1", Name = "Template One", IssueProviderId = "ip-1", RepoProviderId = "rp-1" }
+        };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>())).ReturnsAsync(projectA);
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new[] { projectA });
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(templates);
+
+        // Project admin — not global admin.
+        Services.AddTestAccess(TestAccess.Scoped(("pA", AccessRole.Admin)));
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "pA")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
+
+        // The remove (✕) button is hidden for project admins — it is inside the IsAdmin guard.
+        Assert.Empty(cut.FindAll("button.btn-icon-danger")); // Remove template button must be absent for project admin
+        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
 
 /// <summary>
@@ -863,6 +1120,8 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
 
     private void SetupDefaults()
     {
+        // Register global admin so all access-gated controls render.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>

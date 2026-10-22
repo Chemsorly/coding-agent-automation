@@ -405,8 +405,8 @@ Spec 049: render-time validation of the auth values (the web host validates them
     {{- if not (regexMatch "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" (toString $b.projectId)) }}
       {{- fail (printf "auth.rbac.bindings[%d] has projectId '%s', which is not a project ID." $i $b.projectId) }}
     {{- end }}
-    {{- if eq (lower (toString $b.role)) "admin" }}
-      {{- fail (printf "auth.rbac.bindings[%d] binds role admin to projectId %q. The admin role can only be bound globally." $i $b.projectId) }}
+    {{- if eq (lower (toString $b.projectId)) "00000000-0000-0000-0000-000000000000" }}
+      {{- fail (printf "auth.rbac.bindings[%d] binds the Default project. The Default project takes no project bindings; bind the role globally or move the repositories to a project." $i) }}
     {{- end }}
   {{- end }}
 {{- end }}

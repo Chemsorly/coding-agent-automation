@@ -161,7 +161,7 @@ public class SettingsTreeNavComponentTests : BunitContext
 
         var active = Assert.Single(cut.FindAll("a.tree-node.active"));
         Assert.Equal("Alpha", active.TextContent.Trim());
-        Assert.Equal($"settings?section={Uri.EscapeDataString(nodeId)}", active.GetAttribute("href"));
+        Assert.Equal("/projects/p-1", active.GetAttribute("href"));
     }
 
     [Fact]

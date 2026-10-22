@@ -5,6 +5,7 @@ using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
+using CodingAgent.Web.UnitTests.Auth;
 using Microsoft.AspNetCore.Components;
 using Moq;
 
@@ -66,6 +67,9 @@ public class SettingsCoverageTests : BunitContext
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
         _configClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineJobTemplate>());
         _configClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineProject> { project });
+        // Global admin needed so all settings fields (including BrainReadOnly, BrainConsolidationReviewEnabled)
+        // are rendered. Without this, those two fields are hidden for non-admins.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p-1")

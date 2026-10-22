@@ -173,15 +173,12 @@ public class AuthOptionsValidatorTests
         Errors(options).Should().ContainSingle(e => e.Contains("Bindings:3") && e.Contains("exactly one"));
     }
 
-    // TODO: AdminBoundToProject_Fails (below) and AdminWithProjectId_IsRefused (in the Requirement 9 block) are duplicate tests:
-    // both add { Group = "g", Role = "admin", ProjectId = "6f1c2a9e-..." } to Valid() and assert "only be bound globally".
-    // One of them should be removed or differentiated to avoid redundant coverage.
     [Fact]
-    public void AdminBoundToProject_Fails()
+    public void AdminBoundToNonDefaultProject_Succeeds()
     {
         var options = Valid();
         options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "admin", ProjectId = "6f1c2a9e-0000-0000-0000-000000000000" });
-        Errors(options).Should().ContainSingle(e => e.Contains("Bindings:3") && e.Contains("only be bound globally"));
+        Validator.Validate(null, options).Succeeded.Should().BeTrue();
     }
 
     [Fact]
@@ -214,11 +211,19 @@ public class AuthOptionsValidatorTests
     }
 
     [Fact]
-    public void AdminWithProjectId_IsRefused()
+    public void AdminWithDefaultProjectId_IsRefused()
     {
         var options = Valid();
-        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "admin", ProjectId = "6f1c2a9e-0000-0000-0000-000000000000" });
-        Errors(options).Should().ContainSingle(e => e.Contains("only be bound globally"));
+        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "admin", ProjectId = "00000000-0000-0000-0000-000000000000" });
+        Errors(options).Should().ContainSingle(e => e.Contains("Default project") && e.Contains("takes no project bindings"));
+    }
+
+    [Fact]
+    public void OperatorBoundToDefaultProject_IsRefused()
+    {
+        var options = Valid();
+        options.Rbac.Bindings.Add(new RoleBindingOptions { Group = "g", Role = "operator", ProjectId = "00000000-0000-0000-0000-000000000000" });
+        Errors(options).Should().ContainSingle(e => e.Contains("Default project") && e.Contains("takes no project bindings"));
     }
 
     [Fact]

@@ -144,9 +144,25 @@ public class RbacEvaluatorTests
     }
 
     [Fact]
-    public async Task ProjectScopedAdminBinding_GrantsNothing()
+    public async Task ProjectScopedAdminBinding_GrantsAdminOnThatProject()
     {
+        // Admin may now be bound to a non-default project.
         var grant = await Evaluator("", Group("team-a", "admin", PaymentsId)).EvaluateAsync(Oidc("alice", "team-a"));
+
+        grant.HasAnyAccess.Should().BeTrue();
+        grant.GlobalRole.Should().Be(AccessRole.None, "a project admin has no global admin role");
+        grant.RoleFor(PaymentsId).Should().Be(AccessRole.Admin);
+        grant.RoleFor(BillingId).Should().Be(AccessRole.None);
+        grant.Matches.Should().ContainSingle().Which.Should().Be(
+            new MatchedBinding("group:team-a", AccessRole.Admin, PaymentsId));
+    }
+
+    [Fact]
+    public async Task DefaultProjectBinding_IsIgnored()
+    {
+        // The all-zeros Default project takes no project bindings; Binding.From returns null.
+        const string defaultProjectId = "00000000-0000-0000-0000-000000000000";
+        var grant = await Evaluator("", Group("team-a", "operator", defaultProjectId)).EvaluateAsync(Oidc("alice", "team-a"));
 
         grant.HasAnyAccess.Should().BeFalse();
         grant.Matches.Should().BeEmpty();

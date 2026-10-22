@@ -71,11 +71,13 @@ public sealed class AuthOptionsValidator : IValidateOptions<AuthOptions>
 
             if (!string.IsNullOrWhiteSpace(binding.ProjectId) && !Guid.TryParse(binding.ProjectId, out _))
                 errors.Add($"{prefix} has projectId '{binding.ProjectId}', which is not a project ID.");
+            else if (!string.IsNullOrWhiteSpace(binding.ProjectId)
+                && Guid.TryParse(binding.ProjectId, out var projectGuid)
+                && projectGuid == Guid.Parse(CodingAgent.Pipeline.Models.WellKnownIds.DefaultProjectId))
+                errors.Add($"{prefix} binds the Default project. The Default project takes no project bindings; bind the role globally or move the repositories to a project.");
 
-            if (!AccessRoleNames.TryParse(binding.Role, out var role))
+            if (!AccessRoleNames.TryParse(binding.Role, out _))
                 errors.Add($"{prefix} has unknown role '{binding.Role}'. Use '{AccessRoleNames.ReadOnly}', '{AccessRoleNames.Operator}' or '{AccessRoleNames.Admin}'.");
-            else if (role == AccessRole.Admin && !string.IsNullOrWhiteSpace(binding.ProjectId))
-                errors.Add($"{prefix} binds '{AccessRoleNames.Admin}' to project '{binding.ProjectId}'. The admin role can only be bound globally.");
         }
     }
 }

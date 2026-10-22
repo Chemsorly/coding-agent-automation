@@ -286,16 +286,27 @@ A [triage](triage.md) always has the project's scope: the run clones every enabl
 
 ## UI Management
 
-Projects are managed in the **Settings** page under the "Projects" group in the navigation tree. Each project has six tabs (the Default project has no Project Review tab):
+Projects are managed in two places depending on your role:
 
-| Tab | Contents |
-|-----|----------|
-| **Overview** | Name, description, enabled toggle, EpicIssueProviderId dropdown |
-| **Templates** | The project's templates by name, with add/remove controls and a "Move to…" action |
-| **Secrets** | Environment variables injected into every run of the project. Merged with repository-level secrets; the repository value wins on a key collision |
-| **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*". The tab also holds the **Steering Instructions** text (`SteeringContent`) and the Blacklisted Paths override |
-| **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |
-| **Project Review** | The project review switch and the project reviewer's instructions, prefilled with the default ones; "Reset to default" restores them. Instructions equal to the default are stored empty, so the project follows later changes to the default |
+- **Global admins** manage projects in the **Settings** page under the "Projects" group. The Settings page shows the project list, lets you create and delete projects, and allows project nodes in the navigation tree which link to the project's own page.
+- **Project admins and other users with project access** visit each project's own page at `/projects/{id}`. This page is also reachable from the "Project settings" link in the sidebar navigation (shown when a project is selected) and from the project nodes in the Settings tree.
+
+### Project Page
+
+The project page at `/projects/{id}` requires at least `readonly` on the project. It hosts the same six tabs as the Settings tree. Access to each tab's controls depends on the role:
+
+| Tab | Project admin (`admin` on the project) | Global admin only |
+|-----|---------------------------------------|-------------------|
+| **Overview** | Name, description — Save button | Enabled toggle, Epic Issue Provider |
+| **Templates** | View only | Add, remove and move templates |
+| **Secrets** | Edit secrets — Save button | — |
+| **Settings** | All overrides except the two brain switches — Save button | Brain Consolidation Review Enabled, Brain Read-Only |
+| **MCP Servers** | Add/edit/remove MCP servers — Save button | — |
+| **Project Review** | Edit reviewer instructions — Save button | — |
+
+Users with `operator` or `readonly` see all tabs read-only. Secret values are never shown to any user; only the key names are displayed. The Default project has no Project Review tab.
+
+Every save calls a server-side guard. When a user who is not a global admin saves, the server reloads the stored project right before writing and restores the `Enabled`, `EpicIssueProviderId`, `BrainReadOnly` and `BrainConsolidationReviewEnabled` fields from the stored copy, so browser-supplied values for those fields are ignored.
 
 The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. The template name and the "Edit" link in each row navigate to the template's **repository page** (`/pipelines/{templateId}`). Projects with `EpicIssueProviderId` set show a 🧩 indicator.
 
@@ -310,10 +321,10 @@ Each pipeline job template has its own repository page at `/pipelines/{templateI
 - Required agent labels (determines agent routing and quality gates), with a label preview
 - Enabled toggle
 
-**Behaviour card** — how the pipeline works on the repository. Editable only by global admins. Contains:
+**Behaviour card** — how the pipeline works on the repository. Editable by `admin` on the template's project (or a global admin). Contains:
 - Template name (must be unique within its project)
 - Workflow switches: Implementation, PR Review, Decomposition, Housekeeping
 - Housekeeping concurrency limit and stale-branch cleanup (shown only when Housekeeping is on)
 - Steering instructions, setup steps, secrets (write-only — stored values are never displayed), and commit blacklist
 
-Both cards have a Save button. Changes apply from the next poll cycle. The page header also exposes the dispatch buttons (Browse issues, Browse pull requests, Browse epics) and the "Scan for refactorings" button (requires global operator), matching the Pipelines page dispatch controls but scoped to the single template.
+Both cards have a Save button. Changes apply from the next poll cycle. The page header also exposes the dispatch buttons (Browse issues, Browse pull requests, Browse epics) and the "Scan for refactorings" button (requires `operator` on the template's project), matching the Pipelines page dispatch controls but scoped to the single template.

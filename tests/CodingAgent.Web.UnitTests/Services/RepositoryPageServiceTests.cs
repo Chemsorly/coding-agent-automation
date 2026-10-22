@@ -723,6 +723,21 @@ public class RepositoryPageServiceTests
     }
 
     [Fact]
+    public async Task SaveBindingAsync_ProjectAdmin_ReturnsDenied()
+    {
+        // Access audit: SaveBindingAsync uses DeniedGlobalAdminAsync (null project ID), so a
+        // project-scoped admin must be refused even though they have Admin on the project.
+        SetupPage();
+        var svc = CreateService(TestAccess.Scoped((ProjectId, AccessRole.Admin)));
+        await svc.InitializeAsync(TemplateId);
+
+        var (success, error, _) = await svc.SaveBindingAsync(new RepositoryPageService.BindingFormModel());
+
+        Assert.False(success);
+        Assert.Equal("You don't have permission to do this", error);
+    }
+
+    [Fact]
     public async Task SaveBindingAsync_TemplateNull_ReturnsNotFound()
     {
         SetupPage();
