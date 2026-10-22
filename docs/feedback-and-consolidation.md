@@ -119,7 +119,7 @@ The Scheduler checks every 15 minutes whether any consolidation type has crossed
 2. **Automatic runs never add `agent:next`.** `TriggerAutomaticAsync` always passes `autoDispatch: false`; a human decides what gets implemented.
 3. **Backpressure:** No automatic scan runs while the template still has at least `MaxRefactoringProposals` open scan issues.
 
-**Pause-after-failure:** When a consolidation run ends in failure, that scope's automatic start is paused until a later run of the same scope succeeds. This prevents retry storms without a cooldown setting. A run whose route is refused when an agent claims it (for example, its profile was disabled after the run was queued) fails, so it pauses the scope too, until a successful run. An automatic start the API refuses at creation creates no run and pauses nothing: the Scheduler logs a warning and tries again at the next check.
+**Pause-after-failure:** When a consolidation run ends in failure, that scope's automatic start is paused until a later run of the same scope succeeds. This prevents retry storms without a cooldown setting. A run whose route is refused when an agent claims it (for example, its profile was disabled after the run was queued) fails, so it pauses the scope too, until a successful run. An automatic start the API refuses at creation creates no run and pauses nothing: the Scheduler logs a warning and tries again at the next check, and the scope's counter on the Consolidation page shows "auto refused:" with the reason until the route is fixed. For a brain, that is the route of the template the Scheduler starts the run with, the first of the brain's templates.
 
 Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initiated by column of the Runs page and filterable there.
 
@@ -128,7 +128,7 @@ Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initi
 The page is reached through the "Consolidation" item in the sidebar navigation. It displays:
 
 - Per-template cards with trigger buttons and last-run status
-- Automatic-start counters per card, with the reason when an automatic start is paused or waiting (see Automatic Start)
+- Automatic-start counters per card, with the reason when an automatic start is refused (its Consolidation route does not resolve), paused or waiting (see Automatic Start)
 - Run history table across all consolidation types
 
 A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review), the auto-dispatch option and the focus before it starts. A focused scan (Structure, Correctness, Design or Tests) runs only that detection agent and proposes only its categories; Phase 0 runs the test coverage only for the All and Tests focus.

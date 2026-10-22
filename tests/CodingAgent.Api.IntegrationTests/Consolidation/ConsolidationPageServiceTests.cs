@@ -1,9 +1,13 @@
 using AwesomeAssertions;
 using CodingAgent.Api.Consolidation;
+using CodingAgent.Api.IntegrationTests.AgentRouting;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.TestUtilities;
 using Moq;
 using Xunit;
 
@@ -122,12 +126,17 @@ public sealed class ConsolidationPageServiceTests
 
     // ── GetAutoCountersAsync ──────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The page service over the given stores. The routing table routes every task type to the default test profile
+    /// unless <paramref name="routing"/> says otherwise (spec 053: a refused Consolidation route shows on the counter).
+    /// </summary>
     private static ConsolidationPageService BuildService(
         Mock<ConsolidationStalenessService> mockStaleness,
         PipelineConfiguration config,
         PipelineProject[] projects,
         PipelineJobTemplate[] templates,
-        IConsolidationService? consolidation = null)
+        IConsolidationService? consolidation = null,
+        CodingAgent.Pipeline.Models.AgentRouting? routing = null)
     {
         var mockConfigStore = new Mock<IPipelineConfigStore>();
         mockConfigStore
@@ -142,11 +151,67 @@ public sealed class ConsolidationPageServiceTests
             .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>(templates));
 
+        var db = new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString());
+        AgentRoutingTestSupport.SeedRouting(db, routing);
+        var mockProfiles = new Mock<IAgentProfileStore>();
+        mockProfiles
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([AgentRoutingTestData.Profile()]);
+
         return new ConsolidationPageService(
             mockProjectStore.Object,
             mockConfigStore.Object,
             consolidation ?? new Mock<IConsolidationService>().Object,
-            mockStaleness.Object);
+            mockStaleness.Object,
+            new AgentRoutingStore(db),
+            mockProfiles.Object,
+            AgentRoutingTestData.JobTemplates());
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_ARefusedConsolidationRoute_IsTheReason_BeforeAPause()
+    {
+        // Spec 053: a refused automatic start creates no run, so nothing pauses the scope; the counter names the route.
+        var config = new PipelineConfiguration { AutoRefactoringScanAfterClosedIssues = 10, MaxRefactoringProposals = 3 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness.Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockStaleness.Setup(s => s.CountClosedIssuesSinceLastScanAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(4);
+
+        var service = BuildService(mockStaleness, config,
+            [Project("p", templateIds: ["t1"])], [Template("t1")],
+            routing: CodingAgent.Pipeline.Models.AgentRouting.Empty);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.RefactoringCounters["t1"].Should().Be(
+            new UiAutoCounter(4, 10, $"auto refused: {AgentRouteRefusalReason.NoRouteText}"));
+    }
+
+    [Fact]
+    public async Task GetAutoCounters_ABrainsRefusal_IsTheRouteOfTheTemplateTheSchedulerUses()
+    {
+        // The Scheduler routes a shared brain's run by the first template of its group; t2's own row does not count.
+        var config = new PipelineConfiguration { AutoBrainConsolidationAfterRuns = 20 };
+        var mockStaleness = new Mock<ConsolidationStalenessService>();
+        mockStaleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("brain-1", It.IsAny<CancellationToken>())).ReturnsAsync(3);
+        mockStaleness.Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var routedT2 = Template("t2") with
+        {
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route(),
+            },
+        };
+
+        var service = BuildService(mockStaleness, config,
+            [Project("p", templateIds: ["t1", "t2"])], [Template("t1"), routedT2],
+            routing: CodingAgent.Pipeline.Models.AgentRouting.Empty);
+
+        var result = await service.GetAutoCountersAsync(CancellationToken.None);
+
+        result.BrainCounters.Values.Should().AllSatisfy(c => c.Blocked.Should().StartWith("auto refused: "),
+            "both cards show the brain's run, which routes by t1");
     }
 
     [Fact]
