@@ -263,14 +263,14 @@ public sealed partial class WorkItemStatusTransitionService
     {
         try
         {
-            var (duration, runTypeTag, _, projectName) =
+            var (duration, runTypeTag, _, projectName, providerTag, modelTag) =
                 await RunOutcomeTelemetry.ResolveRunContextAsync(id, dbFactory, ct);
 
             var (payload, failureReason) = ResolvePayloadAndFailureReason(request);
 
             var (outcome, failureReasonTag) = RunOutcomeTelemetry.DeriveOutcome(request.Status, payload, failureReason);
 
-            RunOutcomeTelemetry.RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
+            RunOutcomeTelemetry.RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration, providerTag, modelTag);
 
             // Record per-phase LLM usage metrics from the completion payload
             if (payload?.PhaseBreakdown is { Count: > 0 })

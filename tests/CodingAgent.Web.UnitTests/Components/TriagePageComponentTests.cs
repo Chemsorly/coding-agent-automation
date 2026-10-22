@@ -350,7 +350,7 @@ public class TriagePageComponentTests : BunitContext
     {
         Returns(detail);
         _runHistory.Setup(r => r.GetRunAsync(Guid.Parse(TriageRunId), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UiRunDetail(run, null));
+            .ReturnsAsync(new UiRunDetail(run, new UiRunAgent(null, null, null)));
     }
 
     [Fact]

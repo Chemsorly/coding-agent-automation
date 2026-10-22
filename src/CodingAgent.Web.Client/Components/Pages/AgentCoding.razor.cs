@@ -82,8 +82,7 @@ public partial class AgentCoding : IDisposable
     private List<ProviderConfig> _pipelineProviders => PageService.PipelineProviders;
     private IReadOnlyList<QualityGateConfiguration> _qualityGateConfigs => PageService.QualityGateConfigs;
     private IReadOnlyList<ReviewerConfiguration> _reviewerConfigs => PageService.ReviewerConfigs;
-    private IReadOnlyList<AgentProfile> _agentProfiles => PageService.AgentProfiles;
-    private PipelineConfiguration _pipelineConfig => PageService.PipelineConfig;
+    private IReadOnlyDictionary<string, IReadOnlyList<UiResolvedRoute>> _routes => PageService.Routes;
     private List<IssueSummary> _drawerIssues => PageService.DrawerIssues;
     private bool _drawerLoading => PageService.DrawerLoading;
     private int _drawerPage => PageService.DrawerPage;

@@ -38,6 +38,7 @@ public sealed class WorkItemEndpointTests
     public WorkItemEndpointTests(ApiWebApplicationFactory factory)
     {
         _factory = factory;
+        factory.SeedDefaultRoute();
         _client = factory.CreateClient();
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", ApiWebApplicationFactory.ApiKey);
@@ -1053,30 +1054,33 @@ public sealed class WorkItemEndpointTests
     // ── PriorityWeight — AC tests for issue #2172 ────────────────────────────
 
     /// <summary>
-    /// Issue #3642: a Consolidation request whose selector has no job template is refused with 422 and leaves
-    /// no row. The shared host's template store is empty, so no selector has one. The same request with a
-    /// template, and the other task types, are covered by <c>ConsolidationEnqueueEndpointTests</c> and
-    /// <c>CreateWorkItemConsolidationTemplateGateTests</c>.
+    /// Spec 053 req 2.9, 4.12 (D15): a request no agent route resolves for is refused with 422, the reason as ProblemDetails
+    /// <c>detail</c> (which the Scheduler shows), and leaves no row. The consolidation template check is covered by
+    /// <c>ConsolidationEnqueueEndpointTests</c> and <c>CreateWorkItemRoutingTests</c>.
     /// </summary>
     [Fact]
-    public async Task CreateWorkItem_Consolidation_NoJobTemplate_Returns422_AndInsertsNoRow()
+    public async Task CreateWorkItem_WithoutARoute_Returns422WithTheReason_AndInsertsNoRow()
     {
+        using (var routingDb = _factory.CreateDbContext())
+        {
+            routingDb.KeyValueStore.RemoveRange(routingDb.KeyValueStore.Where(kv => kv.Key == CodingAgent.Pipeline.Models.AgentRouting.StorageKey));
+            routingDb.SaveChanges();
+        }
         var request = new JobDistributionRequest
         {
-            IssueIdentifier = new IssueIdentifier($"BrainConsolidation:{Guid.NewGuid():N}"),
-            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            IssueIdentifier = new IssueIdentifier($"no-route-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
             RepoProviderConfigId = "repo-1",
             InitiatedBy = "test",
-            TaskType = WorkItemTaskType.Consolidation,
-            RunType = PipelineRunType.Consolidation,
-            AgentSelector = "kiro,python,python312",
+            TaskType = WorkItemTaskType.Implementation,
             TimeoutSeconds = 3600
         };
 
         var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
 
-        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity,
-            "a consolidation run that the dispatcher could never start must be refused at enqueue");
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        problem!.Detail.Should().Be(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText);
         using var db = _factory.CreateDbContext();
         db.WorkItems.Where(w => w.IssueIdentifier == request.IssueIdentifier.Value).Should().BeEmpty();
     }

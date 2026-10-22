@@ -3,12 +3,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Services
 <section class="settings-section">
-    @* The page re-renders on its loop-status tick, which redraws "polled Xs ago". The agents matched in an
-       open label preview come from /api/ui/agents, read while a preview or the add form is open. *@
-    @if (ShowsAgents)
-    {
-        <AutoRefresh OnTick="RefreshAgentsAsync" />
-    }
+    @* The page re-renders on its loop-status tick, which redraws "polled Xs ago". *@
     <div class="cockpit-card-header"><h2>Pipeline Job Templates</h2></div>
     @if (Templates.Count == 0)
     {
@@ -97,6 +92,19 @@
                                         @if (providerMissing)
                                         {
                                             <span class="badge-disabled-table" title="Referenced provider no longer exists"><Icon Name="alert-triangle" Size="14" /></span>
+                                        }
+                                        @{ var routes = RoutesOf(template.Id); }
+                                        @if (routes.Count > 0)
+                                        {
+                                            var problems = routes.Where(r => r.Problem is not null).ToList();
+                                            <div class="monitoring-muted" style="font-size: 0.75rem;" data-testid="template-routes">
+                                                @RouteText.Compact(routes)
+                                                @if (problems.Count > 0)
+                                                {
+                                                    <span class="badge-disabled-table" data-testid="template-route-problem"
+                                                          title="@string.Join("\n", problems.Select(p => $"{CodingAgent.Pipeline.Models.AgentRouteLabels.TaskType(p.TaskType)}: {p.Problem}"))"><Icon Name="alert-triangle" Size="12" /></span>
+                                                }
+                                            </div>
                                         }
                                     </td>
                                     <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, IssueProviders)</td>

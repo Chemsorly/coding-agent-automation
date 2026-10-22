@@ -2,10 +2,12 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using AwesomeAssertions;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -56,6 +58,7 @@ public sealed class ConsolidationEnqueueEndpointTests : IClassFixture<Consolidat
     public ConsolidationEnqueueEndpointTests(ConsolidationTemplateWebApplicationFactory factory)
     {
         _factory = factory;
+        factory.SeedDefaultRoute();
         _client = factory.CreateClient();
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", ApiWebApplicationFactory.ApiKey);
@@ -97,14 +100,21 @@ public sealed class ConsolidationEnqueueEndpointTests : IClassFixture<Consolidat
     }
 
     [Fact]
-    public async Task PostWorkItems_Consolidation_SelectorWithoutTemplate_Returns422_EvenThoughOtherTemplatesExist()
+    public async Task PostWorkItems_Consolidation_RoutedToAProfileWithoutAJobTemplate_Returns422_EvenThoughOtherTemplatesExist()
     {
-        var request = MakeConsolidationRequest("kiro,python,python312");
+        // #3642 and spec 053: the dispatcher could never start it. The next test's constructor restores the default route.
+        const string profileId = "0e5e0000-0000-4000-8000-0000000000a1";
+        await _factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(profileId, "kiro,python,python312", "Python agent"), CancellationToken.None);
+        await _factory.Services.GetRequiredService<AgentRoutingStore>().SaveAsync(
+            AgentRoutingTestData.Routing(profileId), CancellationToken.None);
+        var request = MakeConsolidationRequest("");
 
         var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
 
-        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity,
-            "the selector has no template, directly or through a profile");
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>())!.Detail
+            .Should().Be("Job template kiro,python,python312 of agent profile 'Python agent' does not exist in the Helm values");
         using var db = _factory.CreateDbContext();
         db.WorkItems.Where(w => w.IssueIdentifier == request.IssueIdentifier.Value).Should().BeEmpty(
             "a refused request must not leave a row behind");

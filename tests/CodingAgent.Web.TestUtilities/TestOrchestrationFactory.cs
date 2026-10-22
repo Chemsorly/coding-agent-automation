@@ -14,8 +14,6 @@ public static class TestOrchestrationFactory
     /// Creates a <see cref="DispatchRunCreationService"/> with no-op/null defaults.
     /// </summary>
     public static DispatchRunCreationService CreateMinimalRunCreator(
-        IConfigurationStore? configStore = null,
-        IProviderFactory? providerFactory = null,
         PipelineRunLifecycleService? lifecycle = null,
         Serilog.ILogger? logger = null,
         IPipelineRunHistoryService? historyService = null,
@@ -23,13 +21,7 @@ public static class TestOrchestrationFactory
     {
         logger ??= Serilog.Log.Logger;
         historyService ??= new NullHistoryService();
-        var store = configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
-
-        return new DispatchRunCreationService(
-            lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
-            store,
-            providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
-            logger);
+        return new DispatchRunCreationService(lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger));
     }
 
     /// <summary>No-op label service for tests that don't exercise label operations.</summary>

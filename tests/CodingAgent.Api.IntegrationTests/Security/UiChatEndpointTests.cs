@@ -5,12 +5,14 @@ using AwesomeAssertions;
 using CodingAgent.Api.Chat;
 using CodingAgent.Contracts.Auth;
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.Ui;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -55,7 +57,6 @@ public sealed class UiChatEndpointTests
     private const string ProjectA = "6f1c2a9e-0000-0000-0000-0000000000c7";
     private const string ProjectB = "6f1c2a9e-0000-0000-0000-0000000000c8";
     private const string ProfileId = "9c000000-0000-0000-0000-0000000000c7";
-    private const string AgentConfigId = "8b000000-0000-0000-0000-0000000000c7";
 
     private readonly ChatApiFactory _factory;
 
@@ -92,16 +93,11 @@ public sealed class UiChatEndpointTests
 
     private async Task SeedProfileAsync()
     {
-        await _factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = ProfileId, DisplayName = "Chat agent", AgentProviderConfigId = AgentConfigId, MatchLabels = [ChatApiFactory.TemplateLabels], Enabled = true,
-        }, CancellationToken.None);
-        using var scope = _factory.Services.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(new ProviderConfig
-        {
-            Id = AgentConfigId, Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Chat agent config",
-            Settings = new() { [ProviderSettingKeys.Model] = "claude-opus-5-5" },
-        }, CancellationToken.None);
+        await _factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(ProfileId, ChatApiFactory.TemplateLabels, "Chat agent"), CancellationToken.None);
+        // Spec 053 req 6.3a: a chat preselects the default route's model when the route names its profile.
+        await _factory.Services.GetRequiredService<AgentRoutingStore>().SaveAsync(
+            AgentRoutingTestData.Routing(ProfileId, "claude-opus-5-5"), CancellationToken.None);
     }
 
     // ── Launch ──────────────────────────────────────────────────────────────
@@ -125,17 +121,29 @@ public sealed class UiChatEndpointTests
     {
         await SeedProfileAsync();
         await _factory.Services.GetRequiredService<IProjectStore>().SaveProjectAsync(new PipelineProject { Id = ProjectA, Name = "Alpha" }, CancellationToken.None);
-        _factory.Dispatcher.Setup(d => d.DispatchChatPodAsync(ChatApiFactory.TemplateLabels, "claude-opus-5-5", null, It.IsAny<CancellationToken>()))
+        _factory.Dispatcher.Setup(d => d.DispatchChatPodAsync(ChatApiFactory.TemplateLabels, "claude-opus-5-5", "auto", It.IsAny<CancellationToken>()))
             .ReturnsAsync("chat-endpoint-launched");
         var client = Client(TestUserTokens.Scoped(ProjectA, AccessRole.Operator));
 
         var options = await client.GetOptionsAsync();
         var session = await client.StartAsync(ProfileId, ProjectA);
 
-        options.Profiles.Should().ContainEquivalentOf(new UiChatProfile(ProfileId, "Chat agent", [ChatApiFactory.TemplateLabels]));
+        options.Profiles.Should().ContainEquivalentOf(new UiChatProfile(
+            ProfileId, "Chat agent", JobTemplateProviderType.Kiro, ["auto", "claude-opus-5-5"],
+            ["auto", .. AgentToolCatalog.Kiro.Efforts], "claude-opus-5-5", "auto"));
         session.Should().Be(new UiChatSession("chat-endpoint-launched", "claude-opus-5-5"));
         (await Sessions.FindAsync("chat-endpoint-launched")).Should().BeEquivalentTo(
             new { OwnerIdentitySource = "oidc", OwnerSubject = "oidc:tester", ProjectId = ProjectA, ProfileId });
+    }
+
+    [IdorCase("GET /api/ui/chat/options")]
+    [Fact]
+    public async Task Options_ForAnotherProject_AreRefused()
+    {
+        // Spec 053 req 6.2: the options of a project include its repository rows' models, so they need operator on it.
+        var response = await Http(TestUserTokens.Scoped(ProjectA, AccessRole.Operator)).GetAsync($"/api/ui/chat/options?projectId={ProjectB}");
+
+        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.NotFound);
     }
 
     [Fact]

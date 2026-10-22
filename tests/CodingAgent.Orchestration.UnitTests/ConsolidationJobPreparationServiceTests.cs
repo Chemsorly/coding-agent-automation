@@ -34,10 +34,6 @@ public sealed class ConsolidationJobPreparationServiceTests
                 return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
             });
 
-        // Default: return empty profiles
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>());
-
         // Default: return global pipeline config (no overrides)
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
@@ -116,7 +112,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_RefactoringDetection_IncludesIssuePermission()
     {
-        SetupAgentConfig("agent-cfg");
         SetupTemplateWithAllProviders();
         SetupRepoConfigs();
         SetupIssueConfig();
@@ -141,8 +136,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_BrainConsolidation_ExcludesIssuePermission()
     {
-        SetupAgentConfig("agent-cfg");
-        SetupMatchingProfile("agent-cfg");
 
         bool capturedIncludeIssue = true; // Start true, expect false
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
@@ -153,7 +146,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, AgentConfig("agent-cfg"), CancellationToken.None);
 
         capturedIncludeIssue.Should().BeFalse();
     }
@@ -161,8 +154,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_NullTemplate_ExcludesIssuePermission()
     {
-        SetupAgentConfig("agent-cfg");
-        SetupMatchingProfile("agent-cfg");
 
         bool capturedIncludeIssue = true;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
@@ -173,7 +164,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, AgentConfig("agent-cfg"), CancellationToken.None);
 
         capturedIncludeIssue.Should().BeFalse();
     }
@@ -185,7 +176,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_RefactoringDetection_IncludesIssueProviderConfig()
     {
-        SetupAgentConfig("agent-cfg");
         SetupTemplateWithAllProviders();
         SetupRepoConfigs();
         SetupIssueConfig();
@@ -216,7 +206,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_NonRefactoring_ExcludesIssueProviderConfig()
     {
-        SetupAgentConfig("agent-cfg");
         SetupTemplateWithAllProviders();
         SetupRepoConfigs();
         SetupIssueConfig();
@@ -238,100 +227,11 @@ public sealed class ConsolidationJobPreparationServiceTests
 
     #endregion
 
-    #region Profile / fallback agent resolution
-
-    [Fact]
-    public async Task PrepareAsync_NoProfileMatch_FallsBackToFirstCompatibleAgentConfig()
-    {
-        // New behavior (spec 041-045): without a matching AgentProfile, no agent provider config
-        // is injected and token vending is skipped. The old RequiredLabels-based fallback has been
-        // removed; an explicit profile is required for agent config resolution.
-        var kiroConfig = new ProviderConfig
-        {
-            Id = "kiro-agent-cfg",
-            Kind = ProviderKind.Agent,
-            ProviderType = "KiroCli",
-            DisplayName = "KiroCli",
-            RequiredLabels = new List<string> { "kiro" }
-        };
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { kiroConfig });
-        // No profiles → no match → no agent config injected
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>());
-
-        var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, null, CancellationToken.None);
-
-        // Token vending is skipped when rawConfigs is empty
-        _mockTokenVending.Verify(
-            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()),
-            Times.Never);
-        result.ProviderConfigs.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task PrepareAsync_NoProfileMatch_NoCompatibleConfig_SkipsAgentProvider()
-    {
-        // Agent config requires "opencode" but agent has "kiro" labels → incompatible
-        var openCodeConfig = new ProviderConfig
-        {
-            Id = "opencode-cfg",
-            Kind = ProviderKind.Agent,
-            ProviderType = "OpenCode",
-            DisplayName = "OpenCode",
-            RequiredLabels = new List<string> { "opencode" }
-        };
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { openCodeConfig });
-
-        var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, null, CancellationToken.None);
-
-        // No configs → token vending not called
-        _mockTokenVending.Verify(
-            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()),
-            Times.Never);
-        result.ProviderConfigs.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task PrepareAsync_EmptyAgentLabels_NoProfileMatch_FallsBackSuccessfully()
-    {
-        // New behavior (spec 041-045): without a matching AgentProfile, no agent provider config
-        // is injected. Empty labels produce no profile match; token vending is skipped.
-        var agentConfig = new ProviderConfig
-        {
-            Id = "default-agent",
-            Kind = ProviderKind.Agent,
-            ProviderType = "KiroCli",
-            DisplayName = "Default Agent"
-        };
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { agentConfig });
-
-        var svc = CreateService();
-        // Empty agentLabels — no profile matches → no agent config added
-        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, null, CancellationToken.None);
-
-        _mockTokenVending.Verify(
-            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()),
-            Times.Never);
-        result.ProviderConfigs.Should().BeEmpty();
-    }
-
-    #endregion
-
     #region Template resolution — partial configs
 
     [Fact]
     public async Task PrepareAsync_TemplateWithRepoOnly_NoBrain_NoIssue()
     {
-        SetupAgentConfig("agent-cfg");
-        SetupMatchingProfile("agent-cfg");
 
         var template = new PipelineJobTemplate
         {
@@ -356,7 +256,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", AgentConfig("agent-cfg"), CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         // Should contain agent + repo (no brain, no issue for BrainConsolidation)
@@ -368,8 +268,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_TemplateWithRepoAndBrain_BothResolved()
     {
-        SetupAgentConfig("agent-cfg");
-        SetupMatchingProfile("agent-cfg");
 
         var template = new PipelineJobTemplate
         {
@@ -396,7 +294,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", AgentConfig("agent-cfg"), CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         // agent + repo + brain
@@ -407,8 +305,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_NullTemplateId_OnlyAgentConfig()
     {
-        SetupAgentConfig("agent-cfg");
-        SetupMatchingProfile("agent-cfg");
 
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
@@ -419,7 +315,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, AgentConfig("agent-cfg"), CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Should().HaveCount(1);
@@ -430,8 +326,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_TemplateNotFound_OnlyAgentConfig()
     {
-        SetupAgentConfig("agent-cfg");
-        SetupMatchingProfile("agent-cfg");
 
         // Template "nonexistent" is not in the list
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -449,7 +343,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "nonexistent", MakeMatchingProfile("agent-cfg"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "nonexistent", AgentConfig("agent-cfg"), CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Should().HaveCount(1);
@@ -463,7 +357,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_TokenVendingCalledWithCorrectRepoId()
     {
-        SetupAgentConfig("agent-cfg");
 
         var template = new PipelineJobTemplate
         {
@@ -696,15 +589,13 @@ public sealed class ConsolidationJobPreparationServiceTests
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        SetupAgentConfig("agent-cfg");
-        SetupMatchingProfile("agent-cfg");
 
         var svc = CreateService();
 
         var result = await svc.PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             null,
-            MakeMatchingProfile("agent-cfg"),
+            AgentConfig("agent-cfg"),
             CancellationToken.None);
 
         result.PipelineConfiguration.Should().NotBeNull();
@@ -714,17 +605,17 @@ public sealed class ConsolidationJobPreparationServiceTests
 
     #endregion
 
-    // ── PrepareAsync — no template, no matching profile ───────────────────
+    // ── PrepareAsync — no template, no agent config ───────────────────
 
     [Fact]
-    public async Task PrepareAsync_NoTemplateNoProfile_ReturnsEmptyConfigs()
+    public async Task PrepareAsync_NoTemplateNoAgentConfig_ReturnsEmptyConfigs()
     {
         SetupEmptyProviders();
 
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: null,
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         result.ProviderConfigs.Should().BeEmpty();
@@ -732,33 +623,22 @@ public sealed class ConsolidationJobPreparationServiceTests
     }
 
     [Fact]
-    public async Task PrepareAsync_NullProfile_DoesNotThrow()
+    public async Task PrepareAsync_NullAgentConfig_DoesNotThrow()
     {
-        // Null profile is now valid: no agent config is injected and the call succeeds.
+        // No agent config: none is injected and the call succeeds.
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation, null, null, CancellationToken.None);
         result.Should().NotBeNull();
         result.ProviderConfigs.Should().BeEmpty();
     }
 
-    // ── PrepareAsync — with matching profile, no template ─────────────────
+    // ── PrepareAsync — with an agent config, no template ──────────────────
 
     [Fact]
-    public async Task PrepareAsync_MatchingProfile_InjectsAgentConfig()
+    public async Task PrepareAsync_AgentConfig_IsInjectedAsGiven()
     {
-        var agentConfig = MakeConfig("kiro-agent", ProviderKind.Agent);
-        var profile = new AgentProfile
-        {
-            Id = "kiro-profile",
-            DisplayName = "Kiro",
-            AgentProviderConfigId = "kiro-agent",
-            MatchLabels = ["kiro"]
-        };
-
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { agentConfig } as IReadOnlyList<ProviderConfig>);
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile> { profile } as IReadOnlyList<AgentProfile>);
+        // Spec 053 DD5: the enricher builds the config from the profile and its route; no kind-Agent config is loaded.
+        var agentConfig = AgentConfig("kiro-profile");
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
             It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
             .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _, IReadOnlySet<string>? _) => configs);
@@ -766,11 +646,12 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: null,
-            profile: profile,
+            agentConfig: agentConfig,
             ct: CancellationToken.None);
 
-        result.ProviderConfigs.Should().HaveCount(1);
-        result.ProviderConfigs[0].Id.Should().Be("kiro-agent");
+        result.ProviderConfigs.Should().ContainSingle().Which.Should().BeSameAs(agentConfig);
+        _mockConfigStore.Verify(
+            s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── PrepareAsync — with template ──────────────────────────────────────
@@ -790,7 +671,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: new TemplateId("t1"),
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         result.RepoProviderConfigId.Should().Be("repo");
@@ -814,7 +695,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.RefactoringDetection,
             templateId: new TemplateId("t1"),
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         // repo + issue = 2 configs
@@ -831,7 +712,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: new TemplateId("missing"),
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         result.RepoProviderConfigId.Should().BeEmpty();
@@ -871,7 +752,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: new TemplateId("t1"),
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         // Assert: BrainProviderConfigId is forwarded from the template
@@ -906,7 +787,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: new TemplateId("t1"),
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         // Assert: ID is still set even though the ProviderConfig object was not found in the store
@@ -939,7 +820,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: new TemplateId("t1"),
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         // TODO: [WARNING] This assertion is tautological: when BrainProviderId is not set on the template,
@@ -964,7 +845,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         var result = await CreateService().PrepareAsync(
             ConsolidationRunType.BrainConsolidation,
             templateId: null,
-            profile: null,
+            agentConfig: null,
             ct: CancellationToken.None);
 
         // TODO: [WARNING] This assertion is tautological: when templateId is null, PrepareAsync never
@@ -980,15 +861,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     }
 
     #region Helpers
-
-    private void SetupAgentConfig(string agentConfigId)
-    {
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>
-            {
-                new() { Id = agentConfigId, Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Agent" }
-            });
-    }
 
     private void SetupTemplateWithAllProviders()
     {
@@ -1019,28 +891,6 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig> { issueConfig });
     }
 
-    /// <summary>
-    /// Sets up an AgentProfile with empty MatchLabels (catch-all), ensuring the ProfileResolver
-    /// always finds a match regardless of what agent labels are passed in the test.
-    /// An empty MatchLabels profile matches any agent (Subset strategy: [] ⊆ any set = true).
-    /// </summary>
-    private void SetupMatchingProfile(string agentConfigId)
-    {
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new()
-                {
-                    Id = "default-profile",
-                    DisplayName = "Default",
-                    Enabled = true,
-                    MatchLabels = Array.Empty<string>(),
-                    AgentProviderConfigId = agentConfigId,
-                    Priority = 1
-                }
-            });
-    }
-
     #endregion
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1055,8 +905,6 @@ public sealed class ConsolidationJobPreparationServiceTests
     {
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>() as IReadOnlyList<ProviderConfig>);
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>() as IReadOnlyList<AgentProfile>);
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
             It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
             .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _, IReadOnlySet<string>? _) => configs);
@@ -1081,8 +929,6 @@ public sealed class ConsolidationJobPreparationServiceTests
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
 
-        SetupAgentConfig("agent-1");
-        SetupMatchingProfile("agent-1");
 
         // Global config: BrainReadOnly = true
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -1098,7 +944,7 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         // Act
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", MakeMatchingProfile("agent-1"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", AgentConfig("agent-1"), CancellationToken.None);
 
         // Assert: brain config ID must be in readOnlyConfigIds
         capturedReadOnlyIds.Should().NotBeNull("readOnlyConfigIds must be set when BrainReadOnly is true");
@@ -1121,8 +967,6 @@ public sealed class ConsolidationJobPreparationServiceTests
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
 
-        SetupAgentConfig("agent-1");
-        SetupMatchingProfile("agent-1");
 
         // Global config: BrainReadOnly = false (default)
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -1137,7 +981,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", MakeMatchingProfile("agent-1"), CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", AgentConfig("agent-1"), CancellationToken.None);
 
         capturedReadOnlyIds.Should().BeNull(
             "readOnlyConfigIds must be null when BrainReadOnly is false (no token narrowing)");
@@ -1152,20 +996,9 @@ public sealed class ConsolidationJobPreparationServiceTests
 
     #endregion
 
-    // ── Profile factories ─────────────────────────────────────────────────
+    // ── Agent config factory ──────────────────────────────────────────────
 
-    /// <summary>
-    /// Creates an <see cref="AgentProfile"/> that mirrors what <c>SetupMatchingProfile</c>
-    /// registers on the store. Use when calling <c>PrepareAsync</c> directly with a profile
-    /// rather than relying on the store-based resolution that was removed in issue #3560.
-    /// </summary>
-    private static AgentProfile MakeMatchingProfile(string agentConfigId) => new()
-    {
-        Id = "default-profile",
-        DisplayName = "Default",
-        Enabled = true,
-        MatchLabels = [],
-        AgentProviderConfigId = agentConfigId,
-        Priority = 1
-    };
+    /// <summary>The agent config the enricher builds from the routed profile and its route (spec 053 DD5).</summary>
+    private static ProviderConfig AgentConfig(string id) =>
+        new() { Id = id, Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Agent" };
 }

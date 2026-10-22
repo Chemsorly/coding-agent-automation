@@ -5,6 +5,7 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -41,10 +42,11 @@ public static class WorkItemAgentEndpoints
                    [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
                    [FromServices] IProjectStore projectStore,
                    [FromServices] AssignmentEnricher? assignmentEnricher,
+                   [FromServices] WorkItemStatusTransitionService statusTransitionService,
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await GetAssignment(id, dbFactory, projectStore, assignmentEnricher, ct));
+                    ?? await GetAssignment(id, dbFactory, projectStore, assignmentEnricher, statusTransitionService, ct));
 
         group.MapPost("/{id:guid}/status",
             async (Guid id, [FromBody] WorkItemStatusRequest request,
@@ -119,8 +121,8 @@ public static class WorkItemAgentEndpoints
     /// <summary>
     /// GET /api/work-items/{id}/assignment
     /// Returns the job assignment payload for an agent.
-    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal,
-    /// 503 when the assignment can't be enriched (the agent retries).
+    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal or refused for a routing reason
+    /// (the work item is then Failed, spec 053 req 4.5), 503 when the assignment can't be enriched for now (the agent retries).
     /// <para>
     /// The payload contains only identity fields (<c>PayloadSchemaVersion == 1</c>). Mutable config
     /// is fetched fresh from the database at assignment time via <see cref="AssignmentEnricher"/>,
@@ -132,6 +134,7 @@ public static class WorkItemAgentEndpoints
         IDbContextFactory<PipelineDbContext> dbFactory,
         IProjectStore projectStore,
         AssignmentEnricher? assignmentEnricher = null,
+        WorkItemStatusTransitionService? statusTransitions = null,
         CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -157,62 +160,8 @@ public static class WorkItemAgentEndpoints
         // TryDeserialize returned true, so requestNullable is guaranteed non-null here.
         var request = requestNullable!;
 
-        // ── Pod start time histogram (issue #2976) ─────────────────────────
-        // Record workdistribution.pod_start_seconds on the first GET /assignment per WorkItem.
-        // CAS-style conditional write prevents double-recording when an agent retries on network
-        // timeout. We use a tracked-entity update (NOT ExecuteUpdateAsync — not supported by the
-        // InMemory EF provider used in integration tests) with an optimistic-concurrency pattern:
-        // fetch the entity tracked, check FirstAssignmentAt is still null, update and save.
-        // Concurrent callers may both see null on the initial read (line above, AsNoTracking),
-        // but only one will succeed the SaveChangesAsync without a DbUpdateConcurrencyException.
-        // The DbUpdateConcurrencyException path silently skips recording (acceptable: the histogram
-        // fires exactly once in the common case; double-recording is statistically improbable).
-        // TODO [WARNING]: The once-per-item guarantee relies on RowVersion (xmin) raising
-        // DbUpdateConcurrencyException for the losing concurrent caller. xmin is a PostgreSQL
-        // system column and is NOT enforced by the EF InMemory provider used in integration tests.
-        // Under InMemory, both concurrent callers can SaveChangesAsync without an exception, causing
-        // pod_start_seconds to be recorded twice. The concurrency guard's correctness cannot be
-        // exercised by any current InMemory-backed test. Add a PostgreSQL-backed (or fake-transition)
-        // test for the double-fetch path to validate the once-per-item guarantee.
-        if (item.FirstAssignmentAt is null && item.DispatchedAt.HasValue)
-        {
-            await using var writeDb = await dbFactory.CreateDbContextAsync(ct);
-            var now = DateTimeOffset.UtcNow;
-            var tracked = await writeDb.WorkItems.FindAsync([id], ct);
-            // TODO [WARNING]: If FindAsync returns null here (work item deleted between the two reads),
-            // pod-start recording is silently skipped with no log output. WorkItems use status
-            // transitions rather than DELETEs, so this is an edge case, but a Log.Warning on the
-            // null path would make the gap observable in production.
-            if (tracked is { FirstAssignmentAt: null })
-            {
-                tracked.FirstAssignmentAt = now;
-                try
-                {
-                    await writeDb.SaveChangesAsync(ct);
-                    // Successfully wrote FirstAssignmentAt — this is the first assignment fetch.
-                    // TODO [WARNING]: FirstAssignmentAt is never cleared on re-dispatch (retry/re-queue).
-                    // If a WorkItem fails and is re-queued, FirstAssignmentAt from the prior dispatch
-                    // lifecycle remains set, and pod_start_seconds is never recorded for subsequent
-                    // dispatches — a silent data gap for retry scenarios.
-                    //
-                    // Clamp to 0: clock skew between API replicas can cause item.DispatchedAt (set by
-                    // the dispatching replica) to be ahead of now (captured on the accepting replica),
-                    // producing a negative elapsed time. A negative histogram value violates the metric's
-                    // semantic and corrupts p-quantile computation (issue #3704).
-                    var podStartSeconds = Math.Max(0.0, (now - item.DispatchedAt.Value).TotalSeconds);
-                    CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.PodStartSeconds.Record(podStartSeconds);
-                }
-                catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
-                {
-                    // Another concurrent call beat us to it — skip recording to avoid double-count.
-                }
-            }
-        }
-        // TODO [WARNING]: No behavioral test verifies that pod_start_seconds is recorded on the
-        // first GET /assignment, that the value equals (firstAssignment - DispatchedAt), or that it
-        // fires exactly once per WorkItem. HistogramBucketBoundaryTests.PodStartSeconds_HasExpectedBucketBoundaries
-        // only asserts bucket boundaries. Add an integration test exercising this endpoint to lock
-        // in the measurement contract.
+        if (item.FirstAssignmentAt is null && item.DispatchedAt is { } dispatchedAt)
+            await RecordPodStartAsync(id, dispatchedAt, dbFactory, ct);
 
         // The payload holds identity only (PayloadSchemaVersion 1); every config is resolved here.
         // Without enrichment the agent would run without configs, so fail closed and let it retry.
@@ -225,17 +174,31 @@ public static class WorkItemAgentEndpoints
             return EnrichmentFailed();
         }
 
+        EnrichmentResult enrichment;
         try
         {
-            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+            enrichment = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // EnrichAsync logs its own transient failures; this also covers the permanent ones
-            // (no matching profile, deleted provider) that surface as InvalidOperationException.
+            // EnrichAsync logs its own transient failures (DB timeout, network error).
             Log.Error(ex, "GetAssignment {WorkItemId}: assignment enrichment failed; returning 503", id);
             return EnrichmentFailed();
         }
+
+        switch (enrichment)
+        {
+            case EnrichmentResult.Refused refused:
+                // Spec 053 req 4.5: the route can no longer run, and no retry changes that. The item fails with the
+                // reason, and 410 makes an agent of any release exit 0 (WorkItemHttpClient).
+                return await FailRefusedAsync(id, refused, statusTransitions, dbFactory, ct)
+                    ? TypedResults.StatusCode(StatusCodes.Status410Gone)
+                    : EnrichmentFailed();
+            case EnrichmentResult.Unavailable:
+                Log.Error("GetAssignment {WorkItemId}: the assignment cannot be enriched now; returning 503", id);
+                return EnrichmentFailed();
+        }
+        request = ((EnrichmentResult.Enriched)enrichment).Request;
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
         // Secret injection delegates to AssignmentEnricher.InjectProjectSecretsAsync (issue #2914),
@@ -253,6 +216,67 @@ public static class WorkItemAgentEndpoints
     }
 
     /// <summary>
+    /// Records <c>workdistribution.pod_start_seconds</c> on the first GET /assignment of a dispatched work item.
+    /// </summary>
+    private static async Task RecordPodStartAsync(
+        Guid id, DateTimeOffset dispatchedAt, IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    {
+        // ── Pod start time histogram (issue #2976) ─────────────────────────
+        // Record workdistribution.pod_start_seconds on the first GET /assignment per WorkItem.
+        // CAS-style conditional write prevents double-recording when an agent retries on network
+        // timeout. We use a tracked-entity update (NOT ExecuteUpdateAsync — not supported by the
+        // InMemory EF provider used in integration tests) with an optimistic-concurrency pattern:
+        // fetch the entity tracked, check FirstAssignmentAt is still null, update and save.
+        // Concurrent callers may both see null on the initial read (line above, AsNoTracking),
+        // but only one will succeed the SaveChangesAsync without a DbUpdateConcurrencyException.
+        // The DbUpdateConcurrencyException path silently skips recording (acceptable: the histogram
+        // fires exactly once in the common case; double-recording is statistically improbable).
+        // TODO [WARNING]: The once-per-item guarantee relies on RowVersion (xmin) raising
+        // DbUpdateConcurrencyException for the losing concurrent caller. xmin is a PostgreSQL
+        // system column and is NOT enforced by the EF InMemory provider used in integration tests.
+        // Under InMemory, both concurrent callers can SaveChangesAsync without an exception, causing
+        // pod_start_seconds to be recorded twice. The concurrency guard's correctness cannot be
+        // exercised by any current InMemory-backed test. Add a PostgreSQL-backed (or fake-transition)
+        // test for the double-fetch path to validate the once-per-item guarantee.
+        await using var writeDb = await dbFactory.CreateDbContextAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        var tracked = await writeDb.WorkItems.FindAsync([id], ct);
+        // TODO [WARNING]: If FindAsync returns null here (work item deleted between the two reads),
+        // pod-start recording is silently skipped with no log output. WorkItems use status
+        // transitions rather than DELETEs, so this is an edge case, but a Log.Warning on the
+        // null path would make the gap observable in production.
+        if (tracked is not { FirstAssignmentAt: null })
+            return;
+
+        tracked.FirstAssignmentAt = now;
+        try
+        {
+            await writeDb.SaveChangesAsync(ct);
+            // Successfully wrote FirstAssignmentAt — this is the first assignment fetch.
+            // TODO [WARNING]: FirstAssignmentAt is never cleared on re-dispatch (retry/re-queue).
+            // If a WorkItem fails and is re-queued, FirstAssignmentAt from the prior dispatch
+            // lifecycle remains set, and pod_start_seconds is never recorded for subsequent
+            // dispatches — a silent data gap for retry scenarios.
+            //
+            // Clamp to 0: clock skew between API replicas can cause item.DispatchedAt (set by
+            // the dispatching replica) to be ahead of now (captured on the accepting replica),
+            // producing a negative elapsed time. A negative histogram value violates the metric's
+            // semantic and corrupts p-quantile computation (issue #3704).
+            var podStartSeconds = Math.Max(0.0, (now - dispatchedAt).TotalSeconds);
+            CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.PodStartSeconds.Record(podStartSeconds);
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        {
+            // Another concurrent call beat us to it — skip recording to avoid double-count.
+        }
+        // TODO [WARNING]: No behavioral test verifies that pod_start_seconds is recorded on the
+        // first GET /assignment, that the value equals (firstAssignment - DispatchedAt), or that it
+        // fires exactly once per WorkItem. HistogramBucketBoundaryTests.PodStartSeconds_HasExpectedBucketBoundaries
+        // only asserts bucket boundaries. Add an integration test exercising this endpoint to lock
+        // in the measurement contract.
+    }
+
+    /// <summary>
     /// Enriches a new-schema request (PayloadSchemaVersion == 1) by fetching mutable config fresh
     /// from the database. Resolves the project for steering + config override context, falling
     /// back to a minimal stub for project-less items.
@@ -260,12 +284,8 @@ public static class WorkItemAgentEndpoints
     /// <remarks>
     /// Any exception from <see cref="AssignmentEnricher.EnrichAsync"/> (other than
     /// <see cref="OperationCanceledException"/>) propagates to the caller so it can return HTTP 503.
-    /// When <see cref="AssignmentEnricher.EnrichAsync"/> returns <c>null</c> (permanent failure —
-    /// profile not found, provider config removed), this also surfaces as a 503 via
-    /// <see cref="InvalidOperationException"/> so the agent retries rather than proceeding with
-    /// an incomplete job spec.
     /// </remarks>
-    private static async Task<JobDistributionRequest> EnrichRequestAsync(
+    private static async Task<EnrichmentResult> EnrichRequestAsync(
         JobDistributionRequest request,
         IProjectStore projectStore,
         AssignmentEnricher assignmentEnricher,
@@ -283,25 +303,83 @@ public static class WorkItemAgentEndpoints
         }
 
         // EnrichAsync propagates transient failures (DB timeout, etc.) — let them bubble up.
-        // A null return indicates a permanent/configuration failure (no profile matched).
-        var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
-        if (enriched is null)
-        {
-            // Profile resolution failure is permanent but should still be treated as a 503 so
-            // the reconciler TTL can expire the work item rather than the agent silently using
-            // an identity-only payload with no configs.
-            // TODO: [WARNING] This InvalidOperationException propagates to the GetAssignment catch block
-            // which does not log it at Error level (the comment there says "EnrichAsync already logged at
-            // Error level", which is true for the transient-exception path but NOT for the null-return
-            // path — EnrichCoreAsync only logs at Warning for no-profile-matched). Add Error-level logging
-            // here or in the catch block so permanent config failures are visible without querying Warning
-            // logs.
-            throw new InvalidOperationException(
-                $"AssignmentEnricher returned null for IssueIdentifier {request.IssueIdentifier}; " +
-                "no agent profile matched the selector. Cannot serve a valid job spec.");
-        }
+        return await assignmentEnricher.EnrichAsync(request, project, ct);
+    }
 
-        return enriched;
+    /// <summary>
+    /// Fails a work item whose claim was refused for a routing reason (spec 053 req 4.5): Failed with
+    /// <see cref="FailureReason.InfrastructureFailure"/> and the refusal text. The HTTP pre-read guard keeps it Failed
+    /// when the Job Controller later reports Succeeded, and the reason code in the payload
+    /// (<see cref="AgentRouteRefusalReason.PayloadProperty"/>) keeps a late Running report from recovering it.
+    /// </summary>
+    /// <returns>False when no transition service is registered: the item is not failed, so the caller answers 503.</returns>
+    private static async Task<bool> FailRefusedAsync(
+        Guid id, EnrichmentResult.Refused refused, WorkItemStatusTransitionService? statusTransitions,
+        IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    {
+        if (statusTransitions is null)
+        {
+            Log.Error("GetAssignment {WorkItemId}: refused ({RefusalReason}) but no transition service is registered; the item is not failed, returning 503", id, refused.Reason);
+            return false;
+        }
+        await RecordRefusalAsync(id, refused.Reason, dbFactory, ct);
+        var outcome = await statusTransitions.TransitionAsync(id, new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            ErrorMessage = refused.Text,
+            FailureReason = nameof(FailureReason.InfrastructureFailure),
+        }, ct);
+        Log.Warning(
+            "GetAssignment {WorkItemId}: refused for a routing reason ({RefusalReason}: {RefusalText}); work item failed ({Outcome}), returning 410",
+            id, refused.Reason, refused.Text, outcome);
+        return true;
+    }
+
+    /// <summary>How often the refusal's reason code is written when another writer (a Running report) moves the item meanwhile.</summary>
+    private const int RefusalWriteAttempts = 3;
+
+    /// <summary>
+    /// Writes the refusal's reason code into the work item's payload; the claim reads nothing else from it later. Without
+    /// it, a Succeeded report after the agent exits on the 410 would recover the item as a race, so a concurrent write
+    /// is retried on the item as it is now.
+    /// </summary>
+    private static async Task RecordRefusalAsync(
+        Guid id, string reason, IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    {
+        for (var attempt = 1; attempt <= RefusalWriteAttempts; attempt++)
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var entity = await db.WorkItems.FindAsync([id], ct);
+            if (entity?.Payload is null || ParsePayload(id, entity.Payload) is not { } payload)
+                return;
+            payload[AgentRouteRefusalReason.PayloadProperty] = reason;
+            entity.Payload = payload.ToJsonString();
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // Another writer moved the item meanwhile; read it again.
+            }
+        }
+        Log.Warning("GetAssignment {WorkItemId}: the refusal reason {RefusalReason} could not be written after {Attempts} attempts",
+            id, reason, RefusalWriteAttempts);
+    }
+
+    /// <summary>The payload as a JSON object, or null when it is not one; the transition still fails the item.</summary>
+    private static System.Text.Json.Nodes.JsonObject? ParsePayload(Guid id, string payload)
+    {
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(payload) as System.Text.Json.Nodes.JsonObject;
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            Log.Warning(ex, "GetAssignment {WorkItemId}: the payload cannot be read; the refusal reason is not written", id);
+            return null;
+        }
     }
 
     /// <summary>

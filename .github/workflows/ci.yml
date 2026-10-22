@@ -317,8 +317,11 @@ jobs:
           REF="docker.io/chemsorly/coding-agent@$(cat "${RUNNER_TEMP}/digest")"
           cosign sign --yes "${REF}"
 
-          # The signature is an OCI referrer; retry in case the registry's referrers index lags.
-          for ATTEMPT in 1 2 3; do
+          # The signature is an OCI referrer. Docker Hub's referrers index can lag the push by more
+          # than a minute, so retry with a growing wait (about 3 minutes in all) before failing.
+          ATTEMPT=0
+          for WAIT in 10 20 30 45 60 0; do
+            ATTEMPT=$((ATTEMPT + 1))
             if cosign verify \
               --certificate-identity-regexp "${IMAGE_SIGNER_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer "${IMAGE_SIGNER_OIDC_ISSUER}" \
@@ -326,8 +329,11 @@ jobs:
               "${REF}" > /dev/null; then
               exit 0
             fi
-            echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/3)"
-            sleep 10
+            if [ "${WAIT}" -eq 0 ]; then
+              break
+            fi
+            echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/6); retrying in ${WAIT}s"
+            sleep "${WAIT}"
           done
           echo "::error::cosign verify failed for ${REF}"
           exit 1
@@ -419,8 +425,11 @@ jobs:
           sign_manifest() {
             local REF="${IMG}@$1"
             cosign sign --yes --recursive "${REF}"
-            # The signature is an OCI referrer; retry in case the registry's referrers index lags.
-            for ATTEMPT in 1 2 3; do
+            # The signature is an OCI referrer. Docker Hub's referrers index can lag the push by more
+            # than a minute, so retry with a growing wait (about 3 minutes in all) before failing.
+            local ATTEMPT=0 WAIT
+            for WAIT in 10 20 30 45 60 0; do
+              ATTEMPT=$((ATTEMPT + 1))
               if cosign verify \
                 --certificate-identity-regexp "${IMAGE_SIGNER_IDENTITY_REGEXP}" \
                 --certificate-oidc-issuer "${IMAGE_SIGNER_OIDC_ISSUER}" \
@@ -428,8 +437,11 @@ jobs:
                 "${REF}" > /dev/null; then
                 return 0
               fi
-              echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/3)"
-              sleep 10
+              if [ "${WAIT}" -eq 0 ]; then
+                break
+              fi
+              echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/6); retrying in ${WAIT}s"
+              sleep "${WAIT}"
             done
             echo "::error::cosign verify failed for ${REF}"
             exit 1

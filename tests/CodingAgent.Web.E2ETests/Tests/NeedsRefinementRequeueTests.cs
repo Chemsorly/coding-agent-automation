@@ -48,14 +48,13 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id             = $"profile-staleness-{agentLabel}",
             DisplayName    = $"Staleness Profile ({agentLabel})",
-            MatchLabels    = new[] { agentLabel },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(agentLabel),
             Enabled        = true
-        }, CancellationToken.None);
+        });
     }
 
     // ── Scenario 1 ───────────────────────────────────────────────────────
@@ -284,14 +283,13 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
             Enabled         = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id                    = "profile-staleness-s5",
             DisplayName           = "Staleness Profile (s5)",
-            MatchLabels           = new[] { "staleness-s5" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("staleness-s5"),
             Enabled               = true
-        }, CancellationToken.None);
+        });
 
         // Issue has BOTH agent:next and agent:needs-refinement — the loop must skip it.
         // The issue also carries "staleness-s5" so that the seeded agent profile (MatchLabels=["staleness-s5"])

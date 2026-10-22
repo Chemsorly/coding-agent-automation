@@ -16,9 +16,18 @@ public interface IUiSettingsClient
     /// <summary>Reads the configuration, applies <paramref name="transform"/> and saves the result.</summary>
     Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct = default);
 
-    Task<IReadOnlyList<AgentProfile>> GetAgentProfilesAsync(CancellationToken ct = default);
+    /// <summary>The Agent Profiles page: the profiles (MCP server secrets masked) and the job templates they can run on.</summary>
+    Task<UiAgentProfilesPage> GetAgentProfilesAsync(CancellationToken ct = default);
+
+    /// <summary>A profile needs tool settings and a job template with a tool; a disable or delete is refused while routes name it.</summary>
     Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct = default);
     Task DeleteAgentProfileAsync(string id, CancellationToken ct = default);
+
+    /// <summary>The Routing page: the global routing table, the profiles a route can name and their job templates.</summary>
+    Task<UiAgentRoutingPage> GetAgentRoutingAsync(CancellationToken ct = default);
+
+    /// <summary>Replaces the global routing table. An invalid table is refused with one line per invalid row.</summary>
+    Task SaveAgentRoutingAsync(AgentRouting routing, CancellationToken ct = default);
 
     Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default);
     Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct = default);
@@ -66,14 +75,20 @@ public sealed class UiSettingsClient(HttpClient http, IUiAccessTokenSource token
         await SendJsonAsync(HttpMethod.Put, $"{Settings}/pipeline", updated, UiJsonContext.Default.PipelineConfiguration, ct);
     }
 
-    public Task<IReadOnlyList<AgentProfile>> GetAgentProfilesAsync(CancellationToken ct = default) =>
-        GetAsync($"{Settings}/agent-profiles", UiJsonContext.Default.IReadOnlyListAgentProfile, ct);
+    public Task<UiAgentProfilesPage> GetAgentProfilesAsync(CancellationToken ct = default) =>
+        GetAsync($"{Settings}/agent-profiles", UiJsonContext.Default.UiAgentProfilesPage, ct);
 
     public Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct = default) =>
         SendJsonAsync(HttpMethod.Put, $"{Settings}/agent-profiles", profile, UiJsonContext.Default.AgentProfile, ct);
 
     public Task DeleteAgentProfileAsync(string id, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Delete, $"{Settings}/agent-profiles/{Id(id)}", ct);
+
+    public Task<UiAgentRoutingPage> GetAgentRoutingAsync(CancellationToken ct = default) =>
+        GetAsync($"{Settings}/agent-routing", UiJsonContext.Default.UiAgentRoutingPage, ct);
+
+    public Task SaveAgentRoutingAsync(AgentRouting routing, CancellationToken ct = default) =>
+        SendJsonAsync(HttpMethod.Put, $"{Settings}/agent-routing", routing, UiJsonContext.Default.AgentRouting, ct);
 
     public Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default) =>
         GetAsync($"{Settings}/quality-gate-configs", UiJsonContext.Default.IReadOnlyListQualityGateConfiguration, ct);

@@ -48,10 +48,6 @@ public sealed class DispatchWorkItemServiceTests
               maxConcurrent: {maxConcurrent}
             """);
 
-    /// <summary>A resolver without profiles: every active selector is counted under its normalized form.</summary>
-    private static DispatchTemplateResolver CreateTemplateResolverWithoutProfiles() =>
-        new DispatchTemplateResolver(null, CreateTemplateStore());
-
     private static IDbContextFactory<PipelineDbContext> CreateDbFactory(string? dbName = null)
     {
         var name = dbName ?? $"dispatch-svc-test-{Guid.NewGuid():N}";
@@ -123,11 +119,10 @@ public sealed class DispatchWorkItemServiceTests
     [Fact]
     public async Task BuildConcurrencySnapshotAsync_EmptyDb_ReturnsEmptyDictionary()
     {
-        var svc = CreateService();
         var dbFactory = CreateDbFactory();
         await using var db = await dbFactory.CreateDbContextAsync();
 
-        var result = await svc.BuildConcurrencySnapshotAsync(db, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
 
         result.Should().BeEmpty("no active items — concurrency map must be empty");
     }
@@ -135,7 +130,6 @@ public sealed class DispatchWorkItemServiceTests
     [Fact]
     public async Task BuildConcurrencySnapshotAsync_WithDispatchedAndRunningItems_CountsByNormalizedSelector()
     {
-        var svc = CreateService();
         var dbFactory = CreateDbFactory();
 
         // Seed: 2 Dispatched + 1 Running for "kiro,dotnet" (in various orderings)
@@ -147,7 +141,7 @@ public sealed class DispatchWorkItemServiceTests
         await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "opencode,python");
 
         await using var db = await dbFactory.CreateDbContextAsync();
-        var result = await svc.BuildConcurrencySnapshotAsync(db, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
 
         // "dotnet,kiro" == "kiro,dotnet" after NormalizeLabels (sorted)
         var normalizedKiroDotnet = JobTemplateStore.NormalizeLabels("kiro,dotnet");
@@ -166,7 +160,6 @@ public sealed class DispatchWorkItemServiceTests
     [Fact]
     public async Task BuildConcurrencySnapshotAsync_IgnoresPendingAndTerminalStatuses()
     {
-        var svc = CreateService();
         var dbFactory = CreateDbFactory();
 
         // Seed items in statuses that must NOT be counted
@@ -174,7 +167,7 @@ public sealed class DispatchWorkItemServiceTests
             await SeedWorkItemAsync(dbFactory, status, "kiro,dotnet");
 
         await using var db = await dbFactory.CreateDbContextAsync();
-        var result = await svc.BuildConcurrencySnapshotAsync(db, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
 
         result.Should().BeEmpty(
             "Pending, Succeeded, Failed, and Cancelled items must not appear in the concurrency snapshot");
@@ -430,13 +423,12 @@ public sealed class DispatchWorkItemServiceTests
             await seedDb.SaveChangesAsync();
         }
 
-        var svc = CreateService(maxConcurrent: 5);
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"]);
 
         await using var db = await dbFactory.CreateDbContextAsync();
 
         // Act
-        var (concurrencyBySelector, pvcResult) = await svc.BuildDispatchPreambleAsync(db, lifecycle, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+        var (concurrencyBySelector, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
 
         // Assert — concurrency snapshot
         var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
@@ -497,7 +489,7 @@ public sealed class DispatchWorkItemServiceTests
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
         await using var db = await CreateDbFactory().CreateDbContextAsync();
 
-        var (_, pvcResult) = await CreateService().BuildDispatchPreambleAsync(db, lifecycle, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+        var (_, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
 
         pvcResult.AvailablePvcs.Should().Equal(["pvc-1"], "a running chat Job mounts pvc-0");
     }
@@ -511,7 +503,7 @@ public sealed class DispatchWorkItemServiceTests
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
         await using var db = await CreateDbFactory().CreateDbContextAsync();
 
-        var (_, pvcResult) = await CreateService().BuildDispatchPreambleAsync(db, lifecycle, CreateTemplateResolverWithoutProfiles(), CancellationToken.None);
+        var (_, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
 
         pvcResult.AvailablePvcs.Should().Equal(["pvc-0", "pvc-1"]);
     }

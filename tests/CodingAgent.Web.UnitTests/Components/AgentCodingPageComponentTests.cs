@@ -52,8 +52,6 @@ public class AgentCodingPageComponentTests : BunitContext
         SetupDefaults();
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
             historyService: mockHistoryService.Object);
 
         Services.AddSingleton(_mockStore.Object);
@@ -98,8 +96,6 @@ public class AgentCodingPageComponentTests : BunitContext
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadQualityGateConfigsAsync(ct));
         _mockConfigClient.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
-        _mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
         Services.AddSingleton<CodingAgent.Api.Client.IPipelineApiConfigClient>(_mockConfigClient.Object);
         // Spec 051 2.7: the page reads /api/ui/pipelines, answered from the config mock, and writes templates through Settings.
         Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiConfig(_mockConfigClient).Object);
@@ -153,8 +149,6 @@ public class AgentCodingPageComponentTests : BunitContext
             {
                 WorkspaceBaseDirectory = Path.GetTempPath()
             });
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
         _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         _mockStore.Setup(s => s.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))

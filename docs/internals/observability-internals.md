@@ -55,6 +55,8 @@ The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.
 
 The `workdistribution.workitems_by_status` gauge is only emitted by the leader Scheduler replica.
 
-Terminal transitions are counted by `pipeline.run.outcomes` (API) only.
+Terminal transitions are counted by `pipeline.run.outcomes` (API) only, tagged `run_type`, `outcome`, `failure_reason`, `pipeline.project_name`, `provider` and `model`. `RunOutcomeTelemetry` reads `provider` and `model` from the route pinned in the work item's payload (the job template's tool and the route's model), not from the agent's report, so their cardinality is bounded by what the admin routes.
+
+Routing refusals are counted by `pipeline.routing.refusals` (API) only: `WorkItemRouter` records the `create` and `dispatch` stages, `AssignmentEnricher` the `claim` stage. A refusal at creation leaves no work item, so no outcome is counted for it.
 
 The credential pool and dispatcher gauges use owner-only empty-measurement guards: non-owning processes emit no measurement, preventing spurious 0 series that would corrupt the `CredentialPoolExhausted` and `DispatcherStalled` Prometheus alerts.

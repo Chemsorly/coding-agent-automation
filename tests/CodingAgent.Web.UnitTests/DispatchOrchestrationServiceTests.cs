@@ -13,13 +13,11 @@ namespace CodingAgent.Web.UnitTests;
 
 /// <summary>
 /// Unit tests for <see cref="DispatchOrchestrationService"/>.
-/// Verifies profile resolution, label swap, run creation, and provider config prep.
+/// Verifies label swap, run creation, and provider config prep.
 /// </summary>
 public class DispatchOrchestrationServiceTests
 {
-    private readonly Mock<IAgentProfileStore> _mockAgentProfileStore = new();
     private readonly Mock<IConfigurationStore> _mockProviderConfigStore = new();
-    private readonly Mock<IPipelineConfigStore> _mockPipelineConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
@@ -27,16 +25,6 @@ public class DispatchOrchestrationServiceTests
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly OrchestratorRunService _runService;
     private readonly DispatchResolutionService _resolution;
-
-    private static readonly AgentProfile TestProfile = new()
-    {
-        Id = "profile-1",
-        DisplayName = "Test Profile",
-        AgentProviderConfigId = "agent-config-1",
-        Enabled = true,
-        MatchLabels = ["dotnet"],
-        McpServers = []
-    };
 
     private static readonly PipelineConfiguration TestConfig = new()
     {
@@ -56,14 +44,6 @@ public class DispatchOrchestrationServiceTests
         DisplayName = "Repo",
         ProviderType = "github",
         Kind = ProviderKind.Repository
-    };
-
-    private static readonly ProviderConfig TestAgentConfig = new()
-    {
-        Id = "agent-config-1",
-        DisplayName = "Agent",
-        ProviderType = "kiro",
-        Kind = ProviderKind.Agent
     };
 
     public DispatchOrchestrationServiceTests()
@@ -92,28 +72,12 @@ public class DispatchOrchestrationServiceTests
                     _mockLabelService.Object,
                     _resolution),
                 _mockWorkDistributor.Object,
-                _mockAgentProfileStore.Object,
-                _mockProviderConfigStore.Object,
-                _mockPipelineConfigStore.Object),
+                _mockProviderConfigStore.Object),
             _mockLogger.Object);
     }
 
     private void SetupStandardMocks()
     {
-        // LoadAgentProfilesAsync: set up on both mocks — direct call via _agentProfileStore
-        // (ResolveProfileByLabelsAsync) and via _resolution.ConfigStore (DispatchResolutionService).
-        // TODO: Both mocks are configured with the same return value, which means a wiring swap
-        // between _mockAgentProfileStore and _mockProviderConfigStore would still pass these tests.
-        // For stronger swap-detection, use distinct profiles per mock (or leave one unconfigured
-        // and verify which mock receives the call).
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { TestProfile });
-
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { TestProfile });
-
         _mockProviderConfigStore
             .Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
@@ -122,13 +86,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
 
-        // LoadPipelineConfigAsync: set up on both mocks — direct call via _pipelineConfigStore
-        // (ResolveRequiredLabelsInternalAsync) and via _resolution.ConfigStore
-        // (PipelineConfigurationResolver.ResolveAsync inside PrepareDispatchCoreAsync).
-        _mockPipelineConfigStore
-            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestConfig);
-
+        // LoadPipelineConfigAsync: PipelineConfigurationResolver.ResolveAsync inside PrepareDispatchCoreAsync.
         _mockProviderConfigStore
             .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestConfig);
@@ -138,16 +96,8 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(TestRepoConfig);
 
         _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("agent-config-1", ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestAgentConfig);
-
-        _mockProviderConfigStore
             .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { TestRepoConfig });
-
-        _mockProviderConfigStore
-            .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { TestAgentConfig });
 
         _mockProviderConfigStore
             .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -209,13 +159,11 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: null,
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject),
             CancellationToken.None);
 
         result.Should().NotBeNull();
-        result!.ResolvedProfile.Id.Should().Be("profile-1");
-        result.IssueDetail.Title.Should().Be("Test Issue Title");
+        result!.IssueDetail.Title.Should().Be("Test Issue Title");
         result.CreatedRun.Should().NotBeNull();
         result.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
         result.Project.Id.Should().Be("11110000-0000-0000-0000-000000000001");
@@ -236,7 +184,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: null,
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject),
             CancellationToken.None);
 
@@ -394,36 +341,6 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task PrepareAsync_WhenNoProfileMatches_ReturnsNull()
-    {
-        SetupStandardMocks();
-        // Override profiles to return empty (no match) — must override on both mocks since
-        // LoadAgentProfilesAsync is called from two paths (direct _agentProfileStore and _resolution.ConfigStore).
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-
-        var service = CreateService();
-
-        var result = await service.PrepareAsync(
-            new OrchestratorPreparationRequest(
-                IssueIdentifier: "issue-42",
-                IssueProviderId: "issue-1",
-                RepoProviderId: "repo-1",
-                BrainProviderId: null,
-                PipelineProviderId: null,
-                InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
-                Project: TestProject),
-            CancellationToken.None);
-
-        result.Should().BeNull();
-    }
-
-    [Fact]
     public async Task PrepareAsync_WhenIssueProviderNotFound_ReturnsNull()
     {
         SetupStandardMocks();
@@ -442,7 +359,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: null,
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject),
             CancellationToken.None);
 
@@ -463,7 +379,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: null,
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject),
             CancellationToken.None);
 
@@ -495,7 +410,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: null,
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject),
             CancellationToken.None);
 
@@ -516,14 +430,14 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: null,
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject),
             CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.ProviderConfigs.Should().NotBeEmpty();
         result.ProviderConfigs.Should().Contain(c => c.Id == "repo-1");
-        result.ProviderConfigs.Should().Contain(c => c.Id == "agent-config-1");
+        result.ProviderConfigs.Should().NotContain(c => c.Kind == ProviderKind.Agent,
+            "the API builds the agent config from the routed profile when an agent claims the work item");
     }
 
     // ── IDispatchOrchestrationService interface method tests ───────────────────
@@ -532,7 +446,7 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareDistributionRequestAsync_ReturnsJobDistributionRequest_WithCorrectFields()
     {
         SetupStandardMocks();
-        // Setup repo config with RequiredLabels so LabelResolver picks them up
+        // The repository connection still carries labels: they no longer route the work item (spec 053).
         var repoConfigWithLabels = new ProviderConfig
         {
             Id = "repo-1",
@@ -571,7 +485,11 @@ public class DispatchOrchestrationServiceTests
         request.RunType.Should().Be(PipelineRunType.Implementation);
         request.ProjectId.Should().Be(new Guid("11110000-0000-0000-0000-000000000001"));
         request.ProjectName.Should().Be("TestProject");
-        request.ResolvedProfileId.Should().Be("profile-1");
+        // Spec 053 DD1: the API routes the work item when it creates it; the Scheduler sends no route.
+        request.AgentSelector.Should().BeEmpty();
+        request.ResolvedProfileId.Should().BeNull();
+        request.Route.Should().BeNull();
+        request.AgentProviderConfigId.Should().BeNull();
         request.IssueDetail.Should().NotBeNull();
         request.ProviderConfigs.Should().NotBeNullOrEmpty();
         request.PipelineConfiguration.Should().NotBeNull();
@@ -627,168 +545,6 @@ public class DispatchOrchestrationServiceTests
         _mockLogger.Verify(
             l => l.Warning(It.IsAny<string>(), It.Is<string>(v => v == "proj-legacy")),
             Times.Once);
-    }
-
-    [Fact]
-    public async Task PrepareDistributionRequestAsync_SetsAgentSelector_AsSortedCommaJoinedLabels()
-    {
-        SetupStandardMocks();
-        // Profile with multiple match labels in unsorted order
-        var multiLabelProfile = new AgentProfile
-        {
-            Id = "profile-multi",
-            DisplayName = "Multi Label Profile",
-            AgentProviderConfigId = "agent-config-1",
-            Enabled = true,
-            MatchLabels = ["python", "dotnet", "aws"],
-            McpServers = []
-        };
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { multiLabelProfile });
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { multiLabelProfile });
-
-        // Repo config returns all three labels
-        var repoConfigWithLabels = new ProviderConfig
-        {
-            Id = "repo-1",
-            DisplayName = "Repo",
-            ProviderType = "github",
-            Kind = ProviderKind.Repository,
-            RequiredLabels = ["python", "dotnet", "aws"]
-        };
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfigWithLabels);
-
-        var service = CreateService();
-        DispatchOrchestrationService iface = service;
-
-        var request = await iface.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "issue-42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                BrainProviderId = null,
-                PipelineProviderId = null,
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-
-        request.Should().NotBeNull();
-        // Labels sorted alphabetically: aws, dotnet, python
-        request!.AgentSelector.Should().Be("aws,dotnet,python");
-    }
-
-    [Fact]
-    public async Task PrepareDistributionRequestAsync_ProfileWithJobTemplate_UsesTemplateKeyNotMatchLabels()
-    {
-        // ARRANGE: profile has MatchLabels = [kiro, dotnet, dotnet10, sonnet] but
-        // JobTemplate = "kiro,dotnet,dotnet10". The AgentSelector must be the
-        // sorted JobTemplate key, not the MatchLabels key.
-        SetupStandardMocks();
-
-        var profileWithTemplate = new AgentProfile
-        {
-            Id = "profile-with-template",
-            DisplayName = "Profile With Template",
-            AgentProviderConfigId = "agent-config-1",
-            Enabled = true,
-            MatchLabels = ["kiro", "dotnet", "dotnet10", "sonnet"],
-            JobTemplate = "kiro,dotnet,dotnet10",
-            McpServers = []
-        };
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithTemplate });
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithTemplate });
-
-        var repoConfig = new ProviderConfig
-        {
-            Id = "repo-1",
-            DisplayName = "Repo",
-            ProviderType = "github",
-            Kind = ProviderKind.Repository,
-            RequiredLabels = ["kiro", "dotnet", "dotnet10"]
-        };
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfig);
-
-        var service = CreateService();
-        DispatchOrchestrationService iface = service;
-
-        // ACT
-        var request = await iface.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "issue-42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                BrainProviderId = null,
-                PipelineProviderId = null,
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-
-        // ASSERT
-        request.Should().NotBeNull();
-        // The AgentSelector must come from JobTemplate (sorted: dotnet,dotnet10,kiro),
-        // NOT from MatchLabels (which would give dotnet,dotnet10,kiro,sonnet).
-        request!.AgentSelector.Should().Be("dotnet,dotnet10,kiro",
-            "a profile with JobTemplate set must use the template key as AgentSelector, not MatchLabels");
-        request.ResolvedProfileId.Should().Be("profile-with-template",
-            "the resolved profile's ID must be stored in ResolvedProfileId");
-    }
-
-    [Fact]
-    public async Task PrepareDistributionRequestAsync_WhenNoMatchingProfile_ReturnsNull()
-    {
-        SetupStandardMocks();
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-
-        // Repo config with labels that won't match any profile
-        var repoConfigWithLabels = new ProviderConfig
-        {
-            Id = "repo-1",
-            DisplayName = "Repo",
-            ProviderType = "github",
-            Kind = ProviderKind.Repository,
-            RequiredLabels = ["java"]
-        };
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfigWithLabels);
-
-        var service = CreateService();
-        DispatchOrchestrationService iface = service;
-
-        var result = await iface.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "issue-42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                BrainProviderId = null,
-                PipelineProviderId = null,
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-
-        result.Should().BeNull();
     }
 
     [Fact]
@@ -1067,25 +823,12 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareReviewDistributionRequestAsync_WhenOrchestrationFails_ReturnsNull()
     {
         SetupStandardMocks();
-        // No profiles → orchestration fails — must override on both mocks.
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-
-        var repoConfigWithLabels = new ProviderConfig
-        {
-            Id = "repo-1",
-            DisplayName = "Repo",
-            ProviderType = "github",
-            Kind = ProviderKind.Repository,
-            RequiredLabels = ["dotnet"]
-        };
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfigWithLabels);
+        // The preparation fails: token vending cannot mint the job's credentials.
+        _mockTokenVending
+            .Setup(t => t.PrepareAgentConfigsAsync(
+                It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(), It.IsAny<IReadOnlySet<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("Token vending failed"));
 
         var service = CreateService();
         DispatchOrchestrationService iface = service;
@@ -2108,45 +1851,6 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task PrepareDistributionRequestAsync_ResolvesLabelsFromRepoConfig()
-    {
-        SetupStandardMocks();
-        // Setup repo config that uses RequiredLabels property
-        var repoConfigWithLabels = new ProviderConfig
-        {
-            Id = "repo-1",
-            DisplayName = "Repo",
-            ProviderType = "github",
-            Kind = ProviderKind.Repository,
-            RequiredLabels = ["dotnet"]
-        };
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfigWithLabels);
-
-        var service = CreateService();
-        DispatchOrchestrationService iface = service;
-
-        var result = await iface.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "issue-42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                BrainProviderId = null,
-                PipelineProviderId = null,
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-
-        // Profile with ["dotnet"] matches the resolved labels
-        result.Should().NotBeNull();
-        result!.ResolvedProfileId.Should().Be("profile-1");
-        result.AgentSelector.Should().Be("dotnet");
-    }
-
-    [Fact]
     public async Task PrepareDistributionRequestAsync_RunTrackedByOrchestratorRunService()
     {
         SetupStandardMocks();
@@ -2230,36 +1934,18 @@ public class DispatchOrchestrationServiceTests
         result.RunId.Should().NotBeNullOrEmpty("dispatch request must carry RunId for hub routing");
     }
 
-    // ── MCP merge integration tests ────────────────────────────────────────────
+    // ── MCP servers ────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task PrepareAsync_WhenProjectHasMcpServers_MergesWithProfileMcpServers()
+    public async Task PrepareAsync_McpServers_AreTheProjects_TheProfilesJoinAtClaim()
     {
-        var profileWithMcp = new AgentProfile
-        {
-            Id = "profile-1",
-            DisplayName = "Test Profile",
-            AgentProviderConfigId = "agent-config-1",
-            Enabled = true,
-            MatchLabels = ["dotnet"],
-            McpServers = [new McpServerConfig { Name = "context7", Type = "stdio", Command = "uvx" }]
-        };
+        // Spec 053: the profile is known once the API routes the work item; the enricher adds its MCP servers to the
+        // project's when an agent claims it.
         SetupStandardMocks();
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithMcp });
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithMcp });
-
-        var projectWithMcp = new PipelineProject
+        var projectWithMcp = TestProject with
         {
-            Id = "proj-1",
-            Name = "TestProject",
-            Enabled = true,
             McpServers = [new McpServerConfig { Name = "sonarqube-mcp", Type = "stdio", Command = "uvx" }]
         };
-
         var service = CreateService();
 
         var result = await service.PrepareAsync(
@@ -2270,106 +1956,11 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: null,
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: projectWithMcp),
             CancellationToken.None);
 
         result.Should().NotBeNull();
-        result!.McpServers.Should().NotBeNull();
-        result.McpServers!.Should().HaveCount(2);
-        result.McpServers.Should().Contain(s => s.Name == "context7" && s.Command == "uvx",
-            "merge must preserve the profile-sourced Command value, not just the server name");
-        result.McpServers.Should().Contain(s => s.Name == "sonarqube-mcp");
-    }
-
-    [Fact]
-    public async Task PrepareAsync_WhenProjectMcpServerOverridesProfileServer_ProjectWins()
-    {
-        var profileWithMcp = new AgentProfile
-        {
-            Id = "profile-1",
-            DisplayName = "Test Profile",
-            AgentProviderConfigId = "agent-config-1",
-            Enabled = true,
-            MatchLabels = ["dotnet"],
-            McpServers = [new McpServerConfig { Name = "web-search", Type = "stdio", Command = "uvx", Disabled = false }]
-        };
-        SetupStandardMocks();
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithMcp });
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithMcp });
-
-        var projectWithOverride = new PipelineProject
-        {
-            Id = "proj-1",
-            Name = "TestProject",
-            Enabled = true,
-            McpServers = [new McpServerConfig { Name = "web-search", Type = "stdio", Command = "uvx", Disabled = true }]
-        };
-
-        var service = CreateService();
-
-        var result = await service.PrepareAsync(
-            new OrchestratorPreparationRequest(
-                IssueIdentifier: "issue-42",
-                IssueProviderId: "issue-1",
-                RepoProviderId: "repo-1",
-                BrainProviderId: null,
-                PipelineProviderId: null,
-                InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
-                Project: projectWithOverride),
-            CancellationToken.None);
-
-        result.Should().NotBeNull();
-        result!.McpServers.Should().HaveCount(1);
-        result.McpServers![0].Name.Should().Be("web-search");
-        result.McpServers![0].Disabled.Should().BeTrue("project override wins on name collision");
-    }
-
-    [Fact]
-    public async Task PrepareAsync_WhenProjectMcpServersNull_ReturnsProfileMcpServersUnchanged()
-    {
-        var profileWithMcp = new AgentProfile
-        {
-            Id = "profile-1",
-            DisplayName = "Test Profile",
-            AgentProviderConfigId = "agent-config-1",
-            Enabled = true,
-            MatchLabels = ["dotnet"],
-            McpServers = [new McpServerConfig { Name = "context7", Type = "stdio", Command = "uvx" }]
-        };
-        SetupStandardMocks();
-        _mockAgentProfileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithMcp });
-        _mockProviderConfigStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profileWithMcp });
-
-        // TestProject has McpServers = null — backward compat: profile MCPs pass through unchanged
-        var service = CreateService();
-
-        var result = await service.PrepareAsync(
-            new OrchestratorPreparationRequest(
-                IssueIdentifier: "issue-42",
-                IssueProviderId: "issue-1",
-                RepoProviderId: "repo-1",
-                BrainProviderId: null,
-                PipelineProviderId: null,
-                InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
-                Project: TestProject),
-            CancellationToken.None);
-
-        result.Should().NotBeNull();
-        result!.McpServers.Should().HaveCount(1);
-        // TODO [WARNING] resolved: assert both Name and Command to verify passthrough is unmodified.
-        result.McpServers![0].Name.Should().Be("context7");
-        result.McpServers![0].Command.Should().Be("uvx", "passthrough must preserve all profile-sourced field values, not just the name");
+        result!.McpServers.Should().ContainSingle().Which.Name.Should().Be("sonarqube-mcp");
     }
 
     // ── BuildLocalRun characterization tests ──────────────────────────────────
@@ -2394,7 +1985,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: "brain-42",
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject,
                 RunType: PipelineRunType.Review),
             CancellationToken.None);
@@ -2407,8 +1997,8 @@ public class DispatchOrchestrationServiceTests
         run.IssueProviderConfigId.Should().Be("issue-1");
         run.RepoProviderConfigId.Should().Be("repo-1");
         run.InitiatedBy.Should().Be("loop");
-        run.AgentProviderConfigId.Should().Be("agent-config-1",
-            "AgentProviderConfigId comes from the resolved profile, not the request");
+        run.AgentProviderConfigId.Should().BeNull(
+            "the API routes the work item to a profile when it creates it (spec 053 DD1)");
         run.BrainProviderConfigId.Should().Be("brain-42",
             "BrainProviderConfigId is load-bearing — AgentHubFacade reads it back for token refresh");
     }
@@ -2451,7 +2041,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: "brain-42",
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject,
                 RunType: PipelineRunType.Decomposition),
             CancellationToken.None);
@@ -2464,7 +2053,7 @@ public class DispatchOrchestrationServiceTests
         run.IssueProviderConfigId.Should().Be("issue-1");
         run.RepoProviderConfigId.Should().Be("repo-1");
         run.InitiatedBy.Should().Be("loop");
-        run.AgentProviderConfigId.Should().Be("agent-config-1");
+        run.AgentProviderConfigId.Should().BeNull();
         run.BrainProviderConfigId.Should().Be("brain-42");
     }
 
@@ -2506,7 +2095,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: "brain-42",
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject,
                 RunType: PipelineRunType.DecompositionAnalysis),
             CancellationToken.None);
@@ -2519,7 +2107,7 @@ public class DispatchOrchestrationServiceTests
         run.IssueProviderConfigId.Should().Be("issue-1");
         run.RepoProviderConfigId.Should().Be("repo-1");
         run.InitiatedBy.Should().Be("loop");
-        run.AgentProviderConfigId.Should().Be("agent-config-1");
+        run.AgentProviderConfigId.Should().BeNull();
         run.BrainProviderConfigId.Should().Be("brain-42");
     }
 
@@ -2538,7 +2126,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: "brain-42",
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject,
                 RunType: PipelineRunType.Implementation),
             CancellationToken.None);
@@ -2557,7 +2144,7 @@ public class DispatchOrchestrationServiceTests
         run.IssueProviderConfigId.Should().Be("issue-1");
         run.RepoProviderConfigId.Should().Be("repo-1");
         run.InitiatedBy.Should().Be("loop");
-        run.AgentProviderConfigId.Should().Be("agent-config-1");
+        run.AgentProviderConfigId.Should().BeNull();
         run.BrainProviderConfigId.Should().Be("brain-42");
     }
 
@@ -2583,7 +2170,6 @@ public class DispatchOrchestrationServiceTests
                 BrainProviderId: "brain-provider-99",
                 PipelineProviderId: null,
                 InitiatedBy: "loop",
-                RequiredLabels: ["dotnet"],
                 Project: TestProject),
             CancellationToken.None);
 
@@ -2622,8 +2208,6 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
                     mockTokenVending.Object, mockProviderFactory.Object,
                     _mockLabelService.Object, resolution),
                 new Mock<IWorkDistributor>().Object,
-                mockConfigStore.Object,
-                mockConfigStore.Object,
                 mockConfigStore.Object),
             _mockLogger.Object);
     }
@@ -2885,8 +2469,6 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
                     mockTokenVending.Object, mockProviderFactory.Object,
                     _mockLabelService.Object, resolution),
                 _mockWorkDistributor.Object,
-                mockConfigStore.Object,
-                mockConfigStore.Object,
                 mockConfigStore.Object),
             _mockLogger.Object);
     }

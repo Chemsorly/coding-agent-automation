@@ -1,51 +1,54 @@
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
 using CodingAgent.Api.Chat;
+using CodingAgent.Api.IntegrationTests.AgentRouting;
 using CodingAgent.Contracts;
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using RoutingTable = CodingAgent.Pipeline.Models.AgentRouting;
 
 namespace CodingAgent.Api.IntegrationTests.Chat;
 
 /// <summary>
-/// Spec 051 2.5b: the chat rules the Agent Chat page applied until they moved into the API. Which
-/// profiles can be launched, what a launch dispatches, how failures read, and what each prompt carries.
+/// Spec 051 2.5b and spec 053 req 6: the chat rules the API applies. Which profiles can be launched and with which
+/// models and efforts, what a launch dispatches, how refusals and failures read, and what each prompt carries.
 /// UiChatEndpointTests cover access and ownership.
 /// </summary>
 public sealed class ChatServiceTests
 {
     private const string ProfileId = "chat-profile";
-    private const string AgentConfigId = "chat-agent-config";
     private const string AgentId = "chat-agent-1";
     private const string ConnectionId = "conn-chat-agent-1";
+    private const string DefaultModel = "kiro-model-a";
 
     private readonly Mock<IAgentProfileStore> _profiles = new();
-    private readonly Mock<IProviderConfigStore> _providerConfigs = new();
     private readonly Mock<IProjectStore> _projects = new();
     private readonly Mock<IChatJobDispatcher> _dispatcher = new();
     private readonly Mock<IAgentRegistryService> _registry = new();
     private readonly Mock<IAgentHubClient> _agent = new();
+    private readonly AgentRoutingTestSupport.InMemoryFactory _db = new(Guid.NewGuid().ToString());
     private readonly ChatSessionStore _sessions = new(null, TimeSpan.FromHours(1));
     private readonly List<ChatPromptMessage> _delivered = [];
     private readonly ChatService _sut;
 
     public ChatServiceTests()
     {
-        _profiles.Setup(p => p.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([Profile(ProfileId, "kiro,dotnet")]);
+        UseProfiles(Profile(ProfileId, "dotnet,kiro"));
+        AgentRoutingTestSupport.SeedRouting(_db, AgentRoutingTestData.Routing(ProfileId, DefaultModel, "high"));
         _dispatcher.Setup(d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(AgentId);
-        UseAgentConfig("KiroCli");
         _registry.Setup(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentEntry { AgentId = new AgentId(AgentId), ConnectionId = ConnectionId, Hostname = "pod", Labels = ["kiro"], RegisteredAt = DateTimeOffset.UtcNow });
         _agent.Setup(a => a.AssignChatPrompt(It.IsAny<ChatPromptMessage>()))
@@ -57,101 +60,177 @@ public sealed class ChatServiceTests
         hub.Setup(h => h.Clients).Returns(clients.Object);
 
         _sut = new ChatService(
-            _profiles.Object, _providerConfigs.Object, _projects.Object,
-            JobTemplateStore.LoadFromYaml(Template("kiro,dotnet") + Template("claude,dotnet") + Template("")),
+            _profiles.Object, new AgentRoutingStore(_db), _projects.Object,
+            AgentRoutingTestData.JobTemplates(
+                ("dotnet,kiro", JobTemplateProviderType.Kiro),
+                ("claude,dotnet", JobTemplateProviderType.Claude),
+                ("java,opencode", JobTemplateProviderType.Opencode),
+                ("dotnet,python", "")),
             _dispatcher.Object, _sessions, _registry.Object, hub.Object,
             new DispatchServiceOptions { ChatPodConnectTimeoutSeconds = 90 },
             NullLogger<ChatService>.Instance);
     }
 
-    private static string Template(string labels) => $"- labels: \"{labels}\"\n  image: \"test/agent:latest\"\n  providerType: \"kiro\"\n";
+    private static AgentProfile Profile(
+        string id, string jobTemplate, bool enabled = true, IReadOnlyDictionary<string, string>? settings = null) =>
+        AgentRoutingTestData.Profile(id, jobTemplate, $"{id} profile", enabled, settings);
 
-    private static AgentProfile Profile(string id, string labels, bool enabled = true) => new()
-    {
-        Id = id,
-        DisplayName = $"{id} profile",
-        MatchLabels = labels.Split(',', StringSplitOptions.RemoveEmptyEntries),
-        AgentProviderConfigId = AgentConfigId,
-        Enabled = enabled,
-    };
+    private void UseProfiles(params AgentProfile[] profiles) =>
+        _profiles.Setup(p => p.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(profiles);
 
-    private void UseAgentConfig(string providerType, Dictionary<string, string>? settings = null) =>
-        _providerConfigs.Setup(p => p.GetProviderConfigByIdAsync(AgentConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProviderConfig
-            {
-                Id = AgentConfigId, DisplayName = "Agent", Kind = ProviderKind.Agent, ProviderType = providerType,
-                Settings = settings ?? [],
-            });
+    private async Task UseRoutingAsync(RoutingTable routing) => await new AgentRoutingStore(_db).SaveAsync(routing, CancellationToken.None);
 
-    private static ChatSessionRecord Session(string? projectId = null, bool prompted = false) =>
-        new(AgentId, "oidc", "oidc:tester", projectId, ProfileId, "window-1", prompted);
+    private static ChatSessionRecord Session(string? projectId = null, bool prompted = false, string profileId = ProfileId) =>
+        new(AgentId, "oidc", "oidc:tester", projectId, profileId, "window-1", prompted);
+
+    private Task<UiChatSession> StartAsync(
+        string profileId = ProfileId, string? model = null, string? effort = null, PipelineProject? project = null,
+        IReadOnlyList<PipelineJobTemplate>? chatTemplates = null) =>
+        _sut.StartAsync(
+            new UiChatStartRequest(profileId, project?.Id, model, effort), project, chatTemplates ?? [],
+            "oidc", "oidc:tester", CancellationToken.None);
 
     // ── Options ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Options_OfferOnlyEnabledProfilesWhoseLabelsNameAJobTemplate()
+    public async Task Options_OfferOnlyEnabledProfilesWhoseJobTemplateHasATool()
     {
-        // The empty-labels template exists so the label-less profile is excluded for having no
-        // labels, not for lacking a template: a chat pod needs a non-empty selector.
-        _profiles.Setup(p => p.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
-        [
+        UseProfiles(
             Profile("kiro", "dotnet,kiro"),
             Profile("claude-disabled", "claude,dotnet", enabled: false),
-            Profile("no-template", "java"),
-            Profile("default", ""),
-        ]);
+            Profile("no-template", "java,spring"),
+            Profile("no-tool", "dotnet,python"));
 
-        var options = await _sut.GetOptionsAsync(CancellationToken.None);
+        var options = await _sut.GetOptionsAsync([], CancellationToken.None);
 
         options.Profiles.Select(p => p.Id).Should().Equal("kiro");
         options.ConnectTimeoutSeconds.Should().Be(90);
     }
 
+    [Fact]
+    public async Task Options_ListTheModelsAndEffortsOfEachTool()
+    {
+        UseProfiles(Profile("kiro", "dotnet,kiro"), Profile("claude", "claude,dotnet"), Profile("opencode", "java,opencode"));
+        await UseRoutingAsync(AgentRoutingTestData.Routing(
+            "kiro", DefaultModel, "auto",
+            (WorkItemTaskType.Review, AgentRoutingTestData.Route("claude", "claude-row-model")),
+            (WorkItemTaskType.Decomposition, AgentRoutingTestData.Route("opencode", "openai/gpt-row"))));
+
+        var options = (await _sut.GetOptionsAsync([], CancellationToken.None)).Profiles.ToDictionary(p => p.Id);
+
+        options["kiro"].Should().BeEquivalentTo(new
+        {
+            Tool = JobTemplateProviderType.Kiro,
+            Models = new[] { "auto", DefaultModel },
+            Efforts = AgentToolCatalog.Kiro.Efforts.Prepend("auto"),
+        });
+        options["claude"].Models.Should().Equal(AgentToolCatalog.ClaudeCode.BuiltInModels.Prepend("claude-row-model").Prepend("auto"),
+            "Claude Code also offers its built-in models");
+        options["claude"].Efforts.Should().Equal(AgentToolCatalog.ClaudeCode.Efforts.Prepend("auto"));
+        options["opencode"].Models.Should().Equal("auto", "openai/gpt-row");
+        options["opencode"].Efforts.Should().Equal(["auto"], "OpenCode has no effort");
+    }
+
+    [Fact]
+    public async Task Options_OfferTheChatProjectsRows_ButNoOtherProjectsModels()
+    {
+        var ownTemplate = new PipelineJobTemplate
+        {
+            Id = "t-own", Name = "own", IssueProviderId = "ip", RepoProviderId = "rp",
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Implementation] = AgentRoutingTestData.Route(ProfileId, "own-project-model") },
+        };
+
+        // Another project's template, with "other-project-model" on its row, is not among the chat's templates.
+        var options = await _sut.GetOptionsAsync([ownTemplate], CancellationToken.None);
+
+        options.Profiles.Single().Models.Should().Equal("auto", DefaultModel, "own-project-model");
+    }
+
+    [Fact]
+    public async Task Options_PreselectTheDefaultRoute_WhenItNamesTheProfile()
+    {
+        UseProfiles(Profile(ProfileId, "dotnet,kiro"), Profile("claude", "claude,dotnet"));
+
+        var options = (await _sut.GetOptionsAsync([], CancellationToken.None)).Profiles.ToDictionary(p => p.Id);
+
+        options[ProfileId].Should().BeEquivalentTo(new { DefaultModel, DefaultEffort = "high" });
+        options["claude"].Should().BeEquivalentTo(new { DefaultModel = "auto", DefaultEffort = "auto" });
+    }
+
     // ── Launch ──────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Start_DispatchesTheProfilesSelector_WithItsProvidersModelAndEffort_AndRecordsTheOwner()
+    public async Task Start_DispatchesTheProfilesJobTemplate_WithTheChosenModelAndEffort_AndRecordsTheOwner()
     {
-        // Regression: the chat header showed "model: auto" and the pod ran the CLI default model
-        // because the page looked the profile up from template labels and found none.
-        UseAgentConfig("ClaudeCode", new() { [ProviderSettingKeys.Model] = "claude-opus-5-5", [ProviderSettingKeys.Effort] = "high" });
         var project = new PipelineProject { Id = "6f1c2a9e-0000-0000-0000-0000000000f1", Name = "Foxtrot" };
 
-        var session = await _sut.StartAsync(ProfileId, project, "oidc", "oidc:tester", CancellationToken.None);
+        var session = await StartAsync(model: DefaultModel, effort: "low", project: project);
 
-        session.Should().Be(new UiChatSession(AgentId, "claude-opus-5-5"));
-        _dispatcher.Verify(d => d.DispatchChatPodAsync("dotnet,kiro", "claude-opus-5-5", "high", It.IsAny<CancellationToken>()), Times.Once);
-        (await _sessions.FindAsync(AgentId)).Should().BeEquivalentTo(
-            new { AgentId, OwnerIdentitySource = "oidc", OwnerSubject = "oidc:tester", ProjectId = project.Id, ProfileId, Prompted = false });
+        session.Should().Be(new UiChatSession(AgentId, DefaultModel));
+        _dispatcher.Verify(d => d.DispatchChatPodAsync("dotnet,kiro", DefaultModel, "low", It.IsAny<CancellationToken>()), Times.Once);
+        (await _sessions.FindAsync(AgentId)).Should().BeEquivalentTo(new
+        {
+            AgentId, OwnerIdentitySource = "oidc", OwnerSubject = "oidc:tester", ProjectId = project.Id, ProfileId,
+            Prompted = false, Model = DefaultModel, Effort = "low",
+        });
     }
 
     [Fact]
-    public async Task Start_WithoutAModel_ReportsAuto()
+    public async Task Start_WithoutAModelOrEffort_UsesThePreselection()
     {
-        (await _sut.StartAsync(ProfileId, null, "oidc", "oidc:tester", CancellationToken.None)).Model.Should().Be("auto");
+        (await StartAsync()).Model.Should().Be(DefaultModel);
+        _dispatcher.Verify(d => d.DispatchChatPodAsync("dotnet,kiro", DefaultModel, "high", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task Start_AProfileThatCannotBeLaunched_IsRefusedWithoutDispatching()
+    public async Task Start_WithoutADefaultRouteForTheProfile_RunsWithAuto()
     {
-        var act = () => _sut.StartAsync("gone", null, "oidc", "oidc:tester", CancellationToken.None);
+        await UseRoutingAsync(RoutingTable.Empty);
 
-        (await act.Should().ThrowAsync<ChatRequestException>())
-            .Which.Should().BeEquivalentTo(new { StatusCode = StatusCodes.Status409Conflict, Message = "The selected agent profile is no longer available. Reload the page." });
+        (await StartAsync()).Model.Should().Be("auto");
+        _dispatcher.Verify(d => d.DispatchChatPodAsync("dotnet,kiro", "auto", "auto", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Start_AProfileThatCannotBeLaunched_IsRefusedWith400WithoutDispatching()
+    {
+        UseProfiles(Profile(ProfileId, "dotnet,kiro"), Profile("disabled", "dotnet,kiro", enabled: false), Profile("no-tool", "dotnet,python"));
+
+        foreach (var profileId in new[] { "gone", "disabled", "no-tool" })
+        {
+            var act = () => StartAsync(profileId);
+
+            (await act.Should().ThrowAsync<ChatRequestException>())
+                .Which.StatusCode.Should().Be(StatusCodes.Status400BadRequest, profileId);
+        }
         _dispatcher.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task Start_AProfileWithoutItsProviderConfig_IsRefusedWithoutDispatching()
+    public async Task Start_AModelTheOptionsDoNotOffer_IsRefusedWith400WithoutDispatching()
     {
-        // Launching anyway would run the pod with default model, effort and auth mode.
-        _providerConfigs.Setup(p => p.GetProviderConfigByIdAsync(AgentConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProviderConfig?)null);
-
-        var act = () => _sut.StartAsync(ProfileId, null, "oidc", "oidc:tester", CancellationToken.None);
+        var act = () => StartAsync(model: "--dangerously-skip-permissions");
 
         (await act.Should().ThrowAsync<ChatRequestException>())
-            .WithMessage("Agent profile 'chat-profile profile' points to an agent provider config that does not exist*");
+            .Which.Should().BeEquivalentTo(new
+            {
+                StatusCode = StatusCodes.Status400BadRequest,
+                Message = "Model '--dangerously-skip-permissions' is not offered for agent profile 'chat-profile profile'. Choose one from the list.",
+            });
+        _dispatcher.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(ProfileId, "xhigh", "Kiro does not accept effort 'xhigh'.")]
+    [InlineData("opencode", "high", "OpenCode does not accept effort 'high'.")]
+    public async Task Start_AnEffortTheToolDoesNotAccept_IsRefusedWith400WithoutDispatching(string profileId, string effort, string message)
+    {
+        UseProfiles(Profile(ProfileId, "dotnet,kiro"), Profile("opencode", "java,opencode"));
+
+        var act = () => StartAsync(profileId, model: "auto", effort: effort);
+
+        (await act.Should().ThrowAsync<ChatRequestException>())
+            .Which.Should().BeEquivalentTo(new { StatusCode = StatusCodes.Status400BadRequest, Message = message });
         _dispatcher.VerifyNoOtherCalls();
     }
 
@@ -169,7 +248,7 @@ public sealed class ChatServiceTests
         _dispatcher.Setup(d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(failure);
 
-        var act = () => _sut.StartAsync(ProfileId, null, "oidc", "oidc:tester", CancellationToken.None);
+        var act = () => StartAsync();
 
         (await act.Should().ThrowAsync<ChatRequestException>())
             .Which.Should().BeEquivalentTo(new { StatusCode = StatusCodes.Status502BadGateway, Message = reason });
@@ -179,19 +258,41 @@ public sealed class ChatServiceTests
     // ── Prompts ─────────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("OpenCode", null, "/home/ubuntu/.opencode/opencode.json")]
-    [InlineData("KiroCli", null, "/home/ubuntu/.kiro/settings/mcp.json")]
-    [InlineData("ClaudeCode", null, AgentDefaults.ClaudeMcpConfigPath)]
-    [InlineData("OpenCode", "/custom/mcp.json", "/custom/mcp.json")]
-    [InlineData("SomeNewProvider", null, "/home/ubuntu/.kiro/settings/mcp.json")]
-    [InlineData("", null, "/home/ubuntu/.kiro/settings/mcp.json")]
-    public async Task Prompt_CarriesTheMcpConfigPath_OfTheProfilesProvider(string providerType, string? explicitPath, string expected)
+    [InlineData("java,opencode", null, "/home/ubuntu/.opencode/opencode.json")]
+    [InlineData("dotnet,kiro", null, "/home/ubuntu/.kiro/settings/mcp.json")]
+    [InlineData("claude,dotnet", null, AgentDefaults.ClaudeMcpConfigPath)]
+    [InlineData("java,opencode", "/custom/mcp.json", "/custom/mcp.json")]
+    public async Task Prompt_CarriesTheMcpConfigPath_OfTheProfilesTool(string jobTemplate, string? explicitPath, string expected)
     {
-        UseAgentConfig(providerType, explicitPath is null ? null : new() { [ProviderSettingKeys.McpConfigPath] = explicitPath });
+        UseProfiles(Profile(ProfileId, jobTemplate,
+            settings: explicitPath is null ? null : new Dictionary<string, string> { [ProviderSettingKeys.McpConfigPath] = explicitPath }));
 
         await _sut.SendPromptAsync(Session(), new UiChatPromptRequest("s1", "hello"), CancellationToken.None);
 
         _delivered.Single().McpConfigPath.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task Prompt_CarriesTheProfilesAuthMode()
+    {
+        UseProfiles(Profile(ProfileId, "claude,dotnet",
+            settings: new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = "api-key" }));
+
+        await _sut.SendPromptAsync(Session(), new UiChatPromptRequest("s1", "hello"), CancellationToken.None);
+
+        _delivered.Single().AgentAuthMode.Should().Be("api-key");
+    }
+
+    [Fact]
+    public async Task Prompt_ForAProfileThatCanNoLongerRun_IsRefused()
+    {
+        UseProfiles(Profile(ProfileId, "dotnet,python"));
+
+        var act = () => _sut.SendPromptAsync(Session(), new UiChatPromptRequest("s1", "hello"), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<ChatRequestException>())
+            .Which.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+        _delivered.Should().BeEmpty();
     }
 
     [Fact]

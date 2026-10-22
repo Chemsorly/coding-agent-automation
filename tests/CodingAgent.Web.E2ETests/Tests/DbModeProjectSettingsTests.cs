@@ -81,14 +81,13 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-override-e2e",
             DisplayName = "Override Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Issue "52": dispatched with the project that has MaxRetries = 5.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -192,14 +191,13 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-deepmerge-e2e",
             DisplayName = "Deep Merge Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -267,14 +265,13 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-snapshot-e2e",
             DisplayName = "Snapshot Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -330,19 +327,18 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
         const string mcpProjectId = "aaaaaaaa-bbbb-cccc-dddd-444444444444";
 
         // Profile has servers "a" (http) and "b" (http) at a profile URL.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-mcp-e2e",
             DisplayName = "MCP Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true,
             McpServers = new[]
             {
                 new McpServerConfig { Name = "a", Type = "http", Url = "http://profile-a" },
                 new McpServerConfig { Name = "b", Type = "http", Url = "http://profile-b" }
             }
-        }, CancellationToken.None);
+        });
 
         // Project overrides "b" with a different URL, adds "c", and adds "disabled-server" (Disabled=true).
         await Fixture.ConfigStore.SaveProjectAsync(new PipelineProject
@@ -459,14 +455,13 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Secrets = new Dictionary<string, string> { ["K2"] = "r" }
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-secrets-merge-e2e",
             DisplayName = "Secrets Merge Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -537,14 +532,13 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-brain-ro-e2e",
             DisplayName = "BrainReadOnly Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -599,14 +593,13 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-brain-ro2-e2e",
             DisplayName = "BrainReadOnly B Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -683,14 +676,13 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-project-review-e2e",
             DisplayName = "Project Review Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {

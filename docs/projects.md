@@ -92,9 +92,9 @@ Besides overrides, a project holds settings of its own:
 
 | Setting | Type | Description |
 |---------|------|-------------|
-| `McpServers` | List? | Project-level MCP server configurations. Merged with the resolved agent profile's MCP servers at dispatch time. `null` = inherit profile list unchanged. |
+| `McpServers` | List? | Project-level MCP server configurations. Merged with the MCP servers of the work item's routed agent profile when an agent claims the work. `null` = inherit profile list unchanged. |
 
-**Merge semantics**: At dispatch time, project-level MCP servers are merged with the resolved agent profile's servers:
+**Merge semantics**: When an agent claims the work, project-level MCP servers are merged with the servers of the routed agent profile:
 - A project server with the same `Name` (case-insensitive) as a profile server **replaces** it
 - Project servers with new names are **appended** to the profile list
 - `null` (or empty list) = inherit profile list unchanged
@@ -306,7 +306,7 @@ The project page at `/projects/{id}` requires `admin` on the project. It hosts t
 
 Users with only `operator` or `readonly` on the project see "Project not found": the page shows the project's prompts, steering and MCP servers, which stay with its admins. Secret values are never shown to any user; only the key names are displayed. The Default project has no Project Review tab.
 
-The API checks every save, so a request sent around the page changes no more than the page allows. When a project admin saves their project, the API reloads the stored project and keeps its `Enabled`, `EpicIssueProviderId`, `BrainReadOnly` and `BrainConsolidationReviewEnabled`. When a project admin saves a repository's Behaviour card, the API takes only the card's fields and keeps every other field of the stored template, such as the connections, the Binding card and the triage switch. A project admin can't create a project or a repository, or save another project's (`404`).
+The API checks every save, so a request sent around the page changes no more than the page allows. When a project admin saves their project, the API reloads the stored project and keeps its `Enabled`, `EpicIssueProviderId`, `BrainReadOnly` and `BrainConsolidationReviewEnabled`. When a project admin saves a repository's Behaviour card, the API takes only the card's fields and keeps every other field of the stored template, such as the connections, the Binding card, the triage switch and the repository routes. A project admin can't create a project or a repository, or save another project's (`404`).
 
 The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. The template name and the "Edit" link in each row navigate to the template's **repository page** (`/pipelines/{templateId}`). Projects with `EpicIssueProviderId` set show a 🧩 indicator.
 
@@ -318,7 +318,8 @@ Each pipeline job template has its own repository page at `/pipelines/{templateI
 - Repository and issue tracker (display-only once saved)
 - Brain provider and brain read-only toggle
 - Pipeline/CI provider
-- Required agent labels (determines agent routing and quality gates), with a label preview
+- Stack labels (pick the quality gates and reviewers, no agent), with a label preview
+- Agent routing: the repository's own route per task type, saved with its own button. A task type without a row inherits the global routing. Others see the resolved route per task type (see [Agent Routing](agent-routing.md#repository-rows))
 - Enabled toggle
 
 **Behaviour card** — how the pipeline works on the repository. Editable by `admin` on the template's project (or a global admin). Contains:

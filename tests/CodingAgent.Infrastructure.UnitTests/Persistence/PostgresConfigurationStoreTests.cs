@@ -248,10 +248,7 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = id,
             DisplayName = "Test Profile",
-            AgentProviderConfigId = "provider-abc",
-            MatchLabels = ["dotnet", "csharp"],
             Enabled = true,
-            Priority = 5
         };
         await _store.SaveAgentProfileAsync(profile, CancellationToken.None);
 
@@ -259,8 +256,6 @@ public class PostgresConfigurationStoreTests : IDisposable
         var match = loaded.Should().ContainSingle().Subject;
         match.Id.Should().Be(id);
         match.DisplayName.Should().Be("Test Profile");
-        match.AgentProviderConfigId.Should().Be("provider-abc");
-        match.Priority.Should().Be(5);
     }
 
     [Fact]
@@ -271,9 +266,7 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = id,
             DisplayName = "Delete Me",
-            AgentProviderConfigId = "p1",
             Enabled = true,
-            Priority = 1
         };
         await _store.SaveAgentProfileAsync(profile, CancellationToken.None);
         await _store.DeleteAgentProfileAsync(id, CancellationToken.None);
@@ -882,9 +875,7 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = Guid.NewGuid().ToString(),
             DisplayName = "P1",
-            AgentProviderConfigId = "x",
             Enabled = true,
-            Priority = 1
         }, CancellationToken.None);
 
         var reloaded = await _store.LoadAgentProfilesAsync(CancellationToken.None);
@@ -954,24 +945,19 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = id,
             DisplayName = "V1",
-            AgentProviderConfigId = "x",
             Enabled = true,
-            Priority = 1
         }, CancellationToken.None);
 
         await _store.SaveAgentProfileAsync(new AgentProfile
         {
             Id = id,
             DisplayName = "V2",
-            AgentProviderConfigId = "x",
             Enabled = true,
-            Priority = 2
         }, CancellationToken.None);
 
         var loaded = await _store.LoadAgentProfilesAsync(CancellationToken.None);
         var match = loaded.Should().ContainSingle().Subject;
         match.DisplayName.Should().Be("V2");
-        match.Priority.Should().Be(2);
     }
 
     // ── DeserializeProject correctness (stale Settings JSON) ────────────

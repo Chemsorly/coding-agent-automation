@@ -97,7 +97,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.ClosedLoopMaxConsecutivePollFailures.Should().Be(10);
         deserialized.ClosedLoopMaxPagesToFetch.Should().Be(20);
         deserialized.ClosedLoopCircuitBreakerCooldown.Should().Be(TimeSpan.FromMinutes(10));
-        deserialized.DefaultRequiredAgentLabels.Should().Be("kiro,dotnet");
         deserialized.BrainPushMaxRetries.Should().Be(5);
         deserialized.OrphanedLabelSweepIntervalMinutes.Should().Be(60);
         deserialized.MaxRefactoringProposals.Should().Be(5);
@@ -169,7 +168,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         ClosedLoopMaxConsecutivePollFailures = 10,
         ClosedLoopMaxPagesToFetch = 20,
         ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(10),
-        DefaultRequiredAgentLabels = "kiro,dotnet",
         BrainPushMaxRetries = 5,
         OrphanedLabelSweepIntervalMinutes = 60,
         MaxRefactoringProposals = 5,

@@ -20,7 +20,10 @@ namespace CodingAgent.Agent.UnitTests;
 /// <see cref="AgentWorkItemModeRegistration.AddK8sModeServices"/>,
 /// <see cref="AgentChatModeRegistration.AddSignalRModeServices"/>) so that any divergence
 /// between Program.cs and the smoke test is caught immediately.
+/// The OpenCode HttpClient tests set and clear <c>OPENCODE_SERVER_PASSWORD</c>, so the class runs in the shared
+/// <see cref="EnvironmentVariablesCollection"/>, not in parallel with the other tests that change it.
 /// </remarks>
+[Collection("EnvironmentVariables")]
 public class DiResolutionSmokeTests
 {
     /// <summary>

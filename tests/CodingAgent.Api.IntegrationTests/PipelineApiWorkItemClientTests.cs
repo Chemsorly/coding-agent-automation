@@ -246,6 +246,65 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
     // ── CreateAsync ────────────────────────────────────────────────────────────
 
+    private static JobDistributionRequest CreateRequest() => new()
+    {
+        IssueIdentifier = new IssueIdentifier("owner/repo#9"),
+        IssueProviderConfigId = "prov-1",
+        RepoProviderConfigId = "repo-1",
+        InitiatedBy = "test",
+        TaskType = WorkItemTaskType.Implementation,
+        TimeoutSeconds = 3600
+    };
+
+    [Fact]
+    public async Task CreateAsync_A422WithProblemDetails_ThrowsTheRefusalWithItsDetail()
+    {
+        // Spec 053 DD2: the API answers a request it cannot route with 422 and the reason as ProblemDetails detail.
+        _server.Given(Request.Create().WithPath("/api/work-items").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(422)
+                .WithHeader("Content-Type", "application/problem+json")
+                .WithBody("""{"title":"Work item refused","status":422,"detail":"No agent route: set the default route in Settings → Agents → Routing"}"""));
+
+        var act = () => _client.CreateAsync(CreateRequest());
+
+        await act.Should().ThrowAsync<WorkItemRefusedException>()
+            .WithMessage("No agent route: set the default route in Settings → Agents → Routing");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not json")]
+    [InlineData("""{"title":"Unprocessable"}""")]
+    public async Task CreateAsync_A422WithoutADetail_ThrowsTheFixedText(string body)
+    {
+        // A previous-release API replica answers a consolidation without a job template with a bare 422 (V9).
+        _server.Given(Request.Create().WithPath("/api/work-items").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(422).WithBody(body));
+
+        var act = () => _client.CreateAsync(CreateRequest());
+
+        await act.Should().ThrowAsync<WorkItemRefusedException>().WithMessage(PipelineApiWorkItemClient.RefusedWithoutReason);
+    }
+
+    [Fact]
+    public async Task KubernetesWorkDistributor_ARefusedCreate_IsAPermanentFailureWithTheReason()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(422)
+                .WithHeader("Content-Type", "application/problem+json")
+                .WithBody("""{"status":422,"detail":"agent profile 'Kiro' is disabled"}"""));
+        var distributor = new CodingAgent.Orchestration.Dispatch.KubernetesWorkDistributor(
+            _client, Microsoft.Extensions.Logging.Abstractions.NullLogger<CodingAgent.Orchestration.Dispatch.KubernetesWorkDistributor>.Instance);
+
+        var result = await distributor.DistributeAsync(CreateRequest(), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.IsPermanentFailure.Should().BeTrue("no retry changes a routing refusal");
+        result.ErrorMessage.Should().Be("agent profile 'Kiro' is disabled");
+    }
+
     [Fact]
     public async Task CreateAsync_Returns_Guid()
     {

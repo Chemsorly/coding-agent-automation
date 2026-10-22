@@ -152,6 +152,10 @@ public sealed class UiProjectAdminEndpointTests(ApiWebApplicationFactory factory
             RequiredLabels = ["cpu"],
             Enabled = false,
             TriageEnabled = true,
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Implementation] = new("profile-of-the-team", "auto", "high"),
+            },
         }, Json);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -169,6 +173,7 @@ public sealed class UiProjectAdminEndpointTests(ApiWebApplicationFactory factory
             .Including(t => t.BrainProviderId).Including(t => t.BrainReadOnly).Including(t => t.PipelineProviderId)
             .Including(t => t.RequiredLabels).Including(t => t.Enabled).Including(t => t.TriageEnabled),
             "connections, the Binding card and triage are the operator's");
+        stored.AgentRoutes.Should().BeNull("repository routes are the operator's (spec 053)");
     }
 
     [Fact]

@@ -55,6 +55,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    // Spec 053 req 10.5: a body that names a property or key twice, such as one task type's route twice, is refused (400)
+    // instead of the last one silently winning.
+    options.SerializerOptions.AllowDuplicateProperties = false;
 });
 
 // ── Host shutdown timeout ────────────────────────────────────────────────────

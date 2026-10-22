@@ -179,13 +179,7 @@ public sealed record PipelineConfiguration
 
     // ── Agent orchestration settings ────────────────────────────────────
 
-    /// <summary>
-    /// Global fallback for agent label routing when a repository's ProviderConfig
-    /// does not specify <see cref="ProviderConfig.RequiredLabels"/>. Comma-separated string (e.g., "kiro,dotnet").
-    /// Null means any idle agent can be selected.
-    /// </summary>
-    [Key(24)]
-    public string? DefaultRequiredAgentLabels { get; init; }
+    // Key(24) retired — DefaultRequiredAgentLabels removed (spec 053: stack labels pick no agent; the configuration move reads it from the raw JSON). Do NOT reuse this Key index
 
     /// <summary>
     /// Maximum number of retry attempts when brain repo push fails with a non-fast-forward error

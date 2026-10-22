@@ -7,7 +7,6 @@
 @using CodingAgent.Web.Services
 @inject RepositoryPageService PageService
 @inject CurrentAccess Access
-@inject IUiAgentClient AgentClient
 
 <PageTitle>@(_template?.Name ?? "Repository") - Coding Agent</PageTitle>
 
@@ -143,7 +142,7 @@ else
                             <span class="monitoring-mono">@(GetProviderDisplay(template.RepoProviderId, PageService.RepoProviders, PageService.BrainProviders))</span>
                             @if (Access.IsAdmin)
                             {
-                                <a href="/settings?section=repo-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                                <a href="@($"/settings?section={SettingsNodes.ProvidersRepository}")" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
                             }
                         </div>
                     </div>
@@ -154,7 +153,7 @@ else
                             <span class="monitoring-mono">@(GetProviderDisplay(template.IssueProviderId, PageService.IssueProviders))</span>
                             @if (Access.IsAdmin)
                             {
-                                <a href="/settings?section=issue-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                                <a href="@($"/settings?section={SettingsNodes.ProvidersIssue}")" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
                             }
                         </div>
                     </div>
@@ -173,7 +172,7 @@ else
                                 </select>
                                 @if (!string.IsNullOrEmpty(_bindingForm.BrainProviderId))
                                 {
-                                    <a href="/settings?section=repo-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                                    <a href="@($"/settings?section={SettingsNodes.ProvidersRepository}")" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
                                 }
                             </div>
                         </div>
@@ -199,14 +198,18 @@ else
                                 </select>
                                 @if (!string.IsNullOrEmpty(_bindingForm.PipelineProviderId))
                                 {
-                                    <a href="/settings?section=pipeline-providers" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
+                                    <a href="@($"/settings?section={SettingsNodes.ProvidersPipeline}")" class="btn-cancel" style="font-size:0.75rem; padding: 2px 8px;">Connection ›</a>
                                 }
                             </div>
                         </div>
                         <div class="form-group">
-                            <label>Required Agent Labels <span class="form-hint">(comma-separated)</span></label>
-                            <input type="text" value="@_bindingLabelsText" @onchange="OnBindingLabelsChanged"
-                                   placeholder="e.g. kiro, dotnet, dotnet10" />
+                            <label>Stack labels <span class="form-hint">(comma-separated · pick quality gates and reviewers, for example dotnet, dotnet10)</span></label>
+                            <input type="text" data-testid="binding-stack-labels" value="@_bindingLabelsText" @onchange="OnBindingLabelsChanged"
+                                   placeholder="e.g. dotnet, dotnet10" />
+                            @if (_bindingForm.RequiredLabels is not { Count: > 0 })
+                            {
+                                <span class="form-hint" data-testid="binding-no-labels-note">@NoStackLabelsNote</span>
+                            }
                         </div>
                         @if (_labelPreview is { Labels.Count: > 0 })
                         {
@@ -221,6 +224,30 @@ else
                         <div class="form-buttons">
                             <button class="btn-save" @onclick="SaveBinding" disabled="@_bindingSaving">Save</button>
                             <span class="monitoring-muted" style="font-size:0.8rem;">Changes apply from the next poll cycle.</span>
+                        </div>
+
+                        <div class="config-sub-fields" style="margin-top: 1rem;" data-testid="binding-routing">
+                            <h3>Agent routing</h3>
+                            <p class="form-hint">Which agent profile runs each task type of this repository, with which model and effort. A task type without its own row inherits the global routing. Changes apply to work created after saving.</p>
+                            @if (PageService.RoutingPage is { } routing)
+                            {
+                                <RouteTable Rows="_routeRows" Profiles="routing.Profiles" Inherited="routing.Routing" />
+                                @if (!string.IsNullOrEmpty(_routesError))
+                                {
+                                    <div class="settings-status status-error" data-testid="binding-routing-error" style="white-space: pre-line;">@_routesError</div>
+                                }
+                                @if (!string.IsNullOrEmpty(_routesSuccess))
+                                {
+                                    <div class="settings-status status-success">@_routesSuccess</div>
+                                }
+                                <div class="form-buttons">
+                                    <button class="btn-save" data-testid="binding-routing-save" @onclick="SaveRoutes" disabled="@_routesSaving">Save routing</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="settings-status status-error">@PageService.RoutingLoadError</div>
+                            }
                         </div>
                     }
                     else
@@ -242,12 +269,42 @@ else
                             <span class="monitoring-mono">@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplay(template.PipelineProviderId, PageService.PipelineProviders))</span>
                         </div>
                         <div class="form-group">
-                            <label>Agent Labels</label>
-                            <span>@(template.RequiredLabels is { Count: > 0 } ? string.Join(", ", template.RequiredLabels) : "(global default)")</span>
+                            <label>Stack labels</label>
+                            <span data-testid="binding-stack-labels">@(template.RequiredLabels is { Count: > 0 } ? string.Join(", ", template.RequiredLabels) : "(none)")</span>
+                            @if (template.RequiredLabels is not { Count: > 0 })
+                            {
+                                <span class="form-hint" data-testid="binding-no-labels-note">@NoStackLabelsNote</span>
+                            }
                         </div>
                         <div class="form-group">
                             <label>Status</label>
                             <span class="feature-badge @(template.Enabled ? "feature-on" : "feature-off")">@(template.Enabled ? "Enabled" : "Disabled")</span>
+                        </div>
+                        <div class="form-group" data-testid="binding-routes">
+                            <label>Agent routing</label>
+                            <div class="monitoring-table-wrap">
+                                <table class="monitoring-table">
+                                    <thead>
+                                        <tr><th>Task type</th><th>Route</th><th>Source</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var route in PageService.Routes)
+                                        {
+                                            <tr data-testid="binding-route-@route.TaskType.ToString().ToLowerInvariant()">
+                                                <td>@AgentRouteLabels.TaskType(route.TaskType)</td>
+                                                <td>
+                                                    @RouteText.Describe(route)
+                                                    @if (route.ProfileName is not null && route.Problem is not null)
+                                                    {
+                                                        <span class="badge-disabled-table" title="@route.Problem"><Icon Name="alert-triangle" Size="12" /></span>
+                                                    }
+                                                </td>
+                                                <td>@RouteText.Source(route)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     }
                 </section>
@@ -504,7 +561,15 @@ else
     private RepositoryPageService.BindingFormModel _bindingForm = new();
     private string _bindingLabelsText = "";
     private TemplateTableSection.LabelPreviewResult? _labelPreview;
-    private IReadOnlyList<AgentEntryDto> _agents = [];
+
+    // Spec 053 req 5.5: what a template without stack labels gets.
+    private const string NoStackLabelsNote = "Without stack labels, only the quality gates and reviewers that have no match labels apply.";
+
+    // Repository rows (spec 053 req 3.2), edited by the global admin.
+    private List<RouteRow> _routeRows = [];
+    private string? _routesError;
+    private string? _routesSuccess;
+    private bool _routesSaving;
 
     // Behaviour form state — uses TemplateTableSection.TemplateFormModel for RepositorySettingsEditor compatibility
     private RepositoryPageService.BehaviourFormModel _behaviourForm = new();
@@ -529,7 +594,6 @@ else
         if (!string.IsNullOrEmpty(_loadError) || !PageService.CanView()) return;
 
         InitForms();
-        await RefreshAgentsAsync();
         RefreshLabelPreview();
     }
 
@@ -550,6 +614,7 @@ else
 
         _template = template;
         _bindingForm = RepositoryPageService.BindingFormModel.FromTemplate(template);
+        _routeRows = RouteRow.ForRepository(template.AgentRoutes);
         _bindingLabelsText = template.RequiredLabels is { Count: > 0 }
             ? string.Join(", ", template.RequiredLabels)
             : "";
@@ -566,15 +631,9 @@ else
         };
     }
 
-    private async Task RefreshAgentsAsync()
-    {
-        try { _agents = await AgentClient.GetAgentsAsync(); }
-        catch (Exception) { /* Keep the last list */ }
-    }
-
     private void RefreshLabelPreview()
     {
-        _labelPreview = PageService.GetLabelPreview(_bindingForm.RequiredLabels, _agents);
+        _labelPreview = PageService.GetLabelPreview(_bindingForm.RequiredLabels);
     }
 
     private void OnBindingLabelsChanged(ChangeEventArgs e)
@@ -602,6 +661,25 @@ else
             }
         }
         finally { _bindingSaving = false; }
+    }
+
+    private async Task SaveRoutes()
+    {
+        _routesError = null;
+        _routesSuccess = null;
+        _routesSaving = true;
+        try
+        {
+            // The API refuses an invalid row with one line per row.
+            var (success, error, message) = await PageService.SaveRoutesAsync(_routeRows);
+            if (!success) { _routesError = error; }
+            else
+            {
+                _routesSuccess = message;
+                _template = PageService.Template;
+            }
+        }
+        finally { _routesSaving = false; }
     }
 
     private async Task SaveBehaviour()

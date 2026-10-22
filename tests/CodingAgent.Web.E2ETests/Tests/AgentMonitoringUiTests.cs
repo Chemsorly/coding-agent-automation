@@ -36,14 +36,13 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-ui-monitor",
             DisplayName = "UI Monitor Profile",
-            MatchLabels = labels,
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(labels),
             Enabled = true
-        }, CancellationToken.None);
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════════════

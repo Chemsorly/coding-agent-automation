@@ -40,7 +40,6 @@ public sealed class ConsolidationServiceBrainScopeTests
     private readonly Mock<IProjectStore> _projectStore = new();
     private readonly Mock<IPipelineConfigStore> _configStore = new();
     private readonly Mock<IWorkDistributor> _distributor = new();
-    private readonly Mock<IConsolidationSelectorResolver> _selectorResolver = new();
     private readonly List<JobDistributionRequest> _requests = [];
 
     private PipelineConfiguration _liveConfig = new() { AgentTimeout = TimeSpan.FromMinutes(60) };
@@ -55,9 +54,6 @@ public sealed class ConsolidationServiceBrainScopeTests
             .ReturnsAsync(() => _templates);
         _configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => _liveConfig);
-        _selectorResolver
-            .Setup(r => r.ResolveAsync(It.IsAny<ProviderConfig?>(), It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(["dotnet"]), null));
         _distributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .Callback<JobDistributionRequest, CancellationToken>((request, _) => _requests.Add(request))
@@ -72,9 +68,7 @@ public sealed class ConsolidationServiceBrainScopeTests
             new LoggerConfiguration().CreateLogger(),
             bootstrap,
             _projectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
             WorkDistributor: _distributor.Object,
-            SelectorResolver: _selectorResolver.Object,
             PipelineConfigStore: _configStore.Object));
     }
 
@@ -190,16 +184,16 @@ public sealed class ConsolidationServiceBrainScopeTests
     }
 
     [Fact]
-    public async Task TriggerAsync_SelectorLabelsAreResolvedWithTheLiveSettings()
+    public async Task TriggerAsync_LeavesTheAgentRoutingToTheApi()
     {
-        _liveConfig = _liveConfig with { DefaultRequiredAgentLabels = "live-label" };
         var sut = CreateSut();
 
         await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, new TemplateId(TemplateA.Id), CancellationToken.None);
 
-        _selectorResolver.Verify(r => r.ResolveAsync(
-            It.IsAny<ProviderConfig?>(),
-            It.Is<PipelineConfiguration>(c => c.DefaultRequiredAgentLabels == "live-label"),
-            It.IsAny<CancellationToken>()), Times.Once);
+        // Spec 053 req 4.2: the API routes the work item when it creates it; the Scheduler sends no selector or profile.
+        var request = _requests.Should().ContainSingle().Subject;
+        request.AgentSelector.Should().BeEmpty();
+        request.ResolvedProfileId.Should().BeNull();
+        request.Route.Should().BeNull();
     }
 }

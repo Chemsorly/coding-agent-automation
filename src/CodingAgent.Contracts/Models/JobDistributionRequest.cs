@@ -32,8 +32,11 @@ public record JobDistributionRequest
     /// <summary>Type of work to perform.</summary>
     public required WorkItemTaskType TaskType { get; init; }
 
-    /// <summary>Sorted comma-joined agent labels for dispatch routing.</summary>
-    public required string AgentSelector { get; init; }
+    /// <summary>
+    /// The job template key the work runs on: set by the API's router when it creates the work item (spec 053 DD1).
+    /// Callers leave it empty.
+    /// </summary>
+    public string AgentSelector { get; init; } = "";
 
     /// <summary>Maximum execution time in seconds before timeout.</summary>
     public required int TimeoutSeconds { get; init; }
@@ -93,6 +96,12 @@ public record JobDistributionRequest
 
     /// <summary>Resolved agent profile ID for this work item.</summary>
     public string? ResolvedProfileId { get; init; }
+
+    /// <summary>
+    /// The route the API pinned when it created the work item (spec 053 req 4.4): profile, tool, model, effort and
+    /// source. Null for a work item created before spec 053; such an item is routed at claim.
+    /// </summary>
+    public AgentRouteSnapshot? Route { get; init; }
 
     /// <summary>Resolved agent provider config ID from the agent profile.</summary>
     public string? AgentProviderConfigId { get; init; }

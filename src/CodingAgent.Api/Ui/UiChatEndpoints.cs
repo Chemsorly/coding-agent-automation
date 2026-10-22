@@ -3,6 +3,7 @@ using CodingAgent.Contracts.Auth;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.Mvc;
 
 namespace CodingAgent.Api.Ui;
 
@@ -27,9 +28,18 @@ internal static class UiChatEndpoints
         return group;
     }
 
-    /// <summary>GET /api/ui/chat/options — the launchable profiles and the pod connect timeout.</summary>
-    internal static async Task<IResult> GetOptions(ChatService chat, CancellationToken ct) =>
-        TypedResults.Ok(await chat.GetOptionsAsync(ct));
+    /// <summary>
+    /// GET /api/ui/chat/options — the launchable profiles with their models and efforts, and the pod connect timeout.
+    /// With <paramref name="projectId"/>, the models of that project's repository rows count; without, those of the
+    /// projects the caller can read (spec 053 req 6.2).
+    /// </summary>
+    internal static async Task<IResult> GetOptions(
+        [FromQuery] string? projectId, IUserAccess access, IProjectStore projects, ChatService chat, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(projectId))
+            access.DemandOperate(projectId);
+        return TypedResults.Ok(await chat.GetOptionsAsync(await ChatTemplatesAsync(projectId, access, projects, ct), ct));
+    }
 
     /// <summary>POST /api/ui/chat — launches a chat pod and waits until it connects (up to the connect timeout).</summary>
     internal static async Task<IResult> Start(
@@ -44,8 +54,25 @@ internal static class UiChatEndpoints
                 return TypedResults.NotFound();
         }
 
+        var chatTemplates = await ChatTemplatesAsync(request.ProjectId, access, projects, ct);
         return await RefusalAsJsonAsync(async () =>
-            TypedResults.Ok(await chat.StartAsync(request.ProfileId, project, access.IdentitySource, access.Subject!, ct)));
+            TypedResults.Ok(await chat.StartAsync(request, project, chatTemplates, access.IdentitySource, access.Subject!, ct)));
+    }
+
+    /// <summary>
+    /// The templates whose repository rows a chat's model list includes: the chat project's, or without a project those
+    /// of every project the caller can read, so no other project's routes are offered (review-2 n12).
+    /// </summary>
+    private static async Task<IReadOnlyList<PipelineJobTemplate>> ChatTemplatesAsync(
+        string? projectId, IUserAccess access, IProjectStore projects, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(projectId))
+            return await projects.LoadTemplatesForProjectAsync(projectId, ct);
+        var readable = (await projects.LoadProjectsAsync(ct))
+            .Where(p => access.CanRead(p.Id))
+            .SelectMany(p => p.TemplateIds)
+            .ToHashSet(StringComparer.Ordinal);
+        return (await projects.LoadAllTemplatesAsync(ct)).Where(t => readable.Contains(t.Id)).ToList();
     }
 
     /// <summary>POST /api/ui/chat/{agentId}/prompt — sends a prompt; the reply streams to the session's hub group.</summary>

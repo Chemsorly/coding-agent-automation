@@ -46,15 +46,6 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         return result ?? [];
     }
 
-    public async Task<IReadOnlyList<AgentProfile>> GetAgentProfilesAsync(CancellationToken ct = default)
-    {
-        var result = await _http.GetFromJsonAsync<List<AgentProfile>>(
-            "/api/config/agent-profiles",
-            PipelineJsonOptions.Default,
-            ct);
-        return result ?? [];
-    }
-
     public async Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default)
     {
         var result = await _http.GetFromJsonAsync<List<QualityGateConfiguration>>(

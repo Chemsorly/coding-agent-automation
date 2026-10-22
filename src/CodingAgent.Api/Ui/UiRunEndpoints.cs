@@ -40,21 +40,20 @@ internal static class UiRunEndpoints
         return await PipelineRunEndpoints.GetRunHistory(history, runService, dbFactory, query, ct);
     }
 
-    /// <summary>GET /api/ui/runs/{runId} — the run and its agent provider's name; 404 when the user cannot read the run's project.</summary>
+    /// <summary>
+    /// GET /api/ui/runs/{runId} — the run and the agent it ran with, as the run recorded it (spec 053 req 8.3); 404 when
+    /// the user cannot read the run's project.
+    /// </summary>
     internal static async Task<IResult> GetRun(
         Guid runId, IUserAccess access,
-        IPipelineRunHistoryService history, IOrchestratorRunService runService,
-        IProviderConfigStore providers, CancellationToken ct)
+        IPipelineRunHistoryService history, IOrchestratorRunService runService, CancellationToken ct)
     {
         var run = await PipelineRunEndpoints.FindRunAsync(runId, history, runService, ct);
         if (run is null)
             return TypedResults.NotFound();
         access.DemandRead(run.ProjectId);
 
-        var agentProvider = run.AgentProviderConfigId is { Length: > 0 } providerId
-            ? await providers.GetProviderConfigByIdAsync(providerId, ProviderKind.Agent, ct)
-            : null;
-        return TypedResults.Ok(new UiRunDetail(run, agentProvider?.DisplayName));
+        return TypedResults.Ok(new UiRunDetail(run, new UiRunAgent(run.AgentProfileName, run.ModelName, run.AgentEffort)));
     }
 
     /// <summary>

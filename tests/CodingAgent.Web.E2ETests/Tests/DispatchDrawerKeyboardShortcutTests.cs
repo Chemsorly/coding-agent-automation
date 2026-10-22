@@ -42,14 +42,13 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
     }
 
     /// <summary>
@@ -480,14 +479,13 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             ReviewEnabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // TODO [WARNING]: SaveAgentProfileAsync("profile-e2e") is called here and in SeedDefaultTemplateAsync.
         // If Enter_PrDrawer_DispatchesPrReview and Enter_EpicDrawer_DispatchesDecomposition ever run
@@ -559,14 +557,13 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             DecompositionEnabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {

@@ -22,6 +22,9 @@ namespace CodingAgent.Web.E2ETests.Tests;
 [Collection(E2ECollection.Name)]
 public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
 {
+    private static readonly string[] FrontendLabels = ["frontend"];
+    private static readonly string[] BackendLabels = ["backend"];
+
     public DbModeAgentLifecycleTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAsync(string issueId, string title = "Lifecycle test issue")
@@ -53,14 +56,13 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
         var profiles = await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
         if (!profiles.Any(p => p.Id == profileId))
         {
-            await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+            await Fixture.SeedRoutedProfileAsync(new AgentProfile
             {
                 Id = profileId,
                 DisplayName = $"Profile {profileId}",
-                MatchLabels = matchLabels,
-                AgentProviderConfigId = "agent-e2e",
+                JobTemplate = E2ERouting.Key(matchLabels),
                 Enabled = true
-            }, CancellationToken.None);
+            });
         }
     }
 
@@ -171,7 +173,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // D3: Multi-agent label routing — each gets matching jobs only
+    // D3: Multi-agent routing — each template's row sends its jobs to its own agents
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
@@ -204,7 +206,9 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-frontend",
             Enabled = true,
-            RequiredLabels = new[] { "frontend" }  // issue #3575: labels live on the template
+            RequiredLabels = FrontendLabels,  // issue #3575: labels live on the template
+            // Spec 053: the template's own row routes its work to its profile; labels pick no agent.
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Implementation] = new("profile-frontend", E2ERouting.Model, "auto") },
         }, CancellationToken.None);
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -214,7 +218,8 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-backend",
             Enabled = true,
-            RequiredLabels = new[] { "backend" }   // issue #3575: labels live on the template
+            RequiredLabels = BackendLabels,  // issue #3575: labels live on the template
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Implementation] = new("profile-backend", E2ERouting.Model, "auto") },
         }, CancellationToken.None);
 
         await SeedIssueAsync("3010", "Frontend issue");

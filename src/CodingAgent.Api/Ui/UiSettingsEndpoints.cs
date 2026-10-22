@@ -1,7 +1,9 @@
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CodingAgent.Api.Ui;
@@ -23,6 +25,9 @@ internal static class UiSettingsEndpoints
         var group = ui.MapGroup("/settings").RequireAuthorization(UiPolicies.Admin);
 
         group.MapPut("/pipeline", SavePipelineConfig);
+
+        group.MapGet("/agent-routing", GetAgentRouting);
+        group.MapPut("/agent-routing", SaveAgentRouting);
 
         group.MapGet("/agent-profiles", GetAgentProfiles);
         group.MapPut("/agent-profiles", SaveAgentProfile);
@@ -83,17 +88,60 @@ internal static class UiSettingsEndpoints
         return TypedResults.Ok();
     }
 
-    internal static async Task<IResult> GetAgentProfiles(IAgentProfileStore store, CancellationToken ct) =>
-        TypedResults.Ok((await store.LoadAgentProfilesAsync(ct)).Select(UiSecretMask.Redact).ToList());
+    /// <summary>GET /api/ui/settings/agent-routing — the global routing table, the profiles a route can name and their job templates.</summary>
+    internal static async Task<IResult> GetAgentRouting(
+        AgentRoutingStore routing, IAgentProfileStore profiles, JobTemplateStore templates, CancellationToken ct)
+    {
+        var toolsByKey = templates.ToolsByKey();
+        var routingProfiles = (await profiles.LoadAgentProfilesAsync(ct))
+            .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(p => new UiRoutingProfile(p.Id, p.DisplayName, ToolOf(p, toolsByKey), p.JobTemplateKey(), p.Enabled))
+            .ToList();
+        return TypedResults.Ok(new UiAgentRoutingPage(
+            await routing.LoadAsync(ct) ?? AgentRouting.Empty, routingProfiles, JobTemplates(toolsByKey)));
+    }
 
-    internal static async Task<IResult> SaveAgentProfile([FromBody] AgentProfile profile, IAgentProfileStore store, JobTemplateStore templates, IProviderConfigStore providerStore, CancellationToken ct)
+    /// <summary>
+    /// PUT /api/ui/settings/agent-routing — replaces the global routing table (spec 053 req 2.6): every row is checked,
+    /// and an invalid table is refused with one line per invalid row.
+    /// </summary>
+    internal static async Task<IResult> SaveAgentRouting(
+        [FromBody] AgentRouting? routing, AgentRoutingStore store, IAgentProfileStore profiles, JobTemplateStore templates,
+        CancellationToken ct)
+    {
+        var errors = AgentRouteValidator.ValidateRouting(routing, await profiles.LoadAgentProfilesAsync(ct), templates.ToolsByKey());
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join("\n", errors));
+
+        await store.SaveAsync(routing!, ct);
+        return TypedResults.Ok();
+    }
+
+    /// <summary>GET /api/ui/settings/agent-profiles — the profiles, MCP secrets masked, and the job templates they can run on.</summary>
+    internal static async Task<IResult> GetAgentProfiles(IAgentProfileStore store, JobTemplateStore templates, CancellationToken ct) =>
+        TypedResults.Ok(new UiAgentProfilesPage(
+            (await store.LoadAgentProfilesAsync(ct)).Select(UiSecretMask.Redact).ToList(),
+            JobTemplates(templates.ToolsByKey())));
+
+    internal static async Task<IResult> SaveAgentProfile(
+        [FromBody] AgentProfile profile, IAgentProfileStore store, JobTemplateStore templates, AgentRoutingStore routing,
+        IProjectStore projects, CancellationToken ct)
     {
         var stored = (await store.LoadAgentProfilesAsync(ct)).FirstOrDefault(p => p.Id == profile.Id);
         var (restored, error) = UiSecretMask.Restore(profile, stored);
         return restored is null
             ? TypedResults.BadRequest(error)
-            : await ConfigEndpoints.SaveAgentProfile(restored, store, templates, providerStore, ct);
+            : await ConfigEndpoints.SaveAgentProfile(restored, store, templates, routing, projects, ct);
     }
+
+    private static List<UiJobTemplate> JobTemplates(IReadOnlyDictionary<string, string> toolsByKey) =>
+        toolsByKey
+            .OrderBy(t => t.Key, StringComparer.Ordinal)
+            .Select(t => new UiJobTemplate(t.Key, AgentToolCatalog.Find(t.Value)?.Id ?? ""))
+            .ToList();
+
+    private static string ToolOf(AgentProfile profile, IReadOnlyDictionary<string, string> toolsByKey) =>
+        toolsByKey.TryGetValue(profile.JobTemplateKey(), out var providerType) ? AgentToolCatalog.Find(providerType)?.Id ?? "" : "";
 
     internal static async Task<IResult> GetProjects(IProjectStore store, CancellationToken ct) =>
         TypedResults.Ok((await store.LoadProjectsAsync(ct)).Select(UiSecretMask.Redact).ToList());
@@ -134,7 +182,8 @@ internal static class UiSettingsEndpoints
     /// project's (saving it here would move it here), is 404.
     /// </summary>
     internal static async Task<IResult> SaveTemplate(
-        string projectId, [FromBody] PipelineJobTemplate template, IUserAccess access, IProjectStore store, CancellationToken ct)
+        string projectId, [FromBody] PipelineJobTemplate template, IUserAccess access, IProjectStore store,
+        IAgentProfileStore profiles, JobTemplateStore jobTemplates, CancellationToken ct)
     {
         access.DemandAdminister(projectId);
         if (!access.IsGlobalAdmin)
@@ -145,7 +194,7 @@ internal static class UiSettingsEndpoints
             template = ProjectAdminEdits.Apply(stored, template);
         }
 
-        return await ConfigEndpoints.SaveTemplate(projectId, template, store, ct);
+        return await ConfigEndpoints.SaveTemplate(projectId, template, store, profiles, jobTemplates, ct);
     }
 
     /// <summary>GET /api/ui/settings/first-run — what the first-run banner needs.</summary>

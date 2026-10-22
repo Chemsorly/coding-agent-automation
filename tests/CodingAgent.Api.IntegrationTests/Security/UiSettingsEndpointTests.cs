@@ -7,6 +7,7 @@ using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -135,19 +136,14 @@ public sealed class UiSettingsEndpointTests(ApiWebApplicationFactory factory)
     public async Task AgentProfiles_MaskMcpEnv_AndSavingTheMaskKeepsIt()
     {
         var store = factory.Services.GetRequiredService<IAgentProfileStore>();
-        await store.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = ProfileId,
-            DisplayName = "d4",
-            AgentProviderConfigId = "ap-1",
-            MatchLabels = ["d4"],
-            McpServers = [Grafana(EnvCanary, HeaderCanary)],
-        }, CancellationToken.None);
+        await store.SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(ProfileId, displayName: "d4", mcpServers: [Grafana(EnvCanary, HeaderCanary)]),
+            CancellationToken.None);
 
         var body = await Admin.GetStringAsync("/api/ui/settings/agent-profiles");
         body.Should().NotContain(EnvCanary).And.NotContain(HeaderCanary);
 
-        var profile = System.Text.Json.JsonSerializer.Deserialize<List<AgentProfile>>(body, Json)!.Single(p => p.Id == ProfileId);
+        var profile = System.Text.Json.JsonSerializer.Deserialize<UiAgentProfilesPage>(body, Json)!.Profiles.Single(p => p.Id == ProfileId);
         (await Admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile with { DisplayName = "d4 renamed" }, Json))
             .StatusCode.Should().Be(HttpStatusCode.OK);
 

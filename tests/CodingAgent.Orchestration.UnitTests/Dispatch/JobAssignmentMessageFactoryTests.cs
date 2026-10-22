@@ -18,6 +18,7 @@ public sealed class JobAssignmentMessageFactoryTests
         InitiatedBy = "user",
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = "kiro",
+        AgentProviderConfigId = "profile-kiro",
         TimeoutSeconds = 3600
     };
 
@@ -145,12 +146,13 @@ public sealed class JobAssignmentMessageFactoryTests
     }
 
     [Fact]
-    public void BuildJobAssignmentMessage_NullAgentProviderConfigId_FallsBackToRepoProvider()
+    public void BuildJobAssignmentMessage_NullAgentProviderConfigId_Throws_NeverFallsBackToTheRepository()
     {
-        var req = MinimalRequest();
-        // AgentProviderConfigId not set — should fall back to RepoProviderConfigId
-        var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), req);
-        msg.AgentProviderConfigId.Should().Be("github-repo");
+        // Spec 053 task 4.7: the claim always builds the agent config from the route; a message without it would
+        // hand the agent the repository provider as its agent config.
+        var req = MinimalRequest() with { AgentProviderConfigId = null };
+        var act = () => JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), req);
+        act.Should().Throw<InvalidOperationException>();
     }
 
     [Fact]
@@ -304,6 +306,7 @@ public sealed class JobAssignmentMessageFactoryTests
         InitiatedBy = "pipeline-loop",
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = "kiro,linux",
+        AgentProviderConfigId = "profile-kiro",
         TimeoutSeconds = 1800,
         ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),
         RunType = PipelineRunType.Implementation

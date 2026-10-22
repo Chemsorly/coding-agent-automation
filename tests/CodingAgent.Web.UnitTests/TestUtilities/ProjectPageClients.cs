@@ -15,7 +15,7 @@ public static class ProjectPageClients
     {
         var client = new Mock<IUiConfigClient>();
         client.Setup(c => c.GetPipelinesPageAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UiPipelinesPage([], templates ?? [], issueProviders ?? [], [], [], [], [], [], null, 3));
+            .ReturnsAsync(new UiPipelinesPage([], templates ?? [], issueProviders ?? [], [], [], [], [], [], new Dictionary<string, IReadOnlyList<UiResolvedRoute>>(), 3));
         return client;
     }
 }

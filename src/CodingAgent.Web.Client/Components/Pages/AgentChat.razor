@@ -32,23 +32,46 @@
 
                 <div class="chat-agent-select">
                     <label for="profile-select">Agent Profile:</label>
-                    <select id="profile-select" @bind="_selectedProfileId" class="chat-select">
+                    <select id="profile-select" @bind="_selectedProfileId" @bind:after="OnProfileSelected" class="chat-select">
                         <option value="">— Select agent profile —</option>
                         @foreach (var profile in _chatProfiles)
                         {
-                            <option value="@profile.Id">@profile.DisplayName (@string.Join(", ", profile.MatchLabels))</option>
+                            <option value="@profile.Id">@profile.DisplayName (@(AgentToolCatalog.Find(profile.Tool)?.DisplayName ?? profile.Tool))</option>
                         }
                     </select>
                 </div>
 
+                @if (SelectedProfile is { } chosen)
+                {
+                    @* Spec 053 D13, req 6.1: the model and effort come from lists; no free text reaches the CLI. *@
+                    <div class="chat-agent-select">
+                        <label for="chat-model-select">Model:</label>
+                        <select id="chat-model-select" @bind="_selectedModel" class="chat-select">
+                            @foreach (var model in chosen.Models)
+                            {
+                                <option value="@model">@(model == AgentToolCatalog.Auto ? "auto (the tool chooses)" : model)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="chat-agent-select">
+                        <label for="chat-effort-select">Effort:</label>
+                        <select id="chat-effort-select" @bind="_selectedEffort" class="chat-select">
+                            @foreach (var effort in chosen.Efforts)
+                            {
+                                <option value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
+                            }
+                        </select>
+                    </div>
+                }
+
                 @if (_profilesLoaded && _chatProfiles.Count == 0)
                 {
-                    <p class="form-hint">No enabled agent profile has a matching job template. Add one in Settings → Label Routing → Agent Profiles.</p>
+                    <p class="form-hint">No enabled agent profile runs on a job template with a tool. Add one in Settings → Agents → Agent Profiles.</p>
                 }
 
                 <div class="chat-agent-select">
                     <label for="project-select-k8s">@(Access.HasGlobalOperate ? "Project (optional):" : "Project:")</label>
-                    <select id="project-select-k8s" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select"
+                    <select id="project-select-k8s" @bind="_selectedProjectId" @bind:after="OnProjectSelectedAsync" class="chat-select"
                             disabled="@_isChatActive">
                         @if (Access.HasGlobalOperate)
                         {
@@ -84,7 +107,7 @@
             <!-- Chat Window (shared by both modes) -->
             <div class="chat-window">
                 <div class="chat-header-bar">
-                    <span class="chat-agent-info">Chatting with <strong>@_selectedAgentId</strong> · model: <strong>@_resolvedModel</strong></span>
+                    <span class="chat-agent-info">Chatting with <strong>@_selectedAgentId</strong> · <strong>@_chatProfileName</strong> · <strong>@_resolvedModel</strong></span>
                     <button class="btn-end-chat" @onclick="EndChat">✕ End Chat</button>
                 </div>
 
@@ -138,6 +161,7 @@
     private string _currentPrompt = "";
     private string? _activeSessionId;
     private string _resolvedModel = "auto";
+    private string _chatProfileName = "";
 
     // ── Hub event subscriptions ──────────────────────────────────────────────
     private IDisposable? _chatResponseSub;
@@ -155,11 +179,13 @@
     private ElementReference _messagesContainer;
 
     // ── K8s-mode state ───────────────────────────────────────────────────────
-    // Profiles a chat can be launched for, from the API: enabled, and their labels name a job
-    // template. The API takes the model, effort, auth mode and MCP servers from the profile.
+    // Profiles a chat can be launched for, from the API (spec 053 req 6.1): enabled, on a job template with a tool, with
+    // the models and efforts a chat may use. The API takes the tool settings and MCP servers from the profile.
     private IReadOnlyList<UiChatProfile> _chatProfiles = [];
     private bool _profilesLoaded;
     private string _selectedProfileId = "";
+    private string _selectedModel = AgentToolCatalog.Auto;
+    private string _selectedEffort = AgentToolCatalog.Auto;
     private bool _launching;
     private string? _launchError;
     private int _launchElapsedSeconds;
@@ -198,7 +224,7 @@
         if (!Access.HasGlobalOperate && _projects.Count > 0)
         {
             _selectedProjectId = _projects[0].Id;
-            OnProjectSelected();
+            await OnProjectSelectedAsync();
         }
 
         // The hub is not started here: StartChat() registers the chat handlers and starts it once a
@@ -258,11 +284,37 @@
 
     // ── Project selection handler (shared by both modes) ─────────────────────
 
-    private void OnProjectSelected()
+    /// <summary>
+    /// The models offered depend on the project: the global rows and that project's repository rows name them (spec 053
+    /// req 6.2), so the options are read again for it.
+    /// </summary>
+    private async Task OnProjectSelectedAsync()
     {
         _selectedProject = string.IsNullOrEmpty(_selectedProjectId)
             ? null
             : _projects.FirstOrDefault(p => p.Id == _selectedProjectId);
+        try
+        {
+            _chatProfiles = (await Chat.GetOptionsAsync(_selectedProject?.Id)).Profiles;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "AgentChat: failed to load the chat profiles for the project");
+            _launchError = "Could not load the agent profiles for this project. Reload the page.";
+        }
+        if (SelectedProfile is null)
+            _selectedProfileId = "";
+        else if (!SelectedProfile.Models.Contains(_selectedModel))
+            OnProfileSelected();
+    }
+
+    private UiChatProfile? SelectedProfile => _chatProfiles.FirstOrDefault(p => p.Id == _selectedProfileId);
+
+    /// <summary>Req 6.3a: the model and effort start at the global default route's when it names the profile, else auto.</summary>
+    private void OnProfileSelected()
+    {
+        _selectedModel = SelectedProfile?.DefaultModel ?? AgentToolCatalog.Auto;
+        _selectedEffort = SelectedProfile?.DefaultEffort ?? AgentToolCatalog.Auto;
     }
 
     // ── K8s-mode: launch chat pod ─────────────────────────────────────────────
@@ -288,9 +340,10 @@
         try
         {
             // The API checks operator on the project, resolves the profile and waits for the pod.
-            var session = await Chat.StartAsync(_selectedProfileId, _selectedProject?.Id, _cts.Token);
+            var session = await Chat.StartAsync(_selectedProfileId, _selectedProject?.Id, _selectedModel, _selectedEffort, _cts.Token);
             _selectedAgentId = session.AgentId;
             _resolvedModel = session.Model;
+            _chatProfileName = SelectedProfile?.DisplayName ?? _selectedProfileId;
             await StartChat();
         }
         catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)

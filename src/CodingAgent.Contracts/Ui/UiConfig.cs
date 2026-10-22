@@ -28,10 +28,11 @@ public sealed record UiFirstRunState(bool HasEnabledTemplates, bool BannerDismis
 /// the user can read, grouped by those projects, and the configuration the template table names and matches
 /// labels against. Projects carry only their id, name, enabled flag and templates; providers and agent profiles
 /// come with their secrets masked. A project-scoped user gets only the providers their templates use, and no
-/// quality gates, reviewers or agent profiles (global configuration).
+/// quality gates or reviewers (global configuration). Agent profiles go to the global admin only (spec 053 D17);
+/// every reader gets the resolved routes of the templates they see.
 /// </summary>
 /// <param name="RepoProviders">Repository providers of every role, brain repositories included.</param>
-/// <param name="DefaultRequiredAgentLabels">The global setting a repository without labels of its own falls back to.</param>
+/// <param name="Routes">Per template Id, the resolved route of each task type.</param>
 public sealed record UiPipelinesPage(
     IReadOnlyList<PipelineProject> Projects,
     IReadOnlyList<PipelineJobTemplate> Templates,
@@ -41,5 +42,5 @@ public sealed record UiPipelinesPage(
     IReadOnlyList<QualityGateConfiguration> QualityGateConfigs,
     IReadOnlyList<ReviewerConfiguration> ReviewerConfigs,
     IReadOnlyList<AgentProfile> AgentProfiles,
-    string? DefaultRequiredAgentLabels,
+    IReadOnlyDictionary<string, IReadOnlyList<UiResolvedRoute>> Routes,
     int MaxRetries);

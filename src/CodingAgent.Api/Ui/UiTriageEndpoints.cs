@@ -1,5 +1,7 @@
 using CodingAgent.Api.Triage;
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -66,7 +68,7 @@ internal static class UiTriageEndpoints
         [FromQuery] string projectId, [FromQuery] string? startIn, IUserAccess access, [AsParameters] TriagePreviewStores stores,
         CancellationToken ct)
     {
-        var (projects, providers, profiles, config) = stores;
+        var (projects, routing, jobTemplates, profiles, config) = stores;
         access.DemandOperate(projectId);
         var project = await projects.GetProjectByIdAsync(projectId, ct);
         if (project is null)
@@ -76,8 +78,9 @@ internal static class UiTriageEndpoints
             project,
             await projects.LoadTemplatesForProjectAsync(projectId, ct),
             string.IsNullOrEmpty(startIn) ? null : startIn,
-            await providers.LoadProviderConfigsAsync(ProviderKind.Repository, ct),
             await profiles.LoadAgentProfilesAsync(ct),
+            await routing.LoadAsync(ct) ?? AgentRouting.Empty,
+            jobTemplates.ToolsByKey(),
             await config.LoadPipelineConfigAsync(ct)));
     }
 
@@ -175,4 +178,5 @@ internal sealed record TriageListParameters(
 
 /// <summary>The stores a triage preview is built from.</summary>
 internal sealed record TriagePreviewStores(
-    IProjectStore Projects, IProviderConfigStore Providers, IAgentProfileStore Profiles, IPipelineConfigStore Config);
+    IProjectStore Projects, AgentRoutingStore Routing, JobTemplateStore JobTemplates, IAgentProfileStore Profiles,
+    IPipelineConfigStore Config);

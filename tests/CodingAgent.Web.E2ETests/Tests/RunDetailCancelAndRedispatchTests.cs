@@ -52,14 +52,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "run-page-profile",
             DisplayName = "Run Page E2E Profile",
-            MatchLabels = s_e2eMatchLabels,
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(s_e2eMatchLabels),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -494,14 +493,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "review-profile-4b",
             DisplayName = "E2E Review Profile 4b",
-            MatchLabels = s_e2eMatchLabels,
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(s_e2eMatchLabels),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Seed a PR in the repository provider
         Fixture.RepositoryProvider.PullRequests.Add(new PullRequestSummary

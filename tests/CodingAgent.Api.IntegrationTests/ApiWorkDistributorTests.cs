@@ -5,6 +5,7 @@ using CodingAgent.Api.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -20,7 +21,14 @@ namespace CodingAgent.Api.IntegrationTests;
 [Collection(ApiIntegrationTestCollection.Name)]
 public sealed class ApiWorkDistributorTests(ApiWebApplicationFactory factory)
 {
-    private IWorkDistributor Distributor => factory.Services.GetRequiredService<IWorkDistributor>();
+    private IWorkDistributor Distributor => Seeded().Services.GetRequiredService<IWorkDistributor>();
+
+    /// <summary>The factory with its default route stored (spec 053): the API routes every work item it creates.</summary>
+    private ApiWebApplicationFactory Seeded()
+    {
+        factory.SeedDefaultRoute();
+        return factory;
+    }
 
     private HttpClient Operator()
     {
@@ -84,6 +92,22 @@ public sealed class ApiWorkDistributorTests(ApiWebApplicationFactory factory)
         var second = await Distributor.DistributeAsync(Request(issue), CancellationToken.None);
 
         second.Should().BeEquivalentTo(new DistributionResult(true, null, null, Queued: true, AlreadyExists: true));
+    }
+
+    [Fact]
+    public async Task Distribute_WithoutARoute_IsAPermanentFailureWithTheReason()
+    {
+        // Spec 053 task 4.2: the Scheduler shows the reason and does not retry.
+        var distributor = Distributor;
+        await using (var db = factory.CreateDbContext())
+        {
+            db.KeyValueStore.RemoveRange(db.KeyValueStore.Where(kv => kv.Key == CodingAgent.Pipeline.Models.AgentRouting.StorageKey));
+            await db.SaveChangesAsync();
+        }
+
+        var result = await distributor.DistributeAsync(Request(), CancellationToken.None);
+
+        result.Should().BeEquivalentTo(new DistributionResult(false, null, AgentRouteRefusalReason.NoRouteText, IsPermanentFailure: true));
     }
 
     [Fact]

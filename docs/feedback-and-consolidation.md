@@ -36,7 +36,7 @@ Two maintenance loops that review accumulated state and produce improvements. Ea
 
 Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge repository. Several repositories usually feed one brain, so brain consolidation works on the brain, not on a template:
 
-- **Trigger:** from the card of any template that uses the brain. The run uses that template's settings (its project's overrides and its repository's agent labels).
+- **Trigger:** from the card of any template that uses the brain. The run uses that template's settings (its project's overrides) and its Consolidation route (see [Consolidation Dispatch](#consolidation-dispatch)).
 - **One run per brain at a time:** templates that share a brain share its running state and its last run on the Consolidation page, and a second trigger for the same brain is rejected as already running.
 - **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain. For GitHub App brain providers, runs get a read-only token (`contents: read`) when the brain is read-only, so a misbehaving agent cannot push to it even if it tries.
 
@@ -99,6 +99,7 @@ Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversa
 
 Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. The Scheduler's `WorkItemDispatchLoop` dispatches consolidation `WorkItem` rows in the lowest-priority tier (4th, after Review, Decomposition, and Implementation). Like every work item, a consolidation Job is named `caa-{8 hex chars}`.
 
+- **Agent:** Both consolidation types run on the Consolidation route of the template that triggered the run (its repository's Consolidation row, else the global Consolidation row, else the default route); automatic brain consolidation uses the first template of the brain group. A trigger without a template uses the global rows only. When no route resolves or the route cannot run, the trigger is refused with the reason (for example `No agent route: set the default route in Settings → Agents → Routing`) and no run is created. See [Agent Routing](agent-routing.md).
 - **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override.
 - **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Scheduler's dispatch loop fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
@@ -118,7 +119,7 @@ The Scheduler checks every 15 minutes whether any consolidation type has crossed
 2. **Automatic runs never add `agent:next`.** `TriggerAutomaticAsync` always passes `autoDispatch: false`; a human decides what gets implemented.
 3. **Backpressure:** No automatic scan runs while the template still has at least `MaxRefactoringProposals` open scan issues.
 
-**Pause-after-failure:** When a consolidation run ends in failure, that scope's automatic start is paused until a later run of the same scope succeeds. This prevents retry storms without a cooldown setting.
+**Pause-after-failure:** When a consolidation run ends in failure, that scope's automatic start is paused until a later run of the same scope succeeds. This prevents retry storms without a cooldown setting. A run whose route is refused when an agent claims it (for example, its profile was disabled after the run was queued) fails, so it pauses the scope too, until a successful run. An automatic start the API refuses at creation creates no run and pauses nothing: the Scheduler logs a warning and tries again at the next check, and the scope's counter on the Consolidation page shows "auto refused:" with the reason until the route is fixed. For a brain, that is the route of the template the Scheduler starts the run with, the first of the brain's templates.
 
 Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initiated by column of the Runs page and filterable there.
 
@@ -127,7 +128,7 @@ Automatic runs record `InitiatedBy = "consolidation:auto"`, visible in the Initi
 The page is reached through the "Consolidation" item in the sidebar navigation. It displays:
 
 - Per-template cards with trigger buttons and last-run status
-- Automatic-start counters per card, with the reason when an automatic start is paused or waiting (see Automatic Start)
+- Automatic-start counters per card, with the reason when an automatic start is refused (its Consolidation route does not resolve), paused or waiting (see Automatic Start)
 - Run history table across all consolidation types
 
 A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review), the auto-dispatch option and the focus before it starts. A focused scan (Structure, Correctness, Design or Tests) runs only that detection agent and proposes only its categories; Phase 0 runs the test coverage only for the All and Tests focus.

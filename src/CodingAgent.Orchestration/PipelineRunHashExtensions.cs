@@ -81,6 +81,9 @@ public static class PipelineRunHashExtensions
             F("pullRequestNumber",          run.PullRequestNumber ?? ""),
             F("workspacePath",              run.WorkspacePath ?? ""),
             F("modelName",                  run.ModelName ?? ""),
+            F("agentProfileId",             run.AgentProfileId ?? ""),
+            F("agentProfileName",           run.AgentProfileName ?? ""),
+            F("agentEffort",                run.AgentEffort ?? ""),
             F("repositoryName",             run.RepositoryName ?? ""),
             F("codegenSessionId",           run.CodegenSessionId ?? ""),
             F("finalLabel",                 run.FinalLabel ?? ""),
@@ -260,6 +263,9 @@ public static class PipelineRunHashExtensions
         run.PullRequestNumber = r.OptionalString("pullRequestNumber");
         run.WorkspacePath = r.OptionalString("workspacePath");
         run.ModelName = r.OptionalString("modelName");
+        run.AgentProfileId = r.OptionalString("agentProfileId");
+        run.AgentProfileName = r.OptionalString("agentProfileName");
+        run.AgentEffort = r.OptionalString("agentEffort");
         run.RepositoryName = r.OptionalString("repositoryName");
         run.CodegenSessionId = r.OptionalString("codegenSessionId");
         run.FinalLabel = r.OptionalString("finalLabel");

@@ -153,8 +153,9 @@ internal static class E2ETestDefaults
             # ── Test-only selectors ─────────────────────────────────────────────────
             # Dispatching a Pending work item (POST /api/work-items/{id}/dispatch) needs a matching
             # JobTemplate, or the item is deferred with "no_template".
-            # Each test class that seeds its own AgentProfile uses a unique MatchLabels value
-            # (e.g. "db-e2e", "edge-e2e") to isolate its dispatches from other parallel tests.
+            # Each test class that seeds its own AgentProfile puts it on a job template of its own
+            # (e.g. "db-e2e", "edge-e2e") to isolate its dispatches from other parallel tests. Since spec 053 a claim
+            # is refused when the profile's job template is missing or has no providerType.
             # These labels don't correspond to real images; providerType "opencode" is used so
             # no PVC availability check fires (only kiro agents require a PVC).
             # The empty-labels entry covers consolidation dispatches where no required labels
@@ -240,6 +241,46 @@ internal static class E2ETestDefaults
               providerType: "opencode"
               maxConcurrent: 5
             - labels: "jc-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "issue-ops"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "setup-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "staleness-s1"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "staleness-s2"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "staleness-s3"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "staleness-s4"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "staleness-s5"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "triage-e2e"
               image: "chemsorly/coding-agent:opencode-dotnet10-latest"
               imagePullPolicy: "Always"
               providerType: "opencode"

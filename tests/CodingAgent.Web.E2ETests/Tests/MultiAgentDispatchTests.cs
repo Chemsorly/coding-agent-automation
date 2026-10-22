@@ -69,14 +69,13 @@ public sealed class MultiAgentDispatchTests : E2ETestBase
         }, CancellationToken.None);
 
         // Add an agent profile matching both agents' labels
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Connect two fake agents with the same labels
         await using var agent1 = new FakeAgentClient("multi-agent-1", "e2e");

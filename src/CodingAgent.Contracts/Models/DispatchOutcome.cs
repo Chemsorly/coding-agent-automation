@@ -23,4 +23,10 @@ public record DispatchOutcome(bool Success, bool Queued, string? ErrorMessage)
     /// Callers must not count this as a processed dispatch or consume budget.
     /// </summary>
     public bool AlreadyExists { get; init; } = false;
+
+    /// <summary>
+    /// When <c>true</c>, the API refused the work item (spec 053: no agent route resolves, or the route cannot run), and
+    /// <see cref="ErrorMessage"/> is the reason to show the operator. No retry changes it.
+    /// </summary>
+    public bool IsRefused { get; init; }
 }

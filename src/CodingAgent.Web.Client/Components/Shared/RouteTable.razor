@@ -1,0 +1,81 @@
+@using CodingAgent.Pipeline.Models
+
+<div class="monitoring-table-wrap">
+    <table class="monitoring-table route-table" data-testid="route-table">
+        <thead>
+            <tr>
+                <th>@(Repository ? "Task type" : "Row")</th>
+                <th>Agent profile</th>
+                <th>Model</th>
+                <th>Effort</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in Rows)
+            {
+                var key = RowKey(row);
+                <tr data-testid="route-row-@key">
+                    <td>@RowLabel(row)</td>
+                    @if (row.UseRoute)
+                    {
+                        var tool = ToolOf(row.ProfileId);
+                        <td>
+                            <select data-testid="route-profile-@key" aria-label="@($"Agent profile for {RowLabel(row)}")"
+                                    @bind="row.ProfileId" @bind:after="() => AfterProfileChanged(row)">
+                                <option value="">— Select agent profile —</option>
+                                @foreach (var profile in OfferedProfiles(row))
+                                {
+                                    <option value="@profile.Id">@ProfileLabel(profile)</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <input type="text" list="@($"route-models-{key}")" data-testid="route-model-@key"
+                                   aria-label="@($"Model for {RowLabel(row)}")" @bind="row.Model" placeholder="auto" />
+                            <datalist id="@($"route-models-{key}")">
+                                <option value="auto">auto (the tool chooses)</option>
+                                @foreach (var model in ModelsFor(tool))
+                                {
+                                    <option value="@model">@model</option>
+                                }
+                            </datalist>
+                        </td>
+                        <td>
+                            @if (tool is { Efforts.Count: 0 })
+                            {
+                                <span class="monitoring-muted" data-testid="route-effort-@key" title="@($"{tool.DisplayName} has no effort setting")">auto</span>
+                            }
+                            else
+                            {
+                                <select data-testid="route-effort-@key" aria-label="@($"Effort for {RowLabel(row)}")" @bind="row.Effort">
+                                    @foreach (var effort in EffortsFor(tool))
+                                    {
+                                        <option value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
+                                    }
+                                </select>
+                            }
+                        </td>
+                        <td class="route-actions">
+                            @if (Repository)
+                            {
+                                <button type="button" class="btn-edit" data-testid="route-use-for-all-@key" @onclick="() => UseForAll(row)">Use for all task types</button>
+                            }
+                            @if (row.TaskType is not null)
+                            {
+                                <button type="button" class="btn-cancel" data-testid="route-inherit-button-@key" @onclick="() => Inherit(row)">@InheritLabel</button>
+                            }
+                        </td>
+                    }
+                    else
+                    {
+                        <td colspan="3" class="monitoring-muted" data-testid="route-inherit-@key">@InheritLabel: @InheritText(row)</td>
+                        <td class="route-actions">
+                            <button type="button" class="btn-edit" data-testid="route-set-@key" @onclick="() => SetRoute(row)">Set route</button>
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>

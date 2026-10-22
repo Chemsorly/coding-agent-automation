@@ -95,9 +95,9 @@ public sealed record PipelineJobTemplate
     // ── Repository settings (moved from ProviderConfig) ───────────────────
 
     /// <summary>
-    /// Explicit required agent labels for the repository. When set, takes precedence
-    /// in label resolution. Null or empty means fall back to
-    /// <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/>, then empty (any agent).
+    /// The repository's stack labels (spec 053 req 5.1): they pick the quality gate and reviewer configs whose match
+    /// labels intersect them; a config without match labels always applies. They pick no agent. Null or empty: only the
+    /// configs without match labels apply.
     /// </summary>
     [Key(15)]
     public IReadOnlyList<string>? RequiredLabels { get; init; }
@@ -132,4 +132,12 @@ public sealed record PipelineJobTemplate
     /// </summary>
     [Key(19)]
     public IReadOnlyList<string>? BlacklistedPaths { get; init; }
+
+    /// <summary>
+    /// Repository rows (spec 053 req 3.1): routes that replace the global routes for this repository's work, per task
+    /// type. There is no repository default row. Null means none stored; in a save body null means "keep the stored
+    /// rows", and an empty dictionary clears them.
+    /// </summary>
+    [Key(20)]
+    public IReadOnlyDictionary<WorkItemTaskType, AgentRoute>? AgentRoutes { get; init; }
 }

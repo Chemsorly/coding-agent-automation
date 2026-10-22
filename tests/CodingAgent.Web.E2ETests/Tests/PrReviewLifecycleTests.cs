@@ -62,14 +62,13 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-lifecycle",
             DisplayName = "Lifecycle Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -591,14 +590,13 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
             ReviewEnabled = true  // required: DispatchScheduler.DispatchPrRoundAsync checks this
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-loop-review",
             DisplayName = "Loop Review Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("loop-review-agent-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -672,14 +670,13 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-linked",
             DisplayName = "Linked Issues Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
     }
 
     /// <summary>

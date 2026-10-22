@@ -58,12 +58,10 @@ public static class WorkItemDispatchEndpoints
     /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
     /// <para>
-    /// A Consolidation request whose agent selector has no job template — directly or through the profile
-    /// fallback, resolved exactly as <c>DispatchPendingWorkItem</c> does — is refused with 422 before any row
-    /// or in-memory run exists (issue #3642). The dispatcher could never start it: it would stay Pending for
-    /// ever and be deferred as <c>no_template</c> every cycle. Templates are read from a ConfigMap at start-up,
-    /// so unlike a transient dispatch failure the next cycle cannot fix it. Other task types are not checked
-    /// here; their missing-template case is still deferred by the pending-dispatch path.
+    /// The API routes the request here (spec 053 DD1): the caller sends the task type and the repository, and
+    /// <see cref="WorkItemRouter"/> pins the profile, model and effort. When no route resolves, or the route cannot
+    /// run (for consolidation: its job template is missing, #3642), the request is refused with 422 and a
+    /// ProblemDetails <c>detail</c> that names the reason, before any row or in-memory run exists (DD2).
     /// </para>
     /// <para>
     /// Only identity fields are serialized to <c>WorkItems.Payload</c> (issue #2171).
@@ -75,30 +73,17 @@ public static class WorkItemDispatchEndpoints
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
         WorkItemStore store,
-        DispatchWorkItemService dispatchService,
-        DispatchTemplateResolver templateResolver,
         CancellationToken ct = default)
     {
-        // Refuse a consolidation run the dispatcher could never start, before anything is written. The lookup is
-        // the dispatcher's own (direct, then the profile fallback). It runs without the expansion warning: the
-        // dispatcher logs that when it dispatches, and consolidation selectors are routinely partial.
-        if (request.TaskType == WorkItemTaskType.Consolidation)
+        var (outcome, workItemId, reason) = await store.CreateAsync(request, ct);
+        return outcome switch
         {
-            var (template, _) = await dispatchService.ResolveTemplateAsync(
-                request.AgentSelector ?? "", templateResolver, "CreateWorkItem", warnOnExpansion: false, ct);
-            if (template is null)
-            {
-                Log.Warning("CreateWorkItem: no job template for consolidation selector {Selector} — returning 422",
-                    LogSanitizer.SanitizeForLog(request.AgentSelector));
-                // 422 Unprocessable Entity — permanent config error, distinct from 409 (a live run already exists).
-                return TypedResults.StatusCode(StatusCodes.Status422UnprocessableEntity);
-            }
-        }
-
-        var (outcome, workItemId) = await store.CreateAsync(request, ct);
-        return outcome == WorkItemCreateOutcome.LiveItemExists
-            ? DispatchWorkItemService.HandleUniqueViolationFallback()
-            : TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
+            // 422 Unprocessable Entity — a permanent configuration error, distinct from 409 (a live run already exists).
+            WorkItemCreateOutcome.Refused => TypedResults.Problem(
+                detail: reason, statusCode: StatusCodes.Status422UnprocessableEntity, title: "Work item refused"),
+            WorkItemCreateOutcome.LiveItemExists => DispatchWorkItemService.HandleUniqueViolationFallback(),
+            _ => TypedResults.Created($"/api/work-items/{workItemId}", workItemId),
+        };
     }
 
     /// <summary>
@@ -207,9 +192,9 @@ public static class WorkItemDispatchEndpoints
                 }
                 : null,
 
-            // Dispatch-time profile identity — kept so AssignmentEnricher can restore the exact
-            // profile at claim time without re-resolving from labels.
+            // The pinned route (spec 053 req 4.4): the claim uses it and never re-resolves.
             ResolvedProfileId = request.ResolvedProfileId,
+            Route = request.Route,
 
             // Schema version discriminator — marks this as new-schema (minimal identity payload).
             // GetAssignment uses PayloadSchemaVersion == 1 to detect new-schema rows and trigger
@@ -241,6 +226,8 @@ public static class WorkItemDispatchEndpoints
     ///   <item>200 <c>{ "dispatched": true }</c> — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
     ///   <item>200 <c>{ "dispatched": false, "reason": "not_pending" | "no_template" | "concurrency_limit" }</c>
     ///     — expected backpressure outcome; Scheduler stops this selector for the cycle</item>
+    ///   <item>200 <c>{ "dispatched": false, "reason": "no_route" }</c> — an item stored without a selector (spec 053
+    ///     rollout) whose route is refused; it is failed with the reason</item>
     ///   <item>404 Not Found — no WorkItem with this ID</item>
     ///   <item>503 Service Unavailable — no PVC available, advisory lock timeout, or K8s Job creation failed</item>
     /// </list>
@@ -249,16 +236,16 @@ public static class WorkItemDispatchEndpoints
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
-        DispatchTemplateResolver templateResolver,
         IDistributedLockProvider lockProvider,
         DispatchWorkItemService dispatchService,
+        RolloutRouting rollout,
         CancellationToken ct = default)
     {
         // Delegate entirely to the service method which owns the full dispatch lifecycle
         // (fast-path check, advisory lock, concurrency gate, PVC gate, K8s Job creation,
         // result interpretation, and telemetry). The static endpoint exists as the ASP.NET
         // Core minimal-API handler that the DI container resolves parameters for.
-        return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, templateResolver, lockProvider, ct);
+        return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, lockProvider, rollout, ct);
     }
 
     /// <summary>

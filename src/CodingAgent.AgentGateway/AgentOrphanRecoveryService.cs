@@ -202,6 +202,15 @@ public sealed class AgentOrphanRecoveryService(
         restoredRun.ProjectName = activeJob.ProjectName;
         restoredRun.RepositoryName = activeJob.RepositoryName;
         restoredRun.ModelName = activeJob.ModelName;
+        if (identity.Route is { } route)
+        {
+            // Spec 053 req 8.1: the route pinned on the work item; agents do not report the profile or the effort. The
+            // model the agent reported wins over the route's, which may be auto.
+            restoredRun.AgentProfileId = route.ProfileId;
+            restoredRun.AgentProfileName = route.ProfileName;
+            restoredRun.AgentEffort = route.Effort;
+            restoredRun.ModelName = activeJob.ModelName ?? route.Model;
+        }
 
         _facade.AddRun(restoredRun);
 
@@ -289,7 +298,8 @@ public sealed class AgentOrphanRecoveryService(
         string RepoProviderConfigId,
         string? BrainProviderConfigId,
         string? PipelineProviderConfigId,
-        string? ProjectId)
+        string? ProjectId,
+        AgentRouteSnapshot? Route = null)
     {
         public static RunIdentity FromAgentReport(ActiveJobState activeJob) => new(
             activeJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId,
@@ -317,7 +327,8 @@ public sealed class AgentOrphanRecoveryService(
                 record.RepoProviderConfigId ?? string.Empty,
                 record.BrainProviderConfigId,
                 record.PipelineProviderConfigId,
-                record.ProjectId?.ToString());
+                record.ProjectId?.ToString(),
+                record.Route);
         }
     }
 

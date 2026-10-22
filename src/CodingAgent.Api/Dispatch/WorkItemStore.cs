@@ -3,6 +3,7 @@ using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.Dispatch;
@@ -18,6 +19,9 @@ internal enum WorkItemCreateOutcome
 
     /// <summary>Another live work item exists for the same issue and issue provider.</summary>
     LiveItemExists,
+
+    /// <summary>No agent route resolves, or the route cannot run (spec 053 DD2); nothing was written.</summary>
+    Refused,
 }
 
 /// <summary>
@@ -25,19 +29,23 @@ internal enum WorkItemCreateOutcome
 /// dedup queries. The <c>/api/work-items</c> handlers and the in-process <see cref="ApiWorkDistributor"/>
 /// both go through here, so a request behaves the same over HTTP and in the API process.
 /// </summary>
-internal sealed class WorkItemStore(IDbContextFactory<PipelineDbContext> dbFactory, IOrchestratorRunService runService)
+internal sealed class WorkItemStore(
+    IDbContextFactory<PipelineDbContext> dbFactory,
+    IOrchestratorRunService runService,
+    WorkItemRouter router)
 {
     /// <summary>
-    /// Inserts the request as a Pending work item and shows its run in the UI at once. The work
-    /// item's ID is the request's <c>RunId</c> when it has one, so hub groups route by it.
+    /// Routes the request (spec 053 DD1) and inserts it as a Pending work item, and shows its run in the UI at once.
+    /// The work item's ID is the request's <c>RunId</c> when it has one, so hub groups route by it. An idempotent
+    /// retry is answered before routing, so a retried create after a routing change finds its row (review-2 n5).
     /// </summary>
-    public async Task<(WorkItemCreateOutcome Outcome, Guid WorkItemId)> CreateAsync(JobDistributionRequest request, CancellationToken ct)
+    /// <returns>The outcome, the work item's ID, and the refusal text for <see cref="WorkItemCreateOutcome.Refused"/>.</returns>
+    public async Task<(WorkItemCreateOutcome Outcome, Guid WorkItemId, string? Reason)> CreateAsync(
+        JobDistributionRequest request, CancellationToken ct)
     {
         var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
             ? parsedRunId
             : Guid.NewGuid();
-
-        var entity = WorkItemDispatchEndpoints.BuildWorkItemEntity(request, workItemId);
 
         try
         {
@@ -47,16 +55,23 @@ internal sealed class WorkItemStore(IDbContextFactory<PipelineDbContext> dbFacto
             // They are a TOCTOU (issue #3243); the unique-violation catch below is the race backstop.
             // 1. Idempotent PK retry: the same RunId was already created.
             if (await db.WorkItems.AnyAsync(w => w.Id == workItemId, ct))
-                return (WorkItemCreateOutcome.AlreadyCreated, workItemId);
+                return (WorkItemCreateOutcome.AlreadyCreated, workItemId, null);
 
-            // 2. A live item for the same issue and provider (the partial unique index's predicate).
+            // 2. The route (spec 053): pinned on the request, refused with its reason.
+            var routed = await router.RouteAsync(request, PipelineTelemetry.RoutingStages.Create, ct);
+            if (routed.IsRefused)
+                return (WorkItemCreateOutcome.Refused, workItemId, routed.RefusalText);
+            request = routed.Request!;
+            var entity = WorkItemDispatchEndpoints.BuildWorkItemEntity(request, workItemId);
+
+            // 3. A live item for the same issue and provider (the partial unique index's predicate).
             var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
             if (await db.WorkItems.AnyAsync(
                     w => w.IssueIdentifier == entity.IssueIdentifier
                       && w.IssueProviderConfigId == entity.IssueProviderConfigId
                       && activeStatuses.Contains(w.Status),
                     ct))
-                return (WorkItemCreateOutcome.LiveItemExists, workItemId);
+                return (WorkItemCreateOutcome.LiveItemExists, workItemId, null);
 
             db.WorkItems.Add(entity);
             await db.SaveChangesAsync(ct);
@@ -67,8 +82,8 @@ internal sealed class WorkItemStore(IDbContextFactory<PipelineDbContext> dbFacto
             // ID means an idempotent PK retry; otherwise a different run is already live for the issue.
             await using var freshDb = await dbFactory.CreateDbContextAsync(ct);
             return await freshDb.WorkItems.AnyAsync(w => w.Id == workItemId, ct)
-                ? (WorkItemCreateOutcome.AlreadyCreated, workItemId)
-                : (WorkItemCreateOutcome.LiveItemExists, workItemId);
+                ? (WorkItemCreateOutcome.AlreadyCreated, workItemId, null)
+                : (WorkItemCreateOutcome.LiveItemExists, workItemId, null);
         }
 
         // The in-memory run lets the UI subscribe to hub events right away (Req 1a.1, Option A).
@@ -78,7 +93,7 @@ internal sealed class WorkItemStore(IDbContextFactory<PipelineDbContext> dbFacto
         if (run is not null)
             runService.AddRun(run);
 
-        return (WorkItemCreateOutcome.Created, workItemId);
+        return (WorkItemCreateOutcome.Created, workItemId, null);
     }
 
     /// <summary>The work item's status, or null when it does not exist.</summary>

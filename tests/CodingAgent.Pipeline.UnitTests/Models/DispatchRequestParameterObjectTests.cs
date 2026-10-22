@@ -5,90 +5,11 @@ namespace CodingAgent.Pipeline.UnitTests.Models;
 
 /// <summary>
 /// Tests for the new parameter-object records introduced in the S107 refactoring:
-/// <see cref="DispatchRunRequest"/>, <see cref="ImplementationDispatchOrchestrationRequest"/>,
-/// and <see cref="DecompositionDispatchOrchestrationRequest"/>.
+/// <see cref="ImplementationDispatchOrchestrationRequest"/> and <see cref="DecompositionDispatchOrchestrationRequest"/>.
 /// Verifies property assignment and default values.
 /// </summary>
 public class DispatchRequestParameterObjectTests
 {
-    // ── DispatchRunRequest ─────────────────────────────────────────────
-
-    [Fact]
-    public void DispatchRunRequest_RequiredProperties_AreAssigned()
-    {
-        var req = new DispatchRunRequest
-        {
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            IssueIdentifier = "owner/repo#42",
-            AgentProviderId = "ap-1"
-        };
-
-        req.IssueProviderId.Value.Should().Be("ip-1");
-        req.RepoProviderId.Value.Should().Be("rp-1");
-        req.IssueIdentifier.Value.Should().Be("owner/repo#42");
-        req.AgentProviderId.Value.Should().Be("ap-1");
-    }
-
-    [Fact]
-    public void DispatchRunRequest_DefaultValues_AreCorrect()
-    {
-        var req = new DispatchRunRequest
-        {
-            IssueProviderId = "ip",
-            RepoProviderId = "rp",
-            IssueIdentifier = "x",
-            AgentProviderId = "ap"
-        };
-
-        req.AgentId.Should().BeNull();
-        req.BrainProviderId.Should().BeNull();
-        req.PipelineProviderId.Should().BeNull();
-        req.InitiatedBy.Should().Be("dispatch");
-        req.RunType.Should().Be(PipelineRunType.Implementation);
-    }
-
-    [Fact]
-    public void DispatchRunRequest_OptionalProperties_CanBeOverridden()
-    {
-        var req = new DispatchRunRequest
-        {
-            IssueProviderId = "ip",
-            RepoProviderId = "rp",
-            IssueIdentifier = "x",
-            AgentProviderId = "ap",
-            AgentId = "agent-123",
-            BrainProviderId = "bp-1",
-            PipelineProviderId = "pp-1",
-            InitiatedBy = "loop",
-            RunType = PipelineRunType.Review
-        };
-
-        req.AgentId.Should().Be("agent-123");
-        req.BrainProviderId.Should().Be("bp-1");
-        req.PipelineProviderId.Should().Be("pp-1");
-        req.InitiatedBy.Should().Be("loop");
-        req.RunType.Should().Be(PipelineRunType.Review);
-    }
-
-    [Fact]
-    public void DispatchRunRequest_With_CreatesNewInstanceWithOverriddenRunType()
-    {
-        var original = new DispatchRunRequest
-        {
-            IssueProviderId = "ip",
-            RepoProviderId = "rp",
-            IssueIdentifier = "x",
-            AgentProviderId = "ap",
-            RunType = PipelineRunType.Implementation
-        };
-
-        var modified = original with { RunType = PipelineRunType.Review };
-
-        modified.RunType.Should().Be(PipelineRunType.Review);
-        original.RunType.Should().Be(PipelineRunType.Implementation); // original unchanged
-    }
-
     // ── ImplementationDispatchOrchestrationRequest ─────────────────────
 
     [Fact]
@@ -192,28 +113,5 @@ public class DispatchRequestParameterObjectTests
         };
 
         req.BrainProviderId.Should().BeNull();
-    }
-
-    // ── Record equality (smoke test) ───────────────────────────────────
-
-    [Fact]
-    public void DispatchRunRequest_TwoIdenticalInstances_AreEqual()
-    {
-        var a = new DispatchRunRequest
-        {
-            IssueProviderId = "ip",
-            RepoProviderId = "rp",
-            IssueIdentifier = "x",
-            AgentProviderId = "ap"
-        };
-        var b = new DispatchRunRequest
-        {
-            IssueProviderId = "ip",
-            RepoProviderId = "rp",
-            IssueIdentifier = "x",
-            AgentProviderId = "ap"
-        };
-
-        a.Should().Be(b);
     }
 }

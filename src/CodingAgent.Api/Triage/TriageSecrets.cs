@@ -1,5 +1,4 @@
 using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 
 namespace CodingAgent.Api.Triage;
@@ -13,7 +12,7 @@ namespace CodingAgent.Api.Triage;
 internal static class TriageSecrets
 {
     public static async Task<IReadOnlyCollection<KeyValuePair<string, string>>> LoadAsync(
-        IConfigurationStore config, string projectId, CancellationToken ct)
+        IConfigurationStore config, IAgentProfileStore profiles, string projectId, CancellationToken ct)
     {
         var secrets = new Dictionary<string, string>(StringComparer.Ordinal);
         void Add(string source, IEnumerable<KeyValuePair<string, string>>? values)
@@ -26,13 +25,11 @@ internal static class TriageSecrets
         Add("project", project?.Secrets);
         Add("project-mcp", TriageSecretMasking.McpSecrets(project?.McpServers));
 
+        // A repository's secrets live on its template; the repository connection never stores them.
         foreach (var template in await config.LoadTemplatesForProjectAsync(projectId, ct))
-        {
-            var repo = await config.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
-            Add($"repo:{template.Id}", repo?.Secrets);
-        }
+            Add($"repo:{template.Id}", template.Secrets);
 
-        foreach (var profile in await config.LoadAgentProfilesAsync(ct))
+        foreach (var profile in await profiles.LoadAgentProfilesAsync(ct))
             Add($"profile-mcp:{profile.Id}", TriageSecretMasking.McpSecrets(profile.McpServers));
 
         return secrets;

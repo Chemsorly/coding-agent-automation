@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Contracts.Auth;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
@@ -47,7 +48,8 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
         return client;
     }
 
-    private async Task<PipelineRunSummary> SeedRunAsync(string? projectId, string? agentProviderConfigId = null)
+    private async Task<PipelineRunSummary> SeedRunAsync(
+        string? projectId, string? agentProfileName = null, string? modelName = null, string? agentEffort = null)
     {
         var run = new PipelineRunSummary
         {
@@ -58,7 +60,9 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
             StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             CompletedAtOffset = DateTimeOffset.UtcNow,
             ProjectId = projectId,
-            AgentProviderConfigId = agentProviderConfigId,
+            AgentProfileName = agentProfileName,
+            ModelName = modelName,
+            AgentEffort = agentEffort,
         };
         using var scope = factory.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IPipelineRunHistoryService>().AddRunSummaryAsync(run, CancellationToken.None);
@@ -161,21 +165,26 @@ public sealed class UiRunEndpointTests(ApiWebApplicationFactory factory)
     // ── Run detail ──────────────────────────────────────────────────────
 
     [Fact]
-    public async Task RunDetail_NamesTheAgentProvider()
+    public async Task RunDetail_NamesTheAgentProfile_Model_AndEffort()
     {
-        var provider = new ProviderConfig
-        {
-            Id = Guid.NewGuid().ToString(), Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro (team pool)",
-        };
-        using (var scope = factory.Services.CreateScope())
-            await scope.ServiceProvider.GetRequiredService<IProviderConfigStore>().SaveProviderConfigAsync(provider, CancellationToken.None);
-        var run = await SeedRunAsync(ProjectR, provider.Id);
+        // Spec 053 req 8.3: as the run recorded them.
+        var run = await SeedRunAsync(ProjectR, "Kiro (team pool)", "claude-sonnet-4", "high");
 
         var detail = await Runs(ReaderOfR).GetRunAsync(Guid.Parse(run.RunId));
 
         detail.Should().NotBeNull();
         detail!.Run.RunId.Should().Be(run.RunId);
-        detail.AgentProviderName.Should().Be("Kiro (team pool)");
+        detail.Agent.Should().Be(new UiRunAgent("Kiro (team pool)", "claude-sonnet-4", "high"));
+    }
+
+    [Fact]
+    public async Task RunDetail_OfARunFromBeforeAgentRouting_HasOnlyTheModel()
+    {
+        var run = await SeedRunAsync(ProjectR, modelName: "auto");
+
+        var detail = await Runs(ReaderOfR).GetRunAsync(Guid.Parse(run.RunId));
+
+        detail!.Agent.Should().Be(new UiRunAgent(null, "auto", null));
     }
 
     [IdorCase("GET /api/ui/runs/{runId:guid}")]

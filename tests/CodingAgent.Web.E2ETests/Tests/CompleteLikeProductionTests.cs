@@ -52,14 +52,13 @@ public sealed class CompleteLikeProductionTests : HeadlessE2ETestBase
 
         // AgentProfile with MatchLabels = ["db-e2e"] is required — without it, DispatchIssueAsync
         // finds no matching profile and returns a failed DistributionResult.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-http-completion-e2e",
             DisplayName = "HTTP Completion E2E Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
     }
 
     /// <summary>

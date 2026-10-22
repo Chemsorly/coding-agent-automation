@@ -46,8 +46,6 @@ public class DrawerMultiPanelTests : BunitContext
         SetupDefaults();
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
             historyService: mockHistoryService.Object);
 
         Services.AddSingleton(_mockStore.Object);
@@ -72,8 +70,6 @@ public class DrawerMultiPanelTests : BunitContext
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadQualityGateConfigsAsync(ct));
         mockConfigClient.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
-        mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
         Services.AddSingleton<CodingAgent.Api.Client.IPipelineApiConfigClient>(mockConfigClient.Object);
         Services.AddSingleton(CodingAgent.Web.UnitTests.TestUtilities.ConfigBackedPipelinesClients.UiConfig(mockConfigClient).Object);
         Services.AddSingleton(new Mock<CodingAgent.Web.Ui.IUiSettingsClient>().Object);
@@ -125,8 +121,6 @@ public class DrawerMultiPanelTests : BunitContext
             {
                 WorkspaceBaseDirectory = Path.GetTempPath()
             });
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
         _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         _mockStore.Setup(s => s.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))

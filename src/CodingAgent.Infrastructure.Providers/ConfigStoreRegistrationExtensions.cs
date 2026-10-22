@@ -18,7 +18,9 @@ public static class ConfigStoreRegistrationExtensions
     {
         services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
         services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<IConfigurationStore>());
+        // Agent profiles are not part of IConfigurationStore (spec 053); a store that holds them implements both.
+        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<IConfigurationStore>() as IAgentProfileStore
+            ?? throw new InvalidOperationException("The registered IConfigurationStore does not store agent profiles."));
         services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
         services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<IConfigurationStore>());

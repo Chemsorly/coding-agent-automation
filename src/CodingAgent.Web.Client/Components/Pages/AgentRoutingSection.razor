@@ -1,0 +1,188 @@
+@using CodingAgent.Pipeline
+@using CodingAgent.Pipeline.Models
+@implements IAsyncDisposable
+
+<section class="settings-section" data-testid="agent-routing-section">
+    <h2>Routing</h2>
+    <p class="section-description">
+        Which agent profile runs each task type, with which model and effort. A task type without its own row uses the
+        default row. A repository can set its own rows on its page (Binding card).
+    </p>
+    <p class="form-hint" data-testid="routing-applies-note">Changes apply to work created after saving. Queued and running work keeps its route.</p>
+
+    @if (_page is null)
+    {
+        @if (_loadError is not null)
+        {
+            <div class="settings-status status-error">@_loadError</div>
+        }
+        else
+        {
+            <div class="monitoring-empty">Loading…</div>
+        }
+    }
+    else
+    {
+        @if (_page.Profiles.Count == 0)
+        {
+            <div class="monitoring-empty">No agent profiles yet. Add one in Agent Profiles, then set the default route here.</div>
+        }
+
+        <RouteTable Rows="_rows" Profiles="_page.Profiles" KiroModels="_kiroModels" />
+
+        @if (!string.IsNullOrEmpty(_saveError))
+        {
+            <div class="settings-status status-error" data-testid="routing-save-error" style="white-space: pre-line;">@_saveError</div>
+        }
+        <div class="form-buttons">
+            <button class="btn-save" data-testid="routing-save" @onclick="SaveAsync" disabled="@_saving">Save</button>
+        </div>
+
+        <h3>Kiro models</h3>
+        <div class="form-group">
+            <div class="input-with-action">
+                @if (_loadingModels)
+                {
+                    <button class="btn-edit" disabled>@_fetchPhase (@_fetchElapsedSeconds s…)</button>
+                    <button class="btn-cancel" @onclick="CancelFetch" style="margin-left: 4px;">Cancel</button>
+                }
+                else
+                {
+                    <button class="btn-edit" data-testid="routing-fetch-models" @onclick="FetchModels">Fetch Models</button>
+                }
+            </div>
+            <span class="form-hint">
+                Starts a short-lived Kubernetes Job (~@(_modelFetchTimeoutSeconds)s) that lists the models of the Kiro
+                service, offered on the rows of Kiro profiles. Needs a credential PVC in <code>WorkDistribution:KiroPvcPool</code>.
+                Claude Code rows offer the built-in models; OpenCode takes <code>provider/model</code>. Any model can be typed.
+            </span>
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ModelFetchTimeoutSeconds)">
+            <label>Fetch Models Timeout (seconds)</label>
+            <input type="number" @bind="_modelFetchTimeoutSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" />
+            <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s. Saved with the routing.</span>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IUiSettingsClient SettingsClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    // Spec 051 2.1c: models through the API as the signed-in admin.
+    [Parameter, EditorRequired] public IUiProviderClient ProviderClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private CancellationTokenSource _cts = new();
+    private UiAgentRoutingPage? _page;
+    private List<RouteRow> _rows = [];
+    private string? _loadError;
+    private string? _saveError;
+    private bool _saving;
+
+    private IReadOnlyList<string> _kiroModels = [];
+    private bool _loadingModels;
+    private string _fetchPhase = "Fetching";
+    private int _fetchElapsedSeconds;
+    private System.Threading.Timer? _elapsedTimer;
+
+    private int _modelFetchTimeoutSeconds = 120;
+    private int _storedModelFetchTimeoutSeconds = 120;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _page = await SettingsClient.GetAgentRoutingAsync(_cts.Token);
+            _rows = RouteRow.ForRouting(_page.Routing);
+            var config = await SettingsClient.GetPipelineConfigAsync(_cts.Token);
+            _modelFetchTimeoutSeconds = _storedModelFetchTimeoutSeconds = config.ModelFetchTimeoutSeconds;
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            _loadError = $"Failed to load the routing: {ex.Message}";
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saveError = null;
+        _saving = true;
+        try
+        {
+            await SettingsClient.SaveAgentRoutingAsync(RouteRow.ToRouting(_rows), _cts.Token);
+            if (_modelFetchTimeoutSeconds != _storedModelFetchTimeoutSeconds)
+            {
+                var timeout = _modelFetchTimeoutSeconds;
+                await SettingsClient.UpdatePipelineConfigAsync(current => current with { ModelFetchTimeoutSeconds = timeout }, _cts.Token);
+                _storedModelFetchTimeoutSeconds = timeout;
+            }
+            await OnShowStatus.InvokeAsync(("Routing saved. It applies to work created from now on.", false));
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            // The API refuses an invalid table with one line per invalid row.
+            _saveError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task FetchModels()
+    {
+        _fetchPhase = "Creating job…";
+        _fetchElapsedSeconds = 0;
+        _loadingModels = true;
+        StateHasChanged();
+
+        _elapsedTimer = new System.Threading.Timer(_ =>
+            InvokeAsync(() => { _fetchElapsedSeconds++; StateHasChanged(); }),
+            null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
+        try
+        {
+            // Spec 045 Req 7a.3: the API dispatches a one-shot Kubernetes Job and returns its result.
+            var (models, error) = await ProviderClient.GetModelsAsync(_cts.Token);
+            if (error is not null)
+            {
+                await OnShowStatus.InvokeAsync((error, true));
+                return;
+            }
+
+            _kiroModels = models
+                .Select(m => m.ModelId)
+                .Where(id => !id.Equals(AgentToolCatalog.Auto, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            await OnShowStatus.InvokeAsync(($"{_kiroModels.Count} model(s) loaded.", false));
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to fetch models: {ex.Message}", true));
+        }
+        finally
+        {
+            _loadingModels = false;
+            if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+        }
+    }
+
+    // Cancels the in-flight fetch and renews _cts so a later save still works.
+    private async Task CancelFetch()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        _loadingModels = false;
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

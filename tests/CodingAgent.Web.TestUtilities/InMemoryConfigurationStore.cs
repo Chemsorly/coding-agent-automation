@@ -9,7 +9,7 @@ namespace CodingAgent.Web.TestUtilities;
 /// unit, integration and E2E test projects.
 /// Pre-seeded with default pipeline config and provider configs via <see cref="SeedDefaults"/>.
 /// </summary>
-public sealed class InMemoryConfigurationStore : IConfigurationStore
+public sealed class InMemoryConfigurationStore : IConfigurationStore, IAgentProfileStore
 {
     private PipelineConfiguration _pipelineConfig = new()
     {

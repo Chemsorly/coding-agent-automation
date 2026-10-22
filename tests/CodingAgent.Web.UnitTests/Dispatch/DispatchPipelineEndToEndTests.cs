@@ -63,24 +63,6 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         }
     };
 
-    private static readonly ProviderConfig AgentConfig = new()
-    {
-        Id = "agent-1",
-        DisplayName = "Test Agent",
-        ProviderType = "KiroCli",
-        Kind = ProviderKind.Agent
-    };
-
-    private static readonly AgentProfile TestProfile = new()
-    {
-        Id = "profile-1",
-        DisplayName = "Test Profile",
-        AgentProviderConfigId = "agent-1",
-        Enabled = true,
-        MatchLabels = ["dotnet"],
-        McpServers = []
-    };
-
     private static readonly PipelineProject TestProject = new()
     {
         Id = "11110000-0000-0000-0000-000000000001",
@@ -111,8 +93,6 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
     private void SetupMocks()
     {
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { TestProfile });
         _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
@@ -123,12 +103,8 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { RepoConfig });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { AgentConfig });
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(RepoConfig);
-        _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync("agent-1", ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(AgentConfig);
 
         var issueConfig = new ProviderConfig { Id = "issue-1", DisplayName = "Issues", ProviderType = "GitHub", Kind = ProviderKind.Issue };
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
@@ -158,8 +134,6 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
                     _mockLabelService.Object,
                     new DispatchResolutionService(new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object)),
                 new Mock<IWorkDistributor>().Object,
-                _mockConfigStore.Object,
-                _mockConfigStore.Object,
                 _mockConfigStore.Object),
             _mockLogger.Object);
     }
@@ -243,7 +217,8 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         request!.ProviderConfigs.Should().NotBeNullOrEmpty("orchestration must resolve provider configs");
         request.ProviderConfigs!.Should().Contain(c => c.Id == "repo-1", "repo config must be included");
-        request.ProviderConfigs!.Should().Contain(c => c.Id == "agent-1", "agent config must be included");
+        request.ProviderConfigs!.Should().NotContain(c => c.Kind == ProviderKind.Agent,
+            "the API builds the agent config from the routed profile when an agent claims the work item (spec 053)");
 
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();

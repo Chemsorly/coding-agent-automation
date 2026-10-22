@@ -14,13 +14,16 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// read: the pull request a review is about, or an operator triage's report; null for every other run.
 /// <see cref="NewestComments"/> keeps the newest comments instead of the oldest when an issue has more than the
 /// cap; a triage needs the latest feedback.
+/// <see cref="StackLabels"/> are the repository template's labels, which pick the quality gates and reviewers
+/// (spec 053 DD7); null at dispatch time, where none are resolved. <see cref="AgentConfig"/> is the agent provider
+/// config built from the routed profile and route (DD5); null at dispatch time, where the agent receives none yet.
 /// </summary>
 internal sealed record DispatchCoreRequest(
-    IReadOnlyList<string> RequiredLabels,
+    IReadOnlyList<string>? StackLabels,
     IssueIdentifier IssueIdentifier,
     ProviderConfigId IssueProviderId,
     ProviderConfigId RepoProviderId,
-    string AgentProviderId,
+    ProviderConfig? AgentConfig,
     string? BrainProviderId,
     string? PipelineProviderId,
     PipelineProject Project,
@@ -42,7 +45,6 @@ public sealed record OrchestratorPreparationRequest(
     string? BrainProviderId,
     string? PipelineProviderId,
     string InitiatedBy,
-    IReadOnlyList<string> RequiredLabels,
     PipelineProject Project,
     PipelineRunType RunType = PipelineRunType.Implementation,
     IssueDetail? PullRequest = null);

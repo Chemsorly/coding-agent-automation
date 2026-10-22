@@ -4,7 +4,7 @@ namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
 /// Narrow interface exposing only the dispatch-path operations from the orchestration layer.
-/// Consumers that need dedup checks, run creation, and active-run queries for dispatch purposes
+/// Consumers that need dedup checks and active-run queries for dispatch purposes
 /// depend on this interface rather than the full orchestration service.
 /// <para>
 /// Implementations:
@@ -28,31 +28,6 @@ public interface IDispatchRunCreator
     /// <param name="issueProviderConfigId">The issue provider config ID.</param>
     /// <returns><c>true</c> if the issue is currently being processed.</returns>
     bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
-
-    /// <summary>
-    /// Creates a <see cref="PipelineRun"/> for dispatch to a remote agent.
-    /// The run is tracked via <see cref="IOrchestratorRunService"/> (not a local ActiveRun).
-    /// Does NOT execute the pipeline locally — the agent handles execution.
-    /// </summary>
-    /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
-    Task<PipelineRun?> CreateDispatchedRunAsync(DispatchRunRequest request, CancellationToken ct);
-
-    /// <summary>
-    /// Reserves a run ID and registers a dedup guard (sentinel) without constructing a full
-    /// <see cref="PipelineRun"/>. Returns metadata needed to construct the final run.
-    /// The sentinel immediately makes <see cref="IsIssueBeingProcessed"/> return <c>true</c>.
-    /// </summary>
-    /// <returns>A <see cref="RunReservation"/> with the allocated RunId and resolved metadata,
-    /// or <c>null</c> if the issue is already being processed.</returns>
-    Task<RunReservation?> ReserveRunIdAsync(DispatchRunRequest request, CancellationToken ct);
-
-    /// <summary>
-    /// Registers a fully-constructed <see cref="PipelineRun"/> by atomically replacing the
-    /// sentinel created by <see cref="ReserveRunIdAsync"/>. The run must use the same RunId
-    /// that was returned in the <see cref="RunReservation"/>.
-    /// </summary>
-    /// <param name="run">The fully-populated pipeline run to register.</param>
-    void RegisterDispatchedRun(PipelineRun run);
 
     /// <summary>
     /// Returns all currently active pipeline runs from both local and multi-run tracking sources.

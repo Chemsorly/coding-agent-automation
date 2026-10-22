@@ -9,7 +9,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// End-to-end integration tests verifying the full label mapping procedure:
-/// QGC resolution and required-label resolution work correctly together.
+/// a repository's stack labels pick the quality gate configs that apply (spec 053 req 5.1).
 /// </summary>
 public class LabelMappingIntegrationTests
 {
@@ -116,79 +116,6 @@ public class LabelMappingIntegrationTests
         resolved.Should().HaveCount(2);
         resolved.Select(q => q.Id).Should().Contain("qgc-global");
         resolved.Select(q => q.Id).Should().Contain("qgc-dotnet");
-    }
-
-    #endregion
-
-    #region Scenario 7: RequiredLabels from ProviderConfig.RequiredLabels field
-
-    [Fact]
-    public void RequiredLabels_ExplicitField_UsedForResolution()
-    {
-        // Arrange
-        var repoConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo",
-            RequiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" }
-        };
-        var pipelineConfig = new PipelineConfiguration();
-
-        // Act
-        var labels = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        // Assert
-        labels.Should().HaveCount(3);
-        labels.Should().Contain("kiro");
-        labels.Should().Contain("dotnet");
-        labels.Should().Contain("dotnet10");
-    }
-
-    #endregion
-
-    #region Scenario 8: RequiredLabels fallback to pipeline default
-
-    [Fact]
-    public void RequiredLabels_FallsBackToPipelineDefault_WhenBothNull()
-    {
-        // Arrange: No RequiredLabels, but pipeline has default
-        var repoConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo",
-            RequiredLabels = null
-        };
-        var pipelineConfig = new PipelineConfiguration
-        {
-            DefaultRequiredAgentLabels = "kiro,dotnet"
-        };
-
-        // Act
-        var resolved = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        // Assert: Falls back to pipeline default
-        resolved.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
-    }
-
-    [Fact]
-    public void RequiredLabels_ReturnsEmpty_WhenNothingConfigured()
-    {
-        // Arrange: No labels configured anywhere
-        var repoConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo"
-        };
-        var pipelineConfig = new PipelineConfiguration();
-
-        // Act
-        var resolved = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        // Assert: Empty — any agent matches
-        resolved.Should().BeEmpty();
     }
 
     #endregion

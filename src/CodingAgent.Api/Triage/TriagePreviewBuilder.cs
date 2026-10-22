@@ -24,18 +24,24 @@ public static class TriagePreviewBuilder
             ?? TemplateOrder.ByName(enabled, t => t.Name, t => t.Id).FirstOrDefault();
     }
 
+    /// <summary>
+    /// The preview of a triage started from <paramref name="startInTemplateId"/>: the Triage route of the executor
+    /// template (spec 053 req 4.3), resolved as the API resolves it when the triage starts, and its MCP servers.
+    /// </summary>
     public static TriagePreview Build(
         PipelineProject project,
         IReadOnlyList<PipelineJobTemplate> projectTemplates,
         string? startInTemplateId,
-        IReadOnlyList<ProviderConfig> repoConfigs,
         IReadOnlyList<AgentProfile> profiles,
+        AgentRouting routing,
+        IReadOnlyDictionary<string, string> toolsByKey,
         PipelineConfiguration globalConfig)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(projectTemplates);
-        ArgumentNullException.ThrowIfNull(repoConfigs);
         ArgumentNullException.ThrowIfNull(profiles);
+        ArgumentNullException.ThrowIfNull(routing);
+        ArgumentNullException.ThrowIfNull(toolsByKey);
         ArgumentNullException.ThrowIfNull(globalConfig);
 
         var executor = SelectExecutor(projectTemplates, startInTemplateId);
@@ -55,12 +61,8 @@ public static class TriagePreviewBuilder
             .Distinct(StringComparer.Ordinal)
             .Count();
 
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == executor.RepoProviderId);
-        var enrichedRepoConfig = repoConfig is not null
-            ? RepositorySettings.WithTemplateSettings(repoConfig, executor)
-            : null;
-        var labels = LabelResolver.ResolveRequiredLabels(enrichedRepoConfig, globalConfig);
-        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, labels);
+        var route = AgentRouteResolver.Resolve(WorkItemTaskType.Triage, executor, routing, profiles, toolsByKey);
+        var profile = route.Profile;
 
         return new TriagePreview
         {
@@ -71,9 +73,7 @@ public static class TriagePreviewBuilder
             HasBrain = executor.BrainProviderId is not null,
             HasProjectSteering = !string.IsNullOrWhiteSpace(project.SteeringContent),
             TimeLimit = config.AgentTimeout,
-            Problem = profile is null
-                ? $"No agent profile matches the labels of '{executor.Name}' ({string.Join(", ", labels)}), so the triage cannot start."
-                : null,
+            Problem = route.RefusalText,
         };
     }
 

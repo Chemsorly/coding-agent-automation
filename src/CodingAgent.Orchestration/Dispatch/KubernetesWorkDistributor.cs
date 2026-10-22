@@ -30,9 +30,9 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// stale snapshot.
 /// </para>
 /// <para>
-/// 422 from <c>CreateAsync</c> means the API refused the run because its agent selector has no job
-/// template (only consolidation requests are checked at enqueue). That cannot be fixed by retrying, so it
-/// is returned as a failure with <see cref="DistributionResult.IsPermanentFailure"/> set, naming the selector.
+/// 422 from <c>CreateAsync</c> (<see cref="WorkItemRefusedException"/>) means the API refused the run: no agent
+/// route resolves, or the route cannot run (spec 053 DD2). That cannot be fixed by retrying, so it is returned as a
+/// failure with <see cref="DistributionResult.IsPermanentFailure"/> set and the API's reason as the message.
 /// </para>
 /// <para>
 /// Cancel, status-query, and dedup operations route through the same API client.
@@ -93,18 +93,18 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
                 request.IssueIdentifier);
             return new DistributionResult(true, null, null, Queued: true, AlreadyExists: true);
         }
-        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+        catch (WorkItemRefusedException ex)
         {
-            // 422 = POST /api/work-items refused the run: no job template for its agent selector
-            // (directly or through the profile fallback). Templates are read from a ConfigMap at
-            // start-up, so retrying always gives the same answer. IsPermanentFailure tells the caller
-            // (ConsolidationService) to report a configuration failure, not a transient one.
-            _logger.LogInformation(ex,
-                "CreateAsync returned 422 for issue {IssueIdentifier} — no job template for agent selector '{AgentSelector}' (permanent failure)",
-                request.IssueIdentifier, request.AgentSelector);
-            return new DistributionResult(false, null,
-                $"No job template for agent selector '{request.AgentSelector}'",
-                IsPermanentFailure: true);
+            // 422 = POST /api/work-items refused the run (spec 053 DD2): no agent route, or a route that cannot run.
+            // A configuration error, so retrying gives the same answer. IsPermanentFailure tells the caller to report
+            // it with the API's reason, not as a transient failure.
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation(ex,
+                    "CreateAsync refused the work item for issue {IssueIdentifier}: {RefusalText} (permanent failure)",
+                    request.IssueIdentifier, ex.Message);
+            }
+            return new DistributionResult(false, null, ex.Message, IsPermanentFailure: true);
         }
         catch (HttpRequestException ex)
         {

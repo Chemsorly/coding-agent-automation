@@ -16,13 +16,16 @@ namespace CodingAgent.Api.Triage;
 public class TriageTrackerOperations
 {
     private readonly IConfigurationStore _config;
+    private readonly IAgentProfileStore _profiles;
     private readonly IProviderFactory _providers;
     private readonly ILabelService _labels;
     private readonly ILogger _logger;
 
-    public TriageTrackerOperations(IConfigurationStore config, IProviderFactory providers, ILabelService labels, ILogger logger)
+    public TriageTrackerOperations(
+        IConfigurationStore config, IAgentProfileStore profiles, IProviderFactory providers, ILabelService labels, ILogger logger)
     {
         _config = config;
+        _profiles = profiles;
         _providers = providers;
         _labels = labels;
         _logger = logger;
@@ -33,7 +36,7 @@ public class TriageTrackerOperations
     /// <summary>Asks the loop for another attempt: the feedback goes on the issue, then <c>agent:triage</c>.</summary>
     public virtual async Task RequestRerunAsync(TriageRecord triage, TriageFeedback feedback, CancellationToken ct)
     {
-        var secrets = await TriageSecrets.LoadAsync(_config, triage.ProjectId, ct);
+        var secrets = await TriageSecrets.LoadAsync(_config, _profiles, triage.ProjectId, ct);
         string V(string value) => Clean(value, secrets);
 
         var sb = new StringBuilder();
@@ -72,7 +75,7 @@ public class TriageTrackerOperations
     /// <summary>Notes on the triaged issue that the triage was dismissed, and sets <c>agent:wont-do</c>.</summary>
     public virtual async Task ReportDismissedAsync(TriageRecord triage, CancellationToken ct)
     {
-        var secrets = await TriageSecrets.LoadAsync(_config, triage.ProjectId, ct);
+        var secrets = await TriageSecrets.LoadAsync(_config, _profiles, triage.ProjectId, ct);
         var reason = string.IsNullOrWhiteSpace(triage.DismissReason) ? "" : $": {Clean(triage.DismissReason, secrets)}";
         await PostCommentAsync(triage, $"The triage was dismissed in Coding Agent{reason}", critical: false, ct);
         await SwapAsync(triage, AgentLabels.WontDo, ct);
