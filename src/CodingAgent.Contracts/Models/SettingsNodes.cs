@@ -8,6 +8,8 @@ public static class SettingsNodes
 {
     public const string ProvidersIssue = "providers-issue";
     public const string ProvidersRepository = "providers-repository";
+
+    /// <summary>The former agent provider node (spec 053 req 1.6). Old deep links to it open <see cref="AgentProfiles"/>.</summary>
     public const string ProvidersAgent = "providers-agent";
     public const string ProvidersPipeline = "providers-pipeline";
     public const string PipelineGeneral = "pipeline-general";
@@ -20,6 +22,7 @@ public static class SettingsNodes
     public const string PipelineTriage = "pipeline-triage";
     public const string PipelineAdvanced = "pipeline-advanced";
     public const string AgentProfiles = "agent-profiles";
+    public const string AgentRouting = "agent-routing";
     public const string QualityGateConfigs = "quality-gate-configs";
     public const string ReviewerConfigs = "reviewer-configs";
     public const string Projects = "projects";

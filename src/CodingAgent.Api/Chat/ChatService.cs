@@ -53,7 +53,7 @@ internal sealed class ChatService(
             {
                 var (defaultModel, defaultEffort) = Defaults(x.Profile, x.Tool!, table);
                 return new UiChatProfile(
-                    x.Profile.Id, x.Profile.DisplayName, [], x.Tool!.Id,
+                    x.Profile.Id, x.Profile.DisplayName, x.Tool!.Id,
                     ModelsFor(x.Profile, x.Tool, table, chatTemplates),
                     [AgentToolCatalog.Auto, .. x.Tool.Efforts],
                     defaultModel, defaultEffort);

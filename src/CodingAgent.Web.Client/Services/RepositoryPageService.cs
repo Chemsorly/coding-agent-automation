@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
+using CodingAgent.Web.Components.Shared;
 using CodingAgent.Web.Ui;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
@@ -50,7 +51,7 @@ public class RepositoryPageService : DrawerStateAccessorBase
     public PipelineJobTemplate? Template { get; private set; }
     public PipelineProject? Project { get; private set; }
     // NOTE: IssueProviders, RepoProviders, PipelineProviders and BrainProviders are List<T> rather than
-    // IReadOnlyList<T>, inconsistent with QualityGateConfigs, ReviewerConfigs, AgentProfiles, AllProjects and
+    // IReadOnlyList<T>, inconsistent with QualityGateConfigs, ReviewerConfigs, AllProjects and
     // AllTemplates below. Callers can mutate the list contents via .Add()/.Remove() despite the private setter.
     // Change these four to IReadOnlyList<ProviderConfig> and assign .AsReadOnly() in InitializeAsync to match
     // the existing pattern. (DotNetSpecialist review finding, issue #3576)
@@ -60,7 +61,14 @@ public class RepositoryPageService : DrawerStateAccessorBase
     public List<ProviderConfig> BrainProviders { get; private set; } = [];
     public IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; private set; } = [];
     public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; private set; } = [];
-    public IReadOnlyList<AgentProfile> AgentProfiles { get; private set; } = [];
+    /// <summary>Spec 053 req 3.3: the route each task type of the template resolves to, as every reader may see it.</summary>
+    public IReadOnlyList<UiResolvedRoute> Routes { get; private set; } = [];
+
+    /// <summary>The global routing table and the profiles a row can name, for the global admin's routing editor; else null.</summary>
+    public UiAgentRoutingPage? RoutingPage { get; private set; }
+
+    /// <summary>Why the routing editor could not load, or null.</summary>
+    public string? RoutingLoadError { get; private set; }
     public PipelineConfiguration PipelineConfig { get; private set; } = new();
     public IReadOnlyList<PipelineProject> AllProjects { get; private set; } = [];
     public IReadOnlyList<PipelineJobTemplate> AllTemplates { get; private set; } = [];
@@ -89,12 +97,7 @@ public class RepositoryPageService : DrawerStateAccessorBase
             RepoProviders = page.RepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
             QualityGateConfigs = page.QualityGateConfigs;
             ReviewerConfigs = page.ReviewerConfigs;
-            AgentProfiles = page.AgentProfiles;
-            PipelineConfig = new PipelineConfiguration
-            {
-                DefaultRequiredAgentLabels = page.DefaultRequiredAgentLabels,
-                MaxRetries = page.MaxRetries
-            };
+            PipelineConfig = new PipelineConfiguration { MaxRetries = page.MaxRetries };
             AllProjects = page.Projects;
             AllTemplates = page.Templates;
 
@@ -102,6 +105,9 @@ public class RepositoryPageService : DrawerStateAccessorBase
             if (Template is not null)
             {
                 Project = page.Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
+                Routes = page.Routes.TryGetValue(templateId, out var routes) ? routes : [];
+                if (_access.IsAdmin)
+                    await LoadRoutingPageAsync();
             }
 
             return null;
@@ -186,52 +192,23 @@ public class RepositoryPageService : DrawerStateAccessorBase
 
     // ── Label preview ──
 
-    /// <summary>Resolves the label preview for the given required labels, using the current page data.</summary>
-    public TemplateTableSection.LabelPreviewResult GetLabelPreview(
-        IReadOnlyList<string>? requiredLabels,
-        IReadOnlyList<AgentEntryDto> agents)
+    /// <summary>The quality gates and reviewers the given stack labels pick, from the current page data.</summary>
+    public TemplateTableSection.LabelPreviewResult GetLabelPreview(IReadOnlyList<string>? requiredLabels) =>
+        TemplateTableSection.LabelPreviewResult.For(requiredLabels, QualityGateConfigs, ReviewerConfigs);
+
+    /// <summary>Loads the routing editor's data (global admin only); a failure leaves the editor out with the reason.</summary>
+    private async Task LoadRoutingPageAsync()
     {
-        IReadOnlyList<string> labels;
-        if (requiredLabels is { Count: > 0 })
+        try
         {
-            labels = requiredLabels;
+            RoutingPage = await _settings.GetAgentRoutingAsync(CancellationToken.None);
+            RoutingLoadError = null;
         }
-        else if (!string.IsNullOrWhiteSpace(PipelineConfig?.DefaultRequiredAgentLabels))
+        catch (Exception ex)
         {
-            labels = PipelineConfig.DefaultRequiredAgentLabels
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList().AsReadOnly();
+            RoutingPage = null;
+            RoutingLoadError = $"Failed to load the routing: {ex.Message}";
         }
-        else
-            return new TemplateTableSection.LabelPreviewResult();
-
-        if (labels.Count == 0)
-            return new TemplateTableSection.LabelPreviewResult();
-
-        var matchedProfile = ProfileResolver.ResolveByRequiredLabels(AgentProfiles, labels);
-        var resolveLabels = matchedProfile?.MatchLabels ?? labels;
-
-        var qgResolver = new QualityGateResolver();
-        var matchedQgs = qgResolver.Resolve(QualityGateConfigs, resolveLabels);
-
-        var rvResolver = new ReviewerResolver();
-        var matchedRvs = rvResolver.Resolve(ReviewerConfigs, resolveLabels);
-
-        var allAgents = agents
-            .Where(a => !a.Disabled)
-            .Where(a => labels.Count == 0 || labels.All(l => a.Labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
-            .ToList();
-        var onlineCount = allAgents.Count(a => a.Status != AgentStatus.Disconnected);
-
-        return new TemplateTableSection.LabelPreviewResult
-        {
-            Labels = labels,
-            QualityGates = matchedQgs.Select(q => q.DisplayName).ToList(),
-            Reviewers = matchedRvs.Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})").ToList(),
-            Profiles = matchedProfile is not null ? [matchedProfile.DisplayName] : [],
-            Agents = allAgents.Select(a => a.AgentId.Value).ToList(),
-            OnlineAgentCount = onlineCount
-        };
     }
 
     // ── Save operations ──
@@ -247,10 +224,26 @@ public class RepositoryPageService : DrawerStateAccessorBase
         var conflict = TemplateBindingRules.Validate(updated, Project.Id, AllTemplates.ToList(), AllProjects.ToList());
         if (conflict is not null) return (false, conflict, null);
 
-        try { await _settings.SaveTemplateAsync(Project.Id, updated, CancellationToken.None); }
+        try { await _settings.SaveTemplateAsync(Project.Id, WithoutRoutes(updated), CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
         Template = updated;
         return (true, null, $"Binding saved. Changes apply from the next poll cycle.");
+    }
+
+    /// <summary>
+    /// Saves the template's repository rows (spec 053 req 3.2): the routing editor is the only template save that sends
+    /// rows; task types without a route inherit the global table.
+    /// </summary>
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> SaveRoutesAsync(IReadOnlyList<RouteRow> rows)
+    {
+        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
+        if (Template is null || Project is null) return (false, TemplateNotFoundMessage, null);
+
+        var updated = Template with { AgentRoutes = RouteRow.ToRepositoryRoutes(rows) };
+        try { await _settings.SaveTemplateAsync(Project.Id, updated, CancellationToken.None); }
+        catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
+        Template = updated;
+        return (true, null, "Agent routing saved. It applies to work created from now on.");
     }
 
     /// <summary>Saves only the Behaviour fields of the template (name, switches, housekeeping, repo settings).</summary>
@@ -266,13 +259,19 @@ public class RepositoryPageService : DrawerStateAccessorBase
         var conflict = TemplateBindingRules.Validate(updated, Project.Id, AllTemplates.ToList(), AllProjects.ToList());
         if (conflict is not null) return (false, conflict, null);
 
-        try { await _settings.SaveTemplateAsync(Project.Id, updated, CancellationToken.None); }
+        try { await _settings.SaveTemplateAsync(Project.Id, WithoutRoutes(updated), CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
         Template = updated;
         return (true, null, $"Behaviour saved. Changes apply from the next poll cycle.");
     }
 
     // ── Apply helpers ──
+
+    /// <summary>
+    /// Spec 053 req 3.6: a template save that does not edit routes sends none, so the API keeps the stored rows and a
+    /// page loaded before a routing change cannot revert it.
+    /// </summary>
+    private static PipelineJobTemplate WithoutRoutes(PipelineJobTemplate template) => template with { AgentRoutes = null };
 
     private static PipelineJobTemplate ApplyBindingEdit(PipelineJobTemplate existing, BindingFormModel form) =>
         existing with

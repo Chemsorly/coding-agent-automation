@@ -107,14 +107,13 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = $"profile-terminal-{issueId}",
             DisplayName = "Terminal Label E2E Agent Profile",
-            MatchLabels = [AgentSelector],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([AgentSelector]),
             Enabled = true
-        }, CancellationToken.None);
+        });
     }
 
     // ── Assertion helpers ─────────────────────────────────────────────────
@@ -548,14 +547,13 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = $"profile-review-{prNumber}",
             DisplayName = "Review E2E Agent Profile",
-            MatchLabels = [AgentSelector],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([AgentSelector]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var agent = new FakeAgentClient($"review-agent-{prNumber}", AgentSelector);
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);

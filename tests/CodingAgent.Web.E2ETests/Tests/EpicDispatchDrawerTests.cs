@@ -53,14 +53,13 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
 
         // TODO [WARNING]: AgentProfile Id "profile-e2e" is saved identically in Scenarios 1, 2, 4, 5.
         // Consider extracting a shared SeedDefaultAgentProfileAsync helper to keep these in sync.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("epic-agent-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -150,14 +149,13 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             DecompositionEnabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("epic-agent-2", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -296,14 +294,13 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             DecompositionEnabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("decomp-gate-agent", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -452,14 +449,13 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             DecompositionEnabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Two agents, both with the same label. The scheduler selects agents based on label
         // matching and availability — it does NOT guarantee that "epicAgent" receives the

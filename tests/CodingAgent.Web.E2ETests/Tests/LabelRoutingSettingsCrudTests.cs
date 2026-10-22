@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
@@ -6,15 +7,15 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Web.E2ETests.Tests;
 
 /// <summary>
-/// E2E tests for label-routing settings CRUD and the template label preview.
+/// E2E tests for the agent profile and quality settings CRUD and the template label preview.
 ///
-/// Covers four scenarios from issue #3100:
-/// 1. Agent Profile CRUD (add, edit priority, disable, delete)
+/// Covers four scenarios (issue #3100, agent profiles as spec 053 has them):
+/// 1. Agent Profile CRUD (add on a job template, edit a tool setting, disable, delete)
 /// 2. Quality Gate Config CRUD (add, edit command, disable, delete)
 /// 3. Reviewer Config CRUD and Reset-to-Defaults
 /// 4. Label preview on Pipelines (QG appears after add, disappears after disable)
 ///
-/// Routing dispatch is already covered headless by DbModeAgentLifecycleTests.
+/// Routing is covered by AgentRoutingE2ETests and, headless, by DbModeAgentLifecycleTests.
 /// These tests focus exclusively on the UI CRUD flows.
 /// </summary>
 [Trait("Category", "E2E")]
@@ -26,9 +27,9 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
     // ── Scenario 1: Agent Profile CRUD ────────────────────────────────────
 
     /// <summary>
-    /// Verifies the full Agent Profile CRUD lifecycle:
-    /// add a profile → edit priority → disable → delete.
-    /// Asserts the table and status toasts reflect each step, including after a page reload.
+    /// Spec 053 req 1.1–1.5: add a profile on a Helm job template (the form shows that template's tool settings) →
+    /// edit its tool setting → disable → delete. The table and status toasts reflect each step, including after a
+    /// reload; the store holds the job template and the tool settings and none of the retired label fields.
     /// </summary>
     [Fact]
     public async Task AgentProfile_AddEditDisableDelete()
@@ -40,59 +41,50 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         await settingsPage.SelectTreeNodeAsync("Agent Profiles");
 
         // Assert: no profiles exist at start
-        var initialNames = await profiles.GetTableRowNamesAsync();
-        Assert.Empty(initialNames);
+        Assert.Empty(await profiles.GetTableRowNamesAsync());
 
-        // Act: add a profile
+        // Act: add a profile on the Kiro job template; the Kiro tool's Agent Name field appears
         await profiles.ClickAddAsync();
         await profiles.FillDisplayNameAsync("E2E Test Profile");
-        await profiles.FillMatchLabelsAsync("e2e,dotnet");
-        await profiles.SelectAgentProviderAsync("E2E Agent Provider");
-        await profiles.FillPriorityAsync(5);
+        await profiles.SelectJobTemplateAsync("dotnet,kiro");
+        Assert.True(await profiles.IsAgentNameShownAsync(), "A Kiro job template shows the Kiro tool's Agent Name setting");
+        await profiles.FillAgentNameAsync("e2e-agent");
         await profiles.SetEnabledAsync(true);
         await profiles.SaveAsync();
 
-        // Assert: row appears, save toast shown
-        // TODO [WARNING]: Assert.Contains strips only "DEFAULT"; use Any(n => n.StartsWith(...)) to be resilient to other badge suffixes
-        var namesAfterAdd = await profiles.GetTableRowNamesAsync();
-        Assert.Contains("E2E Test Profile", namesAfterAdd.Select(n => n.Replace("DEFAULT", "").Trim()));
+        // Assert: row appears with its job template and tool, save toast shown
+        Assert.Contains("E2E Test Profile", await profiles.GetTableRowNamesAsync());
+        Assert.Contains("Kiro", await profiles.GetJobTemplateCellAsync("E2E Test Profile"));
         Assert.True(await profiles.IsStatusMessageVisibleAsync("saved"), "Expected 'saved' status message after add");
+        var stored = (await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).Single(p => p.DisplayName == "E2E Test Profile");
+        Assert.Equal("dotnet,kiro", stored.JobTemplate);
+        Assert.Equal("e2e-agent", stored.Settings![ProviderSettingKeys.AgentName]);
+        Assert.Empty(stored.MatchLabels);
+        Assert.Equal("", stored.AgentProviderConfigId);
 
-        // Assert: persists after reload (issue criterion: "table reflects each step after reload")
+        // Assert: persists after reload
         await settingsPage.NavigateAsync();
         await settingsPage.SelectTreeNodeAsync("Agent Profiles");
-        var namesAfterAddReload = await profiles.GetTableRowNamesAsync();
-        Assert.Contains("E2E Test Profile", namesAfterAddReload.Select(n => n.Replace("DEFAULT", "").Trim()));
+        Assert.Contains("E2E Test Profile", await profiles.GetTableRowNamesAsync());
 
-        // Act: edit priority
+        // Act: edit the tool setting
         await profiles.EditRowAsync("E2E Test Profile");
-        await profiles.FillPriorityAsync(10);
+        await profiles.FillAgentNameAsync("e2e-reviewer");
         await profiles.SaveAsync();
 
-        // Assert: save toast still visible (re-renders after save)
+        // Assert: saved and still enabled
         Assert.True(await profiles.IsStatusMessageVisibleAsync("saved"), "Expected 'saved' status message after edit");
+        Assert.True(await profiles.IsRowEnabledAsync("E2E Test Profile"), "Profile should remain enabled after the edit");
+        var storedAfterEdit = (await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).Single(p => p.DisplayName == "E2E Test Profile");
+        Assert.Equal("e2e-reviewer", storedAfterEdit.Settings![ProviderSettingKeys.AgentName]);
 
-        // Assert: profile is still enabled
-        // TODO [WARNING]: IsRowEnabledAsync matches any span.status-icon.is-on in the row; scope to the Enabled column to avoid false positives from the Template-match icon
-        Assert.True(await profiles.IsRowEnabledAsync("E2E Test Profile"), "Profile should remain enabled after priority edit");
-
-        // TODO [WARNING]: Verify priority edit persisted to store (same pattern as QualityGateConfig test which reads back via LoadQualityGateConfigsAsync)
-        // var storedAfterEdit = await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
-        // Assert.Equal(10, storedAfterEdit.Single(p => p.DisplayName == "E2E Test Profile").Priority);
-
-        // TODO [WARNING]: Scenario 1's headless assignment check ("A dispatched job for labels e2e,dotnet uses this profile while enabled") is not
-        // performed here. DbModeAgentLifecycleTests seeds its own profiles and does not specifically assert this profile is chosen.
-        // Consider adding an assignment assertion using AgentProfileResolver directly.
-
-        // Act: disable the profile
+        // Act: disable the profile (no route names it, so that is allowed)
         await profiles.EditRowAsync("E2E Test Profile");
         await profiles.SetEnabledAsync(false);
         await profiles.SaveAsync();
 
-        // Assert: row now shows disabled icon
+        // Assert: row shows the disabled icon, also after a reload
         Assert.False(await profiles.IsRowEnabledAsync("E2E Test Profile"), "Profile row should show disabled icon after disabling");
-
-        // Assert: disabled state persists after reload
         await settingsPage.NavigateAsync();
         await settingsPage.SelectTreeNodeAsync("Agent Profiles");
         Assert.False(await profiles.IsRowEnabledAsync("E2E Test Profile"), "Profile row should still show disabled icon after reload");
@@ -100,15 +92,10 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         // Act: delete the profile
         await profiles.DeleteRowAsync("E2E Test Profile");
 
-        // Assert: row removed
-        // TODO [WARNING]: Assert.Empty(stored) is fragile if another test left a profile in the store; prefer Assert.DoesNotContain
-        var namesAfterDelete = await profiles.GetTableRowNamesAsync();
-        Assert.DoesNotContain("E2E Test Profile", namesAfterDelete.Select(n => n.Replace("DEFAULT", "").Trim()));
+        // Assert: row removed, delete toast shown, store no longer has it
+        Assert.DoesNotContain("E2E Test Profile", await profiles.GetTableRowNamesAsync());
         Assert.True(await profiles.IsStatusMessageVisibleAsync("deleted"), "Expected 'deleted' status message after delete");
-
-        // Assert via store: profile no longer present
-        var stored = await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
-        Assert.DoesNotContain(stored, p => p.DisplayName == "E2E Test Profile");
+        Assert.DoesNotContain(await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None), p => p.DisplayName == "E2E Test Profile");
     }
 
     // ── Scenario 2: Quality Gate Config CRUD ─────────────────────────────
@@ -290,23 +277,20 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
 
     /// <summary>
     /// Verifies the label preview on the template table:
-    /// - After setting DefaultRequiredAgentLabels and adding a labelled QG config, the preview
+    /// - With the template's stack label "dotnet" and a labelled QG config added, the preview
     ///   lists the QG config.
     /// - After disabling the QG config, the preview no longer lists it.
     /// - The pre-seeded global "E2E Quality Gate" (empty MatchLabels) keeps the button visible
     ///   throughout; "button absent" is never the expected state in this test.
     ///
-    /// Setup uses Option A (simplest): set DefaultRequiredAgentLabels on the pipeline config to
-    /// "dotnet" — no new ProviderConfig or template needed; the seeded "E2E Repo Provider" and
-    /// the seeded template are reused.
+    /// Setup: the template carries the stack label "dotnet"; the seeded "E2E Repo Provider" is reused.
     /// </summary>
     [Fact]
     public async Task TemplateLabelPreview_ShowsAndHidesWithQualityGateEnabled()
     {
-        // TODO [WARNING]: This test mutates shared fixture state (DefaultRequiredAgentLabels, template) without
-        // restoring it in a teardown step. If test ordering causes this test to run before other tests that read
-        // pipeline config or the template table, those tests may see unexpected data. Consider a try/finally
-        // block or DisposeAsync override to restore DefaultRequiredAgentLabels to its original value.
+        // TODO [WARNING]: This test mutates shared fixture state (the template) without restoring it in a teardown
+        // step. If test ordering causes this test to run before other tests that read the template table, those tests
+        // may see unexpected data. Consider a try/finally block or DisposeAsync override.
 
         // TODO [WARNING]: CancellationToken.None is passed to all ConfigStore calls. Thread the xUnit
         // cancellation token through (TestContext.Current.CancellationToken in xUnit v3) so teardown is not blocked.
@@ -319,15 +303,11 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
             Name = templateName,
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-e2e",
-            Enabled = true
+            Enabled = true,
+            // Stack labels, so the row offers a label preview (spec 053: no global default labels any more).
+            RequiredLabels = ["dotnet"]
         }, CancellationToken.None);
 
-        // Set DefaultRequiredAgentLabels so LabelResolver returns non-empty labels for the template.
-        // This causes GetLabelPreview to return labels and renders the btn-label-preview button.
-        var pipelineConfig = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(
-            pipelineConfig with { DefaultRequiredAgentLabels = "dotnet" },
-            CancellationToken.None);
 
         var settingsPage = new SettingsPage(Page, BaseUrl);
         var qgHelper = new QualityGateConfigSectionHelper(Page);

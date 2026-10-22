@@ -20,7 +20,7 @@
 
 @*
     Run Page — the deep-linkable run detail (see docs/frontend-redesign-handoff.md).
-    Data: IUiRunClient.GetRunAsync(Guid) → UiRunDetail (the run and its agent provider's name).
+    Data: IUiRunClient.GetRunAsync(Guid) → UiRunDetail (the run and the agent profile, model and effort it ran with).
     Every field shown is a real property on the summary (tokens, cost, cache, phase
     breakdown, review findings, feedback). This page replaced the old run-detail modal and
     hosts the live PipelineSidebar step ladder for active runs.
@@ -153,12 +153,8 @@
         <div class="cockpit-card">
             <div class="cockpit-card-pad cockpit-detail-grid">
                 <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
-                <div class="cockpit-detail-item"><div class="k">Agent</div><div class="v mono">@(_resolvedAgentName ?? run.AgentId ?? "—")</div></div>
+                <div class="cockpit-detail-item" data-testid="run-agent"><div class="k">Agent</div><div class="v mono">@AgentText(run)</div></div>
                 <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</div></div>
-                @if (run.ModelName is not null)
-                {
-                    <div class="cockpit-detail-item"><div class="k">Model</div><div class="v mono">@run.ModelName</div></div>
-                }
                 @if (run.TotalTokens > 0)
                 {
                     <div class="cockpit-detail-item"><div class="k">Tokens</div><div class="v">@CostFormatter.FormatTokens(run.TotalTokens)</div></div>
@@ -468,7 +464,18 @@
 
     private readonly CancellationTokenSource _cts = new();
     private PipelineRunSummary? _run;
-    private string? _resolvedAgentName;
+    private UiRunAgent? _agent;
+
+    /// <summary>
+    /// Spec 053 req 8.2: "profile · model · effort …". A run recorded before spec 053 has no profile: "—" and its model.
+    /// </summary>
+    private string AgentText(PipelineRunSummary run)
+    {
+        var model = run.ModelName ?? _agent?.Model;
+        if (_agent?.ProfileName is { } profile)
+            return $"{profile} · {model ?? "auto"} · effort {_agent.Effort ?? "auto"}";
+        return model is null ? "—" : $"— · {model}";
+    }
 
     /// <summary>The triage a Triage run belongs to, for the "Triage ↗" link; null for other runs.</summary>
     private Guid? _triageId;
@@ -522,7 +529,7 @@
         _loading = true;
         _error = null;
         _run = null;
-        _resolvedAgentName = null;
+        _agent = null;
         _triageId = null;
         _model = null;
         _diagnosis = null;
@@ -542,7 +549,7 @@
             if (detail is not null && Access.CanRead(detail.Run.ProjectId))
             {
                 _run = detail.Run;
-                _resolvedAgentName = detail.AgentProviderName;
+                _agent = detail.Agent;
             }
             if (_run?.RunType == PipelineRunType.Triage)
             {

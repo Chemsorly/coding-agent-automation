@@ -37,14 +37,13 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-fb",
             DisplayName = "Feedback Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -130,14 +129,13 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-fb-2",
             DisplayName = "Failure Feedback Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-2", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -219,14 +217,13 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-fb-3",
             DisplayName = "No Feedback Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-3", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -272,14 +269,13 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-fb-4",
             DisplayName = "Feedback UI Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-4", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -373,14 +369,13 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-fb-5",
             DisplayName = "Full Feedback Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-5", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);

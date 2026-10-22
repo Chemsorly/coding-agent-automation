@@ -42,14 +42,13 @@ public sealed class LoopControlTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Act: navigate
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -105,14 +104,13 @@ public sealed class LoopControlTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Act: navigate
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -163,14 +161,13 @@ public sealed class LoopControlTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Two extra providers are needed so the new template can use different providers than template-1
         // (enabled templates may not share an issue tracker or repository).
@@ -262,14 +259,13 @@ public sealed class LoopControlTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Act: navigate and start loop
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -317,14 +313,13 @@ public sealed class LoopControlTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();

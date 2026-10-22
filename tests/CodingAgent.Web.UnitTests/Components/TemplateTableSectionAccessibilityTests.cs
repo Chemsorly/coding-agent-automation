@@ -53,9 +53,7 @@ public class TemplateTableSectionAccessibilityTests : BunitContext
             .Add(s => s.RecentlyToggled, new HashSet<string>())
             .Add(s => s.TemplateStatuses, new Dictionary<string, ConfigStatusSnapshot>())
             .Add(s => s.QualityGateConfigs, Array.Empty<QualityGateConfiguration>())
-            .Add(s => s.ReviewerConfigs, Array.Empty<ReviewerConfiguration>())
-            .Add(s => s.AgentProfiles, Array.Empty<AgentProfile>())
-            .Add(s => s.PipelineConfig, new PipelineConfiguration()));
+            .Add(s => s.ReviewerConfigs, Array.Empty<ReviewerConfiguration>()));
     }
 
     [Fact]

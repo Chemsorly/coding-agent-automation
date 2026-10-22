@@ -37,6 +37,8 @@ public class SettingsPageComponentTests : BunitContext
         settings.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         settings.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineProject>());
+        settings.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new CodingAgent.Contracts.Ui.UiAgentProfilesPage([], []));
+        settings.Setup(s => s.GetAgentRoutingAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new CodingAgent.Contracts.Ui.UiAgentRoutingPage(new AgentRouting(), [], []));
         Services.AddSingleton(settings.Object);
         Services.AddScoped<NotificationService>();
         // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests
@@ -50,8 +52,6 @@ public class SettingsPageComponentTests : BunitContext
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
@@ -161,22 +161,28 @@ public class SettingsPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void Settings_ClickAddAgentProvider_ShowsFormWithoutExecutablePath()
+    public void Settings_TheFormerAgentProviderLink_OpensAgentProfiles()
     {
-        // Navigate to Agent Providers section via URL (NavLink sections are URL-driven)
+        // Spec 053 req 1.6: the agent provider page is gone; its tool settings are on the profile.
         var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
         nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersAgent}");
 
         var component = Render<Settings>();
 
-        var addButton = component.FindAll(".btn-add").First(b => b.TextContent.Contains("Agent"));
-        addButton.Click();
+        Assert.EndsWith($"section={SettingsNodes.AgentProfiles}", component.Find("a[aria-current='page']").GetAttribute("href"));
+        Assert.Contains("+ Add Agent Profile", component.Markup);
+        Assert.DoesNotContain("Add Agent Provider", component.Markup);
+    }
 
-        Assert.Contains("Add Agent Provider", component.Markup);
-        Assert.DoesNotContain("Executable Path", component.Markup);
-        Assert.Contains("Agent Name", component.Markup);
-        // Fetch Models Timeout is shown in k8s mode (Settings.razor always passes IsKubernetesMode=true)
-        Assert.Contains("Timeout", component.Markup);
+    [Fact]
+    public void Settings_TheRoutingNode_ShowsTheRoutingPage()
+    {
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.AgentRouting}");
+
+        var component = Render<Settings>();
+
+        Assert.NotNull(component.Find("[data-testid='agent-routing-section']"));
     }
 
     [Fact]
@@ -193,12 +199,15 @@ public class SettingsPageComponentTests : BunitContext
         Assert.DoesNotContain("Min Coverage Threshold", component.Markup);
     }
 
-    /// <summary>Every <see cref="SettingsNodes"/> constant except the id-carrying ProjectDetail prefix.</summary>
+    /// <summary>
+    /// Every <see cref="SettingsNodes"/> constant except the id-carrying ProjectDetail prefix and the former agent
+    /// provider node, which opens Agent Profiles.
+    /// </summary>
     public static TheoryData<string> AllSectionNodes()
     {
         var data = new TheoryData<string>();
         foreach (var field in typeof(SettingsNodes).GetFields(BindingFlags.Public | BindingFlags.Static)
-                     .Where(f => f.IsLiteral && f.Name != nameof(SettingsNodes.ProjectDetail)))
+                     .Where(f => f.IsLiteral && f.Name is not nameof(SettingsNodes.ProjectDetail) and not nameof(SettingsNodes.ProvidersAgent)))
             data.Add((string)field.GetRawConstantValue()!);
         return data;
     }

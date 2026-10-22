@@ -2,21 +2,9 @@
 
 <section class="settings-section">
     <h2>Advanced</h2>
-    <p class="section-description">Agent routing, the brain repository, issue images, data retention and comment delivery.</p>
+    <p class="section-description">The brain repository, issue images, data retention and comment delivery.</p>
     <div class="provider-form">
         <div class="config-sub-fields">
-            <h3>Agent Routing</h3>
-            <div class="form-group" data-setting="@nameof(PipelineConfiguration.DefaultRequiredAgentLabels)">
-                <div class="label-with-hint">
-                    <label>Default Required Agent Labels</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Global fallback for agent label routing when a repo's provider config doesn't specify labels. Comma-separated (e.g. 'kiro,dotnet'). Leave empty for any idle agent.">?</span>
-                </div>
-                <input type="text" @bind="_defaultRequiredAgentLabels" placeholder="(any agent)" />
-                <span class="form-hint">Comma-separated. Empty = any idle agent can be selected.</span>
-            </div>
-        </div>
-
-        <div class="config-sub-fields" style="margin-top: 1rem;">
             <h3>Brain Repository</h3>
             <div class="form-group form-checkbox" data-setting="@nameof(PipelineConfiguration.BrainReadOnly)">
                 <label>
@@ -121,7 +109,6 @@
     [Parameter, EditorRequired] public IUiSettingsClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
-    private string _defaultRequiredAgentLabels = "";
     private bool _brainReadOnly;
     private int _brainPushMaxRetries = 3;
     private bool _enableIssueImageExtraction = true;
@@ -137,7 +124,6 @@
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
-        _defaultRequiredAgentLabels = config.DefaultRequiredAgentLabels ?? "";
         _brainReadOnly = config.BrainReadOnly;
         _brainPushMaxRetries = config.BrainPushMaxRetries;
         _enableIssueImageExtraction = config.EnableIssueImageExtraction;
@@ -156,14 +142,9 @@
     {
         try
         {
-            var labels = string.IsNullOrWhiteSpace(_defaultRequiredAgentLabels)
-                ? null
-                : _defaultRequiredAgentLabels.Trim();
-
             await ConfigClient.UpdatePipelineConfigAsync(
                 current => current with
                 {
-                    DefaultRequiredAgentLabels = labels,
                     BrainReadOnly = _brainReadOnly,
                     BrainPushMaxRetries = _brainPushMaxRetries,
                     EnableIssueImageExtraction = _enableIssueImageExtraction,

@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Ui;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web.Services;
@@ -53,8 +54,8 @@ public class AgentCodingPageService : DrawerStateAccessorBase
     public List<ProviderConfig> BrainProviders { get; private set; } = [];
     public IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; private set; } = [];
     public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; private set; } = [];
-    public IReadOnlyList<AgentProfile> AgentProfiles { get; private set; } = [];
-    public PipelineConfiguration PipelineConfig { get; private set; } = new();
+    /// <summary>Spec 053 req 3.4: per template Id, the route each task type resolves to.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<UiResolvedRoute>> Routes { get; private set; } = new Dictionary<string, IReadOnlyList<UiResolvedRoute>>();
     public int MaxRetries { get; private set; } = 3;
 
     // ── Drawer state accessors (forwarded to drawer services) ──
@@ -105,12 +106,11 @@ public class AgentCodingPageService : DrawerStateAccessorBase
             BrainProviders = page.RepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
             RepoProviders = page.RepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
             MaxRetries = page.MaxRetries;
-            PipelineConfig = new PipelineConfiguration { DefaultRequiredAgentLabels = page.DefaultRequiredAgentLabels, MaxRetries = page.MaxRetries };
             Projects = page.Projects;
             Templates = page.Templates.ToList();
             QualityGateConfigs = page.QualityGateConfigs;
             ReviewerConfigs = page.ReviewerConfigs;
-            AgentProfiles = page.AgentProfiles;
+            Routes = page.Routes;
 
             return null;
         }
@@ -153,7 +153,9 @@ public class AgentCodingPageService : DrawerStateAccessorBase
         if (idx < 0) return (true, null);
         var updated = updater(template, enabled);
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _settings.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        // Spec 053 req 3.6: no routes in the body, so the API keeps the stored ones; rows saved after this page loaded
+        // stay.
+        try { await _settings.SaveTemplateAsync(projectId, updated with { AgentRoutes = null }, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}"); }
         Templates[idx] = updated;
         return (true, null);

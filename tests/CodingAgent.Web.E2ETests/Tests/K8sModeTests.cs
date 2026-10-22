@@ -192,14 +192,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         });
 
         // Seed a kiro,dotnet agent profile so AssignmentEnricher can resolve it
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-kiro-dotnet-fetch",
             DisplayName = "K8s Fetch Test Profile",
-            MatchLabels = new[] { "kiro", "dotnet" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "kiro", "dotnet" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // The assignment endpoint works on Pending items too — no need to wait for Dispatched.
         // The endpoint enriches with config regardless of status.
@@ -959,14 +958,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Description = "Regression test for pending-queue restore",
             Labels = new[] { "agent:next" }
         });
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-pending-reg",
             DisplayName = "Pending Reg Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var agent = new FakeAgentClient("pending-reg-agent", "e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -1016,14 +1014,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             new IssueDetail { Identifier = "prio-100", Title = "Priority Test 1", Description = "test", Labels = new[] { "agent:next" } },
             new IssueDetail { Identifier = "prio-101", Title = "Priority Test 2", Description = "test", Labels = new[] { "agent:next" } }
         });
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-prio-test",
             DisplayName = "Priority Test Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
         // Note: dispatch without connecting agents so items stay Pending long enough to assert
         var r1 = await DispatchIssueAsync("prio-100");
         var r2 = await DispatchIssueAsync("prio-101");
@@ -1101,14 +1098,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         });
 
         // Seed a kiro,dotnet agent profile so AssignmentEnricher can resolve it
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-kiro-dotnet-lifecycle",
             DisplayName = "K8s Lifecycle Test Profile",
-            MatchLabels = new[] { "kiro", "dotnet" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "kiro", "dotnet" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // ── Step 1: Distribute via KubernetesWorkDistributor (synchronous dispatch) ──
         var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();

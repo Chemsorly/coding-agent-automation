@@ -59,14 +59,13 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         var profiles = await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
         if (!profiles.Any(p => p.Id == "profile-edge-e2e"))
         {
-            await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+            await Fixture.SeedRoutedProfileAsync(new AgentProfile
             {
                 Id = "profile-edge-e2e",
                 DisplayName = "Edge Case Agent Profile",
-                MatchLabels = new[] { "edge-e2e" },
-                AgentProviderConfigId = "agent-e2e",
+                JobTemplate = E2ERouting.Key(new[] { "edge-e2e" }),
                 Enabled = true
-            }, CancellationToken.None);
+            });
         }
     }
 
@@ -380,14 +379,13 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
     {
         // Arrange: two agents with different labels
         // Seed a special profile that matches "special-label"
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-special-e2e",
             DisplayName = "Special Label Profile",
-            MatchLabels = new[] { "special-label" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "special-label" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Seed template that requires "special-label" (via RequiredLabels on repo provider config)
         await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig

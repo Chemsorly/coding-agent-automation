@@ -58,13 +58,6 @@ public sealed class SettingsPage
 
     // ── Per-kind Add shortcuts ──────────────────────────────────────────
 
-    /// <summary>Navigates to the Agent section and clicks the "+ Add Agent Provider" button.</summary>
-    public async Task ClickAddAgentProviderAsync()
-    {
-        await SelectTreeNodeAsync("Agent");
-        await ClickAddProviderAsync();
-    }
-
     /// <summary>Navigates to the Issue section and clicks the "+ Add Issue Provider" button.</summary>
     public async Task ClickAddIssueProviderAsync()
     {

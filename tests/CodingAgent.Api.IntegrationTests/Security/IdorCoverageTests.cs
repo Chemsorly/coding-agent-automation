@@ -33,7 +33,6 @@ public sealed class IdorCoverageTests(ApiWebApplicationFactory factory)
         ["GET /api/ui/settings/projects/{id}"] = GlobalAdminOnly,
         ["GET /api/ui/settings/provider-configs/{id}/agent-labels"] = GlobalAdminOnly,
         ["POST /api/ui/settings/provider-configs/{id}/agent-labels"] = GlobalAdminOnly,
-        ["PUT /api/ui/settings/projects/{projectId}/templates"] = GlobalAdminOnly,
     };
 
     /// <summary>Every ID-taking UI endpoint, as <c>METHOD route</c>, with the ID parameters it takes.</summary>

@@ -161,34 +161,86 @@ public static class ConfigEndpoints
 
     // ── Agent profiles ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Spec 053 req 1.3: the 400 for a profile body without tool settings, which only a form of the previous release
+    /// (match labels and a provider config) sends.
+    /// </summary>
+    internal const string StaleProfileForm = "This page is out of date; reload";
+
+    /// <summary>
+    /// Saves a profile (spec 053 req 1.3, 1.5): it needs tool settings, a display name no other profile has and a job
+    /// template the Helm values define with a tool; it cannot be disabled while routes name it.
+    /// </summary>
     internal static async Task<IResult> SaveAgentProfile(
         [FromBody] AgentProfile profile,
         IAgentProfileStore store,
         JobTemplateStore templates,
+        AgentRoutingStore routing,
+        IProjectStore projects,
         CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(profile.JobTemplate) && templates.GetAllTemplates().Count > 0)
+        if (profile.Settings is null)
+            return TypedResults.BadRequest(StaleProfileForm);
+
+        var profiles = await store.LoadAgentProfilesAsync(ct);
+        if (ValidateAgentProfile(profile, profiles, templates.ToolsByKey()) is { } error)
+            return TypedResults.BadRequest(error);
+
+        var stored = profiles.FirstOrDefault(p => p.Id == profile.Id);
+        if (!profile.Enabled && stored?.Enabled != false)
         {
-            var key = profile.JobTemplateKey();
-            if (templates.Resolve(key) is null)
-                // TODO: [WARNING] This BadRequest branch has no integration test. The issue test
-                // requirements list "An unknown key returns 400 when the template store has templates".
-                // Without a test, inverting the condition or changing the response code would go
-                // undetected by CI. See ConfigEndpointTests.cs for the tracking TODO.
-                return TypedResults.BadRequest($"Job template [{key}] does not exist in the Helm values (jobTemplates).");
+            var routes = await RoutesNamingAsync(profile.Id, routing, projects, ct);
+            if (routes.Count > 0)
+                return TypedResults.BadRequest(AgentRouteReferences.RefusalText(stored?.DisplayName ?? profile.DisplayName, "disabled", routes));
         }
 
         return await SaveAsync(() => store.SaveAgentProfileAsync(profile, ct));
     }
 
+    /// <summary>Deletes a profile, unless routes name it (spec 053 req 1.5).</summary>
     internal static async Task<IResult> DeleteAgentProfile(
         string id,
         IAgentProfileStore store,
+        AgentRoutingStore routing,
+        IProjectStore projects,
         CancellationToken ct)
     {
+        var routes = await RoutesNamingAsync(id, routing, projects, ct);
+        if (routes.Count > 0)
+        {
+            var name = (await store.LoadAgentProfilesAsync(ct)).FirstOrDefault(p => p.Id == id)?.DisplayName ?? id;
+            return TypedResults.BadRequest(AgentRouteReferences.RefusalText(name, "deleted", routes));
+        }
+
         await store.DeleteAgentProfileAsync(id, ct);
         return TypedResults.Ok();
     }
+
+    /// <summary>Why <paramref name="profile"/> cannot be saved, or null. Job templates are checked when the Helm values define any.</summary>
+    private static string? ValidateAgentProfile(
+        AgentProfile profile, IReadOnlyList<AgentProfile> profiles, IReadOnlyDictionary<string, string> toolsByKey)
+    {
+        if (string.IsNullOrWhiteSpace(profile.DisplayName))
+            return "A display name is required.";
+        var name = profile.DisplayName.Trim();
+        var duplicate = profiles.FirstOrDefault(p => p.Id != profile.Id
+            && string.Equals(p.DisplayName?.Trim(), name, StringComparison.OrdinalIgnoreCase));
+        if (duplicate is not null)
+            return $"Another agent profile is named '{duplicate.DisplayName}'.";
+        if (string.IsNullOrWhiteSpace(profile.JobTemplate))
+            return "A job template is required.";
+        if (toolsByKey.Count == 0)
+            return null;
+
+        var key = profile.JobTemplateKey();
+        if (!toolsByKey.TryGetValue(key, out var providerType))
+            return $"Job template [{key}] does not exist in the Helm values (jobTemplates).";
+        return AgentToolCatalog.Find(providerType) is null ? AgentRouteResolver.NoToolText(key, profile) : null;
+    }
+
+    private static async Task<IReadOnlyList<string>> RoutesNamingAsync(
+        string profileId, AgentRoutingStore routing, IProjectStore projects, CancellationToken ct) =>
+        AgentRouteReferences.Find(profileId, await routing.LoadAsync(ct), await projects.LoadAllTemplatesAsync(ct));
 
     // ── Quality gate configs ───────────────────────────────────────────────
 
@@ -318,19 +370,28 @@ public static class ConfigEndpoints
         string projectId,
         [FromBody] PipelineJobTemplate template,
         IProjectStore store,
+        IAgentProfileStore profiles,
+        JobTemplateStore jobTemplates,
         CancellationToken ct)
     {
-        if (await store.GetProjectByIdAsync(projectId, ct) is null)
+        if (await store.GetProjectByIdAsync(projectId, ct) is not { } project)
             return TypedResults.NotFound($"Project {projectId} does not exist.");
 
-        // Spec 053: a body without routes keeps the stored ones, so a page that does not edit routes cannot drop rows
-        // saved after it loaded; an empty dictionary clears them.
-        if (template.AgentRoutes is null)
-        {
-            var stored = (await store.LoadTemplatesForProjectAsync(projectId, ct)).FirstOrDefault(t => t.Id == template.Id);
-            if (stored?.AgentRoutes is not null)
-                template = template with { AgentRoutes = stored.AgentRoutes };
-        }
+        // Spec 053 req 10.4: a template of another project is not saved through this one (templates/move moves it).
+        var stored = (await store.LoadAllTemplatesAsync(ct)).FirstOrDefault(t => t.Id == template.Id);
+        if (stored is not null && !project.TemplateIds.Contains(template.Id))
+            return TypedResults.NotFound($"Template {template.Id} is not in project {projectId}.");
+
+        // Spec 053 req 3.5: repository rows follow the rules of the global rows.
+        var routeErrors = AgentRouteValidator.ValidateTemplateRoutes(
+            template.AgentRoutes, await profiles.LoadAgentProfilesAsync(ct), jobTemplates.ToolsByKey());
+        if (routeErrors.Count > 0)
+            return TypedResults.BadRequest(string.Join("\n", routeErrors));
+
+        // Spec 053 req 3.6: a body without routes keeps the stored ones, so a page that does not edit routes cannot drop
+        // rows saved after it loaded; an empty dictionary clears them.
+        if (template.AgentRoutes is null && stored?.AgentRoutes is not null)
+            template = template with { AgentRoutes = stored.AgentRoutes };
 
         var conflict = await FindTemplateConflictAsync(template, projectId, store, ct);
         if (conflict is not null)

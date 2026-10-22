@@ -5,9 +5,11 @@ using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Api.Client;
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -50,18 +52,13 @@ public sealed class ConfigEndpointTests
     public async Task AgentProfiles_TwoPutsWithSameId_ProduceOneRow()
     {
         var profileId = Guid.NewGuid().ToString();  // must be a parseable Guid (PostgresConfigurationStore validation)
-        var profile = new AgentProfile
-        {
-            Id = profileId,
-            DisplayName = "Test Agent",
-            AgentProviderConfigId = "prov-test-1"
-        };
+        var profile = AgentRoutingTestData.Profile(profileId, displayName: $"Upsert agent {profileId[..8]}");
 
         // Two PUTs with the same Id
         var r1 = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default);
         r1.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var profileUpdated = profile with { DisplayName = "Updated Agent" };
+        var profileUpdated = profile with { DisplayName = $"Updated agent {profileId[..8]}" };
         var r2 = await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profileUpdated, PipelineJsonOptions.Default);
         r2.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -69,20 +66,15 @@ public sealed class ConfigEndpointTests
         var response = await _admin.GetAsync("/api/ui/settings/agent-profiles");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var profiles = await response.Content.ReadFromJsonAsync<List<AgentProfile>>(PipelineJsonOptions.Default);
+        var profiles = (await response.Content.ReadFromJsonAsync<UiAgentProfilesPage>(PipelineJsonOptions.Default))?.Profiles;
         profiles.Should().NotBeNull();
         profiles!.Where(p => p.Id == profileId).Should().HaveCount(1,
             "two PUTs with the same ID must produce exactly one row (upsert semantics)");
     }
 
-    // TODO: [WARNING] Three tests required by issue #3560 are missing from this file:
-    // 1. "PUT then GET of an agent profile keeps jobTemplate" — verifies JSON serialisation and
-    //    the save/load round trip preserve the new AgentProfile.JobTemplate field.
-    // 2. "An unknown key returns 400 when the template store has templates" — exercises the new
-    //    BadRequest branch in ConfigEndpoints.SaveAgentProfile when templates.Resolve(key) is null.
-    //    This is the only non-trivial new validation branch; without this test a regression in
-    //    ConfigEndpoints (e.g., inverted condition, wrong response code) would go undetected.
-    // 3. "An export and import round trip keeps jobTemplate" — verifies export/import path preserves the field.
+    // TODO: [WARNING] A test required by issue #3560 is missing from this file: "An export and import round trip
+    // keeps jobTemplate" — verifies export/import path preserves the field. (The jobTemplate round trip and the
+    // unknown-key 400 are in AgentRoutingSettingsEndpointTests.)
 
     // ── ProviderConfigs ───────────────────────────────────────────────────────────
 

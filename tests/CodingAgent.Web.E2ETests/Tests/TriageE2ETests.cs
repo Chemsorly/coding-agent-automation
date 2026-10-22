@@ -31,14 +31,13 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
             Enabled = true,
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-triage",
             DisplayName = "Triage profile",
-            MatchLabels = [AgentLabel],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([AgentLabel]),
             Enabled = true,
-        }, CancellationToken.None);
+        });
     }
 
     private static TriageResult CauseFound() => new()

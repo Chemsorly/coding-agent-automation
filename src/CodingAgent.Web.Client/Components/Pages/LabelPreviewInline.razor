@@ -2,7 +2,7 @@
 
 <div class="label-preview-inline">
     <div class="label-preview-section">
-        <span class="label-preview-heading">@(IsFormContext ? "Resolved Labels:" : "Labels:")</span>
+        <span class="label-preview-heading">@(IsFormContext ? "Stack Labels:" : "Labels:")</span>
         @foreach (var label in Preview.Labels)
         {
             <span class="provider-label">@label</span>
@@ -28,35 +28,10 @@
             }
         </div>
     }
-    @if (Preview.Profiles.Count > 0)
+    @if (Preview.QualityGates.Count == 0 && Preview.Reviewers.Count == 0)
     {
         <div class="label-preview-section">
-            <span class="label-preview-heading"><Icon Name="bot" Size="12" /> Agent Profiles:</span>
-            @foreach (var pr in Preview.Profiles)
-            {
-                <span class="label-preview-item label-preview-pr">@pr</span>
-            }
-        </div>
-    }
-    <div class="label-preview-section">
-        <span class="label-preview-heading"><Icon Name="monitor" Size="12" /> Agents:</span>
-        @if (Preview.Agents.Count > 0)
-        {
-            @foreach (var ag in Preview.Agents)
-            {
-                <span class="label-preview-item label-preview-ag">@ag</span>
-            }
-            <span class="monitoring-muted">(@Preview.OnlineAgentCount online)</span>
-        }
-        else
-        {
-            <span class="monitoring-muted">No agents available</span>
-        }
-    </div>
-    @if (Preview.QualityGates.Count == 0 && Preview.Reviewers.Count == 0 && Preview.Profiles.Count == 0 && Preview.Agents.Count == 0)
-    {
-        <div class="label-preview-section">
-            <span class="monitoring-muted">No label-mapped resources match these labels</span>
+            <span class="monitoring-muted">No quality gates or reviewers match these labels</span>
         </div>
     }
 </div>

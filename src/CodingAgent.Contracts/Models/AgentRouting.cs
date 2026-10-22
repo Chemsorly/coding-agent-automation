@@ -70,6 +70,16 @@ public static class AgentRouteLabels
     /// <summary>The name of the default row.</summary>
     public const string DefaultRow = "Default";
 
+    /// <summary>The task types in the order the routing tables list them (req 2.1).</summary>
+    public static IReadOnlyList<WorkItemTaskType> TaskTypes { get; } =
+    [
+        WorkItemTaskType.Implementation,
+        WorkItemTaskType.Review,
+        WorkItemTaskType.Decomposition,
+        WorkItemTaskType.Triage,
+        WorkItemTaskType.Consolidation,
+    ];
+
     /// <summary>The name a task type has on the Routing page.</summary>
     public static string TaskType(WorkItemTaskType taskType) => taskType switch
     {

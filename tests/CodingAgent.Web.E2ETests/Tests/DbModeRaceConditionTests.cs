@@ -52,14 +52,13 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
         var profiles = await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
         if (!profiles.Any(p => p.Id == "profile-race-e2e"))
         {
-            await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+            await Fixture.SeedRoutedProfileAsync(new AgentProfile
             {
                 Id = "profile-race-e2e",
                 DisplayName = "Race Condition Agent Profile",
-                MatchLabels = new[] { "race-e2e" },
-                AgentProviderConfigId = "agent-e2e",
+                JobTemplate = E2ERouting.Key(new[] { "race-e2e" }),
                 Enabled = true
-            }, CancellationToken.None);
+            });
         }
     }
 

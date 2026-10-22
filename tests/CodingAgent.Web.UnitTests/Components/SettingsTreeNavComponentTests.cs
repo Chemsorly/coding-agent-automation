@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using Bunit;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,18 +32,36 @@ public class SettingsTreeNavComponentTests : BunitContext
         Assert.Contains("Providers", cut.Markup);
         Assert.Contains("Projects", cut.Markup);
         Assert.Contains("Global Defaults", cut.Markup);
-        Assert.Contains("Label Routing", cut.Markup);
+        Assert.Contains("Agents", cut.Markup);
+        Assert.Contains("Quality", cut.Markup);
+        Assert.DoesNotContain("Label Routing", cut.Markup);
     }
 
     [Fact]
-    public void TreeNav_RendersProviderNodes()
+    public void TreeNav_RendersProviderNodes_WithoutTheFormerAgentNode()
     {
         var cut = Render<SettingsTreeNav>();
 
-        Assert.Contains("Issue", cut.Markup);
-        Assert.Contains("Repository", cut.Markup);
-        Assert.Contains("Agent", cut.Markup);
+        // Spec 053 req 1.6: Providers are Issue, Repository and Pipeline; agents have their own group.
+        GroupNodes(cut, "Providers").Should().Equal("Issue", "Repository", "Pipeline");
     }
+
+    [Fact]
+    public void TreeNav_AgentsAndQuality_HaveTheirNodes()
+    {
+        var cut = Render<SettingsTreeNav>();
+
+        GroupNodes(cut, "Agents").Should().Equal("Agent Profiles", "Routing");
+        GroupNodes(cut, "Quality").Should().Equal("Quality Gate Configs", "Reviewer Configs");
+        cut.Find($"a[href='settings?section={SettingsNodes.AgentRouting}']").TextContent.Trim().Should().Be("Routing");
+    }
+
+    private static List<string> GroupNodes(IRenderedComponent<SettingsTreeNav> cut, string group) =>
+        cut.FindAll(".tree-group")
+            .Single(g => g.QuerySelector("button.tree-group-header")!.TextContent.Trim() == group)
+            .QuerySelectorAll(".tree-group-children a")
+            .Select(a => a.TextContent.Trim())
+            .ToList();
 
     [Fact]
     public void TreeNav_RendersPipelineNodes()
@@ -74,7 +93,7 @@ public class SettingsTreeNavComponentTests : BunitContext
         var cut = Render<SettingsTreeNav>();
 
         var headers = cut.FindAll("button.tree-group-header");
-        Assert.Equal(5, headers.Count);
+        Assert.Equal(6, headers.Count);
     }
 
     [Fact]
@@ -178,8 +197,8 @@ public class SettingsTreeNavComponentTests : BunitContext
 
         // After collapse, children should not be visible
         var childNodes = cut.FindAll(".tree-group-children");
-        // The Providers group children should be gone (Projects, Global Defaults, Label Routing, and Data Management remain)
-        Assert.Equal(4, childNodes.Count);
+        // The Providers group children should be gone (Projects, Global Defaults, Agents, Quality and Data Management remain)
+        Assert.Equal(5, childNodes.Count);
     }
 
     [Fact]
@@ -215,9 +234,9 @@ public class SettingsTreeNavComponentTests : BunitContext
     {
         var cut = Render<SettingsTreeNav>();
 
-        // All five groups should have children visible
+        // All six groups should have children visible
         var childGroups = cut.FindAll(".tree-group-children");
-        Assert.Equal(5, childGroups.Count);
+        Assert.Equal(6, childGroups.Count);
     }
 
     [Fact]
@@ -226,7 +245,7 @@ public class SettingsTreeNavComponentTests : BunitContext
         var cut = Render<SettingsTreeNav>();
 
         var chevrons = cut.FindAll(".tree-chevron");
-        Assert.Equal(5, chevrons.Count);
+        Assert.Equal(6, chevrons.Count);
         // All expanded by default, so all should show chevron-down icon
         Assert.All(chevrons, c => Assert.NotNull(c.QuerySelector("[data-icon='chevron-down']")));
     }

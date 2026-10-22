@@ -1,3 +1,4 @@
+using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Ui;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -30,8 +31,8 @@ public partial class TemplateTableSection
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, ConfigStatusSnapshot> TemplateStatuses { get; set; } = new Dictionary<string, ConfigStatusSnapshot>();
     [Parameter, EditorRequired] public IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; set; } = [];
-    [Parameter, EditorRequired] public IReadOnlyList<AgentProfile> AgentProfiles { get; set; } = [];
-    [Parameter, EditorRequired] public PipelineConfiguration PipelineConfig { get; set; } = new();
+    /// <summary>Spec 053 req 3.4: per template Id, the route each task type resolves to.</summary>
+    [Parameter, EditorRequired] public IReadOnlyDictionary<string, IReadOnlyList<UiResolvedRoute>> Routes { get; set; } = new Dictionary<string, IReadOnlyList<UiResolvedRoute>>();
 
     [Parameter] public bool ShowAddForm { get; set; }
     [Parameter] public TemplateFormModel AddForm { get; set; } = new();
@@ -54,16 +55,9 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback OnRemoveTemplate { get; set; }
     [Parameter] public EventCallback OnCancelDelete { get; set; }
 
-    [Inject] private IUiAgentClient AgentClient { get; set; } = default!;
-
-    /// <summary>The agents the label previews match against; read while one is shown.</summary>
-    private IReadOnlyList<AgentEntryDto> _agents = [];
-
     private string? _moveMenuTemplateId;
     private string? _expandedPreviewTemplateId;
     private string? _expandedFeaturesTemplateId;
-
-    private bool ShowsAgents => _expandedPreviewTemplateId != null || ShowAddForm;
 
     // Number of columns: 9 with the Actions column (admins), 8 without it.
     private int _columnCount => CanEdit ? 9 : 8;
@@ -71,27 +65,11 @@ public partial class TemplateTableSection
     private void ToggleMoveMenu(string? templateId) =>
         _moveMenuTemplateId = _moveMenuTemplateId == templateId ? null : templateId;
 
-    protected override Task OnInitializedAsync() => RefreshAgentsAsync();
-
-    private async Task ToggleLabelPreview(string templateId)
-    {
+    private void ToggleLabelPreview(string templateId) =>
         _expandedPreviewTemplateId = _expandedPreviewTemplateId == templateId ? null : templateId;
-        if (_expandedPreviewTemplateId is not null)
-            await RefreshAgentsAsync();
-    }
 
-    /// <summary>Reads the agents the user can see; on a failure the last list stays.</summary>
-    private async Task RefreshAgentsAsync()
-    {
-        try
-        {
-            _agents = await AgentClient.GetAgentsAsync();
-        }
-        catch (Exception)
-        {
-            // Keep the last list; the next tick retries.
-        }
-    }
+    private IReadOnlyList<UiResolvedRoute> RoutesOf(string templateId) =>
+        Routes.TryGetValue(templateId, out var routes) ? routes : [];
 
     private void ToggleFeatureExpand(string templateId) =>
         _expandedFeaturesTemplateId = _expandedFeaturesTemplateId == templateId ? null : templateId;
@@ -140,64 +118,36 @@ public partial class TemplateTableSection
         return groups;
     }
 
-    internal LabelPreviewResult GetLabelPreview(IReadOnlyList<string>? requiredLabels)
-    {
-        // Resolve labels: template's RequiredLabels take precedence; fall back to global default.
-        IReadOnlyList<string> labels;
-        if (requiredLabels is { Count: > 0 })
-        {
-            labels = requiredLabels;
-        }
-        else if (!string.IsNullOrWhiteSpace(PipelineConfig?.DefaultRequiredAgentLabels))
-        {
-            labels = PipelineConfig.DefaultRequiredAgentLabels
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList().AsReadOnly();
-        }
-        else
-            return new LabelPreviewResult();
+    internal LabelPreviewResult GetLabelPreview(IReadOnlyList<string>? requiredLabels) =>
+        LabelPreviewResult.For(requiredLabels, QualityGateConfigs, ReviewerConfigs);
 
-        if (labels.Count == 0)
-            return new LabelPreviewResult();
-
-        // Profile: resolve what dispatch would use (fewest covering labels wins, then Priority, then Id).
-        // ResolveByRequiredLabels is static — no ProfileResolver instance needed.
-        var matchedProfile = ProfileResolver.ResolveByRequiredLabels(AgentProfiles, labels);
-
-        // QG and Reviewers: resolved against the profile's MatchLabels when a profile was found,
-        // mirroring AssignmentEnricher behaviour. Fall back to repo labels when no profile matched.
-        var resolveLabels = matchedProfile?.MatchLabels ?? labels;
-        var qgResolver = new QualityGateResolver();
-        var matchedQgs = qgResolver.Resolve(QualityGateConfigs, resolveLabels);
-
-        var rvResolver = new ReviewerResolver();
-        var matchedRvs = rvResolver.Resolve(ReviewerConfigs, resolveLabels);
-
-        var allAgents = _agents
-            .Where(a => !a.Disabled)
-            .Where(a => labels.Count == 0 || labels.All(l => a.Labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
-            .ToList();
-        var onlineCount = allAgents.Count(a => a.Status != AgentStatus.Disconnected);
-
-        return new LabelPreviewResult
-        {
-            Labels = labels,
-            QualityGates = matchedQgs.Select(q => q.DisplayName).ToList(),
-            Reviewers = matchedRvs.Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})").ToList(),
-            Profiles = matchedProfile is not null ? [matchedProfile.DisplayName] : [],
-            Agents = allAgents.Select(a => a.AgentId.Value).ToList(),
-            OnlineAgentCount = onlineCount
-        };
-    }
-
+    /// <summary>
+    /// What a template's stack labels pick (spec 053 req 5.1, 5.2): the quality gate and reviewer configs whose match
+    /// labels intersect them, and those with no match labels. Stack labels pick no agent profile.
+    /// </summary>
     public sealed class LabelPreviewResult
     {
         public IReadOnlyList<string> Labels { get; init; } = [];
         public IReadOnlyList<string> QualityGates { get; init; } = [];
         public IReadOnlyList<string> Reviewers { get; init; } = [];
-        public IReadOnlyList<string> Profiles { get; init; } = [];
-        public IReadOnlyList<string> Agents { get; init; } = [];
-        public int OnlineAgentCount { get; init; }
+
+        /// <summary>The preview of <paramref name="labels"/>; empty (no preview) when there are none.</summary>
+        public static LabelPreviewResult For(
+            IReadOnlyList<string>? labels,
+            IReadOnlyList<QualityGateConfiguration> qualityGates,
+            IReadOnlyList<ReviewerConfiguration> reviewers)
+        {
+            if (labels is not { Count: > 0 })
+                return new LabelPreviewResult();
+            return new LabelPreviewResult
+            {
+                Labels = labels,
+                QualityGates = new QualityGateResolver().Resolve(qualityGates, labels).Select(q => q.DisplayName).ToList(),
+                Reviewers = new ReviewerResolver().Resolve(reviewers, labels)
+                    .Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})")
+                    .ToList(),
+            };
+        }
     }
 
     public class TemplateFormModel

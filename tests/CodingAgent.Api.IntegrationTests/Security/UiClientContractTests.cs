@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using CodingAgent.Contracts.Auth;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.Ui;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -66,25 +67,19 @@ public sealed class UiClientContractTests(ApiWebApplicationFactory factory)
     {
         var settings = Settings();
         var id = Guid.NewGuid().ToString();
-        await settings.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = id,
-            DisplayName = "contract",
-            AgentProviderConfigId = "ap-1",
-            MatchLabels = ["contract"],
-            McpServers = [new McpServerConfig { Name = "grafana", Env = new Dictionary<string, string> { ["TOKEN"] = "real-token" } }],
-        });
+        await settings.SaveAgentProfileAsync(AgentRoutingTestData.Profile(id, displayName: $"contract {id[..8]}",
+            mcpServers: [new McpServerConfig { Name = "grafana", Env = new Dictionary<string, string> { ["TOKEN"] = "real-token" } }]));
 
-        var listed = (await settings.GetAgentProfilesAsync()).Single(p => p.Id == id);
+        var listed = (await settings.GetAgentProfilesAsync()).Profiles.Single(p => p.Id == id);
         listed.McpServers.Single().Env["TOKEN"].Should().Be("****");
-        await settings.SaveAgentProfileAsync(listed with { DisplayName = "contract 2" });
+        await settings.SaveAgentProfileAsync(listed with { DisplayName = $"contract 2 {id[..8]}" });
 
         var stored = (await factory.Services.GetRequiredService<IAgentProfileStore>().LoadAgentProfilesAsync(CancellationToken.None)).Single(p => p.Id == id);
-        stored.DisplayName.Should().Be("contract 2");
+        stored.DisplayName.Should().Be($"contract 2 {id[..8]}");
         stored.McpServers.Single().Env["TOKEN"].Should().Be("real-token");
 
         await settings.DeleteAgentProfileAsync(id);
-        (await settings.GetAgentProfilesAsync()).Should().NotContain(p => p.Id == id);
+        (await settings.GetAgentProfilesAsync()).Profiles.Should().NotContain(p => p.Id == id);
     }
 
     [Fact]

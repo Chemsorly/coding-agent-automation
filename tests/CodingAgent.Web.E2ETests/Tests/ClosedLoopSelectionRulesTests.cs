@@ -52,14 +52,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }, CancellationToken.None);
 
     private Task SaveDefaultAgentProfileAsync(string id = "profile-sel") =>
-        Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = id,
             DisplayName = "Selection Rules Agent Profile",
-            MatchLabels = E2EMatchLabels,
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(E2EMatchLabels),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
     private async Task SetPollIntervalAsync(int maxRunsPerCycle, TimeSpan? pollInterval = null)
     {

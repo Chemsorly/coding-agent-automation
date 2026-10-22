@@ -22,9 +22,6 @@
                 <a class="@NodeClass(SettingsNodes.ProvidersRepository)" href="@Href(SettingsNodes.ProvidersRepository)" aria-current="@AriaCurrent(SettingsNodes.ProvidersRepository)">
                     Repository
                 </a>
-                <a class="@NodeClass(SettingsNodes.ProvidersAgent)" href="@Href(SettingsNodes.ProvidersAgent)" aria-current="@AriaCurrent(SettingsNodes.ProvidersAgent)">
-                    Agent
-                </a>
                 <a class="@NodeClass(SettingsNodes.ProvidersPipeline)" href="@Href(SettingsNodes.ProvidersPipeline)" aria-current="@AriaCurrent(SettingsNodes.ProvidersPipeline)">
                     Pipeline
                 </a>
@@ -99,16 +96,31 @@
     </div>
 
     <div class="tree-group">
-        <button class="tree-group-header" @onclick="ToggleLabelRouting" aria-expanded="@_labelRoutingExpanded.ToString().ToLower()">
-            <span class="tree-chevron"><Icon Name="@(_labelRoutingExpanded ? "chevron-down" : "chevron-right")" Size="12" /></span>
-            Label Routing
+        <button class="tree-group-header" @onclick="ToggleAgents" aria-expanded="@_agentsExpanded.ToString().ToLower()">
+            <span class="tree-chevron"><Icon Name="@(_agentsExpanded ? "chevron-down" : "chevron-right")" Size="12" /></span>
+            Agents
         </button>
-        @if (_labelRoutingExpanded)
+        @if (_agentsExpanded)
         {
             <div class="tree-group-children">
                 <a class="@NodeClass(SettingsNodes.AgentProfiles)" href="@Href(SettingsNodes.AgentProfiles)" aria-current="@AriaCurrent(SettingsNodes.AgentProfiles)">
                     Agent Profiles
                 </a>
+                <a class="@NodeClass(SettingsNodes.AgentRouting)" href="@Href(SettingsNodes.AgentRouting)" aria-current="@AriaCurrent(SettingsNodes.AgentRouting)">
+                    Routing
+                </a>
+            </div>
+        }
+    </div>
+
+    <div class="tree-group">
+        <button class="tree-group-header" @onclick="ToggleQuality" aria-expanded="@_qualityExpanded.ToString().ToLower()">
+            <span class="tree-chevron"><Icon Name="@(_qualityExpanded ? "chevron-down" : "chevron-right")" Size="12" /></span>
+            Quality
+        </button>
+        @if (_qualityExpanded)
+        {
+            <div class="tree-group-children">
                 <a class="@NodeClass(SettingsNodes.QualityGateConfigs)" href="@Href(SettingsNodes.QualityGateConfigs)" aria-current="@AriaCurrent(SettingsNodes.QualityGateConfigs)">
                     Quality Gate Configs
                 </a>
@@ -139,7 +151,8 @@
     private bool _providersExpanded = true;
     private bool _projectsExpanded = true;
     private bool _pipelineExpanded = true;
-    private bool _labelRoutingExpanded = true;
+    private bool _agentsExpanded = true;
+    private bool _qualityExpanded = true;
     private bool _dataManagementExpanded = true;
 
     private IReadOnlyList<PipelineProject> _projects = [];
@@ -180,9 +193,14 @@
         _pipelineExpanded = !_pipelineExpanded;
     }
 
-    private void ToggleLabelRouting()
+    private void ToggleAgents()
     {
-        _labelRoutingExpanded = !_labelRoutingExpanded;
+        _agentsExpanded = !_agentsExpanded;
+    }
+
+    private void ToggleQuality()
+    {
+        _qualityExpanded = !_qualityExpanded;
     }
 
     private void ToggleDataManagement()

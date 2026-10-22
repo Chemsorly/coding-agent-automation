@@ -88,14 +88,13 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         };
 
         // Enrichment resolves the agent profile from the "e2e" selector.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e-real-agent",
             DisplayName = "Real agent smoke profile",
-            MatchLabels = ["e2e"],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(["e2e"]),
             Enabled = true
-        }, ct);
+        });
         entity.Payload = System.Text.Json.JsonSerializer.Serialize(
             minimalPayload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
 
@@ -145,14 +144,13 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "real-agent-profile",
             DisplayName = "Real Agent Profile",
-            MatchLabels = ["e2e"],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(["e2e"]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Queue scripted outputs for the pipeline phases:
         // Phase 1 analysis: writes analysis.md + analysis-assessment.json (recommendation=ready)
@@ -269,14 +267,13 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             DecompositionEnabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "decomp-agent-profile",
             DisplayName = "Decomp Agent Profile",
-            MatchLabels = ["e2e"],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(["e2e"]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // ── First Phase 1 run ───────────────────────────────────────────────────────
 

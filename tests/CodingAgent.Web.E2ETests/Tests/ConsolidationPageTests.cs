@@ -103,8 +103,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
     [Fact]
     public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejectedMessage()
     {
-        // Arrange: seed a template but do NOT connect any agent (and no agent profiles configured
-        // in the E2E environment), so selector resolution returns null and the trigger is rejected.
+        // Arrange: seed a template but do NOT connect any agent and seed no route, so the trigger is refused.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-consol-2",
@@ -123,13 +122,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: rejection message shown — the new synchronous dispatch path rejects when no
-        // agent selector can be resolved (no agent profiles configured). The old queued-state
-        // path would return "queued" even without an agent, but the new path requires selector
-        // resolution to succeed before creating the Pending WorkItem.
+        // Assert: the refusal names its reason (spec 053 req 2.9): with no route, the API refuses to create the
+        // Pending WorkItem, and the page shows the routing text instead of a generic rejection.
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains("rejected", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText, message);
         Assert.True(await page.IsStatusMessageErrorAsync());
     }
 
@@ -162,8 +159,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
     [Fact]
     public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejected_ForBrainConsolidation()
     {
-        // Arrange: seed a template but do NOT connect any agent (and no agent profiles configured
-        // in the E2E environment), so selector resolution returns null and the trigger is rejected.
+        // Arrange: seed a template but do NOT connect any agent and seed no route, so the trigger is refused.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-consol-6",
@@ -189,13 +185,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: rejection message shown — the new synchronous dispatch path rejects when no
-        // agent selector can be resolved (no agent profiles configured). The old queued-state
-        // path would persist the run as Queued even without an agent, but the new path requires
-        // selector resolution to succeed before creating the Pending WorkItem.
+        // Assert: the refusal names its reason (spec 053 req 2.9): with no route, the API refuses to create the
+        // Pending WorkItem, and the page shows the routing text instead of a generic rejection.
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains("rejected", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText, message);
         Assert.True(await page.IsStatusMessageErrorAsync());
     }
 
@@ -223,14 +217,13 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-consol-s1",
             DisplayName = "S1 Profile",
-            MatchLabels = [],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var agent = new FakeAgentClient("agent-consol-s1");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -323,14 +316,13 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-consol-s2",
             DisplayName = "S2 Profile",
-            MatchLabels = [],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var agent = new FakeAgentClient("agent-consol-s2");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -460,14 +452,13 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-consol-s3b",
             DisplayName = "S3b Profile",
-            MatchLabels = [],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var agent = new FakeAgentClient("agent-consol-s3b");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -556,7 +547,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-consol-s5",
             DisplayName = "S5 Profile",
@@ -568,10 +559,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
             // pass for the wrong reason. Mitigation: assign a unique label (e.g. "consol-s5=true")
             // to both this profile and a dedicated agent that is intentionally not connected, to
             // prevent dispatch to any stale agent. (DotNetSpecialist WARNING:L1249)
-            MatchLabels = [],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         var page = new ConsolidationPage(Page, BaseUrl);
         await page.NavigateAsync();
@@ -678,7 +668,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-consol-s6",
             DisplayName = "S6 Profile",
@@ -690,10 +680,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
             // a specific label (e.g. "consol-s6=true") to both the profile and the agent
             // registered below, or use Fixture.JobController.DispatchOnceAsync() deterministically
             // rather than relying on the polling loop.
-            MatchLabels = [],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key([]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         var page = new ConsolidationPage(Page, BaseUrl);
         await page.NavigateAsync();

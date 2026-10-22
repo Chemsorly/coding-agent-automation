@@ -45,6 +45,8 @@ POST /api/ui/runs/{runId:guid}/redispatch -> Ui: Ui.AnyAccess, Ui.AnyOperator
 GET /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
 PUT /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
 DELETE /api/ui/settings/agent-profiles/{id} -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/agent-routing -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/agent-routing -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/export -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/first-run -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/ui/settings/first-run/dismiss -> Ui: Ui.Admin, Ui.AnyAccess

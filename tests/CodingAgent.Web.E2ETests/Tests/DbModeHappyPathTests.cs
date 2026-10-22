@@ -43,14 +43,13 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-db-e2e",
             DisplayName = "DB E2E Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
@@ -229,14 +228,13 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-secrets-e2e",
             DisplayName = "Secrets Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var agent = new FakeAgentClient("db-agent-secrets", "db-e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -280,14 +278,13 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-multi-e2e",
             DisplayName = "Multi Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Connect two agents
         await using var agent1 = new FakeAgentClient("db-multi-1", "db-e2e");
@@ -364,14 +361,13 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-db-token-e2e",
             DisplayName = "DB Token Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Connect agent
         await using var agent = new FakeAgentClient("db-agent-token", "db-e2e");
@@ -446,14 +442,13 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-db-brain-e2e",
             DisplayName = "DB Brain Agent Profile",
-            MatchLabels = new[] { "db-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         await using var agent = new FakeAgentClient("db-agent-brain", "db-e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);

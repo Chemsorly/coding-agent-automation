@@ -31,7 +31,7 @@ public static class ConfigBackedPipelinesClients
                     await config.Object.GetQualityGateConfigsAsync(ct) ?? [],
                     await config.Object.GetReviewerConfigsAsync(ct) ?? [],
                     [], // agent profiles: the Pipeline API client no longer serves them (spec 053)
-                    settings.DefaultRequiredAgentLabels,
+                    new Dictionary<string, IReadOnlyList<UiResolvedRoute>>(),
                     settings.MaxRetries);
             });
         return client;

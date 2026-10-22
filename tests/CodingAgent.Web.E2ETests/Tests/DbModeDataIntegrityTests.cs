@@ -50,14 +50,13 @@ public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-integrity-e2e",
             DisplayName = "Integrity E2E Agent Profile",
-            MatchLabels = s_IntegrityE2eMatchLabels,
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(s_IntegrityE2eMatchLabels),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         const string agentId = "integrity-agent-1";
         await using var agent = new FakeAgentClient(agentId, "integrity-e2e");
@@ -184,14 +183,13 @@ public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-integrity-failed-e2e",
             DisplayName = "Integrity Failed E2E Agent Profile",
-            MatchLabels = s_IntegrityE2eMatchLabels,
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(s_IntegrityE2eMatchLabels),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         const string agentId = "integrity-failed-agent-1";
         await using var agent = new FakeAgentClient(agentId, "integrity-e2e");

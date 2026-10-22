@@ -43,14 +43,13 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase
         }, CancellationToken.None);
 
         // Agent profile matching the fake agent's labels
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Connect fake agent
         await using var fakeAgent = new FakeAgentClient("loop-agent-1", "e2e");

@@ -33,14 +33,13 @@ public sealed class FleetViewTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-fleet",
             DisplayName = "Fleet E2E Profile",
-            MatchLabels = ["e2e"],
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(["e2e"]),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {

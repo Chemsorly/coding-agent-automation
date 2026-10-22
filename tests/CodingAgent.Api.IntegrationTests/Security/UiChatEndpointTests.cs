@@ -129,7 +129,7 @@ public sealed class UiChatEndpointTests
         var session = await client.StartAsync(ProfileId, ProjectA);
 
         options.Profiles.Should().ContainEquivalentOf(new UiChatProfile(
-            ProfileId, "Chat agent", [], JobTemplateProviderType.Kiro, ["auto", "claude-opus-5-5"],
+            ProfileId, "Chat agent", JobTemplateProviderType.Kiro, ["auto", "claude-opus-5-5"],
             ["auto", .. AgentToolCatalog.Kiro.Efforts], "claude-opus-5-5", "auto"));
         session.Should().Be(new UiChatSession("chat-endpoint-launched", "claude-opus-5-5"));
         (await Sessions.FindAsync("chat-endpoint-launched")).Should().BeEquivalentTo(
