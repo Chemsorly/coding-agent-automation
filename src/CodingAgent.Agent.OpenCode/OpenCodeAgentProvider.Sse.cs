@@ -18,6 +18,12 @@ internal sealed class SseCallState
 
     /// <summary>Tool calls already announced.</summary>
     public ConcurrentDictionary<string, byte> AnnouncedToolCalls { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Tool name of every tool call seen, by call id.</summary>
+    public ConcurrentDictionary<string, string> ToolCallNames { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Error text of every failed tool call, by call id.</summary>
+    public ConcurrentDictionary<string, string> ToolCallErrors { get; } = new(StringComparer.Ordinal);
 }
 
 public sealed partial class OpenCodeAgentProvider
@@ -148,7 +154,10 @@ public sealed partial class OpenCodeAgentProvider
             case "message.part.updated":
                 LastOutputTime = DateTime.UtcNow;
                 if (properties.Part is { } part)
+                {
+                    TrackToolPart(part, state);
                     EmitPart(part, state, onOutputLine);
+                }
                 break;
 
             case "session.idle":
@@ -165,6 +174,27 @@ public sealed partial class OpenCodeAgentProvider
                 // Discard metadata events (session.updated, session.diff, ...)
                 break;
         }
+    }
+
+    /// <summary>
+    /// Records the tool name and error text of a tool part into the call state for later
+    /// aggregation. Called for every <c>message.part.updated</c> event, before <see cref="EmitPart"/>,
+    /// so counting works even when <paramref name="state"/> has a null output callback.
+    /// </summary>
+    private static void TrackToolPart(SsePart part, SseCallState state)
+    {
+        if (part.Type != "tool" || part.State is not { } toolState || string.IsNullOrEmpty(part.Tool))
+            return;
+
+        var callId = part.CallId ?? part.Id;
+        if (callId is null)
+            return;
+
+        if (toolState.Status is "running" or "completed" or "error")
+            state.ToolCallNames.TryAdd(callId, part.Tool);
+
+        if (toolState.Status == "error")
+            state.ToolCallErrors.TryAdd(callId, toolState.Error ?? "");
     }
 
     /// <summary>

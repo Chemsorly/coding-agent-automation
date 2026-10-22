@@ -239,7 +239,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
                             OutputLines = outputLines.AsReadOnly(),
                             ErrorCategory = orchestrator.LastRunRejectedConfiguration
                                 ? AgentErrorCategory.ProviderMisconfigured
-                                : AgentErrorCategory.None
+                                : AgentErrorCategory.None,
+                            ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls)
                         };
                     }
                     finally
@@ -250,13 +251,25 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 () =>
                 {
                     _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
+                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly(), ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls) });
                 });
 
             // A main-conversation run without an ID started a new session, which becomes the main one
             // unless another call got there first. One whose ID could not be loaded ran in a fresh
             // session, which replaces it. Any other run continued the known main session: the newest
             // listed session may then be an isolated call's, so the list is not asked.
+            if (result.ToolCalls is not null)
+            {
+                foreach (var (key, counts) in result.ToolCalls)
+                {
+                    var slash = key.IndexOf('/');
+                    var server = slash >= 0 ? key[..slash] : key;
+                    var tool = slash >= 0 ? key[(slash + 1)..] : string.Empty;
+                    for (var i = 0; i < counts.FailedUnknown; i++)
+                        McpCallLog.Failed(_logger, server, tool, McpFailureCategory.Unknown, null, null);
+                }
+            }
+
             if (onMainConversation && resumeSessionId is null)
                 await TrackMainSessionAsync(request.WorkspacePath, normalizedPath, replace: false, ct);
             else if (onMainConversation && orchestrator.LastRunStartedFreshSession)
@@ -269,6 +282,15 @@ public partial class KiroCliAgentProvider : IAgentProvider
             if (isIsolatedCall && orchestrator is IDisposable disposable)
                 disposable.Dispose();
         }
+    }
+
+    private static IReadOnlyDictionary<string, McpCallCounts>? ToToolCalls(
+        IReadOnlyDictionary<string, KiroToolCallCount>? toolCounts)
+    {
+        if (toolCounts is null || toolCounts.Count == 0) return null;
+        return toolCounts.ToDictionary(
+            kvp => kvp.Key,
+            kvp => new McpCallCounts { Calls = kvp.Value.Calls, FailedUnknown = kvp.Value.Failed });
     }
 
     /// <summary>

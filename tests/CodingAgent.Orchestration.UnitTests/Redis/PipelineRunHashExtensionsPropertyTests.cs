@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Models;
 using StackExchange.Redis;
+using System.Reflection;
 
 namespace CodingAgent.Orchestration.UnitTests.Redis;
 
@@ -518,5 +519,133 @@ public class PipelineRunHashExtensionsPropertyTests
         entry.ToolCalls["web/search"].Calls.Should().Be(3);
         entry.UnavailableMcpServers.Should().NotBeNull();
         entry.UnavailableMcpServers!["grafana"].Should().Be(McpServerStatuses.NeedsAuth);
+    }
+
+    // ── Completion fields (HarnessVersion, RunMode, FailureCategory) ──────────
+
+    [Fact]
+    public void ToHashEntries_FromHash_PreservesCompletionFields()
+    {
+        var run = MakeMinimalRun();
+        run.HarnessVersion = "abc1234";
+        run.RunMode = RunMode.Rework;
+        run.FailureCategory = FailureReason.Timeout;
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.HarnessVersion.Should().Be("abc1234",
+            "HarnessVersion must survive the Redis hash round-trip");
+        restored.RunMode.Should().Be(RunMode.Rework,
+            "RunMode must survive the Redis hash round-trip");
+        restored.FailureCategory.Should().Be(FailureReason.Timeout,
+            "FailureCategory must survive the Redis hash round-trip");
+    }
+
+    /// <summary>
+    /// Ensures that RunMode.New (enum value 0) is serialised as the string "New" and
+    /// deserialised back as RunMode.New via the present-key path — not just via the
+    /// absent-key ?? RunMode.New fallback. Without this test a broken JEnum that treated
+    /// enum value 0 as null would pass the round-trip by accident.
+    /// </summary>
+    [Fact]
+    public void ToHashEntries_FromHash_PreservesRunModeNew()
+    {
+        var run = MakeMinimalRun();
+        run.RunMode = RunMode.New; // explicit zero-value round-trip
+
+        var entries = run.ToHashEntries();
+
+        // Assert the key is present with value "New" — distinguishes the present-key path from
+        // the absent-key fallback (?? RunMode.New), which would also produce RunMode.New if the
+        // key were missing, masking a broken serializer.
+        var runModeEntry = entries.FirstOrDefault(e => (string)e.Name! == "runMode");
+        runModeEntry.Value.ToString().Should().Be("New",
+            "RunMode.New must be serialised as the string \"New\" in the hash, not omitted as an empty string");
+
+        var restored = PipelineRunHashExtensions.FromHash(entries)!;
+        restored.RunMode.Should().Be(RunMode.New,
+            "RunMode.New must round-trip as the present-key value \"New\", not only via the absent-key default");
+    }
+
+    [Fact]
+    public void FromHash_MissingCompletionFields_GivesDefaults()
+    {
+        var run = MakeMinimalRun();
+        run.HarnessVersion = "abc1234";
+        run.RunMode = RunMode.Rework;
+        run.FailureCategory = FailureReason.Timeout;
+
+        // Strip the three fields — simulates a hash written before this feature
+        var hash = run.ToHashEntries()
+            .Where(e => (string)e.Name! != "harnessVersion"
+                     && (string)e.Name! != "runMode"
+                     && (string)e.Name! != "failureCategory")
+            .ToArray();
+
+        var restored = PipelineRunHashExtensions.FromHash(hash)!;
+
+        restored.HarnessVersion.Should().BeNull(
+            "a hash without harnessVersion must give null, not throw");
+        restored.RunMode.Should().Be(RunMode.New,
+            "a hash without runMode must default to RunMode.New");
+        restored.FailureCategory.Should().BeNull(
+            "a hash without failureCategory must give null, not throw");
+    }
+
+    // ── Guard: every writable PipelineRun property must be stored or explicitly excluded ──
+
+    // Not in the hash on purpose. Add a property here only with a reason.
+    private static readonly Dictionary<string, string> NotInHash = new()
+    {
+        ["OutputLines"] = "Redis list run:{id}:output",
+        ["ChatHistory"] = "Redis list run:{id}:chat",
+        ["QualityGateHistory"] = "Redis list run:{id}:qg",
+        ["RetryErrors"] = "Redis list run:{id}:retryerrors",
+        ["CompletedAt"] = "deprecated shadow of CompletedAtOffset",
+        ["PodLogTail"] = "set by RunLifecycleManager.FailRunAsync after RemoveRun",
+        ["AnalysisContent"] = "set only in the agent process",
+        ["CodeReviewSkipReason"] = "set only in the agent process",
+        ["DroppedIdentifiersByFile"] = "set only in the agent process",
+        ["NotReappliedIdentifiersByFile"] = "set only in the agent process",
+        ["LinkedIssueContexts"] = "set only in the agent process",
+        ["PrMarkedReadyAt"] = "set only in the agent process",
+    };
+
+    [Fact]
+    public void ToHashEntries_StoresEveryWritableProperty()
+    {
+        // Collect all public instance properties with a public set or init accessor.
+        var writableProps = typeof(PipelineRun)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.SetMethod is { IsPublic: true })
+            .Select(p => p.Name)
+            .ToList();
+
+        // Derive the expected hash field name for each property.
+        // Rule: lower-case first letter, plus two explicit renames.
+        static string ToHashFieldName(string propName) => propName switch
+        {
+            "DecompositionSubIssuesCreated" => "decompSubIssuesCreated",
+            "DecompositionSubIssuesAttempted" => "decompSubIssuesAttempted",
+            _ => char.ToLowerInvariant(propName[0]) + propName[1..]
+        };
+
+        // Get all field names actually present in a minimal run's hash.
+        var hashFieldNames = MakeMinimalRun()
+            .ToHashEntries()
+            .Select(e => (string)e.Name!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var missing = new List<string>();
+        foreach (var prop in writableProps)
+        {
+            if (NotInHash.ContainsKey(prop)) continue;
+            var fieldName = ToHashFieldName(prop);
+            if (!hashFieldNames.Contains(fieldName))
+                missing.Add($"{prop} (expected hash key: \"{fieldName}\")");
+        }
+
+        missing.Should().BeEmpty(
+            "every writable PipelineRun property must be stored in the hash or listed in NotInHash with a reason");
     }
 }

@@ -210,7 +210,7 @@ Cache token fields are populated for **OpenCode** and **Claude Code** agents. Ki
 
 **Claude Code usage:** the provider reads the `result` event of `claude -p --output-format stream-json` and reports, per call, input / output / reasoning / cache tokens, the CLI's cost estimate (`total_cost_usd`), turns, API time, web searches, a per-model breakdown and subscription rate-limit readings (`rate_limit_event`). A resumed session reports the whole conversation's totals, so the provider subtracts what it saw at the end of the previous call. The per-model breakdown and rate-limit readings are logged per call (`Claude Code model usage` / `Claude Code rate limit` log lines); the totals feed the counters above.
 
-`PipelineRunSummary.PhaseBreakdown` is keyed by the raw phase key (e.g. `analysis`, `codegen`, `review_correctness`, `quality_gate`). Each entry carries `Tokens` and `Cost`; the Run page (`/runs/{id}`) renders it as the "Cost & token breakdown" table (the pipeline sidebar shows the same data as "Cost Breakdown"). It is `null` for runs recorded before the feature existed.
+`PipelineRunSummary.PhaseBreakdown` is keyed by the raw phase key (e.g. `analysis`, `codegen`, `review_correctness`, `quality_gate`). Each entry carries `Tokens` and `Cost`; the Run page (`/runs/{id}`) renders it as the "Cost & token breakdown" table (the pipeline sidebar shows the same data as "Cost Breakdown"). It is `null` for runs recorded before the feature existed. The run page also shows the tool calls per server ("MCP & web tools") and per phase (the "Tools" column).
 
 ### MCP tool calls
 
@@ -221,6 +221,8 @@ Each phase entry in `PipelineRunSummary.PhaseBreakdown` also carries:
 
 `PipelineRunSummary.McpServers` holds the names of the MCP servers that were configured (and enabled) for the run, regardless of whether they were called. This lets the UI show a server that was configured but never called.
 
+**Claude Code** populates these fields from `tool_use` blocks in `assistant` events (calls), `tool_result` blocks in `user` events (failures), and the `mcp_servers` array of the `init` system event (unavailable servers).
+
 Two Warning log lines are emitted from agent pods (starting when each provider sub-issue lands):
 
 | Event | Message template | Properties |
@@ -230,6 +232,8 @@ Two Warning log lines are emitted from agent pods (starting when each provider s
 
 `McpError` is masked (secrets replaced with `***`) and cut to 200 characters before logging.
 
+**Kiro** populates `ToolCalls` from kiro-cli's stderr `[tool]` lines. Limitations: the CLI reports no failure reason (all failures count as `FailedUnknown`); status lines carry no call ID, so a failure is only attributed to a key when exactly one call was outstanding at the time (parallel calls are counted but not attributed); `UnavailableMcpServers` is always null for Kiro.
+
 **LogQL example** — total failed calls by server and cause over 24 hours:
 
 ```logql
@@ -237,6 +241,10 @@ sum by (McpServer, McpFailureCategory) (count_over_time({service_name="coding-ag
 ```
 
 There is no metric for tool calls, to keep active series low.
+
+The **Attention page** (`/attention`) surfaces MCP server health automatically. For each server, the pipeline examines the runs loaded by the page (newest first). The first run that is not neutral (i.e., the server was either called or unavailable) determines the outcome: if that run shows the server as unavailable in any phase, or shows every call failing with a non-"other" cause (connection, auth, or unknown), the server appears in an "MCP servers" card with the reason and the count of consecutive problem runs. A server is removed from the card as soon as a newer OK run exists for it.
+
+**OpenCode** sources tool-call data from SSE `message.part.updated` tool parts (call counts and error texts) and server statuses from `GET /mcp`; when `GET /mcp` is unavailable the provider falls back to the configured server names in `McpConfigPath` to perform tool-key matching.
 
 ### LLM Usage Telemetry Architecture
 

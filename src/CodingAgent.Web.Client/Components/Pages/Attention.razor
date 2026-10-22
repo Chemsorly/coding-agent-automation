@@ -27,7 +27,7 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Attention</h1>
-            <span class="cockpit-page-sub">@(_loading ? "… items" : AttentionItemsLabel(_sections.Sum(s => s.Rows.Count) + _triages.Count)) that may need a human — triages here, the rest in the issue tracker</span>
+            <span class="cockpit-page-sub">@(_loading ? "… items" : AttentionItemsLabel(_sections.Sum(s => s.Rows.Count) + _triages.Count + _mcpProblems.Count)) that may need a human — triages here, the rest in the issue tracker</span>
         </div>
         <RefreshBar OnRefresh="RefreshAsync" IsLoading="@_loading" StorageKey="autoRefresh.attention" />
     </div>
@@ -74,6 +74,29 @@
             </div>
         }
 
+        @if (_mcpProblems.Count > 0)
+        {
+            <div class="cockpit-card" data-testid="attention-section-mcp">
+                <div class="cockpit-card-header">
+                    <span style="display: inline-flex; align-items: center; gap: 9px;">
+                        <span style="width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #0B5566; background: var(--bg-info);"><Icon Name="plug" Size="15" /></span>
+                        <h2>MCP servers</h2>
+                    </span>
+                    <span data-testid="attention-section-count-mcp" style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@_mcpProblems.Count</span>
+                </div>
+                @foreach (var p in _mcpProblems)
+                {
+                    <div class="cockpit-run-row" data-testid="attention-mcp-row-@p.Server" @onclick="() => OpenRun(p.LastProblemRun.RunId)">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">@p.Server</div>
+                            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">@p.Reason · @p.ProblemRuns run(s) in a row · last: @p.LastProblemRun.IssueIdentifier</div>
+                        </div>
+                        <Icon Name="chevron-right" Size="16" Class="cockpit-row-chevron" />
+                    </div>
+                }
+            </div>
+        }
+
         @foreach (var sec in _sections.Where(s => s.Rows.Count > 0))
         {
             <div class="cockpit-card" data-testid="attention-section-@sec.TestId">
@@ -107,7 +130,7 @@
             </div>
         }
 
-        @if (_sections.Sum(s => s.Rows.Count) + _triages.Count == 0)
+        @if (_sections.Sum(s => s.Rows.Count) + _triages.Count + _mcpProblems.Count == 0)
         {
             <div class="cockpit-card"><div class="cockpit-empty">Nothing needs attention right now.</div></div>
         }
@@ -178,6 +201,7 @@
     private string? _error;
     private List<Section> _sections = new();
     private IReadOnlyList<TriageListItem> _triages = [];
+    private IReadOnlyList<McpServerProblem> _mcpProblems = [];
     private Dictionary<string, RunDiagnosis?> _diagnoses = new();
 
     // Blocked issues are a LIVE provider query (see BlockedIssuesService) — loaded after first render.
@@ -258,6 +282,7 @@
             var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, Logger, _cts.Token);
             var attn = AttentionAggregator.Aggregate(items, triages);
             _triages = attn.TriagesNeedingYou;
+            _mcpProblems = attn.McpServerProblems;
 
             _diagnoses = attn.FailedRuns.ToDictionary(
                 r => r.RunId,

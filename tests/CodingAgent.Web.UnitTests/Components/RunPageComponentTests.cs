@@ -1388,6 +1388,182 @@ public class RunPageComponentTests : BunitContext
         cut.Markup.Should().Contain("&lt;img");
         cut.Markup.Should().NotContain("<img src=x");
     }
+
+    // ── Issue #3823: MCP & web tools block and Tools column ───────────────
+
+    [Fact]
+    public void RunToolsBlock_RendersRowPerServerWithCallsAndFailures()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3823",
+            IssueTitle = "MCP tools test",
+            FinalStep = PipelineStep.Completed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            McpServers = ["sonarqube"],
+            PhaseBreakdown = new Dictionary<string, PhaseUsage>
+            {
+                ["analysis"] = new PhaseUsage(1000, 0.05m) with
+                {
+                    ToolCalls = new Dictionary<string, McpCallCounts>
+                    {
+                        ["sonarqube/get_issues"] = new McpCallCounts { Calls = 10, FailedOther = 2 },
+                    },
+                },
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var block = cut.Find("[data-testid='run-tools']");
+        var row = cut.Find("[data-testid='run-tools-server-sonarqube']");
+        row.TextContent.Should().Contain("10 call(s)");
+        row.TextContent.Should().Contain("2 failed");
+        // The failure span's title should contain the breakdown
+        var failureSpan = row.QuerySelector("[title]");
+        failureSpan.Should().NotBeNull();
+        failureSpan!.GetAttribute("title").Should().Contain("other 2");
+        // Tools line appears below the call count
+        block.TextContent.Should().Contain("get_issues ×10");
+    }
+
+    [Fact]
+    public void RunToolsBlock_RendersNotCalledForConfiguredServerWithZeroCalls()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3823",
+            IssueTitle = "MCP not called test",
+            FinalStep = PipelineStep.Completed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            McpServers = ["grafana"],
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var row = cut.Find("[data-testid='run-tools-server-grafana']");
+        row.TextContent.Should().Contain("not called");
+        cut.FindAll("[data-testid='run-tools-unavailable-grafana']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RunToolsBlock_RendersUnavailableChip()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3823",
+            IssueTitle = "MCP unavailable test",
+            FinalStep = PipelineStep.Completed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            McpServers = ["sonarqube"],
+            PhaseBreakdown = new Dictionary<string, PhaseUsage>
+            {
+                ["analysis"] = new PhaseUsage(0, null) with
+                {
+                    UnavailableMcpServers = new Dictionary<string, string>
+                    {
+                        ["sonarqube"] = "needs-auth",
+                    },
+                },
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var chip = cut.Find("[data-testid='run-tools-unavailable-sonarqube']");
+        chip.TextContent.Should().Contain("unavailable (needs-auth)");
+        chip.GetAttribute("class").Should().Contain("cockpit-chip");
+    }
+
+    [Fact]
+    public void RunToolsBlock_AbsentForOldRunWithNullMcpServersAndNoToolCalls()
+    {
+        // MakeSummary produces McpServers = null and PhaseBreakdown = null — an old run
+        var summary = MakeSummary(PipelineRunType.Implementation, PipelineStep.Completed);
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.FindAll("[data-testid='run-tools']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void PhaseBreakdownTable_HasToolsColumnAndShowsDashWhenNoToolCalls()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3823",
+            IssueTitle = "Phase tools column test",
+            FinalStep = PipelineStep.Completed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsage>
+            {
+                ["analysis"] = new PhaseUsage(1000, 0.05m),
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Expand the collapsible
+        cut.Find(".phase-breakdown-header").Click();
+
+        var thead = cut.Find(".monitoring-table thead");
+        thead.TextContent.Should().Contain("Tools");
+        // Row shows "—" when there are no tool calls
+        var tbody = cut.Find(".monitoring-table tbody");
+        tbody.TextContent.Should().Contain("—");
+    }
+
+    [Fact]
+    public void PhaseBreakdownTable_ToolsColumnShowsSummaryWhenCallsPresent()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3823",
+            IssueTitle = "Phase tools summary test",
+            FinalStep = PipelineStep.Completed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsage>
+            {
+                ["analysis"] = new PhaseUsage(1000, 0.05m) with
+                {
+                    ToolCalls = new Dictionary<string, McpCallCounts>
+                    {
+                        ["sonarqube/get_issues"] = new McpCallCounts { Calls = 20 },
+                        ["web/search"] = new McpCallCounts { Calls = 2 },
+                    },
+                },
+            },
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.Find(".phase-breakdown-header").Click();
+
+        var tbody = cut.Find(".monitoring-table tbody");
+        tbody.TextContent.Should().Contain("sonarqube 20");
+        tbody.TextContent.Should().Contain("web 2");
+    }
 }
 
 /// <summary>
