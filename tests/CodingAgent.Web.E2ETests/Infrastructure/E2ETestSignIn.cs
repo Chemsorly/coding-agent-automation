@@ -17,8 +17,12 @@ public static class E2ETestSignIn
     /// <summary>Bound to global <c>readonly</c>.</summary>
     public const string ReaderUser = "e2e-reader";
 
-    /// <summary>Bound to <c>operator</c> on the seeded "Default" project.</summary>
+    /// <summary>Bound to <c>operator</c> on the seeded "E2E Team" project.</summary>
     public const string TeamGroup = "e2e-team";
+
+    /// <summary>The stable project ID the <see cref="TeamGroup"/> is bound to.
+    /// Not the Default project (all-zeros GUID), which takes no project bindings.</summary>
+    public const string TeamProjectId = "e2e00000-0000-0000-0000-000000000001";
 
     private static readonly (string Name, string Value)[] Bindings =
     [
@@ -26,7 +30,7 @@ public static class E2ETestSignIn
         ("Auth__Rbac__Bindings__0__Role", "readonly"),
         ("Auth__Rbac__Bindings__1__Group", TeamGroup),
         ("Auth__Rbac__Bindings__1__Role", "operator"),
-        ("Auth__Rbac__Bindings__1__ProjectId", "00000000-0000-0000-0000-000000000000"),
+        ("Auth__Rbac__Bindings__1__ProjectId", TeamProjectId),
     ];
 
     public static void ApplyBindings()

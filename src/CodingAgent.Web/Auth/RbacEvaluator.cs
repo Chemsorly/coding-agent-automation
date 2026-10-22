@@ -75,7 +75,8 @@ public sealed class RbacEvaluator : IRbacEvaluator
             if ((group is null) == (user is null))
                 return null;
             var projectId = string.IsNullOrWhiteSpace(options.ProjectId) ? null : ProjectIds.Normalize(options.ProjectId);
-            if (role == AccessRole.Admin && projectId is not null)
+            // The Default project (all-zeros GUID) takes no project bindings.
+            if (projectId is not null && projectId == ProjectIds.Normalize(CodingAgent.Pipeline.Models.WellKnownIds.DefaultProjectId))
                 return null;
             return new Binding(group, user, role, projectId);
         }

@@ -81,7 +81,7 @@ else
                         Open repository ↗
                     </a>
                 }
-                @if (Access.HasGlobalOperate && template.RepoProviderId is not null)
+                @if (Access.CanOperate(PageService.Project?.Id) && template.RepoProviderId is not null)
                 {
                     <button class="btn-save" @onclick="() => OpenRefactoringModal(template.Id, template.Name)"
                             title="Trigger refactoring scan for this repository">
@@ -268,7 +268,7 @@ else
                         <div class="settings-status status-success">@_behaviourSuccess</div>
                     }
 
-                    @if (Access.IsAdmin)
+                    @if (Access.CanAdminister(PageService.Project?.Id))
                     {
                         <div class="form-group">
                             <label>Name *</label>

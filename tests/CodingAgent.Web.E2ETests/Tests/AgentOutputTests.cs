@@ -46,8 +46,10 @@ public sealed partial class AgentOutputTests : E2ETestBase
     private async Task<(JobAssignmentMessage assignment, string runId)> SeedDispatchAndAcceptAsync(
         FakeAgentClient agent,
         string issueIdentifier,
-        string templateName = "Output Test Template")
+        string templateName = "Output Test Template",
+        string? projectId = null)
     {
+        var targetProjectId = projectId ?? WellKnownIds.DefaultProjectId;
         // TODO: [WARNING] Hardcoded IDs "output-template-1" and "output-profile-e2e" are shared
         // across all three test scenarios. This is safe because ResetAllAsync runs between tests,
         // but if a future test calls this helper twice in a single test body (without an
@@ -55,7 +57,7 @@ public sealed partial class AgentOutputTests : E2ETestBase
         // a duplicate-key error in the store. Consider using unique IDs per call (e.g. a Guid
         // suffix) or adding a guard that throws on re-seed to make the single-call-per-test
         // contract explicit.
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        await Fixture.ConfigStore.SaveTemplateAsync(targetProjectId, new PipelineJobTemplate
         {
             Id = "output-template-1",
             Name = templateName,
@@ -439,7 +441,8 @@ public sealed partial class AgentOutputTests : E2ETestBase
     {
         await using var agent = new FakeAgentClient("output-agent-s5", "e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-        var (assignment, runId) = await SeedDispatchAndAcceptAsync(agent, "out-s5");
+        // Seed the run in the E2E Team project so the TeamGroup scoped-operator can view it.
+        var (assignment, runId) = await SeedDispatchAndAcceptAsync(agent, "out-s5", projectId: E2ETestSignIn.TeamProjectId);
         await agent.ReportStepAsync(assignment.JobId, PipelineStep.CloningRepository);
 
         // The API ends the connection with SignalR's close message, after which either side may close the

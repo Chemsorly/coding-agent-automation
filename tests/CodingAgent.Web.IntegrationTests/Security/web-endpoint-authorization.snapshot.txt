@@ -36,6 +36,8 @@ GET /pipelines -> Page: (default), Access.Any
 POST /pipelines -> Page: (default), Access.Any
 GET /pipelines/{TemplateId} -> Page: (default), Access.Any
 POST /pipelines/{TemplateId} -> Page: (default), Access.Any
+GET /projects/{ProjectId} -> Page: (default), Access.Any
+POST /projects/{ProjectId} -> Page: (default), Access.Any
 GET /readyz -> Anonymous
 HEAD /readyz -> Anonymous
 GET /runs -> Page: (default), Access.Any

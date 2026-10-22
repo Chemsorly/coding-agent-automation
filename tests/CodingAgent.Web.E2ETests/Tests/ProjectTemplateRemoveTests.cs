@@ -44,12 +44,9 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        // Act: navigate to Settings → Projects → Test Project → Templates tab
-        var settingsPage = new SettingsPage(Page, BaseUrl);
-        await settingsPage.NavigateAsync();
-
-        // Click on the "Projects" tree node to expand and navigate
-        await settingsPage.SelectTreeNodeAsync("Test Project");
+        // Act: navigate directly to the project settings page (project nodes link to /projects/{id})
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/projects/{nonDefaultProjectId}");
+        await Page.WaitForSelectorAsync("h2", new() { Timeout = 10_000 });
 
         // Click the Templates tab
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
@@ -73,8 +70,9 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
         var templateListAfter = Page.Locator(".template-list");
         Assert.Equal(0, await templateListAfter.CountAsync());
 
-        // Assert: navigate to Default project Templates tab and verify template is there
-        await settingsPage.SelectTreeNodeAsync("Default");
+        // Assert: navigate to Default project page and verify template is there
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/projects/{WellKnownIds.DefaultProjectId}");
+        await Page.WaitForSelectorAsync("h2", new() { Timeout = 10_000 });
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
         // Wait for the template-add-row which is unique to the Templates tab content
         await Page.WaitForSelectorAsync(".template-add-row", new() { Timeout = 5_000 });
@@ -99,11 +97,9 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        var settingsPage = new SettingsPage(Page, BaseUrl);
-        await settingsPage.NavigateAsync();
-
-        // Navigate to Default project
-        await settingsPage.SelectTreeNodeAsync("Default");
+        // Navigate directly to the Default project settings page
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/projects/{WellKnownIds.DefaultProjectId}");
+        await Page.WaitForSelectorAsync("h2", new() { Timeout = 10_000 });
 
         // Click the Templates tab
         await Page.ClickAsync(".tab-btn:has-text('Templates')");

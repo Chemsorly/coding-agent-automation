@@ -43,15 +43,35 @@ tests:
       - failedTemplate:
           errorPattern: "clientSecret.existingSecret is empty"
 
-  - it: fails when admin is bound to a project
+  - it: fails when any role is bound to the Default project
+    set:
+      auth.rbac.bindings:
+        - group: team-a
+          role: admin
+          projectId: 00000000-0000-0000-0000-000000000000
+    asserts:
+      - failedTemplate:
+          errorPattern: "Default project"
+
+  - it: fails when operator is bound to the Default project
+    set:
+      auth.rbac.bindings:
+        - group: team-a
+          role: operator
+          projectId: 00000000-0000-0000-0000-000000000000
+    asserts:
+      - failedTemplate:
+          errorPattern: "Default project"
+
+  - it: accepts admin bound to a non-default project
     set:
       auth.rbac.bindings:
         - group: team-a
           role: admin
           projectId: 6f1c2a9e-0000-0000-0000-000000000000
     asserts:
-      - failedTemplate:
-          errorPattern: "can only be bound globally"
+      - hasDocuments:
+          count: 1
 
   - it: fails when project key is used instead of projectId
     set:

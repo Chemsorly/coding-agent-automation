@@ -287,4 +287,70 @@ public class RepositoryPageTests : BunitContext
         // The secret value must NEVER appear anywhere in the rendered HTML, not even in hidden markup
         Assert.DoesNotContain("super-secret-value-xyz", cut.Markup);
     }
+
+    [Fact]
+    public void ProjectAdmin_CanEditBehaviourCard_ButNotBindingCard()
+    {
+        // A project admin can edit the Behaviour card but not the Binding card.
+        Services.AddTestAccess(TestAccess.Scoped((TestProjectId, AccessRole.Admin)));
+        var configClient = SetupConfigClient(MakePage());
+        RegisterServices(configClient, SetupSettingsClient());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        // Behaviour card: project admin can edit
+        var behaviourCard = cut.Find("[data-testid='behaviour-card']");
+        Assert.NotNull(behaviourCard.QuerySelector("input[type='text']")); // Name input
+        Assert.NotNull(behaviourCard.QuerySelector("button.btn-save")); // Save button
+
+        // Binding card: project admin sees read-only "Managed by the operator"
+        var bindingCard = cut.Find("[data-testid='binding-card']");
+        Assert.Contains("Managed by the operator", bindingCard.TextContent);
+        Assert.Null(bindingCard.QuerySelector("button.btn-save")); // No binding save button
+    }
+
+    [Fact]
+    public void ProjectOperator_BehaviourCard_IsReadOnly()
+    {
+        // The operator fixes the NOTE from ProjectOperator_BothCardsReadOnly_CanOpenDispatchButtons:
+        // a project operator must NOT be able to edit the Behaviour card.
+        Services.AddTestAccess(TestAccess.Scoped((TestProjectId, AccessRole.Operator)));
+        var configClient = SetupConfigClient(MakePage());
+        RegisterServices(configClient, SetupSettingsClient());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        var behaviourCard = cut.Find("[data-testid='behaviour-card']");
+        Assert.Null(behaviourCard.QuerySelector("button.btn-save")); // No Save button
+        Assert.Null(behaviourCard.QuerySelector("input[type='text']")); // No name input
+    }
+
+    [Fact]
+    public void ProjectOperator_CanStartRefactoringScan()
+    {
+        // A project operator on the template's project can see the Scan for refactorings button.
+        Services.AddTestAccess(TestAccess.Scoped((TestProjectId, AccessRole.Operator)));
+        var template = DefaultTemplate with { RepoProviderId = "rp-1" };
+        var configClient = SetupConfigClient(MakePage(template));
+        RegisterServices(configClient, SetupSettingsClient());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        // The scan button should be visible for a project operator
+        Assert.Contains("Scan for refactorings", cut.Markup);
+    }
+
+    [Fact]
+    public void ProjectReadOnly_CannotStartRefactoringScan()
+    {
+        // A project read-only user cannot see the Scan for refactorings button.
+        Services.AddTestAccess(TestAccess.Scoped((TestProjectId, AccessRole.ReadOnly)));
+        var template = DefaultTemplate with { RepoProviderId = "rp-1" };
+        var configClient = SetupConfigClient(MakePage(template));
+        RegisterServices(configClient, SetupSettingsClient());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        Assert.DoesNotContain("Scan for refactorings", cut.Markup);
+    }
 }

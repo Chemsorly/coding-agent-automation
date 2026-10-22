@@ -18,7 +18,7 @@ The rules a plausible change could break. Details are in the linked entries.
 - No agent pod receives the master key; each Job gets its own derived key, and an agent can resume only its own run. ([Agent keys](#hmac-key-derivation-for-agent-auth--intentional-simplicity))
 - The browser holds only the session cookie: user tokens stay on the web host, which holds no Kubernetes rights, and every UI HTTP request carries `X-CSRF: 1`. ([BFF](#web-ui-runs-as-webassembly-behind-a-bff), [Separate BFF](#the-bff-stays-a-separate-process-merging-it-into-the-api-was-rejected), [CSRF](#csrf-a-custom-header-on-every-ui-request-whatever-the-method))
 - Agents can't set human-approval labels such as `agent:epic-approved`. ([Gated labels](#dispatchgatedlabels-extensible-set-for-human-approval-required-label-transitions))
-- The web UI requires a signed-in user, and `admin` is only ever bound globally. ([Sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database), [Project scope](#admin-is-global-only-project-bindings-scope-actions-and-visibility))
+- The web UI requires a signed-in user. A project admin never changes connections, agent labels, the brain or another project, and the Default project takes no project bindings. ([Sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database), [Project scope](#project-admins-edit-their-projects-behaviour-the-operator-owns-bindings-and-shared-resources))
 - Clones of a project's other repositories are read-only and never reach the diff or a commit. ([Project review](#project-review-one-project-reviewer-per-project-with-read-only-clones-of-the-projects-other-repositories))
 - Only the API reads or writes PostgreSQL. ([Services](#only-the-api-owns-the-database-each-service-has-one-job))
 - Every background loop runs on one elected leader; the API runs no loops. ([Loops](#dispatch-loop-belongs-in-a-leader-elected-controller-not-the-stateless-api))
@@ -181,13 +181,12 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** an own user database; custom roles or policy lines; several identity providers at once; a switch that disables sign-in.
 **Revisit when:** a team needs a permission between the three roles, or an audit trail becomes a requirement.
 
-### admin is global-only; project bindings scope actions and visibility
-<!-- 2026-10-04 -->
-**Rule:** `admin` can only be bound globally. A project binding (`readonly` or `operator`) decides both what a user may do with the project's work and whose data the user sees: a user with only project bindings sees one project at a time and none of the cross-project pages. Agent Chat on a project needs `operator` there; a chat without a project needs global `operator`. Template changes, including the enable toggles, are admin-only.
-**Why:** Templates and settings point at the global provider credentials, so a project admin could reach other projects' repositories. A chat on a project gets that project's MCP servers and secrets, the same exposure as dispatching work on it.
-**Accepting:** a project team can't pause its own templates; a user bound to several projects switches between them.
-**Not:** project admins; an "All projects" view across a user's projects.
-**Revisit when:** templates stop sharing the global provider credentials.
+### Project admins edit their project's behaviour; the operator owns bindings and shared resources
+<!-- 2026-10-04; replaced 2026-10-10 -->
+**Rule:** A role binding is global or for one project, and `admin` may be bound to a project. A project binding decides what a user may do with the project and whose data the user sees: a user with only project bindings sees one project at a time and none of the cross-project pages. Agent Chat on a project needs `operator` there; a chat without a project needs global `operator`. A project admin edits the project's name, description, overrides, steering, secrets, MCP servers and project review, and the behaviour of its repositories. Only the operator (global `admin`) creates, deletes, enables or moves projects and repositories, and sets the epic tracker, connections, agent labels, brain, CI and the brain switches. The Default project takes no project bindings.
+**Why:** Teams own how the pipeline works on their repositories; the operator owns credentials, agents and what several projects share, such as a brain. Repository settings live on the project's own templates and connections stay with the operator, so a project admin can't reach another project's repositories. The Default project collects repositories that belong to no team. **Accepting:** a project admin can raise their project's timeouts and retries within the settings' ranges and so use more of the shared capacity; what project admins configure runs next to the agent's credentials.
+**Not:** project admins editing connections, agent labels, the brain or the epic tracker; custom roles; an "All projects" view across a user's projects.
+**Revisit when:** teams need to add their own repositories; then connections need a project.
 
 ### CSRF: a custom header on every UI request, whatever the method
 <!-- 2026-10-16 (spec 052) -->
@@ -497,7 +496,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Consolidation scheduling: automatic start after N, without autonomous churn
 <!-- 2026-10-10 -->
-**Rule:** The two consolidation counters and thresholds (0 = off): `AutoBrainConsolidationAfterRuns`, `AutoRefactoringScanAfterClosedIssues`. All default to 0 — nothing starts automatically until an operator sets a threshold.
+**Rule:** The two consolidation counters and thresholds (0 = off): `AutoBrainConsolidationAfterRuns`, `AutoRefactoringScanAfterClosedIssues`. All default to 0 — nothing starts automatically until an operator sets a threshold. Brain consolidation and refactoring detection can also be started by hand: from the Consolidation page (global operator), or a refactoring scan from its repository page, where an operator on the repository's project may start it.
 **Why:** People forget to run consolidation; the owner wants both to start automatically, but without self-feeding code churn. The refactoring scan never auto-dispatches issues (no `agent:next`), counts only issues it did not create, and is suppressed by backpressure when open proposals are at the limit.
 **Accepting:** The refactoring counter counts closed issues updated since the last scan (the tracker filters by update date, not close date).
 **Not:** A fixed timer; counting the scan's own issues; auto-dispatch from automatic scans.
@@ -549,7 +548,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Brain: runs append, consolidation curates
 <!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29; token scope 2026-10-11 -->
-**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental. A read-only brain gets a read-only token where the provider allows it.
+**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; the operator sets read-only globally, per project or per template, and a template can switch it on but not off. The feature is experimental. A read-only brain gets a read-only token where the provider allows it.
 **Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it. A GitLab or personal-access-token brain keeps its own token, so for those the pipeline's behaviour is the only guard; use a token without write access for a brain that should stay read-only.
 **Not:** a database store (loses git history and inspectability); expiry by age (drops rare but useful entries); periodic full resets; brain access per provider or per run.
 **Revisit when:** the feature becomes stable, brain size measurably slows runs, or consolidation keeps finding nothing to change.
@@ -739,5 +738,6 @@ The owner has no preference in these areas. Follow best practice and the surroun
 
 Decisions that no longer hold. Don't bring one back without asking the owner.
 
-- Target user: single operator/power-user — no RBAC for now (2026-07-04, retired 2026-10-05): superseded by [Web UI sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database) and [admin is global-only](#admin-is-global-only-project-bindings-scope-actions-and-visibility).
+- Target user: single operator/power-user — no RBAC for now (2026-07-04, retired 2026-10-05): superseded by [Web UI sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database) and [Project admins](#project-admins-edit-their-projects-behaviour-the-operator-owns-bindings-and-shared-resources).
 - Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only (2026-07-25, retired 2026-10-10): superseded by [Refactoring scan issues are independent](#refactoring-scan-issues-are-independent-ordered-work-goes-through-epics).
+- admin is global-only; project bindings scope actions and visibility (2026-10-04, retired 2026-10-10): superseded by [Project admins edit their project's behaviour](#project-admins-edit-their-projects-behaviour-the-operator-owns-bindings-and-shared-resources).
