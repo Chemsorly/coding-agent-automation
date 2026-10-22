@@ -74,13 +74,13 @@ public static class AgentRoutingMove
         await using var strategyDb = await dbFactory.CreateDbContextAsync(ct);
         var strategy = strategyDb.Database.CreateExecutionStrategy();
 
-        AgentRoutingMoveSummary? summary = null;
-        await strategy.ExecuteAsync(async cancellationToken =>
+        var summary = await strategy.ExecuteAsync(async cancellationToken =>
         {
             await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-            summary = await RunAsync(db, toolsByKey, logger, cancellationToken);
+            var moved = await RunAsync(db, toolsByKey, logger, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            return moved;
         }, ct);
 
         if (summary is not null)
@@ -264,8 +264,8 @@ public static class AgentRoutingMove
             {
                 logger.Warning(
                     "Agent routing move: operator triage on template {TemplateName} picked agent profile {AgentProfile} " +
-                    "at dispatch and {ClaimProfile} at claim; the Triage route keeps {AgentProfile}",
-                    template.Name, dispatch.DisplayName, claim?.DisplayName ?? "none", dispatch.DisplayName);
+                    "at dispatch and {ClaimProfile} at claim; the Triage route keeps the dispatch-time profile",
+                    template.Name, dispatch.DisplayName, claim?.DisplayName ?? "none");
             }
 
             var consolidation = LegacyRouting.ConsolidationProfile(template, state.DefaultRequiredAgentLabels, profiles, dispatchable);
