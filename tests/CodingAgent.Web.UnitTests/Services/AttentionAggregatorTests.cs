@@ -151,7 +151,7 @@ public class AttentionAggregatorTests
     [Fact]
     public void EmptyInput_ReturnsAllEmptyResult()
     {
-        var result = AttentionAggregator.Aggregate(new List<PipelineRunSummary>());
+        var result = AttentionAggregator.Aggregate([]);
 
         Assert.Empty(result.NeedsRefinement);
         Assert.Empty(result.FailedRuns);
@@ -350,5 +350,321 @@ public class AttentionAggregatorTests
         // Latest in the decomp group is T=3 (DecompositionAnalysis/Completed) → plan to approve
         Assert.Single(result.PlansToApprove);
         Assert.Empty(result.FailedRuns);
+    }
+
+    // ── FindMcpServerProblems tests ────────────────────────────────────────
+
+    private static PipelineRunSummary MakeRunWithMcp(
+        string issueId,
+        DateTimeOffset startedAt,
+        IReadOnlyList<string>? mcpServers = null,
+        IReadOnlyDictionary<string, string>? unavailableMcpServers = null,
+        IReadOnlyDictionary<string, McpCallCounts>? toolCalls = null)
+    {
+        PhaseUsage? phase = null;
+        if (unavailableMcpServers is not null || toolCalls is not null)
+        {
+            phase = new PhaseUsage(0, null)
+            {
+                ToolCalls = toolCalls,
+                UnavailableMcpServers = unavailableMcpServers,
+            };
+        }
+
+        return new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = issueId,
+            IssueTitle = $"Issue {issueId}",
+            RunType = PipelineRunType.Implementation,
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = startedAt,
+            McpServers = mcpServers,
+            PhaseBreakdown = phase is not null
+                ? new Dictionary<string, PhaseUsage> { ["codegen"] = phase }
+                : null,
+        };
+    }
+
+    private static McpCallCounts Calls(int calls, int failedConnection = 0, int failedAuth = 0, int failedOther = 0, int failedUnknown = 0)
+        => new() { Calls = calls, FailedConnection = failedConnection, FailedAuth = failedAuth, FailedOther = failedOther, FailedUnknown = failedUnknown };
+
+    /// <summary>
+    /// Newest run has sonarqube unavailable (needs-auth) → listed with "unavailable (needs-auth)", ProblemRuns = 1.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_UnavailableNeedsAuth_Listed()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                unavailableMcpServers: new Dictionary<string, string> { ["sonarqube"] = "needs-auth" }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("sonarqube", problem.Server);
+        Assert.Equal("unavailable (needs-auth)", problem.Reason);
+        Assert.Equal(1, problem.ProblemRuns);
+    }
+
+    /// <summary>
+    /// Newest run has 3 of 3 grafana calls failed (connection 2, auth 1) → "all 3 calls failed (connection 2, auth 1)".
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_AllCallsFailed_ConnectionAndAuth_Listed()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["grafana/query"] = Calls(calls: 2, failedConnection: 2),
+                    ["grafana/list"] = Calls(calls: 1, failedAuth: 1),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("grafana", problem.Server);
+        Assert.Equal("all 3 calls failed (connection 2, auth 1)", problem.Reason);
+        Assert.Equal(1, problem.ProblemRuns);
+    }
+
+    /// <summary>
+    /// Newest run has 2 of 2 calls failed but one of them is "other" → not listed (FailedOther > 0).
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_AllFailedButSomeOther_NotListed()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["github/get_issue"] = Calls(calls: 2, failedConnection: 1, failedOther: 1),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        Assert.Empty(result);
+    }
+
+    /// <summary>
+    /// Newest run has 1 of 3 calls failed (not all) → not listed.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_PartialFailure_NotListed()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["github/get_issue"] = Calls(calls: 3, failedConnection: 1),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        Assert.Empty(result);
+    }
+
+    /// <summary>
+    /// An OK run newer than a problem run → server is not listed.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_OkRunNewerThanProblem_NotListed()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            // T2 (newer) — OK: one call succeeded
+            MakeRunWithMcp("owner/repo#1", T2,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["github/get_issue"] = Calls(calls: 1),
+                }),
+            // T1 (older) — all calls failed
+            MakeRunWithMcp("owner/repo#2", T1,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["github/get_issue"] = Calls(calls: 2, failedConnection: 2),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        Assert.Empty(result);
+    }
+
+    /// <summary>
+    /// Pattern: problem (T4, newest), neutral (T3), problem (T2), OK (T1, oldest) → listed with ProblemRuns = 2.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_ProblemNeutralProblemOk_ListedWithProblemRunsTwo()
+    {
+        var T4 = new DateTimeOffset(2026, 1, 1, 16, 0, 0, TimeSpan.Zero);
+        var runs = new List<PipelineRunSummary>
+        {
+            // T4 (newest): problem — all calls failed
+            MakeRunWithMcp("owner/repo#4", T4,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["sonarqube/get_issues"] = Calls(calls: 1, failedConnection: 1),
+                }),
+            // T3: neutral — sonarqube configured but not called and not unavailable
+            MakeRunWithMcp("owner/repo#3", T3,
+                mcpServers: ["sonarqube"]),
+            // T2: problem — all calls failed
+            MakeRunWithMcp("owner/repo#2", T2,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["sonarqube/get_issues"] = Calls(calls: 2, failedAuth: 2),
+                }),
+            // T1 (oldest): OK — calls succeeded
+            MakeRunWithMcp("owner/repo#1", T1,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["sonarqube/get_issues"] = Calls(calls: 3),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("sonarqube", problem.Server);
+        Assert.Equal(2, problem.ProblemRuns);
+        Assert.Equal(T4, problem.LastProblemRun.StartedAtOffset);
+    }
+
+    /// <summary>
+    /// web/search calls that all failed → web is never listed.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_WebCallsFailed_WebNeverListed()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["web/search"] = Calls(calls: 3, failedConnection: 3),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        Assert.Empty(result);
+    }
+
+    /// <summary>
+    /// Server names that differ only in case are treated as one server.
+    /// "Sonarqube" and "sonarqube" must produce a single entry, not two.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_NamesInDifferentCase_TreatedAsOneServer()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            // T2 (newer): configured as "Sonarqube" (uppercase S) — neutral
+            MakeRunWithMcp("owner/repo#2", T2,
+                mcpServers: ["Sonarqube"]),
+            // T1 (older): all calls failed under "sonarqube" (lowercase)
+            MakeRunWithMcp("owner/repo#1", T1,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["sonarqube/get_issues"] = Calls(calls: 1, failedConnection: 1),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        // The neutral newer run means the first non-neutral is the problem at T1. Still one server.
+        var problem = Assert.Single(result);
+        Assert.Equal(1, problem.ProblemRuns);
+    }
+
+    /// <summary>
+    /// TotalCount from Aggregate includes McpServerProblems.Count.
+    /// </summary>
+    [Fact]
+    public void Aggregate_TotalCount_IncludesMcpProblems()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                unavailableMcpServers: new Dictionary<string, string> { ["sonarqube"] = "failed" }),
+        };
+
+        var result = AttentionAggregator.Aggregate(runs);
+
+        Assert.Single(result.McpServerProblems);
+        Assert.Equal(1, result.TotalCount);
+    }
+
+    /// <summary>
+    /// Runs with no tool data (no PhaseBreakdown, no McpServers) give an empty list.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_RunsWithNoToolData_EmptyResult()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRun("owner/repo#1", PipelineRunType.Implementation, PipelineStep.Completed, T1),
+            MakeRun("owner/repo#2", PipelineRunType.Implementation, PipelineStep.Failed, T2),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        Assert.Empty(result);
+    }
+
+    /// <summary>
+    /// Newest run has sonarqube unavailable with status "failed" → reason is "unavailable (failed)".
+    /// Exercises the else branch of BuildReason's unavailability check.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_UnavailableFailed_ReasonStringCorrect()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                unavailableMcpServers: new Dictionary<string, string> { ["sonarqube"] = "failed" }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("sonarqube", problem.Server);
+        Assert.Equal("unavailable (failed)", problem.Reason);
+    }
+
+    /// <summary>
+    /// When two distinct servers have problems, results are sorted newest LastProblemRun first.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_MultipleServers_SortedNewestFirst()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            // T1 (older): grafana problem
+            MakeRunWithMcp("owner/repo#1", T1,
+                unavailableMcpServers: new Dictionary<string, string> { ["grafana"] = "failed" }),
+            // T2 (newer): sonarqube problem
+            MakeRunWithMcp("owner/repo#2", T2,
+                unavailableMcpServers: new Dictionary<string, string> { ["sonarqube"] = "needs-auth" }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        Assert.Equal(2, result.Count);
+        // Newest first: sonarqube (T2) before grafana (T1).
+        Assert.Equal("sonarqube", result[0].Server);
+        Assert.Equal(T2, result[0].LastProblemRun.StartedAtOffset);
+        Assert.Equal("grafana", result[1].Server);
+        Assert.Equal(T1, result[1].LastProblemRun.StartedAtOffset);
     }
 }
