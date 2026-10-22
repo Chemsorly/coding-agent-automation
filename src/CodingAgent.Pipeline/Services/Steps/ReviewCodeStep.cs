@@ -22,23 +22,10 @@ public sealed class ReviewCodeStep : IPipelineStep
         if (context.Run.CodegenSessionId is not null)
             activity?.SetTag("pipeline.codegen_session_id", context.Run.CodegenSessionId);
 
-        IReadOnlyList<ReviewerConfiguration> resolvedReviewers;
-        if (context.PreResolvedReviewerConfigs is not null)
-        {
-            resolvedReviewers = context.PreResolvedReviewerConfigs;
-        }
-        else
-        {
-            var allReviewerConfigs = await context.ConfigStore.LoadReviewerConfigsAsync(ct);
-            var reviewerResolver = new ReviewerResolver();
-            var repoConfigForLabels = await context.ConfigStore.GetProviderConfigByIdAsync(context.Run.RepoProviderConfigId, ProviderKind.Repository, ct);
-            var requiredLabelsForReview = LabelResolver.ResolveRequiredLabels(repoConfigForLabels, context.Config);
-            resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
-        }
-
+        // The API resolves the reviewers from the template's stack labels and the job assignment carries them.
         // The project's reviewers join the others, so they run concurrently with them
-        resolvedReviewers = ProjectReview.AddReviewers(
-            resolvedReviewers, context.ProjectReviewers, context.ProjectReviewRepositories);
+        var resolvedReviewers = ProjectReview.AddReviewers(
+            context.PreResolvedReviewerConfigs ?? [], context.ProjectReviewers, context.ProjectReviewRepositories);
 
         // Store resolved reviewers so PostReviewFindingsStep can access them for per-agent retry
         context.ResolvedReviewerConfigs = resolvedReviewers;

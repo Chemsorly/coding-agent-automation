@@ -7,7 +7,9 @@ triages), writes down what it checked and what it found, and proposes 0–5 issu
 drafts in the app and create the issues they want.
 
 Triage is its own run type (`Triage`). It runs as a Kubernetes Job like every other run, with the same agent
-profiles, MCP servers, timeouts, RBAC and run page.
+profiles, MCP servers, timeouts, RBAC and run page. Its agent is the Triage route of the template that runs the job
+(the repository's Triage row, else the global Triage row, else the default route; see [Agent Routing](agent-routing.md)):
+for a label triage the polling template, for an operator triage the executor template.
 
 See also: [Issue Workflows — Flow 8](github-issue-workflows.md#flow-8-triage), [Configuration — Triage](configuration.md),
 [Projects](projects.md), [API Reference — Triage](api-reference.md#triage-endpoints).
@@ -29,8 +31,9 @@ range), the environment, where (a service, endpoint or page), the repository to 
 that was running, links and IDs (trace IDs, dashboards, a failed run, a ticket) and what you already tried.
 
 The side panel shows what the agent will use: the project's enabled repositories (the one that runs the job is
-marked), the MCP servers merged into the run (agent profile and project, by name), the context sources and the
-time limit. It also lists triages of the same project from the last 30 days whose titles share words with
+marked), the MCP servers merged into the run (the routed agent profile and the project, by name), the context sources and the
+time limit. When the executor's Triage route does not resolve, the panel shows the reason, and starting the triage is
+refused with `400` and the same text (for example `No agent route: set the default route in Settings → Agents → Routing`). It also lists triages of the same project from the last 30 days whose titles share words with
 yours, so you can open one instead of starting a duplicate.
 
 The job runs on the "start looking in" repository's template when you pick one, otherwise on the project's first
@@ -54,7 +57,7 @@ the other project's runs neither read nor write it.
 
 - The executor's repository, and every other enabled repository of the project cloned read-only into `repos/`
   (the same mechanism as [project epics](epic-decomposition.md#epic-scope-repo-epics-and-project-epics)).
-- The MCP servers of the agent profile and the project, project and repository steering, the brain (read-only)
+- The MCP servers of the routed agent profile and the project, project and repository steering, the brain (read-only)
   and the environment setup.
 - `.agent/issue-context.md`: the issue with its newest 50 comments, or the operator's report.
 - `.agent/triage-context.md`: the earlier attempts of this triage (verdict, summary, questions and the feedback

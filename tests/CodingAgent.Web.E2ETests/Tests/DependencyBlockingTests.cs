@@ -28,14 +28,13 @@ public sealed class DependencyBlockingTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -85,14 +84,13 @@ public sealed class DependencyBlockingTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -136,14 +134,13 @@ public sealed class DependencyBlockingTests : E2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {

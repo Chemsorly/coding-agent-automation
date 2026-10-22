@@ -52,16 +52,6 @@
                         OnSaved="OnGitHubProviderSaved"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
-                case SettingsNodes.ProvidersAgent:
-                    <AgentProviderSection
-                        Providers="_agentProviders"
-                        ProviderClient="ProviderClient"
-                        SettingsClient="SettingsClient"
-                        OnDelete="id => DeleteProvider(id, ProviderKind.Agent)"
-                        OnSaved="OnAgentProviderSaved"
-                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
-                        IsKubernetesMode="true" />
-                    break;
                 case SettingsNodes.ProvidersPipeline:
                     <PipelineProviderSection
                         Providers="_pipelineProviders"
@@ -118,8 +108,12 @@
                 case SettingsNodes.AgentProfiles:
                     <AgentProfileSection
                         ConfigClient="SettingsClient"
-                        AgentProviders="_agentProviders"
-                        IsKubernetesMode="true"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
+                case SettingsNodes.AgentRouting:
+                    <AgentRoutingSection
+                        SettingsClient="SettingsClient"
+                        ProviderClient="ProviderClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.QualityGateConfigs:
@@ -170,7 +164,6 @@
 
     private List<ProviderConfig> _issueProviders = new();
     private List<ProviderConfig> _repoProviders = new();
-    private List<ProviderConfig> _agentProviders = new();
     private List<ProviderConfig> _pipelineProviders = new();
 
     private string? _statusMessage;
@@ -194,6 +187,7 @@
         section == SettingsNodes.PipelineTriage ||
         section == SettingsNodes.PipelineAdvanced ||
         section == SettingsNodes.AgentProfiles ||
+        section == SettingsNodes.AgentRouting ||
         section == SettingsNodes.QualityGateConfigs ||
         section == SettingsNodes.ReviewerConfigs ||
         section == SettingsNodes.Projects ||
@@ -217,11 +211,15 @@
     /// <summary>
     /// The URL is the only source of the selected section: a missing or unknown section means the
     /// default one, so the sidebar's plain /settings link returns to it instead of keeping the last section.
+    /// The former agent provider node opens Agent Profiles, where the tool settings are now (spec 053 req 1.6).
     /// </summary>
     private void SelectNodeFromQuery() =>
-        _selectedNode = !string.IsNullOrEmpty(SectionFromQuery) && IsKnownSection(SectionFromQuery)
-            ? SectionFromQuery
-            : SettingsNodes.ProvidersIssue;
+        _selectedNode = SectionFromQuery switch
+        {
+            SettingsNodes.ProvidersAgent => SettingsNodes.AgentProfiles,
+            { Length: > 0 } section when IsKnownSection(section) => section,
+            _ => SettingsNodes.ProvidersIssue,
+        };
 
     private async Task LoadAllData()
     {
@@ -229,7 +227,6 @@
         {
             _issueProviders = (await ProviderClient.GetProviderConfigsAsync(ProviderKind.Issue, _cts.Token)).ToList();
             _repoProviders = (await ProviderClient.GetProviderConfigsAsync(ProviderKind.Repository, _cts.Token)).ToList();
-            _agentProviders = (await ProviderClient.GetProviderConfigsAsync(ProviderKind.Agent, _cts.Token)).ToList();
             _pipelineProviders = (await ProviderClient.GetProviderConfigsAsync(ProviderKind.Pipeline, _cts.Token)).ToList();
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
@@ -268,12 +265,6 @@
         await LoadAllData();
         ShowStatus($"{config.Kind} provider saved.");
         _modals?.ShowRelatedProviders(config);
-    }
-
-    private async Task OnAgentProviderSaved()
-    {
-        await LoadAllData();
-        ShowStatus("Agent provider saved.");
     }
 
     private async Task OnRelatedProvidersCreated()

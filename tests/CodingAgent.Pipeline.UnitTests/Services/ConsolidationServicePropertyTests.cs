@@ -95,7 +95,6 @@ public class ConsolidationServicePropertyTests : IDisposable
         var config = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
 
         var mockProjectStore = new Mock<IProjectStore>();
@@ -121,7 +120,6 @@ public class ConsolidationServicePropertyTests : IDisposable
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockDist2.Object));
 
         // First trigger succeeds

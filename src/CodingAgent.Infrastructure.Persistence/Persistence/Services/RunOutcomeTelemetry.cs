@@ -22,14 +22,15 @@ public static partial class RunOutcomeTelemetry
     public const string RunTypeTag = "run_type";
 
     /// <summary>
-    /// Queries the DB for the WorkItem's dispatch/completion timestamps, run type, and project context.
-    /// Returns <c>(null, "unknown", null, null)</c> immediately when <paramref name="dbFactory"/> is null.
+    /// Queries the DB for the WorkItem's dispatch/completion timestamps, run type, project context, and the tool and
+    /// model of its pinned route (spec 053 req 9.1; <c>unknown</c> for work items created before spec 053).
+    /// Returns <c>(null, "unknown", null, null, "unknown", "unknown")</c> immediately when <paramref name="dbFactory"/> is null.
     /// </summary>
-    public static async Task<(TimeSpan? Duration, string RunTypeTag, string? ProjectId, string? ProjectName)>
+    public static async Task<(TimeSpan? Duration, string RunTypeTag, string? ProjectId, string? ProjectName, string ProviderTag, string ModelTag)>
         ResolveRunContextAsync(Guid id, IDbContextFactory<PipelineDbContext>? dbFactory, CancellationToken ct)
     {
         if (dbFactory is null)
-            return (null, UnknownTag, null, null);
+            return (null, UnknownTag, null, null, UnknownTag, UnknownTag);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
@@ -58,6 +59,7 @@ public static partial class RunOutcomeTelemetry
                     x.w.DispatchedAt,
                     x.w.CompletedAt,
                     x.w.TaskType,
+                    x.w.Payload,
                     WorkItemProjectId = x.w.ProjectId,
                     RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
                     ProjectId = pr != null ? pr.ProjectId : null,
@@ -66,7 +68,7 @@ public static partial class RunOutcomeTelemetry
             .FirstOrDefaultAsync(ct);
 
         if (row is null)
-            return (null, UnknownTag, null, null);
+            return (null, UnknownTag, null, null, UnknownTag, UnknownTag);
 
         // The PipelineRuns row is often not written yet when the terminal status arrives, so fall back
         // to the project the WorkItem was dispatched for; without it most runs are tagged "unknown".
@@ -96,7 +98,34 @@ public static partial class RunOutcomeTelemetry
             ? resolvedRunType.Value.ToString().ToLowerInvariant()
             : UnknownTag;
 
-        return (duration, runTypeTag, projectId, projectName);
+        var (providerTag, modelTag) = RouteTags(row.Payload);
+        return (duration, runTypeTag, projectId, projectName, providerTag, modelTag);
+    }
+
+    /// <summary>
+    /// The <c>provider</c> and <c>model</c> tags from the route pinned in the work item's payload: the job template's tool
+    /// (the closed provider set) and the route's model, which the admin sets, so its cardinality is bounded. The model the
+    /// agent reports is not used: <c>auto</c> stays <c>auto</c>.
+    /// </summary>
+    private static (string Provider, string Model) RouteTags(string? payload)
+    {
+        if (string.IsNullOrEmpty(payload))
+            return (UnknownTag, UnknownTag);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payload);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("route", out var route)
+                || route.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return (UnknownTag, UnknownTag);
+            var tool = route.TryGetProperty("tool", out var t) && t.ValueKind == System.Text.Json.JsonValueKind.String ? t.GetString() : null;
+            var model = route.TryGetProperty("model", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.String ? m.GetString() : null;
+            return (PipelineTelemetry.NormalizeRunProvider(tool), string.IsNullOrWhiteSpace(model) ? UnknownTag : model);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return (UnknownTag, UnknownTag);
+        }
     }
 
     /// <summary>
@@ -159,7 +188,7 @@ public static partial class RunOutcomeTelemetry
     /// </summary>
     /// <remarks>
     /// <strong>Tag set for pipeline.run.outcomes:</strong> <c>run_type</c>, <c>outcome</c>,
-    /// <c>failure_reason</c>, and <c>pipeline.project_name</c>.
+    /// <c>failure_reason</c>, <c>pipeline.project_name</c>, <c>provider</c> and <c>model</c> (spec 053 req 9.1).
     /// </remarks>
     // TODO: [WARNING] The three non-nullable string parameters (runTypeTag, outcome, failureReasonTag)
     // lack ArgumentNullException.ThrowIfNull guards. All current call sites produce non-null values,
@@ -171,14 +200,18 @@ public static partial class RunOutcomeTelemetry
         string outcome,
         string failureReasonTag,
         string? projectName,
-        TimeSpan? duration)
+        TimeSpan? duration,
+        string? providerTag = null,
+        string? modelTag = null)
     {
-        // 4-tag label set: run_type, outcome, failure_reason, pipeline.project_name.
+        // 6-tag label set: run_type, outcome, failure_reason, pipeline.project_name, provider, model.
         PipelineTelemetry.RunOutcomes.Add(1,
             new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
             new KeyValuePair<string, object?>("outcome", outcome),
             new KeyValuePair<string, object?>("failure_reason", failureReasonTag),
-            new KeyValuePair<string, object?>("pipeline.project_name", projectName ?? UnknownTag));
+            new KeyValuePair<string, object?>("pipeline.project_name", projectName ?? UnknownTag),
+            new KeyValuePair<string, object?>("provider", providerTag ?? UnknownTag),
+            new KeyValuePair<string, object?>("model", modelTag ?? UnknownTag));
 
         if (duration.HasValue && duration.Value.TotalSeconds >= 0)
         {

@@ -9,9 +9,6 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// </summary>
 public sealed record DispatchPreparationResult
 {
-    /// <summary>Resolved agent profile for this dispatch.</summary>
-    public required AgentProfile ResolvedProfile { get; init; }
-
     /// <summary>Quality gate configurations applicable to this dispatch.</summary>
     public required IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; init; }
 
@@ -51,7 +48,7 @@ public sealed record DispatchPreparationResult
     /// <summary>The project this dispatch belongs to.</summary>
     public required PipelineProject Project { get; init; }
 
-    /// <summary>MCP server configs from the resolved profile.</summary>
+    /// <summary>The project's MCP server configs; the claim merges in the routed profile's (spec 053).</summary>
     public IReadOnlyList<McpServerConfig>? McpServers { get; init; }
 
     /// <summary>Trace context for distributed tracing propagation.</summary>

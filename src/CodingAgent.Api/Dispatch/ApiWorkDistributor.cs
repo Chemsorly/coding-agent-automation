@@ -25,7 +25,12 @@ internal sealed class ApiWorkDistributor(
         ArgumentNullException.ThrowIfNull(request);
         try
         {
-            var (outcome, workItemId) = await store.CreateAsync(request, ct);
+            var (outcome, workItemId, reason) = await store.CreateAsync(request, ct);
+            if (outcome == WorkItemCreateOutcome.Refused)
+            {
+                // Spec 053 DD2: no route, or one that cannot run. A configuration error, so not retried.
+                return new DistributionResult(false, null, reason, IsPermanentFailure: true);
+            }
             if (outcome == WorkItemCreateOutcome.LiveItemExists)
             {
                 logger.LogInformation(

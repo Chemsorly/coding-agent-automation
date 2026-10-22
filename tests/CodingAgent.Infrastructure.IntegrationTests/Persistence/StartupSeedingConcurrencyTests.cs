@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -51,12 +52,12 @@ public sealed class StartupSeedingConcurrencyTests : IClassFixture<StartupSeedin
             var seedingA = Task.Run(async () =>
             {
                 await start.Task;
-                await replicaA.RunStartupSeedingAsync(CancellationToken.None);
+                await replicaA.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
             });
             var seedingB = Task.Run(async () =>
             {
                 await start.Task;
-                await replicaB.RunStartupSeedingAsync(CancellationToken.None);
+                await replicaB.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
             });
             start.SetResult();
 

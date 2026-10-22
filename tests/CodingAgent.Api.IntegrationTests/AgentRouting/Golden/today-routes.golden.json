@@ -1,0 +1,2162 @@
+[
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000101",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "api",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000104",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "archive",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000108",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "go",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Implementation",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Review",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Decomposition",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Triage",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "legacy-java",
+    "taskType": "Consolidation",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000102",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "ml",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000101",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "nolabels",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000101",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "opus",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000107",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "rust",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000106",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "tools",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000104",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "with-default-labels",
+    "template": "web",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000101",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "api",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000101",
+    "profileName": "Kiro",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000104",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "archive",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000108",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "go",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000108",
+    "profileName": "Go",
+    "jobTemplateKey": "go,kiro",
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Implementation",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Review",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Decomposition",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Triage",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "legacy-java",
+    "taskType": "Consolidation",
+    "profileId": null,
+    "profileName": null,
+    "jobTemplateKey": null,
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000102",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000402",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "ml",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000102",
+    "profileName": "Polyglot",
+    "jobTemplateKey": "dotnet,kiro,python",
+    "model": "auto",
+    "effort": "",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000104",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "nolabels",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000105",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet,extra",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403",
+      "00000000-0000-0000-0000-000000000404"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000101",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "opus",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000103",
+    "profileName": "Kiro Opus",
+    "jobTemplateKey": "dotnet,kiro",
+    "model": "claude-opus-4-8",
+    "effort": "max",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000501",
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000107",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "rust",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000107",
+    "profileName": "Rust",
+    "jobTemplateKey": "kiro,rust",
+    "model": null,
+    "effort": null,
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000106",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "tools",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000106",
+    "profileName": "OpenCode",
+    "jobTemplateKey": "dotnet,opencode",
+    "model": "",
+    "effort": "turbo",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Implementation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Review",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Decomposition",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Triage",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ],
+    "reviewers": [
+      "00000000-0000-0000-0000-000000000502"
+    ],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": "00000000-0000-0000-0000-000000000104",
+    "operatorTriageQualityGates": [
+      "00000000-0000-0000-0000-000000000401",
+      "00000000-0000-0000-0000-000000000403"
+    ]
+  },
+  {
+    "scenario": "without-default-labels",
+    "template": "web",
+    "taskType": "Consolidation",
+    "profileId": "00000000-0000-0000-0000-000000000104",
+    "profileName": "Claude",
+    "jobTemplateKey": "claude,dotnet",
+    "model": "opus",
+    "effort": "xhigh",
+    "qualityGates": [],
+    "reviewers": [],
+    "mcpServers": [
+      "db",
+      "grafana"
+    ],
+    "operatorTriageClaimProfileId": null,
+    "operatorTriageQualityGates": null
+  }
+]

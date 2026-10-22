@@ -34,6 +34,8 @@ public class SettingsCoverageTests : BunitContext
     public SettingsCoverageTests()
     {
         _configClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
+        _configClient.Setup(c => c.GetAgentRoutingAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiAgentRoutingPage(new AgentRouting(), [], []));
     }
 
     [Fact]
@@ -49,7 +51,9 @@ public class SettingsCoverageTests : BunitContext
         offered.AddRange(SettingsOn(Render<PipelineConsolidationSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
         offered.AddRange(SettingsOn(Render<PipelineTriageSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
         offered.AddRange(SettingsOn(Render<PipelineAdvancedSection>(p => p.Add(s => s.ConfigClient, _configClient.Object))));
-        offered.AddRange(SettingsOnAgentProviderForm());
+        offered.AddRange(SettingsOn(Render<AgentRoutingSection>(p => p
+            .Add(s => s.SettingsClient, _configClient.Object)
+            .Add(s => s.ProviderClient, _providerClient.Object))));
 
         var settings = PipelineSettingsValidator.SettingPaths();
         settings.Except(InternalSettings).Except(offered).Should().BeEmpty(
@@ -90,18 +94,5 @@ public class SettingsCoverageTests : BunitContext
             collapsed.Click();
 
         return cut.FindAll("[data-setting]").Select(e => e.GetAttribute("data-setting")!).ToList();
-    }
-
-    /// <summary>ModelFetchTimeoutSeconds is edited in the Kiro agent provider form, in Kubernetes mode.</summary>
-    private List<string> SettingsOnAgentProviderForm()
-    {
-        var cut = Render<AgentProviderSection>(p => p
-            .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ProviderClient, _providerClient.Object)
-            .Add(s => s.SettingsClient, _configClient.Object)
-            .Add(s => s.IsKubernetesMode, true));
-        cut.Find(".btn-add").Click();
-
-        return SettingsOn(cut);
     }
 }

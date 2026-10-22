@@ -34,6 +34,7 @@
     <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Persistence\CodingAgent.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
+    <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
   </ItemGroup>
 
 </Project>

@@ -24,6 +24,7 @@ public sealed class PipelineRunEndpointTests
     public PipelineRunEndpointTests(ApiWebApplicationFactory factory)
     {
         _factory = factory;
+        factory.SeedDefaultRoute();
         _client = factory.CreateClient();
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", ApiWebApplicationFactory.ApiKey);

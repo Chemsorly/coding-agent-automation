@@ -60,11 +60,14 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
     public async Task<ConsolidationJobPreparationResult> PrepareAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
-        AgentProfile? profile,
+        ProviderConfig? agentConfig,
         CancellationToken ct)
     {
         var rawConfigs = new List<ProviderConfig>();
-        await ResolveAgentProviderConfigAsync(rawConfigs, profile, ct);
+        if (agentConfig is not null)
+            rawConfigs.Add(agentConfig);
+        else
+            _logger.Warning("ConsolidationJobPreparationService: no agent config supplied; no agent provider config will be injected.");
 
         var repoProviderId = "";
         string? brainProviderId = null;
@@ -95,41 +98,6 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
             BrainProviderConfigId = brainProviderId,
             PipelineConfiguration = pipelineConfiguration
         };
-    }
-
-    /// <summary>
-    /// Resolves the agent provider config from the supplied profile, appending to rawConfigs.
-    /// When the profile is null (work item queued before this change, or profile deleted/disabled),
-    /// no agent provider config is injected and a warning is logged.
-    /// </summary>
-    private async Task ResolveAgentProviderConfigAsync(
-        List<ProviderConfig> rawConfigs,
-        AgentProfile? profile,
-        CancellationToken ct)
-    {
-        if (profile is not null)
-        {
-            var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-            var agentConfig = agentConfigs.TryGetProviderConfig(profile.AgentProviderConfigId);
-            if (agentConfig is not null)
-            {
-                rawConfigs.Add(agentConfig);
-                _logger.Debug(
-                    "ConsolidationJobPreparationService: resolved agent provider via profile '{ProfileId}'",
-                    profile.Id);
-            }
-            return;
-        }
-
-        // No profile — cannot determine which agent provider to use.
-        // TODO: [WARNING] Requirement 8 says the warning should name the work item's selector, but this
-        // method no longer receives the selector (it accepts AgentProfile? directly). The inline comment
-        // "The caller logs the work item's selector" is also inaccurate: EnrichConsolidationCoreAsync
-        // returns null before calling PrepareAsync when profile is null, so in practice this branch is
-        // only reachable from direct calls (tests or future callers outside the current enrichment path).
-        _logger.Warning(
-            "ConsolidationJobPreparationService: no agent profile supplied — " +
-            "no agent provider config will be injected.");
     }
 
     /// <summary>

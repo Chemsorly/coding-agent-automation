@@ -61,6 +61,7 @@ public static class PipelineRunFactory
             consolidationRun.ConsolidationType = request.ConsolidationRunType;
             consolidationRun.ConsolidationTemplateId = request.ConsolidationTemplateId;
             consolidationRun.ConsolidationTemplateName = request.ConsolidationTemplateName;
+            ApplyRoute(consolidationRun, request.Route);
             return consolidationRun;
         }
 
@@ -120,7 +121,22 @@ public static class PipelineRunFactory
 
         run.ProjectId = request.ProjectId?.ToString();
         run.ProjectName = request.ProjectName;
+        ApplyRoute(run, request.Route);
 
         return run;
+    }
+
+    /// <summary>
+    /// Spec 053 req 8.1: the run records the profile, the model and the effort of the work item's pinned route. The
+    /// model is the route's, <c>auto</c> included; the agent's report does not replace it with null.
+    /// </summary>
+    private static void ApplyRoute(PipelineRun run, AgentRouteSnapshot? route)
+    {
+        if (route is null)
+            return;
+        run.AgentProfileId = route.ProfileId;
+        run.AgentProfileName = route.ProfileName;
+        run.AgentEffort = route.Effort;
+        run.ModelName = route.Model;
     }
 }

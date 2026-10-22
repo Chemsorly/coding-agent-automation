@@ -85,14 +85,13 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         });
 
         // Seed an AgentProfile so AssignmentEnricher can resolve the jc-e2e selector.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-jc-e2e",
             DisplayName = "JobController E2E Profile",
-            MatchLabels = TestLabels.Jce2e,
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key(TestLabels.Jce2e),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // ── Act: distribute and dispatch ──────────────────────────────────────────────
         var result = await DistributeDirectlyAsync(issueIdentifier, agentSelector: "jc-e2e");

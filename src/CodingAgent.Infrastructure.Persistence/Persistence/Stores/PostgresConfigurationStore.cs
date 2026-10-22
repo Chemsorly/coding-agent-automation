@@ -15,7 +15,7 @@ namespace CodingAgent.Infrastructure.Persistence.Stores;
 /// PipelineConfiguration is cached permanently (invalidated on write).
 /// Other configs use short-lived cache with configurable TTL (default 30s).
 /// </summary>
-public sealed class PostgresConfigurationStore : IConfigurationStore
+public sealed class PostgresConfigurationStore : IConfigurationStore, IAgentProfileStore
 {
     private static readonly ILogger Logger = Log.ForContext<PostgresConfigurationStore>();
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;

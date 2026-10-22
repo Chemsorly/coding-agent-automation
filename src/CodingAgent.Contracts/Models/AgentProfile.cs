@@ -3,9 +3,8 @@ using MessagePack;
 namespace CodingAgent.Pipeline.Models;
 
 /// <summary>
-/// A named configuration entity that maps a set of match labels to a specific agent provider config.
-/// During job dispatch, the orchestrator resolves which profile matches the selected agent
-/// and sends that profile's provider config.
+/// How an agent runs (spec 053): the Helm job template it runs on, which sets the tool, the tool's settings and the MCP
+/// servers. Which profile, model and effort run a task type is the routing table's choice (<see cref="AgentRouting"/>).
 /// </summary>
 [MessagePackObject]
 public sealed record AgentProfile
@@ -16,49 +15,44 @@ public sealed record AgentProfile
     [Key(1)]
     public required string DisplayName { get; init; }
 
-    [Key(2)]
-    public IReadOnlyList<string> MatchLabels { get; init; } = [];
-
-    [Key(3)]
-    public required string AgentProviderConfigId { get; init; }
+    // Key(2) retired — MatchLabels removed (spec 053: routes pick profiles; the configuration move reads old rows as raw JSON). Do NOT reuse this Key index
+    // Key(3) retired — AgentProviderConfigId removed (spec 053: the agent config is built from the profile and its route). Do NOT reuse this Key index
 
     [Key(4)]
     public bool Enabled { get; init; } = true;
 
-    [Key(5)]
-    public int Priority { get; init; } = 0;
+    // Key(5) retired — Priority removed (spec 053: nothing picks among profiles any more). Do NOT reuse this Key index
 
     [Key(6)]
     public IReadOnlyList<McpServerConfig> McpServers { get; init; } = [];
 
     /// <summary>
-    /// Key of the Kubernetes job template (the <c>labels</c> of a Helm <c>jobTemplates[]</c> entry)
-    /// that this profile's jobs run on. Null or empty: the profile's <see cref="MatchLabels"/> are the key.
+    /// Key of the Kubernetes job template (the <c>labels</c> of a Helm <c>jobTemplates[]</c> entry) that this profile's
+    /// jobs run on. Its <c>providerType</c> is the profile's tool. Required by validation, not by the <c>required</c>
+    /// keyword, so the configuration move can read rows from before spec 053.
     /// </summary>
     [Key(7)]
     public string? JobTemplate { get; init; }
 
     /// <summary>
-    /// Returns the canonical agent selector key for this profile. This is the single way to get a
-    /// profile's agent selector — all dispatch code must call this method rather than computing the
-    /// selector directly from <see cref="MatchLabels"/>.
-    /// <para>
-    /// When <see cref="JobTemplate"/> is not blank, the key is built from <see cref="JobTemplate"/>
-    /// (split on <c>,</c>, trimmed, empty entries removed, then normalised by
-    /// <see cref="AgentSelectorKey.From"/>). Otherwise the key is
-    /// <c>AgentSelectorKey.From(<see cref="MatchLabels"/>)</c>.
-    /// </para>
+    /// Tool settings (spec 053 req 1.1): the <see cref="ProviderSettingKeys"/> of the job template's tool, such as
+    /// <c>agentName</c> (Kiro), <c>baseUrl</c> (OpenCode), <c>authMode</c> (Claude Code) and <c>mcpConfigPath</c>.
+    /// Never a model or an effort: the route names those. Null in a save body means the form is out of date; readers
+    /// treat null as empty.
     /// </summary>
-    public string JobTemplateKey()
-    {
-        if (!string.IsNullOrWhiteSpace(JobTemplate))
-        {
-            var parts = JobTemplate
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(p => !string.IsNullOrWhiteSpace(p));
-            return AgentSelectorKey.From(parts);
-        }
+    [Key(8)]
+    public IReadOnlyDictionary<string, string>? Settings { get; init; }
 
-        return AgentSelectorKey.From(MatchLabels);
-    }
+    /// <summary>
+    /// The normalized key of <see cref="JobTemplate"/>: split on <c>,</c>, trimmed, empty entries removed and sorted
+    /// ordinally (<see cref="AgentSelectorKey.From"/>), the same result as <c>JobTemplateStore.NormalizeLabels</c>, which
+    /// Contracts cannot call. Empty when no job template is set. This is the profile's agent selector; dispatch code
+    /// calls this method rather than normalizing <see cref="JobTemplate"/> itself.
+    /// </summary>
+    public string JobTemplateKey() =>
+        string.IsNullOrWhiteSpace(JobTemplate)
+            ? string.Empty
+            : AgentSelectorKey.From(JobTemplate
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(p => !string.IsNullOrWhiteSpace(p)));
 }

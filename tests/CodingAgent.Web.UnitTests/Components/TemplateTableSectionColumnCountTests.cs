@@ -71,9 +71,7 @@ public class TemplateTableSectionColumnCountTests : BunitContext
             .Add(s => s.RecentlyToggled, new HashSet<string>())
             .Add(s => s.TemplateStatuses, new Dictionary<string, ConfigStatusSnapshot>())
             .Add(s => s.QualityGateConfigs, [])
-            .Add(s => s.ReviewerConfigs, [])
-            .Add(s => s.AgentProfiles, [])
-            .Add(s => s.PipelineConfig, new PipelineConfiguration()));
+            .Add(s => s.ReviewerConfigs, []));
 
     [Fact]
     public void WhenAdmin_ActionsColumnHeaderIsPresent_WhileLoopRuns()

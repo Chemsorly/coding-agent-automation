@@ -132,11 +132,7 @@ public static class SchedulerServiceCollectionExtensions
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
 
         // ── Consolidation services ────────────────────────────────────────────
-        services.AddSingleton<IConsolidationSelectorResolver>(sp =>
-            new ConsolidationSelectorResolver(
-                sp.GetRequiredService<IAgentProfileStore>(),
-                sp.GetRequiredService<IPipelineConfigStore>(),
-                sp.GetService<JobTemplateStore>()));
+        // The API routes consolidation runs when it creates them (spec 053); the Scheduler reads no profiles.
         services.AddSingleton<IConsolidationService>(sp =>
             new ConsolidationService(BuildConsolidationServiceDeps(sp)));
 
@@ -145,9 +141,7 @@ public static class SchedulerServiceCollectionExtensions
             new DispatchOrchestrationServiceDependencies(
                 sp.GetRequiredService<DispatchInfrastructure>(),
                 sp.GetRequiredService<IWorkDistributor>(),
-                sp.GetRequiredService<IAgentProfileStore>(),
-                sp.GetRequiredService<IConfigurationStore>(),
-                sp.GetRequiredService<IPipelineConfigStore>()),
+                sp.GetRequiredService<IConfigurationStore>()),
             Log.Logger));
 
         // ── Run lifecycle (HTTP-backed; no DB needed) ─────────────────────────
@@ -179,10 +173,7 @@ public static class SchedulerServiceCollectionExtensions
             agentCancellationSender: null)); // no hub in Scheduler
 
         services.AddSingleton<IDispatchRunCreator>(sp => new DispatchRunCreationService(
-            sp.GetRequiredService<PipelineRunLifecycleService>(),
-            sp.GetRequiredService<IProviderConfigStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            Log.Logger));
+            sp.GetRequiredService<PipelineRunLifecycleService>()));
 
         // ── Dependency checker ────────────────────────────────────────────────
         services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
@@ -390,7 +381,6 @@ public static class SchedulerServiceCollectionExtensions
             return store;
         });
         services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
-        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
     }
@@ -406,9 +396,7 @@ public static class SchedulerServiceCollectionExtensions
             Log.Logger,
             new PipelineConfiguration(),
             sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<IProviderConfigStore>(),
             WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
-            SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
             PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>());
 
     private static IKubernetes? CreateKubernetesClient() =>

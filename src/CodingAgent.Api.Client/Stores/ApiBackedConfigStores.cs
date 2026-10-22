@@ -84,7 +84,7 @@ public sealed class ApiProviderConfigStore : IProviderConfigStore
 /// (Issue, Repository, Agent, Pipeline, Brain). An earlier two-slot design bucketed every
 /// non-Issue kind together, so a Repository load followed by an Agent load within the TTL
 /// returned the Repository list for Agent — which silently mis-resolves dispatch, since
-/// <c>DispatchInfrastructure</c> loads Repository, Agent and Pipeline back to back.
+/// <c>DispatchInfrastructure</c> loads Repository and Pipeline back to back.
 ///
 /// Callers hold the shared cache lock around <see cref="TryGet"/> / <see cref="Set"/> /
 /// <see cref="Clear"/>; the lock is released across the awaited API call.
@@ -213,7 +213,8 @@ public sealed class ApiProjectStore : IProjectStore
 /// <see cref="IProviderConfigStore"/> left this store serving the pre-save list until its own TTL
 /// lapsed. Delegating gives one cache per concern and makes an invalidation here reach everyone.
 ///
-/// Agent profiles, quality gates and reviewers have no narrow store, so they are cached here.
+/// Quality gates and reviewers have no narrow store, so they are cached here. Agent profiles are not read here: the
+/// API routes work items (spec 053), so the Scheduler needs none.
 /// Thread-safe: the lock is released before awaiting, never held across async I/O.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP-backed store — covered by integration tests, not unit tests.")]
@@ -227,8 +228,7 @@ public sealed class ApiConfigurationStore : IConfigurationStore
     private readonly Lock _cacheLock = new();
     public int CacheTtlSeconds { get; set; } = 60;
 
-    // Only the three concerns with no narrow store of their own.
-    private readonly TtlCache<IReadOnlyList<AgentProfile>> _profiles = new();
+    // Only the two concerns with no narrow store of their own.
     private readonly TtlCache<IReadOnlyList<QualityGateConfiguration>> _qualityGates = new();
     private readonly TtlCache<IReadOnlyList<ReviewerConfiguration>> _reviewers = new();
 
@@ -249,7 +249,6 @@ public sealed class ApiConfigurationStore : IConfigurationStore
     {
         lock (_cacheLock)
         {
-            _profiles.Clear();
             _qualityGates.Clear();
             _reviewers.Clear();
         }
@@ -281,16 +280,6 @@ public sealed class ApiConfigurationStore : IConfigurationStore
 
     public Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
         => _providers.DeleteProviderConfigAsync(id, kind, ct);
-
-    // ── IAgentProfileStore ───────────────────────────────────────────────
-    public Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
-        => LoadCachedAsync(_profiles, _client.GetAgentProfilesAsync, ct);
-
-    public Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
-        => SettingsWrites.NotHere("Saving an agent profile");
-
-    public Task DeleteAgentProfileAsync(string id, CancellationToken ct)
-        => SettingsWrites.NotHere("Deleting an agent profile");
 
     // ── IQualityGateConfigStore ──────────────────────────────────────────
     public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)

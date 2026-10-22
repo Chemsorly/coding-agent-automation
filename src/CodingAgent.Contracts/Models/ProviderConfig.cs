@@ -38,9 +38,8 @@ public sealed class ProviderConfig
     public RepositoryRole RepositoryRole { get; init; } = RepositoryRole.Work;
 
     /// <summary>
-    /// Not stored on the connection. Filled from the repository's pipeline job template when a job is prepared.
-    /// Null or empty means fall back to
-    /// <see cref="Models.PipelineConfiguration.DefaultRequiredAgentLabels"/>, then empty (any agent).
+    /// Not stored on the connection. Filled from the repository's pipeline job template (its stack labels) when a job is
+    /// prepared.
     /// </summary>
     [Key(6)]
     public IReadOnlyList<string>? RequiredLabels { get; init; }

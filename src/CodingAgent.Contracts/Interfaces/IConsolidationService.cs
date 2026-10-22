@@ -18,6 +18,7 @@ public interface IConsolidationService
     /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
     /// <param name="focus">Which detection agent a refactoring scan runs; ignored by the other consolidation types.</param>
     /// <returns>A <see cref="ConsolidationTriggerResult"/> describing the dispatched run, or <c>null</c> if the trigger was rejected.</returns>
+    /// <exception cref="WorkItemRefusedException">The API refused the work item: no agent route, or one that cannot run (spec 053).</exception>
     Task<ConsolidationTriggerResult?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false, RefactoringScanFocus focus = RefactoringScanFocus.All);
 
     /// <summary>
@@ -25,6 +26,7 @@ public interface IConsolidationService
     /// and never adds <c>agent:next</c> to created issues. Returns null when the run was rejected (already running,
     /// configuration error, template not found).
     /// </summary>
+    /// <exception cref="WorkItemRefusedException">The API refused the work item: no agent route, or one that cannot run (spec 053).</exception>
     Task<ConsolidationTriggerResult?> TriggerAutomaticAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct);
 
     /// <summary>

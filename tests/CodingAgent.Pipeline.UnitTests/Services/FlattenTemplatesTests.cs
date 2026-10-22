@@ -34,8 +34,6 @@ public class FlattenTemplatesTests : IAsyncDisposable
         _mockLogger.Setup(l => l.Warning(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string>()));
 
         _runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
             logger: _mockLogger.Object);
     }
 

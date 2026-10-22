@@ -1300,11 +1300,19 @@ public class ConsolidationPageComponentTests : BunitContext
             .Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
+        // This test is about the brain count; the routing store has no database, so the counters carry no route refusal.
+        var noDatabase = new Mock<Microsoft.EntityFrameworkCore.IDbContextFactory<CodingAgent.Infrastructure.Persistence.PipelineDbContext>>();
+        noDatabase
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("no database in this test"));
         var service = new ConsolidationPageService(
             mockProjectStore.Object,
             mockConfigStore.Object,
             new Mock<IConsolidationService>().Object,
-            mockStaleness.Object);
+            mockStaleness.Object,
+            new CodingAgent.Infrastructure.Persistence.Services.AgentRoutingStore(noDatabase.Object),
+            new Mock<IAgentProfileStore>().Object,
+            CodingAgent.Web.TestUtilities.AgentRoutingTestData.JobTemplates());
 
         // Act
         var result = await service.GetAutoCountersAsync(CancellationToken.None);

@@ -92,9 +92,9 @@ Besides overrides, a project holds settings of its own:
 
 | Setting | Type | Description |
 |---------|------|-------------|
-| `McpServers` | List? | Project-level MCP server configurations. Merged with the resolved agent profile's MCP servers at dispatch time. `null` = inherit profile list unchanged. |
+| `McpServers` | List? | Project-level MCP server configurations. Merged with the MCP servers of the work item's routed agent profile when an agent claims the work. `null` = inherit profile list unchanged. |
 
-**Merge semantics**: At dispatch time, project-level MCP servers are merged with the resolved agent profile's servers:
+**Merge semantics**: When an agent claims the work, project-level MCP servers are merged with the servers of the routed agent profile:
 - A project server with the same `Name` (case-insensitive) as a profile server **replaces** it
 - Project servers with new names are **appended** to the profile list
 - `null` (or empty list) = inherit profile list unchanged
@@ -318,7 +318,8 @@ Each pipeline job template has its own repository page at `/pipelines/{templateI
 - Repository and issue tracker (display-only once saved)
 - Brain provider and brain read-only toggle
 - Pipeline/CI provider
-- Required agent labels (determines agent routing and quality gates), with a label preview
+- Stack labels (pick the quality gates and reviewers, no agent), with a label preview
+- Agent routing: the repository's own route per task type, saved with its own button. A task type without a row inherits the global routing. Others see the resolved route per task type (see [Agent Routing](agent-routing.md#repository-rows))
 - Enabled toggle
 
 **Behaviour card** — how the pipeline works on the repository. Editable by `admin` on the template's project (or a global admin). Contains:

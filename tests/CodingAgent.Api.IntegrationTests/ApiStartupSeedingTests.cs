@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
@@ -83,7 +84,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
         var sut = CreateService();
 
         // Act
-        await sut.RunStartupSeedingAsync(CancellationToken.None);
+        await sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         // Assert: Default project row was created
         await using var db = _dbFactory.CreateDbContext();
@@ -109,8 +110,8 @@ public sealed class ApiStartupSeedingTests : IDisposable
         // Running twice must not throw and must not duplicate the Default project row.
         var sut = CreateService();
 
-        await sut.RunStartupSeedingAsync(CancellationToken.None);
-        await sut.RunStartupSeedingAsync(CancellationToken.None);
+        await sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
+        await sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         await using var db = _dbFactory.CreateDbContext();
         var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
@@ -150,7 +151,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
         var sut = CreateService();
 
         // Act: seeding creates Default project first, then repairs orphaned templates
-        await sut.RunStartupSeedingAsync(CancellationToken.None);
+        await sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         // Assert
         await using var verify = _dbFactory.CreateDbContext();
@@ -172,8 +173,8 @@ public sealed class ApiStartupSeedingTests : IDisposable
         // CodingAgent.Infrastructure.IntegrationTests (two service instances, real advisory locks).
         var sut = CreateService();
 
-        var t1 = sut.RunStartupSeedingAsync(CancellationToken.None);
-        var t2 = sut.RunStartupSeedingAsync(CancellationToken.None);
+        var t1 = sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
+        var t2 = sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         // Must not throw
         var act = () => Task.WhenAll(t1, t2);
@@ -234,6 +235,8 @@ public sealed class ApiStartupSeedingTests : IDisposable
             o.UseInMemoryDatabase(dbName)
              .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
         builder.Services.AddDistributedLockProvider(connectionString: null);
+        // RunApiMigrationsAsync passes the job templates' tools to the agent routing move (spec 053).
+        builder.Services.AddSingleton(CodingAgent.Kubernetes.JobTemplateStore.CreateEmpty());
         await using var app = builder.Build();
 
         var appConfig = new ConfigurationBuilder()
@@ -259,6 +262,8 @@ public sealed class ApiStartupSeedingTests : IDisposable
         var hasReviewers = await db.ReviewerConfigs.AnyAsync();
         hasReviewers.Should().BeTrue(
             "RunApiMigrationsAsync must seed reviewer configs via RunStartupSeedingAsync");
+        (await db.KeyValueStore.AnyAsync(kv => kv.Key == CodingAgent.Pipeline.Models.AgentRouting.StorageKey)).Should().BeTrue(
+            "RunStartupSeedingAsync runs the agent routing move, which stores a routing table when none exists (spec 053)");
 
         using var cleanup = new InMemoryPipelineDbContext(dbOptions);
         cleanup.Database.EnsureDeleted();
@@ -338,7 +343,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        await CreateService().RunStartupSeedingAsync(CancellationToken.None);
+        await CreateService().RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         await using var check = _dbFactory.CreateDbContext();
 
@@ -421,7 +426,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        await CreateService().RunStartupSeedingAsync(CancellationToken.None);
+        await CreateService().RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         await using var check = _dbFactory.CreateDbContext();
         var entity = await check.PipelineJobTemplates.FindAsync(templateGuid);
@@ -472,7 +477,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
         }
 
         // Must not throw
-        await CreateService().RunStartupSeedingAsync(CancellationToken.None);
+        await CreateService().RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         await using var check = _dbFactory.CreateDbContext();
         var updatedProvider = await check.ProviderConfigs.FindAsync(providerGuid);
@@ -539,7 +544,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
         var sut = CreateService();
 
         // First run: migrates
-        await sut.RunStartupSeedingAsync(CancellationToken.None);
+        await sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         // Capture state after first run
         string providerConfigAfterFirst;
@@ -551,7 +556,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
         }
 
         // Second run: must not change anything
-        await sut.RunStartupSeedingAsync(CancellationToken.None);
+        await sut.RunStartupSeedingAsync(AgentRoutingTestData.ToolsByKey(), CancellationToken.None);
 
         await using var checkAgain = _dbFactory.CreateDbContext();
         var providerConfigAfterSecond = (await checkAgain.ProviderConfigs.FindAsync(providerGuid))!.Configuration!;

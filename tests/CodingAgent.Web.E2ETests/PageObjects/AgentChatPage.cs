@@ -35,6 +35,13 @@ public sealed class AgentChatPage
         await _page.SelectOptionAsync("#profile-select", profileId);
     }
 
+    /// <summary>Selects a model in the model dropdown, which appears once a profile is chosen (spec 053 req 6.1).</summary>
+    public async Task SelectModelAsync(string model)
+    {
+        await _page.WaitForSelectorAsync("#chat-model-select", new() { Timeout = 10_000 });
+        await _page.SelectOptionAsync("#chat-model-select", model);
+    }
+
     /// <summary>Clicks the "Launch Chat Pod" button.</summary>
     public async Task LaunchChatPodAsync()
     {
@@ -56,7 +63,7 @@ public sealed class AgentChatPage
 
     /// <summary>
     /// Waits for the chat window header to appear, confirming the pod is connected.
-    /// Returns the header text (e.g. "Chatting with agent-id · model: auto").
+    /// Returns the header text (e.g. "Chatting with agent-id · profile · auto").
     /// </summary>
     public async Task<string?> WaitForChatHeaderAsync(int timeoutMs = 60_000)
     {

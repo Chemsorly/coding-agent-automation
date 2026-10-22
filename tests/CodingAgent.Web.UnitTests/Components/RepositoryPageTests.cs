@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Pipeline.Models;
@@ -42,7 +43,8 @@ public class RepositoryPageTests : BunitContext
 
     private static UiPipelinesPage MakePage(
         PipelineJobTemplate? template = null,
-        PipelineProject? project = null) =>
+        PipelineProject? project = null,
+        IReadOnlyList<UiResolvedRoute>? routes = null) =>
         new(
             Projects: [project ?? DefaultProject],
             Templates: [template ?? DefaultTemplate],
@@ -52,7 +54,7 @@ public class RepositoryPageTests : BunitContext
             QualityGateConfigs: [],
             ReviewerConfigs: [],
             AgentProfiles: [],
-            DefaultRequiredAgentLabels: null,
+            Routes: new Dictionary<string, IReadOnlyList<UiResolvedRoute>> { [TestTemplateId] = routes ?? [] },
             MaxRetries: 3);
 
     private static Mock<IUiConfigClient> SetupConfigClient(UiPipelinesPage page)
@@ -286,6 +288,108 @@ public class RepositoryPageTests : BunitContext
 
         // The secret value must NEVER appear anywhere in the rendered HTML, not even in hidden markup
         Assert.DoesNotContain("super-secret-value-xyz", cut.Markup);
+    }
+
+    // ── Binding card: stack labels and agent routing (spec 053 req 1.7, 3.2, 3.3, 3.7, 5.3, 5.5) ──
+
+    private static readonly UiRoutingProfile KiroProfile = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro", true);
+
+    private static UiResolvedRoute Resolved(WorkItemTaskType taskType) =>
+        new(taskType, "Kiro dotnet", JobTemplateProviderType.Kiro, "auto", "high", AgentRouteSource.GlobalDefault, "dotnet,kiro", null);
+
+    private static Mock<IUiSettingsClient> SettingsWithRouting()
+    {
+        var settings = SetupSettingsClient();
+        settings.Setup(s => s.GetAgentRoutingAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new UiAgentRoutingPage(
+            new AgentRouting { Default = new AgentRoute(KiroProfile.Id, "auto", "high") }, [KiroProfile], []));
+        return settings;
+    }
+
+    [Fact]
+    public void GlobalAdmin_EditsTheRepositoryRows_ForAllFiveTaskTypes_AndSavesThem()
+    {
+        // The template enables only implementation and review; the rows still cover all five task types (req 3.7).
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+        var settings = SettingsWithRouting();
+        PipelineJobTemplate? saved = null;
+        settings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Callback<ProjectId, PipelineJobTemplate, CancellationToken>((_, t, _) => saved = t)
+            .Returns(Task.CompletedTask);
+        RegisterServices(SetupConfigClient(MakePage()), settings);
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        var routing = cut.Find("[data-testid='binding-routing']");
+        routing.QuerySelectorAll("[data-testid='route-table'] tbody tr").Should().HaveCount(5);
+        cut.Find("[data-testid='route-inherit-decomposition']").TextContent.Should().Contain("global default");
+        cut.Find("[data-testid='route-set-review']").Click();
+        cut.Find("[data-testid='route-model-review']").Change("claude-sonnet-4");
+        cut.Find("[data-testid='binding-routing-save']").Click();
+
+        saved!.AgentRoutes.Should().BeEquivalentTo(new Dictionary<WorkItemTaskType, AgentRoute>
+        {
+            [WorkItemTaskType.Review] = new(KiroProfile.Id, "claude-sonnet-4", "high"),
+        });
+        cut.FindAll("[data-testid='binding-routes']").Should().BeEmpty("the admin edits the rows instead");
+    }
+
+    [Theory]
+    [InlineData(AccessRole.ReadOnly)]
+    [InlineData(AccessRole.Operator)]
+    public void Others_SeeTheResolvedRoutesReadOnly_WithoutProfileInternals(AccessRole role)
+    {
+        Services.AddTestAccess(TestAccess.Global(role));
+        RegisterServices(SetupConfigClient(MakePage(routes: AgentRouteLabels.TaskTypes.Select(Resolved).ToList())), SetupSettingsClient());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        cut.FindAll("[data-testid='route-table']").Should().BeEmpty();
+        cut.Find("[data-testid='binding-route-triage']").TextContent.Should()
+            .Contain("Kiro dotnet · Kiro · auto (the tool chooses) · effort high").And.Contain("global default");
+        cut.FindAll("[data-testid='binding-routes'] tbody tr").Should().HaveCount(5);
+    }
+
+    [Fact]
+    public void ATemplateWithoutStackLabels_SaysThatOnlyConfigsWithoutMatchLabelsApply()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.ReadOnly));
+        RegisterServices(SetupConfigClient(MakePage()), SetupSettingsClient());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        cut.Find("[data-testid='binding-no-labels-note']").TextContent.Should()
+            .Be("Without stack labels, only the quality gates and reviewers that have no match labels apply.");
+    }
+
+    [Fact]
+    public void TheStackLabelsField_IsNamedAndHinted()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+        RegisterServices(SetupConfigClient(MakePage(DefaultTemplate with { RequiredLabels = ["dotnet"] })), SettingsWithRouting());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        var field = cut.Find("[data-testid='binding-card']").TextContent;
+        field.Should().Contain("Stack labels").And.Contain("pick quality gates and reviewers, for example dotnet, dotnet10");
+        cut.FindAll("[data-testid='binding-no-labels-note']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ConnectionLinks_OpenSettingsSectionsThatExist()
+    {
+        // Req 1.7: the section names used to be unknown to Settings, which then opened its first node.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+        RegisterServices(SetupConfigClient(MakePage()), SettingsWithRouting());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        cut.FindAll("[data-testid='binding-card'] a")
+            .Where(a => a.TextContent.Contains("Connection"))
+            .Select(a => a.GetAttribute("href"))
+            .Should().BeSubsetOf([
+                $"/settings?section={SettingsNodes.ProvidersRepository}",
+                $"/settings?section={SettingsNodes.ProvidersIssue}",
+                $"/settings?section={SettingsNodes.ProvidersPipeline}",
+            ]).And.Contain($"/settings?section={SettingsNodes.ProvidersIssue}");
     }
 
     [Fact]

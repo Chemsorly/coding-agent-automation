@@ -19,11 +19,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// </summary>
 public sealed class ConsolidationServiceDedupTests
 {
-    private static readonly string[] SelectorLabels = ["dotnet", "kiro", "dotnet10"];
-
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory = new();
-    private readonly Mock<IConsolidationSelectorResolver> _mockSelectorResolver = new();
 
     private static readonly PipelineJobTemplate Template = new()
     {
@@ -52,13 +49,6 @@ public sealed class ConsolidationServiceDedupTests
             });
         _mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { Template });
-
-        _mockSelectorResolver
-            .Setup(r => r.ResolveAsync(
-                It.IsAny<ProviderConfig?>(),
-                It.IsAny<PipelineConfiguration>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(SelectorLabels), null));
     }
 
     private ConsolidationService CreateSut(Mock<IWorkDistributor> mockDistributor)
@@ -73,9 +63,7 @@ public sealed class ConsolidationServiceDedupTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
-            WorkDistributor: mockDistributor.Object,
-            SelectorResolver: _mockSelectorResolver.Object));
+            WorkDistributor: mockDistributor.Object));
     }
 
     /// <summary>

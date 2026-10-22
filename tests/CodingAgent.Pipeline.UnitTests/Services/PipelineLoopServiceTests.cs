@@ -29,8 +29,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             new TestOrchestrationFactory.NullHistoryService(), null, _mockLogger.Object);
 
         _runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
             lifecycle: _lifecycle,
             logger: _mockLogger.Object);
 
@@ -856,7 +854,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ClosedLoopMaxConsecutivePollFailures = 10,
             ClosedLoopMaxPagesToFetch = 20
         };
-        var copy = config with { DefaultRequiredAgentLabels = "kiro" };
+        var copy = config with { BrainReadOnly = true };
         Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoopPollInterval);
         Assert.Equal(5, copy.ClosedLoopMaxRunsPerCycle);
         Assert.Equal(10, copy.ClosedLoopMaxConsecutivePollFailures);

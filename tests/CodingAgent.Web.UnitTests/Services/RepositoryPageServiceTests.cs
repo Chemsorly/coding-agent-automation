@@ -84,7 +84,9 @@ public class RepositoryPageServiceTests
     private void SetupPage(
         PipelineJobTemplate? template = null,
         PipelineProject? project = null,
-        IReadOnlyList<ProviderConfig>? repoProviders = null)
+        IReadOnlyList<ProviderConfig>? repoProviders = null,
+        IReadOnlyList<QualityGateConfiguration>? qualityGates = null,
+        IReadOnlyList<UiResolvedRoute>? routes = null)
     {
         var t = template ?? DefaultTemplate;
         var p = project ?? DefaultProject;
@@ -96,10 +98,10 @@ public class RepositoryPageServiceTests
                 IssueProviders: [new ProviderConfig { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "GitHub Issues" }],
                 RepoProviders: rp,
                 PipelineProviders: [],
-                QualityGateConfigs: [],
+                QualityGateConfigs: qualityGates ?? [],
                 ReviewerConfigs: [],
                 AgentProfiles: [],
-                DefaultRequiredAgentLabels: null,
+                Routes: new Dictionary<string, IReadOnlyList<UiResolvedRoute>> { [t.Id] = routes ?? [] },
                 MaxRetries: 3));
     }
 
@@ -341,102 +343,141 @@ public class RepositoryPageServiceTests
         var svc = CreateService();
         await svc.InitializeAsync(TemplateId);
 
-        var result = svc.GetLabelPreview(["kiro", "dotnet"], []);
+        var result = svc.GetLabelPreview(["kiro", "dotnet"]);
 
         Assert.Equal(2, result.Labels.Count);
         Assert.Contains("kiro", result.Labels);
     }
 
     [Fact]
-    public async Task GetLabelPreview_FallsBackToDefaultRequiredAgentLabels()
+    public async Task GetLabelPreview_ListsTheQualityGatesTheStackLabelsPick()
     {
-        var config = new ProviderConfig { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub, DisplayName = "R" };
-        _configClient.Setup(c => c.GetPipelinesPageAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UiPipelinesPage(
-                Projects: [DefaultProject],
-                Templates: [DefaultTemplate],
-                IssueProviders: [],
-                RepoProviders: [config],
-                PipelineProviders: [],
-                QualityGateConfigs: [],
-                ReviewerConfigs: [],
-                AgentProfiles: [],
-                DefaultRequiredAgentLabels: "kiro,dotnet",
-                MaxRetries: 3));
+        // Spec 053 req 5.1, 5.2: stack labels pick quality gates and reviewers only, never a profile.
+        var dotnet = new QualityGateConfiguration { DisplayName = ".NET", MatchLabels = ["dotnet"], Enabled = true };
+        var python = new QualityGateConfiguration { DisplayName = "Python", MatchLabels = ["python"], Enabled = true };
+        var always = new QualityGateConfiguration { DisplayName = "Secrets scan", MatchLabels = [], Enabled = true };
+        SetupPage(qualityGates: [dotnet, python, always]);
         var svc = CreateService();
         await svc.InitializeAsync(TemplateId);
 
-        // Pass null labels — should fall back to DefaultRequiredAgentLabels
-        var result = svc.GetLabelPreview(null, []);
+        var result = svc.GetLabelPreview(["dotnet"]);
 
-        Assert.Equal(2, result.Labels.Count);
-        Assert.Contains("kiro", result.Labels);
-        Assert.Contains("dotnet", result.Labels);
+        result.QualityGates.Should().BeEquivalentTo(".NET", "Secrets scan");
     }
 
     [Fact]
-    public async Task GetLabelPreview_NullLabelsAndNoDefault_ReturnsEmpty()
+    public async Task GetLabelPreview_WithoutLabels_ReturnsNoPreview()
     {
+        // The global default labels are gone (spec 053 req 5.4): nothing stands in for missing stack labels.
         SetupPage();
         var svc = CreateService();
         await svc.InitializeAsync(TemplateId);
 
-        var result = svc.GetLabelPreview(null, []);
+        var result = svc.GetLabelPreview(null);
 
         Assert.Empty(result.Labels);
+        Assert.Empty(result.QualityGates);
+    }
+
+    // ── Agent routing (spec 053 req 3.2–3.6) ─────────────────────────────
+
+    [Fact]
+    public async Task InitializeAsync_KeepsTheTemplatesResolvedRoutes_AndLoadsTheRoutingEditorForTheAdmin()
+    {
+        UiResolvedRoute[] routes = [new(WorkItemTaskType.Implementation, "Kiro", "kiro", "auto", "auto", AgentRouteSource.GlobalDefault, "dotnet,kiro", null)];
+        var routing = new UiAgentRoutingPage(new AgentRouting(), [new UiRoutingProfile("p-1", "Kiro", "kiro", "dotnet,kiro", true)], []);
+        SetupPage(routes: routes);
+        _settings.Setup(s => s.GetAgentRoutingAsync(It.IsAny<CancellationToken>())).ReturnsAsync(routing);
+        var svc = CreateService();
+
+        await svc.InitializeAsync(TemplateId);
+
+        svc.Routes.Should().Equal(routes);
+        svc.RoutingPage.Should().BeSameAs(routing);
     }
 
     [Fact]
-    public async Task GetLabelPreview_WithMatchingAgent_CountsOnlineAgents()
+    public async Task InitializeAsync_ForANonAdmin_DoesNotReadTheRoutingSettings()
     {
         SetupPage();
-        var svc = CreateService();
+        var svc = CreateService(TestAccess.Global(AccessRole.ReadOnly));
+
         await svc.InitializeAsync(TemplateId);
 
-        var agents = new[]
-        {
-            new AgentEntryDto
-            {
-                AgentId = new AgentId("agent-1"),
-                ConnectionId = "conn-1",
-                Hostname = "host-1",
-                Labels = ["kiro"],
-                Status = AgentStatus.Idle,
-                RegisteredAt = DateTimeOffset.UtcNow,
-                Disabled = false,
-            }
-        };
-
-        var result = svc.GetLabelPreview(["kiro"], agents);
-
-        Assert.Equal(1, result.OnlineAgentCount);
-        Assert.Contains("agent-1", result.Agents);
+        svc.RoutingPage.Should().BeNull();
+        _settings.Verify(s => s.GetAgentRoutingAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task GetLabelPreview_DisabledAgentExcluded()
+    public async Task SaveBehaviourAndBinding_SendNoRoutes_SoTheApiKeepsRowsSavedSinceThePageLoaded()
     {
-        SetupPage();
+        // Req 3.6: a page that loaded before a routing change must not revert it.
+        var rows = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Review] = new("p-1", "sonnet", "auto") };
+        SetupPage(template: DefaultTemplate with { AgentRoutes = rows });
+        var sent = new List<PipelineJobTemplate>();
+        _settings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Callback<ProjectId, PipelineJobTemplate, CancellationToken>((_, t, _) => sent.Add(t))
+            .Returns(Task.CompletedTask);
         var svc = CreateService();
         await svc.InitializeAsync(TemplateId);
 
-        var agents = new[]
+        await svc.SaveBehaviourAsync(RepositoryPageService.BehaviourFormModel.FromTemplate(svc.Template!));
+        await svc.SaveBindingAsync(RepositoryPageService.BindingFormModel.FromTemplate(svc.Template!));
+
+        sent.Should().HaveCount(2).And.OnlyContain(t => t.AgentRoutes == null);
+        svc.Template!.AgentRoutes.Should().BeSameAs(rows, "the page keeps showing the rows it loaded");
+    }
+
+    [Fact]
+    public async Task SaveRoutesAsync_SendsTheRowsThatNameARoute()
+    {
+        SetupPage();
+        PipelineJobTemplate? sent = null;
+        _settings.Setup(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Callback<ProjectId, PipelineJobTemplate, CancellationToken>((_, t, _) => sent = t)
+            .Returns(Task.CompletedTask);
+        var svc = CreateService();
+        await svc.InitializeAsync(TemplateId);
+        var rows = CodingAgent.Web.Components.Shared.RouteRow.ForRepository(null);
+        rows[2].UseRoute = true;
+        rows[2].ProfileId = "p-claude";
+        rows[2].Model = "claude-opus-5-5";
+
+        var (success, _, message) = await svc.SaveRoutesAsync(rows);
+
+        success.Should().BeTrue();
+        message.Should().Contain("work created from now on");
+        sent!.AgentRoutes.Should().BeEquivalentTo(new Dictionary<WorkItemTaskType, AgentRoute>
         {
-            new AgentEntryDto
-            {
-                AgentId = new AgentId("agent-1"),
-                ConnectionId = "conn-1",
-                Hostname = "host-1",
-                Labels = ["kiro"],
-                Status = AgentStatus.Idle,
-                RegisteredAt = DateTimeOffset.UtcNow,
-                Disabled = true,
-            }
-        };
+            [WorkItemTaskType.Decomposition] = new("p-claude", "claude-opus-5-5", "auto"),
+        });
+    }
 
-        var result = svc.GetLabelPreview(["kiro"], agents);
+    [Fact]
+    public async Task SaveRoutesAsync_NonAdmin_IsDenied()
+    {
+        SetupPage();
+        var svc = CreateService(TestAccess.Global(AccessRole.Operator));
+        await svc.InitializeAsync(TemplateId);
 
-        Assert.Empty(result.Agents);
+        var (success, _, _) = await svc.SaveRoutesAsync(CodingAgent.Web.Components.Shared.RouteRow.ForRepository(null));
+
+        success.Should().BeFalse();
+        _settings.Verify(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SaveRoutesAsync_ProjectAdmin_IsDenied()
+    {
+        // The rows are part of the Binding card, which only the global admin edits (spec 053 D17).
+        SetupPage();
+        var svc = CreateService(TestAccess.Scoped((ProjectId, AccessRole.Admin)));
+        await svc.InitializeAsync(TemplateId);
+
+        var (success, _, _) = await svc.SaveRoutesAsync(CodingAgent.Web.Components.Shared.RouteRow.ForRepository(null));
+
+        success.Should().BeFalse();
+        _settings.Verify(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Drawer methods with template present ──────────────────────────────
@@ -766,7 +807,7 @@ public class RepositoryPageServiceTests
                 QualityGateConfigs: [],
                 ReviewerConfigs: [],
                 AgentProfiles: [],
-                DefaultRequiredAgentLabels: null,
+                Routes: new Dictionary<string, IReadOnlyList<UiResolvedRoute>>(),
                 MaxRetries: 3));
         var svc = CreateService();
         await svc.InitializeAsync(TemplateId);
@@ -886,7 +927,7 @@ public class RepositoryPageServiceTests
                 QualityGateConfigs: [],
                 ReviewerConfigs: [],
                 AgentProfiles: [],
-                DefaultRequiredAgentLabels: null,
+                Routes: new Dictionary<string, IReadOnlyList<UiResolvedRoute>>(),
                 MaxRetries: 3));
         var svc = CreateService();
         await svc.InitializeAsync(TemplateId);

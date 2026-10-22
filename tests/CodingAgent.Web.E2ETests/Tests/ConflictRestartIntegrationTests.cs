@@ -51,14 +51,13 @@ public sealed class ConflictRestartIntegrationTests : HeadlessE2ETestBase
         var profiles = await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
         if (!profiles.Any(p => p.Id == "profile-conflict-e2e"))
         {
-            await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+            await Fixture.SeedRoutedProfileAsync(new AgentProfile
             {
                 Id = "profile-conflict-e2e",
                 DisplayName = "Conflict Restart Agent Profile",
-                MatchLabels = new[] { "conflict-e2e" },
-                AgentProviderConfigId = "agent-e2e",
+                JobTemplate = E2ERouting.Key("conflict-e2e"),
                 Enabled = true
-            }, CancellationToken.None);
+            });
         }
     }
 

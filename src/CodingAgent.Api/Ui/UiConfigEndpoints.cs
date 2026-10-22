@@ -1,4 +1,7 @@
+using CodingAgent.Contracts.Auth;
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 
@@ -48,11 +51,14 @@ internal static class UiConfigEndpoints
     /// GET /api/ui/pipelines — the Pipelines page (spec 051 2.7): the readable projects' templates and the
     /// configuration the template table shows. A template without a project is global, so only a global reader
     /// sees it. A project-scoped user gets only the providers their templates use and none of the global
-    /// quality gates, reviewers and agent profiles.
+    /// quality gates and reviewers. Agent profiles go to the global admin only (spec 053 D17); every reader gets the
+    /// resolved routes of the templates returned.
     /// </summary>
     internal static async Task<IResult> GetPipelinesPage(
-        IUserAccess access, IProjectStore projects, IProviderConfigStore providers, IConfigurationStore config, CancellationToken ct)
+        IUserAccess access, IProjectStore projects, IProviderConfigStore providers, IConfigurationStore config,
+        [AsParameters] PipelinesPageRoutingStores routingStores, CancellationToken ct)
     {
+        var (profiles, routing, jobTemplates) = routingStores;
         var global = access.CanRead(null);
         var readable = (await projects.LoadProjectsAsync(ct)).Where(p => access.CanRead(p.Id)).ToList();
         var owned = readable.SelectMany(p => p.TemplateIds).ToHashSet(StringComparer.Ordinal);
@@ -71,6 +77,10 @@ internal static class UiConfigEndpoints
                 .ToList();
 
         var settings = await config.LoadPipelineConfigAsync(ct);
+        var allProfiles = await profiles.LoadAgentProfilesAsync(ct);
+        var routes = ResolvedRoutes.For(
+            templates, await routing.LoadAsync(ct) ?? AgentRouting.Empty, allProfiles, jobTemplates.ToolsByKey());
+        var admin = access.Grant.GlobalRole == AccessRole.Admin;
         return TypedResults.Ok(new UiPipelinesPage(
             readable.Select(p => new PipelineProject { Id = p.Id, Name = p.Name, Enabled = p.Enabled, TemplateIds = p.TemplateIds }).ToList(),
             templates,
@@ -79,8 +89,8 @@ internal static class UiConfigEndpoints
             await ProvidersAsync(ProviderKind.Pipeline),
             global ? await config.LoadQualityGateConfigsAsync(ct) : [],
             global ? await config.LoadReviewerConfigsAsync(ct) : [],
-            global ? (await config.LoadAgentProfilesAsync(ct)).Select(UiSecretMask.Redact).ToList() : [],
-            settings.DefaultRequiredAgentLabels,
+            admin ? allProfiles.Select(UiSecretMask.Redact).ToList() : [],
+            routes,
             settings.MaxRetries));
     }
 
@@ -91,3 +101,7 @@ internal static class UiConfigEndpoints
         return TypedResults.Ok(new UiPipelineSettings(settings.MaxRetries, settings.TriageRetentionDays));
     }
 }
+
+/// <summary>The stores the Pipelines page resolves its routes from.</summary>
+internal sealed record PipelinesPageRoutingStores(
+    IAgentProfileStore Profiles, AgentRoutingStore Routing, JobTemplateStore JobTemplates);

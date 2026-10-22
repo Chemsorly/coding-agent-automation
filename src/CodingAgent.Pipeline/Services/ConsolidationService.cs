@@ -15,9 +15,7 @@ public sealed class ConsolidationService : IConsolidationService
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
     private readonly ConsolidationTemplateResolver _templateResolver;
-    private readonly IProviderConfigStore _providerConfigStore;
     private readonly IWorkDistributor? _workDistributor;
-    private readonly IConsolidationSelectorResolver? _selectorResolver;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
 
     /// <inheritdoc />
@@ -34,9 +32,7 @@ public sealed class ConsolidationService : IConsolidationService
         _logger = deps.Logger;
         _config = deps.Config;
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
-        _providerConfigStore = deps.ProviderConfigStore;
         _workDistributor = deps.WorkDistributor;
-        _selectorResolver = deps.SelectorResolver;
         _pipelineConfigStore = deps.PipelineConfigStore;
     }
 
@@ -82,16 +78,12 @@ public sealed class ConsolidationService : IConsolidationService
                 "Ensure AddConsolidationServices passes WorkDistributor.");
         }
 
-        var selection = await ResolveSelectorAsync(scope.RepoConfig, scope.Config, type, scope.TemplateIdValue, ct);
-        if (selection is null)
-            return null;
-
         var runId = Guid.NewGuid().ToString();
         // Taken before DistributeAsync: the API call behind it can take seconds under load (issue #3209).
         var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
 
-        var request = BuildConsolidationDistributionRequest(traceContext, type, selection, scope, autoDispatch, focus,
+        var request = BuildConsolidationDistributionRequest(traceContext, type, scope, autoDispatch, focus,
             initiatedBy);
 
         var result = await TryDistributeAsync(_workDistributor, request, type, scope.TemplateIdValue, ct);
@@ -142,7 +134,6 @@ public sealed class ConsolidationService : IConsolidationService
 
         PipelineJobTemplate? template = null;
         PipelineProject? project = null;
-        ProviderConfig? repoConfig = null;
 
         if (templateId is not null)
         {
@@ -152,13 +143,6 @@ public sealed class ConsolidationService : IConsolidationService
                 _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateIdValue);
                 return null;
             }
-
-            // Resolve repo ProviderConfig (for selector resolution), enriched with template settings.
-            var rawRepoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
-                template.RepoProviderId, ProviderKind.Repository, ct);
-            repoConfig = rawRepoConfig is not null
-                ? RepositorySettings.WithTemplateSettings(rawRepoConfig, template)
-                : null;
         }
 
         var templateName = template?.Name ?? GlobalScopeName;
@@ -196,7 +180,6 @@ public sealed class ConsolidationService : IConsolidationService
             ProjectName: projectName,
             RepoProviderId: repoProviderId,
             BrainProviderId: brainProviderId,
-            RepoConfig: repoConfig,
             Config: config);
     }
 
@@ -207,7 +190,6 @@ public sealed class ConsolidationService : IConsolidationService
     private static JobDistributionRequest BuildConsolidationDistributionRequest(
         Dictionary<string, string>? traceContext,
         ConsolidationRunType type,
-        ConsolidationAgentSelection selection,
         ConsolidationScope scope,
         bool autoDispatch,
         RefactoringScanFocus focus,
@@ -230,8 +212,6 @@ public sealed class ConsolidationService : IConsolidationService
             BrainProviderConfigId = scope.BrainProviderId,
             InitiatedBy = initiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
-            AgentSelector = selection.AgentSelector,
-            ResolvedProfileId = selection.ResolvedProfileId,
             TimeoutSeconds = (int)scope.Config.AgentTimeout.TotalSeconds,
             ConsolidationRunType = type,
             ConsolidationTemplateId = scope.TemplateIdValue,
@@ -246,39 +226,6 @@ public sealed class ConsolidationService : IConsolidationService
             // the originating trace even when dispatched through the API asynchronously.
             TraceContext = traceContext
         };
-    }
-
-    /// <summary>
-    /// Resolves the agent selector for a run. Returns null when the selector resolver
-    /// has no agent profiles available yet (startup race), which the caller treats as a transient failure.
-    /// </summary>
-    private async Task<ConsolidationAgentSelection?> ResolveSelectorAsync(
-        ProviderConfig? repoConfig,
-        PipelineConfiguration config,
-        ConsolidationRunType type,
-        string? templateIdValue,
-        CancellationToken ct)
-    {
-        if (_selectorResolver is null)
-        {
-            // Fallback when no resolver is injected (tests, or legacy call sites).
-            // Use LabelResolver which reads from repoConfig + DefaultRequiredAgentLabels.
-            var labels = LabelResolver.ResolveRequiredLabels(repoConfig, config);
-            if (labels is null)
-                return null;
-            return new ConsolidationAgentSelection(AgentSelectorKey.From(labels), null);
-        }
-
-        var selection = await _selectorResolver.ResolveAsync(repoConfig, config, ct);
-        if (selection is null)
-        {
-            // Null = startup race (no profiles available yet). Treat as transient failure.
-            _logger.Warning(
-                "ConsolidationService: no agent profiles available for {Type}/{TemplateId} — " +
-                "re-trigger after profiles are loaded",
-                type, templateIdValue ?? GlobalScopeName);
-        }
-        return selection;
     }
 
     /// <summary>
@@ -302,7 +249,9 @@ public sealed class ConsolidationService : IConsolidationService
 
     /// <summary>
     /// Submits <paramref name="request"/> to the work distributor. Returns null (after logging) when
-    /// the call throws or the distributor reports a permanent or transient failure.
+    /// the call throws or the distributor reports a transient failure. A permanent failure (the API refused the
+    /// work item: no agent route, or one that cannot run) throws <see cref="WorkItemRefusedException"/> with the
+    /// API's reason, so the Consolidation page shows it (spec 053 req 2.9).
     /// </summary>
     private async Task<DistributionResult?> TryDistributeAsync(
         IWorkDistributor workDistributor,
@@ -329,24 +278,21 @@ public sealed class ConsolidationService : IConsolidationService
 
         if (result.IsPermanentFailure)
         {
-            // Permanent failure (e.g. no job template for the resolved selector). The selector is logged as
-            // its own property: it is what the operator has to fix, and it must not depend on how a
-            // distributor words its error message.
+            // Permanent failure: the API refused the work item, with the reason the operator has to fix.
             PipelineTelemetry.ConsolidationDispatchPermanentFailures.Add(1,
                 new KeyValuePair<string, object?>("run.type", type.ToString()));
             _logger.Error(
-                "ConsolidationService: permanent dispatch failure for {Type}/{TemplateId} (agent selector '{AgentSelector}'): {Error}. " +
-                "No WorkItem created. Re-trigger after fixing the agent configuration.",
-                type, templateIdValue ?? GlobalScopeName, request.AgentSelector, result.ErrorMessage);
-        }
-        else
-        {
-            // Transient failure (capacity limit, PVC unavailable, etc.).
-            _logger.Warning(
-                "ConsolidationService: transient dispatch failure for {Type}/{TemplateId}: {Error}. " +
-                "Re-trigger to retry.",
+                "ConsolidationService: permanent dispatch failure for {Type}/{TemplateId}: {Error}. " +
+                "No WorkItem created. Re-trigger after fixing the agent routing.",
                 type, templateIdValue ?? GlobalScopeName, result.ErrorMessage);
+            throw new WorkItemRefusedException(result.ErrorMessage ?? "The work item was refused");
         }
+
+        // Transient failure (capacity limit, PVC unavailable, etc.).
+        _logger.Warning(
+            "ConsolidationService: transient dispatch failure for {Type}/{TemplateId}: {Error}. " +
+            "Re-trigger to retry.",
+            type, templateIdValue ?? GlobalScopeName, result.ErrorMessage);
         return null;
     }
 
@@ -362,6 +308,5 @@ public sealed class ConsolidationService : IConsolidationService
         string? ProjectName,
         string RepoProviderId,
         string? BrainProviderId,
-        ProviderConfig? RepoConfig,
         PipelineConfiguration Config);
 }

@@ -7,6 +7,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Ui;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,9 +32,9 @@ public abstract class AgentChatTestBase : BunitContext
 
     protected AgentChatTestBase()
     {
-        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UiChatOptions([new UiChatProfile(ProfileId, "Chat profile", ["kiro", "dotnet"])], 120));
-        Chat.Setup(c => c.StartAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiChatOptions([new UiChatProfile(ProfileId, "Chat profile", JobTemplateProviderType.Kiro, ["auto"], ["auto"], "auto", "auto")], 120));
+        Chat.Setup(c => c.StartAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiChatSession(FakeAgentId, "auto"));
         Config.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<UiProject>());
 
@@ -115,36 +116,36 @@ public class AgentChatComponentTests : AgentChatTestBase
     }
 
     [Fact]
-    public void AgentChat_OffersTheProfilesTheApiReturns_WithTheirLabels()
+    public void AgentChat_OffersTheProfilesTheApiReturns_WithTheirTool()
     {
-        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new UiChatOptions(
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new UiChatOptions(
         [
-            new UiChatProfile("claude", "Claude", ["claude", "dotnet"]),
-            new UiChatProfile("kiro", "Kiro", ["kiro"]),
+            new UiChatProfile("claude", "Claude", JobTemplateProviderType.Claude, ["auto"], ["auto"], "auto", "auto"),
+            new UiChatProfile("kiro", "Kiro", JobTemplateProviderType.Kiro, ["auto"], ["auto"], "auto", "auto"),
         ], 120));
 
         var cut = Render<AgentChat>();
 
         cut.FindAll("#profile-select option").Select(o => o.GetAttribute("value")).Should().Equal("", "claude", "kiro");
-        cut.Find("#profile-select option[value='claude']").TextContent.Should().Be("Claude (claude, dotnet)");
-        cut.Markup.Should().NotContain("No enabled agent profile has a matching job template");
+        cut.Find("#profile-select option[value='claude']").TextContent.Should().Be("Claude (Claude Code)");
+        cut.Markup.Should().NotContain("No enabled agent profile runs on a job template with a tool");
     }
 
     [Fact]
     public void AgentChat_ShowsHint_WhenNoProfileCanBeLaunched()
     {
-        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new UiChatOptions([], 120));
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new UiChatOptions([], 120));
 
         var cut = Render<AgentChat>();
 
-        cut.Markup.Should().Contain("No enabled agent profile has a matching job template");
+        cut.Markup.Should().Contain("No enabled agent profile runs on a job template with a tool");
         cut.FindAll("#profile-select option").Should().ContainSingle();
     }
 
     [Fact]
     public void AgentChat_WhenTheApiCannotBeReached_StillRendersAndSaysSo()
     {
-        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("connection refused"));
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("connection refused"));
 
         var cut = Render<AgentChat>();
 
@@ -175,12 +176,12 @@ public class AgentChatComponentTests : AgentChatTestBase
     public async Task Launch_StartsTheChatForTheProfile_AndShowsItsModel()
     {
         // Regression: the header showed "model: auto" when the profile's model was lost on the way.
-        Chat.Setup(c => c.StartAsync(ProfileId, null, It.IsAny<CancellationToken>()))
+        Chat.Setup(c => c.StartAsync(ProfileId, null, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiChatSession(FakeAgentId, "claude-opus-5-5"));
 
         var cut = await LaunchAsync();
 
-        cut.Find(".chat-agent-info").TextContent.Should().Contain(FakeAgentId).And.Contain("model: claude-opus-5-5");
+        cut.Find(".chat-agent-info").TextContent.Should().Contain(FakeAgentId).And.Contain("Chat profile · claude-opus-5-5");
     }
 
     [Fact]
@@ -301,7 +302,7 @@ public class AgentChatAccessTests : AgentChatTestBase
 
         await LaunchAsync();
 
-        Chat.Verify(c => c.StartAsync(ProfileId, "6f1c2a9e-0000-0000-0000-00000000000a", It.IsAny<CancellationToken>()), Times.Once);
+        Chat.Verify(c => c.StartAsync(ProfileId, "6f1c2a9e-0000-0000-0000-00000000000a", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -326,7 +327,7 @@ public class AgentChatLaunchErrorTests : AgentChatTestBase
     [Fact]
     public async Task LaunchChatPod_Refused_ShowsTheApisReason()
     {
-        Chat.Setup(c => c.StartAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        Chat.Setup(c => c.StartAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Pod did not connect within 120s. Check cluster logs."));
 
         var cut = await RenderAndClickLaunchAsync();
@@ -339,7 +340,7 @@ public class AgentChatLaunchErrorTests : AgentChatTestBase
     [Fact]
     public async Task LaunchChatPod_UnexpectedError_ShowsLaunchFailed()
     {
-        Chat.Setup(c => c.StartAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        Chat.Setup(c => c.StartAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Service Unavailable"));
 
         var cut = await RenderAndClickLaunchAsync();
@@ -438,14 +439,14 @@ public class AgentChatTwoProfileSameTemplateTests : AgentChatTestBase
     public AgentChatTwoProfileSameTemplateTests()
     {
         Services.AddTestAccess();
-        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<CancellationToken>()))
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiChatOptions([
-                new UiChatProfile(ProfileA, "Profile A", ["kiro", "dotnet"]),
-                new UiChatProfile(ProfileB, "Profile B", ["kiro", "dotnet"]),
+                new UiChatProfile(ProfileA, "Profile A", JobTemplateProviderType.Kiro, ["auto"], ["auto"], "auto", "auto"),
+                new UiChatProfile(ProfileB, "Profile B", JobTemplateProviderType.Kiro, ["auto"], ["auto"], "auto", "auto"),
             ], 120));
-        Chat.Setup(c => c.StartAsync(ProfileA, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        Chat.Setup(c => c.StartAsync(ProfileA, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiChatSession("agent-a", "gpt-4o"));
-        Chat.Setup(c => c.StartAsync(ProfileB, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        Chat.Setup(c => c.StartAsync(ProfileB, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UiChatSession("agent-b", "claude-sonnet-4-5"));
     }
 
@@ -469,16 +470,11 @@ public class AgentChatTwoProfileSameTemplateTests : AgentChatTestBase
     [Fact]
     public async Task ProfileA_LaunchesWithItsOwnModel()
     {
-        // TODO: This test verifies the model is displayed correctly but does not verify the `effort` value
-        // from the profile's provider config. In the current architecture the component calls
-        // Chat.StartAsync(profileId, ...) and the API resolves model and effort from the profile's provider
-        // config server-side — effort is not returned in UiChatSession and is not observable from the
-        // component. A test for effort forwarding belongs in a ChatService or API integration test.
         var cut = Render<AgentChat>();
         await cut.InvokeAsync(() => cut.Find("select#profile-select").Change(ProfileA));
         await cut.InvokeAsync(() => cut.FindAll("button").First(b => b.TextContent.Contains("Launch")).Click());
 
-        cut.WaitForAssertion(() => cut.Find(".chat-agent-info").TextContent.Should().Contain("model: gpt-4o"),
+        cut.WaitForAssertion(() => cut.Find(".chat-agent-info").TextContent.Should().Contain("Profile A · gpt-4o"),
             timeout: TimeSpan.FromSeconds(5));
     }
 
@@ -489,7 +485,71 @@ public class AgentChatTwoProfileSameTemplateTests : AgentChatTestBase
         await cut.InvokeAsync(() => cut.Find("select#profile-select").Change(ProfileB));
         await cut.InvokeAsync(() => cut.FindAll("button").First(b => b.TextContent.Contains("Launch")).Click());
 
-        cut.WaitForAssertion(() => cut.Find(".chat-agent-info").TextContent.Should().Contain("model: claude-sonnet-4-5"),
+        cut.WaitForAssertion(() => cut.Find(".chat-agent-info").TextContent.Should().Contain("Profile B · claude-sonnet-4-5"),
             timeout: TimeSpan.FromSeconds(5));
+    }
+}
+
+/// <summary>
+/// Spec 053 req 6.1–6.4, D13: the model and effort come from selects, preselected from the global default route; the
+/// launch sends them and the header names profile and model. The offered models depend on the chosen project.
+/// </summary>
+public class AgentChatModelSelectionTests : AgentChatTestBase
+{
+    private const string ProjectId = "6f1c2a9e-0000-0000-0000-0000000005c1";
+
+    private static readonly UiChatProfile Claude = new(
+        "claude-profile", "Claude dotnet", JobTemplateProviderType.Claude,
+        ["auto", "claude-opus-5-5", "claude-sonnet-5-5"], ["auto", "low", "high", "max"], "claude-opus-5-5", "high");
+
+    public AgentChatModelSelectionTests()
+    {
+        Services.AddTestAccess();
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiChatOptions([Claude], 120));
+    }
+
+    [Fact]
+    public async Task ChoosingAProfile_OffersItsModelsAndEfforts_PreselectingTheDefaultRoutes()
+    {
+        var cut = Render<AgentChat>();
+        cut.FindAll("#chat-model-select").Should().BeEmpty("no profile is chosen yet");
+
+        await cut.InvokeAsync(() => cut.Find("select#profile-select").Change(Claude.Id));
+
+        cut.FindAll("#chat-model-select option").Select(o => o.GetAttribute("value")).Should().Equal(Claude.Models);
+        cut.FindAll("#chat-effort-select option").Select(o => o.GetAttribute("value")).Should().Equal(Claude.Efforts);
+        cut.Find("#chat-model-select").GetAttribute("value").Should().Be("claude-opus-5-5");
+        cut.Find("#chat-effort-select").GetAttribute("value").Should().Be("high");
+        cut.Find("#chat-model-select option[value='auto']").TextContent.Should().Be("auto (the tool chooses)");
+    }
+
+    [Fact]
+    public async Task Launch_SendsTheChosenModelAndEffort_AndTheHeaderNamesProfileAndModel()
+    {
+        Chat.Setup(c => c.StartAsync(Claude.Id, null, "claude-sonnet-5-5", "max", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiChatSession(FakeAgentId, "claude-sonnet-5-5"));
+        var cut = Render<AgentChat>();
+        await cut.InvokeAsync(() => cut.Find("select#profile-select").Change(Claude.Id));
+        await cut.InvokeAsync(() => cut.Find("#chat-model-select").Change("claude-sonnet-5-5"));
+        await cut.InvokeAsync(() => cut.Find("#chat-effort-select").Change("max"));
+
+        await cut.InvokeAsync(() => cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod")).Click());
+
+        cut.WaitForAssertion(() => cut.Find(".chat-agent-info").TextContent.Should()
+            .Contain($"Chatting with {FakeAgentId} · Claude dotnet · claude-sonnet-5-5"), timeout: TimeSpan.FromSeconds(5));
+        Chat.Verify(c => c.StartAsync(Claude.Id, null, "claude-sonnet-5-5", "max", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ChoosingAProject_ReadsTheOptionsForThatProject()
+    {
+        // Req 6.2: the models of the chat project's repository rows count, and no other project's.
+        Config.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([new UiProject(ProjectId, "Alpha", true)]);
+        var cut = Render<AgentChat>();
+
+        await cut.InvokeAsync(() => cut.Find("select#project-select-k8s").Change(ProjectId));
+
+        Chat.Verify(c => c.GetOptionsAsync(ProjectId, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

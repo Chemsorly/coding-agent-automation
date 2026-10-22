@@ -63,8 +63,6 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         var lifecycle = new PipelineRunLifecycleService(
             new TestOrchestrationFactory.NullHistoryService(), null, _mockLogger.Object);
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
             lifecycle: lifecycle,
             logger: _mockLogger.Object);
 

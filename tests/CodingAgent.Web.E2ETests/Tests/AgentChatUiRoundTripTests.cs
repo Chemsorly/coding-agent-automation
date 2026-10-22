@@ -3,6 +3,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
+using CodingAgent.Web.TestUtilities;
 
 namespace CodingAgent.Web.E2ETests.Tests;
 
@@ -37,10 +38,13 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private const string ChatProfileId = "chat-profile-rt";
+    private const string DefaultModel = "claude-sonnet-test";
+    private const string ChosenModel = "claude-opus-chat";
 
     /// <summary>
-    /// Seeds the agent profile the chat page offers (its labels name the <c>kiro,dotnet</c> job
-    /// template) and its agent provider config. Call before <see cref="AgentChatPage.NavigateAsync"/>:
+    /// Seeds the agent profile the chat page offers (on the <c>kiro,dotnet</c> job template) and the routes
+    /// that name it: the default route with <see cref="DefaultModel"/> and a triage row with <see cref="ChosenModel"/>,
+    /// so the chat's model select offers both (spec 053 req 6.2). Call before <see cref="AgentChatPage.NavigateAsync"/>:
     /// the page loads profiles when it initialises.
     /// </summary>
     // TODO [WARNING]: these entities are saved with CancellationToken.None and may not be cleaned
@@ -50,26 +54,15 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     // after the test.
     private async Task SeedChatProfileAsync()
     {
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = ChatProfileId,
             DisplayName = "Chat Round Trip Profile",
-            MatchLabels = new[] { "kiro", "dotnet" },
-            AgentProviderConfigId = "agent-chat-rt",
+            JobTemplate = E2ERouting.Key("kiro", "dotnet"),
             Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
-        {
-            Id = "agent-chat-rt",
-            DisplayName = "Chat Agent Round Trip",
-            ProviderType = "kiro",
-            Kind = ProviderKind.Agent,
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.Model] = "claude-sonnet-test"
-            }
-        }, CancellationToken.None);
+        }, DefaultModel);
+        await Fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(ChatProfileId, DefaultModel, "auto",
+            (WorkItemTaskType.Triage, AgentRoutingTestData.Route(ChatProfileId, ChosenModel, "high"))));
     }
 
     /// <summary>
@@ -140,7 +133,7 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     [Fact]
     public async Task AgentChat_RoundTrip_PromptAndResponseRendered()
     {
-        // ── Arrange: seed the agent profile; its provider config supplies the model ───
+        // ── Arrange: seed the agent profile and the routes that offer its models ───
         await SeedChatProfileAsync();
 
         var chatPage = new AgentChatPage(Page, BaseUrl);
@@ -151,11 +144,14 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             async () =>
             {
                 await chatPage.SelectProfileAsync(ChatProfileId);
+                // Spec 053 D13: the model comes from a select of the models routes name for the profile.
+                await chatPage.SelectModelAsync(ChosenModel);
                 await chatPage.LaunchChatPodAsync();
             },
             TimeSpan.FromSeconds(35));
 
         var chatSessionId = GetChatSessionId(job);
+        Assert.Equal(ChosenModel, job.Spec.Template.Spec.Containers.SelectMany(c => c.Env ?? []).Single(e => e.Name == AgentDefaults.EnvChatModel).Value);
 
         // Connect the fake agent concurrently — same approach as DispatchChatPodAndConnectAsync.
         // TODO [WARNING]: connectTask is not externally cancellable; ConnectAsChatAgentAsync manages
@@ -185,7 +181,7 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             var headerText = await chatPage.WaitForChatHeaderAsync(timeoutMs: 60_000);
             Assert.NotNull(headerText);
             Assert.Contains(agentId, headerText, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("claude-sonnet-test", headerText, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains($"Chat Round Trip Profile · {ChosenModel}", headerText, StringComparison.OrdinalIgnoreCase);
 
             // ── Act: send a prompt ────────────────────────────────────────────
             await chatPage.SendPromptAsync("What is 2+2?");

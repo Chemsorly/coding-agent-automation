@@ -54,9 +54,8 @@ internal sealed class DispatchWorkItemService
     // ── Concurrency snapshot ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds the Dispatched||Running concurrency map keyed on the selector of the template each active
-    /// item runs under (see <see cref="ResolveTemplateAsync"/>): the normalized AgentSelector, or for an
-    /// item dispatched through the profile fallback, the profile's labels its partial selector expands to.
+    /// Builds the Dispatched||Running concurrency map keyed on the normalized AgentSelector of each active item: the
+    /// job template key the API pinned when it routed the item (spec 053 req 4.9).
     ///
     /// <para>
     /// Replaces the 8-line LINQ block that <c>DispatchPendingWorkItem</c> held inline.
@@ -71,15 +70,13 @@ internal sealed class DispatchWorkItemService
     /// </para>
     /// </summary>
     /// <param name="db">An open, caller-owned <see cref="PipelineDbContext"/>.</param>
-    /// <param name="templateResolver">Resolves the partial selectors of items dispatched through the profile fallback.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// Dictionary mapping template selector → active-item count.
     /// Empty dictionary when no active items exist.
     /// </returns>
-    internal async Task<Dictionary<string, int>> BuildConcurrencySnapshotAsync(
+    internal static async Task<Dictionary<string, int>> BuildConcurrencySnapshotAsync(
         PipelineDbContext db,
-        DispatchTemplateResolver templateResolver,
         CancellationToken ct)
     {
         var activeCounts = await db.WorkItems
@@ -100,51 +97,22 @@ internal sealed class DispatchWorkItemService
         var result = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var item in activeCounts)
         {
-            // An item dispatched through the profile fallback keeps its stored partial selector ("dotnet")
-            // but runs under the profile's template ("dotnet,kiro"). Count it under that template's selector,
-            // the key DispatchPendingWorkItemAsync checks, or the gate never sees the items the fallback dispatched.
-            var (_, templateKey) = await ResolveTemplateAsync(
-                item.Selector, templateResolver, "BuildConcurrencySnapshot", warnOnExpansion: false, ct);
+            var templateKey = JobTemplateStore.NormalizeLabels(item.Selector);
             result[templateKey] = result.GetValueOrDefault(templateKey, 0) + item.Count;
         }
         return result;
     }
 
     /// <summary>
-    /// Resolves the <see cref="JobTemplate"/> an item stored with <paramref name="agentSelector"/> is
-    /// dispatched under, and the selector that template is keyed on: a direct lookup of the normalized
-    /// selector first, then the profile fallback, which expands a partial selector such as <c>"dotnet"</c>
-    /// to the profile's labels, <c>"dotnet,kiro"</c>. The concurrency snapshot, the gate and the selector lock
-    /// all key on that selector.
-    ///
-    /// <para>
-    /// Also used by <c>CreateWorkItem</c> to refuse a consolidation run at enqueue when this lookup finds no
-    /// template. Sharing the lookup guarantees that an item the dispatcher can dispatch is never refused there.
-    /// </para>
+    /// Resolves the <see cref="JobTemplate"/> an item stored with <paramref name="agentSelector"/> is dispatched under:
+    /// a direct lookup of the normalized selector, the job template key the API pinned when it routed the item
+    /// (spec 053 req 4.9). The concurrency snapshot, the gate and the selector lock all key on that selector.
     /// </summary>
-    /// <returns>
-    /// The template, or <c>null</c> when neither lookup finds one; and the template's selector, or the
-    /// normalized <paramref name="agentSelector"/> when no template is found.
-    /// </returns>
-    internal async Task<(JobTemplate? Template, string EffectiveSelector)> ResolveTemplateAsync(
-        string agentSelector,
-        DispatchTemplateResolver templateResolver,
-        string callerName,
-        bool warnOnExpansion,
-        CancellationToken ct)
+    /// <returns>The template, or <c>null</c> when the Helm values have none; and the normalized selector.</returns>
+    internal (JobTemplate? Template, string EffectiveSelector) ResolveTemplate(string agentSelector)
     {
         var normalizedSelector = JobTemplateStore.NormalizeLabels(agentSelector);
-        var template = _templateStore.Resolve(normalizedSelector);
-        if (template is not null)
-            return (template, normalizedSelector);
-
-        // The profile lookup takes the raw selector (it matches MatchLabels); its result is normalized here
-        // because profile labels are joined without trimming.
-        var (fallbackTemplate, fallbackSelector) = await templateResolver.ResolveTemplateViaProfileAsync(
-            agentSelector, callerName, warnOnExpansion, ct);
-        return fallbackTemplate is not null && fallbackSelector is not null
-            ? (fallbackTemplate, JobTemplateStore.NormalizeLabels(fallbackSelector))
-            : (null, normalizedSelector);
+        return (_templateStore.Resolve(normalizedSelector), normalizedSelector);
     }
 
     // ── Dispatch preamble ────────────────────────────────────────────────────
@@ -175,18 +143,17 @@ internal sealed class DispatchWorkItemService
     /// in <c>DispatchPendingWorkItem</c>).</param>
     /// <param name="lifecycle">The <see cref="DispatchLifecycleService"/> singleton that owns
     /// the PVC pool configuration.</param>
-    /// <param name="templateResolver">Passed to <see cref="BuildConcurrencySnapshotAsync"/>.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// A tuple of the concurrency snapshot (from <see cref="BuildConcurrencySnapshotAsync"/>)
     /// and the PVC availability result (from
     /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/>).
     /// </returns>
-    internal async Task<(Dictionary<string, int> concurrencyBySelector, PvcAvailabilityResult pvcResult)>
+    internal static async Task<(Dictionary<string, int> concurrencyBySelector, PvcAvailabilityResult pvcResult)>
         BuildDispatchPreambleAsync(
-            PipelineDbContext db, DispatchLifecycleService lifecycle, DispatchTemplateResolver templateResolver, CancellationToken ct)
+            PipelineDbContext db, DispatchLifecycleService lifecycle, CancellationToken ct)
     {
-        var concurrencyBySelector = await BuildConcurrencySnapshotAsync(db, templateResolver, ct);
+        var concurrencyBySelector = await BuildConcurrencySnapshotAsync(db, ct);
         var pvcResult = await lifecycle.QueryDispatchablePvcsAsync(db, ct);
         return (concurrencyBySelector, pvcResult);
     }
@@ -508,24 +475,26 @@ internal sealed class DispatchWorkItemService
     /// <param name="id">The GUID of the Pending WorkItem to dispatch.</param>
     /// <param name="dbFactory">Factory for opening the caller-owned <see cref="PipelineDbContext"/>.</param>
     /// <param name="lifecycle">The shared singleton <see cref="DispatchLifecycleService"/>.</param>
-    /// <param name="templateResolver">Used for profile-based template fallback resolution.</param>
     /// <param name="lockProvider">Distributed lock provider for the per-selector advisory lock.</param>
+    /// <param name="rollout">Routes an item a previous-release API stored without a selector (spec 053 DD10).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// <list type="bullet">
     ///   <item>200 <c>DispatchPendingResponse(true,"none")</c> — dispatch succeeded.</item>
     ///   <item>200 <c>DispatchPendingResponse(false,"not_pending"|"no_template"|"concurrency_limit")</c>
     ///     — expected backpressure outcome.</item>
+    ///   <item>200 <c>DispatchPendingResponse(false,"no_route")</c> — the item had no route and none resolves; it was
+    ///     failed with the reason.</item>
     ///   <item>404 Not Found — no WorkItem with this ID.</item>
-    ///   <item>503 Service Unavailable — no PVC available, advisory lock timeout, or K8s failure.</item>
+    ///   <item>503 Service Unavailable — no PVC available, advisory lock timeout, K8s failure, or a routing error.</item>
     /// </list>
     /// </returns>
     internal async Task<IResult> DispatchPendingWorkItemAsync(
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
-        DispatchTemplateResolver templateResolver,
         IDistributedLockProvider lockProvider,
+        RolloutRouting rollout,
         CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -563,6 +532,16 @@ internal sealed class DispatchWorkItemService
         }
 
         var agentSelector = quickCheck.AgentSelector;
+        if (string.IsNullOrEmpty(agentSelector))
+        {
+            // Spec 053 DD10: a previous-release API replica stored the request of a current-release caller without
+            // a selector or route. Route it now, before the selector lock; a refusal fails it.
+            var (routedSelector, early) = await rollout.RouteAsync(id, ct);
+            if (early is not null)
+                return early;
+            agentSelector = routedSelector!;
+        }
+
         // Sanitize agentSelector before embedding it in any log message or HTTP response body.
         // agentSelector originates from a database column set by POST /api/work-items callers;
         // a crafted value containing \r\n can inject fake log lines (log forging). All log and
@@ -570,15 +549,10 @@ internal sealed class DispatchWorkItemService
         // of the raw values. See also: LogSanitizer in CodingAgent.Infrastructure.Common.
         var sanitizedSelector = LogSanitizer.SanitizeForLog(agentSelector);
 
-        // Template — try direct resolve first, then profile-based fallback (issue #2777). The
-        // effective selector is the template's: "dotnet,kiro" for an item stored as "dotnet" that the
-        // fallback resolved. The lock, the concurrency snapshot and the gate all key on it. Resolved
-        // before the lock (templates and profiles are configuration, not locked state) because a lock
-        // keyed on the stored "dotnet" would let this dispatch and one for an item stored as "dotnet,kiro"
-        // run concurrently and both pass the same gate. A missing template is still reported after the
-        // lock and the post-lock re-check, as before.
-        var (template, effectiveSelector) = await ResolveTemplateAsync(
-            agentSelector, templateResolver, "DispatchPendingWorkItem", warnOnExpansion: true, ct);
+        // Template: the job template key the API pinned when it routed the item (spec 053 req 4.9). The lock, the
+        // concurrency snapshot and the gate all key on it. A missing template is reported after the lock and the
+        // post-lock re-check.
+        var (template, effectiveSelector) = ResolveTemplate(agentSelector);
         var sanitizedEffectiveSelector = LogSanitizer.SanitizeForLog(effectiveSelector);
 
         // Acquire advisory lock keyed on the effective selector and perform the post-lock
@@ -594,9 +568,7 @@ internal sealed class DispatchWorkItemService
         // Build the concurrency snapshot and PVC availability result via the shared preamble.
         // IMPORTANT: this call must remain inside the advisory lock, after the post-lock status
         // re-check. The lock-ordering constraint is: acquire lock → re-check status → preamble.
-        // BuildDispatchPreambleAsync keys each active item on its template's selector (not the raw
-        // stored selector) so active items stored by any path are counted correctly.
-        var (concurrencyBySelector, pvcResult) = await BuildDispatchPreambleAsync(db, lifecycle, templateResolver, ct);
+        var (concurrencyBySelector, pvcResult) = await BuildDispatchPreambleAsync(db, lifecycle, ct);
 
         if (template is null)
         {

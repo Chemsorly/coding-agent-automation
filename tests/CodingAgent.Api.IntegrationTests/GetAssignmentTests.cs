@@ -2,11 +2,15 @@ using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace CodingAgent.Api.IntegrationTests;
@@ -117,18 +121,31 @@ public sealed class GetAssignmentTests
     /// </summary>
     private sealed class FakeAssignmentEnricher : AssignmentEnricher
     {
-        private readonly Func<JobDistributionRequest, PipelineProject, Task<JobDistributionRequest?>> _enrich;
+        private readonly Func<JobDistributionRequest, PipelineProject, Task<EnrichmentResult>> _enrich;
         public int CallCount { get; private set; }
 
+        /// <summary>
+        /// A null request from <paramref name="enrich"/> is <see cref="EnrichmentResult.Unavailable"/>. A request gets the agent
+        /// config Id the real enricher always sets (spec 053: the claim builds the agent config from the route).
+        /// </summary>
         public FakeAssignmentEnricher(
             Func<JobDistributionRequest, PipelineProject, Task<JobDistributionRequest?>> enrich,
+            Serilog.ILogger? logger = null)
+            : this(async (identity, project) => await enrich(identity, project) is { } request
+                ? (EnrichmentResult)new EnrichmentResult.Enriched(request with { AgentProviderConfigId = request.AgentProviderConfigId ?? "test-agent-config" })
+                : EnrichmentResult.Unavailable.Instance, logger)
+        {
+        }
+
+        public FakeAssignmentEnricher(
+            Func<JobDistributionRequest, PipelineProject, Task<EnrichmentResult>> enrich,
             Serilog.ILogger? logger = null)
             : base(logger ?? Serilog.Log.Logger) // logger-only protected ctor; real deps unused (EnrichAsync overridden)
         {
             _enrich = enrich;
         }
 
-        public override async Task<JobDistributionRequest?> EnrichAsync(
+        public override async Task<EnrichmentResult> EnrichAsync(
             JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
         {
             CallCount++;
@@ -151,7 +168,7 @@ public sealed class GetAssignmentTests
             _exception = exception;
         }
 
-        public override Task<JobDistributionRequest?> EnrichAsync(
+        public override Task<EnrichmentResult> EnrichAsync(
             JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
         {
             CallCount++;
@@ -385,6 +402,93 @@ public sealed class GetAssignmentTests
             id, dbFactory, CreateNullProjectStore(), null);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NotFound>();
+    }
+
+    // ── Spec 053 DD6: a routing refusal fails the item (410); everything else is 503 ──────────
+
+    private static WorkItemStatusTransitionService CreateStatusTransitions(IDbContextFactory<PipelineDbContext> dbFactory) =>
+        new(new WorkItemTransitionService(dbFactory, NullLogger<WorkItemTransitionService>.Instance),
+            new Mock<IRunLifecycleManager>().Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
+
+    private static async Task<WorkItemEntity> ReadWorkItemAsync(IDbContextFactory<PipelineDbContext> dbFactory, Guid id)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+        return await db.WorkItems.AsNoTracking().SingleAsync(w => w.Id == id);
+    }
+
+    [Fact]
+    public async Task GetAssignment_RoutingRefusal_FailsTheItemWithTheReason_AndAnswers410()
+    {
+        var dbFactory = CreateDbFactory($"GetAssignment-Refused-{Guid.NewGuid():N}");
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched,
+            JsonSerializer.Serialize(MakeMinimalRequest(), PipelineJsonOptions.Default));
+        const string text = "agent profile 'Kiro' no longer exists";
+        var enricher = new FakeAssignmentEnricher((_, _) => Task.FromResult<EnrichmentResult>(
+            new EnrichmentResult.Refused(AgentRouteRefusalReason.ProfileUnavailable, text)));
+
+        var result = await WorkItemAgentEndpoints.GetAssignment(
+            id, dbFactory, CreateNullProjectStore(), enricher, CreateStatusTransitions(dbFactory), CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status410Gone, "an agent of any release exits 0 on 410");
+        var item = await ReadWorkItemAsync(dbFactory, id);
+        item.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Be(text);
+        item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+    }
+
+    [Fact]
+    public async Task GetAssignment_RoutingRefusal_WithoutATransitionService_Answers503_AndLeavesTheItemDispatched()
+    {
+        // A 410 makes the agent exit; without the transition the item would sit Dispatched until the sweep.
+        var dbFactory = CreateDbFactory($"GetAssignment-RefusedNoTransitions-{Guid.NewGuid():N}");
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched,
+            JsonSerializer.Serialize(MakeMinimalRequest(), PipelineJsonOptions.Default));
+        var enricher = new FakeAssignmentEnricher((_, _) => Task.FromResult<EnrichmentResult>(
+            new EnrichmentResult.Refused(AgentRouteRefusalReason.ProfileUnavailable, "agent profile 'Kiro' no longer exists")));
+
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, CreateNullProjectStore(), enricher);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        (await ReadWorkItemAsync(dbFactory, id)).Status.Should().Be(WorkItemStatus.Dispatched);
+    }
+
+    [Fact]
+    public async Task GetAssignment_ARefusedItem_StaysFailed_AfterTheJobControllerReportsSucceededAndTheHubRunning()
+    {
+        var dbFactory = CreateDbFactory($"GetAssignment-RefusedStays-{Guid.NewGuid():N}");
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched,
+            JsonSerializer.Serialize(MakeMinimalRequest(), PipelineJsonOptions.Default));
+        var transitions = CreateStatusTransitions(dbFactory);
+        var enricher = new FakeAssignmentEnricher((_, _) => Task.FromResult<EnrichmentResult>(
+            new EnrichmentResult.Refused(AgentRouteRefusalReason.NoTool, "Job template dotnet,kiro of agent profile 'Kiro' has no providerType")));
+        await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, CreateNullProjectStore(), enricher, transitions, CancellationToken.None);
+
+        // The pod exits 0 on the 410, so the Job Controller reports Succeeded; an agent of the previous release may
+        // have reported Running before it read the 410.
+        await transitions.TransitionAsync(id, new WorkItemStatusRequest { Status = WorkItemStatus.Running }, CancellationToken.None);
+        await transitions.TransitionAsync(id, new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded }, CancellationToken.None);
+
+        var item = await ReadWorkItemAsync(dbFactory, id);
+        item.Status.Should().Be(WorkItemStatus.Failed, "a terminal item does not move again");
+        item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+    }
+
+    [Fact]
+    public async Task GetAssignment_Unavailable_Answers503_AndLeavesTheItemDispatched()
+    {
+        var dbFactory = CreateDbFactory($"GetAssignment-Unavailable-{Guid.NewGuid():N}");
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched,
+            JsonSerializer.Serialize(MakeMinimalRequest(), PipelineJsonOptions.Default));
+        var enricher = new FakeAssignmentEnricher((_, _) => Task.FromResult<EnrichmentResult>(EnrichmentResult.Unavailable.Instance));
+
+        var result = await WorkItemAgentEndpoints.GetAssignment(
+            id, dbFactory, CreateNullProjectStore(), enricher, CreateStatusTransitions(dbFactory), CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable, "the agent retries");
+        (await ReadWorkItemAsync(dbFactory, id)).Status.Should().Be(WorkItemStatus.Dispatched);
     }
 
     // ── BuildMinimalPayload: confirm mutable config stripped ────────────────────

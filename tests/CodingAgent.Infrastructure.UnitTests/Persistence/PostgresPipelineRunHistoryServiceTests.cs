@@ -101,6 +101,31 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AddRunToHistory_ARunReportedWithoutAModel_KeepsTheModelOfItsRoute()
+    {
+        // Spec 053 task 4.9: the run is created with the route's model; an agent on "auto" reports none.
+        var runId = Guid.NewGuid().ToString();
+        await _sut.AddRunToHistoryAsync(CreateCompletedRun(runId, "issue-route", "Routed", modelName: "claude-opus-4"));
+
+        await _sut.AddRunToHistoryAsync(CreateCompletedRun(runId, "issue-route", "Routed", modelName: null));
+
+        (await _sut.GetRunAsync(Guid.Parse(runId)))!.ModelName.Should().Be("claude-opus-4");
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        db.PipelineRuns.Single(r => r.RunId == Guid.Parse(runId)).ModelName.Should().Be("claude-opus-4");
+    }
+
+    [Fact]
+    public async Task AddRunToHistory_AReportedModel_ReplacesTheRoutesModel()
+    {
+        var runId = Guid.NewGuid().ToString();
+        await _sut.AddRunToHistoryAsync(CreateCompletedRun(runId, "issue-route", "Routed", modelName: "auto"));
+
+        await _sut.AddRunToHistoryAsync(CreateCompletedRun(runId, "issue-route", "Routed", modelName: "claude-sonnet-4-6"));
+
+        (await _sut.GetRunAsync(Guid.Parse(runId)))!.ModelName.Should().Be("claude-sonnet-4-6");
+    }
+
+    [Fact]
     public async Task GetRunHistory_DeserializesFullSummary_WithAllFields()
     {
         // Note: ProjectId round-trip via AddRunToHistoryAsync is not yet asserted here.

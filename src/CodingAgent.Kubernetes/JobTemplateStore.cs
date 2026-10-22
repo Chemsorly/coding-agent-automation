@@ -133,6 +133,13 @@ public sealed class JobTemplateStore
     }
 
     /// <summary>
+    /// Every template's normalized key and its <c>providerType</c> (spec 053 DD4). An unset <c>providerType</c> stays an
+    /// empty string, which names no tool. Empty when no templates are loaded.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ToolsByKey() =>
+        _templates.ToDictionary(t => t.Key, t => t.Value.ProviderType ?? "", StringComparer.Ordinal);
+
+    /// <summary>
     /// Normalizes a comma-separated label string: splits, trims, sorts, re-joins.
     /// </summary>
     public static string NormalizeLabels(string labels)
@@ -143,43 +150,6 @@ public sealed class JobTemplateStore
         var parts = labels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         Array.Sort(parts, StringComparer.Ordinal);
         return string.Join(",", parts);
-    }
-
-    /// <summary>
-    /// Returns a human-readable error message when the agent provider's type does not match the job template
-    /// that the profile's labels resolve to; otherwise returns <c>null</c>.
-    /// <para>
-    /// Returns <c>null</c> (no mismatch) in any of these cases:
-    /// <list type="bullet">
-    ///   <item>the profile is disabled</item>
-    ///   <item>the profile has no match labels</item>
-    ///   <item><paramref name="agentProvider"/> is null</item>
-    ///   <item>no job template matches the profile's labels</item>
-    ///   <item>the template's providerType matches the provider config's ProviderType</item>
-    /// </list>
-    /// </para>
-    /// </summary>
-    public string? FindProviderTypeMismatch(AgentProfile profile, ProviderConfig? agentProvider)
-    {
-        ArgumentNullException.ThrowIfNull(profile);
-        if (!profile.Enabled)
-            return null;
-
-        if (profile.MatchLabels.Count == 0)
-            return null;
-
-        if (agentProvider is null)
-            return null;
-
-        var selector = profile.JobTemplateKey();
-        var template = Resolve(selector);
-        if (template is null)
-            return null;
-
-        if (JobTemplateProviderType.MatchesProviderConfigType(template.ProviderType, agentProvider.ProviderType))
-            return null;
-
-        return $"Agent profile '{profile.DisplayName}' uses agent provider '{agentProvider.DisplayName}' of type {agentProvider.ProviderType}, but the job template for labels [{selector}] starts {template.ProviderType} pods. Choose an agent provider of the matching type, or change the job template's providerType in the Helm values.";
     }
 
     private static JobTemplateStore BuildLookup(List<JobTemplate> templates)

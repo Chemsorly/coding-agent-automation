@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.IntegrationTests.Dispatch;
 
@@ -19,10 +22,9 @@ namespace CodingAgent.Api.IntegrationTests.Dispatch;
 /// state machine (AC1 and AC2 of issue #3758).
 ///
 /// <para>
-/// The test environment has no job templates configured
-/// (<c>JobTemplateStore.CreateEmpty()</c> is registered at startup), so
-/// <c>ResolveTemplateAsync</c> always returns null → the dispatch produces
-/// <c>200 { dispatched: false, reason: "no_template" }</c>. No K8s interaction
+/// The seeded item is stored without an agent selector or route, as a previous-release API replica stores a
+/// current-release request, and the test environment has no routing table, so the dispatcher's rollout routing
+/// (spec 053 DD10) refuses it: <c>200 { dispatched: false, reason: "no_route" }</c> and the item fails. No K8s interaction
 /// occurs: the empty <c>KiroPvcPool</c> causes <c>QueryDispatchablePvcsAsync</c>
 /// to return early before calling <c>AgentJobPvcs.ListHeldAsync</c>.
 /// </para>
@@ -52,14 +54,26 @@ public sealed class PendingDispatchHttpTests
     private Guid SeedPendingWorkItem()
     {
         using var db = _factory.CreateDbContext();
+        // Other tests of the collection may store a routing table; this item must find none.
+        db.KeyValueStore.RemoveRange(db.KeyValueStore.Where(kv => kv.Key == CodingAgent.Pipeline.Models.AgentRouting.StorageKey));
+        var issueIdentifier = $"dispatch-test-{Guid.NewGuid():N}";
         var entity = new WorkItemEntity
         {
             Id = Guid.NewGuid(),
             TaskType = WorkItemTaskType.Implementation,
-            IssueIdentifier = $"dispatch-test-{Guid.NewGuid():N}",
+            IssueIdentifier = issueIdentifier,
             IssueProviderConfigId = "prov-dispatch",
             Status = WorkItemStatus.Pending,
-            Payload = "{}",
+            Payload = JsonSerializer.Serialize(new JobDistributionRequest
+            {
+                IssueIdentifier = new IssueIdentifier(issueIdentifier),
+                IssueProviderConfigId = "prov-dispatch",
+                RepoProviderConfigId = "repo-dispatch",
+                InitiatedBy = "test",
+                TaskType = WorkItemTaskType.Implementation,
+                TimeoutSeconds = 3600,
+                PayloadSchemaVersion = 1,
+            }, PipelineJsonOptions.Default),
             AgentSelector = "",
             TimeoutSeconds = 3600,
             CreatedAt = DateTimeOffset.UtcNow
@@ -77,8 +91,8 @@ public sealed class PendingDispatchHttpTests
     /// with a body that deserializes as <see cref="DispatchPendingResponse"/>.
     ///
     /// <para>
-    /// In the test environment no job templates are configured, so the endpoint always
-    /// returns <c>{ dispatched: false, reason: "no_template" }</c>.
+    /// The item has no selector and no route resolves for it, so the endpoint returns
+    /// <c>{ dispatched: false, reason: "no_route" }</c> and fails the item (spec 053 req 2.9, 4.6).
     /// This exercises the full handler body (<c>WorkItemDispatchEndpoints.DispatchPendingWorkItem</c>
     /// L261-262), the <c>DispatchPendingWorkItemAsync</c> fast-path, lock acquisition, and
     /// preamble (<c>TryEnterSelectorDispatchAsync</c> L725-L799).
@@ -104,10 +118,13 @@ public sealed class PendingDispatchHttpTests
         var result = await response.Content.ReadFromJsonAsync<DispatchPendingResponse>(
             PipelineJsonOptions.Default);
         result.Should().NotBeNull("the response body must deserialize as DispatchPendingResponse");
-        result!.Dispatched.Should().BeFalse(
-            "no job template is configured in the test environment — dispatch is deferred");
-        result.Reason.Should().Be("no_template",
-            "the deferred reason must be 'no_template' when no template resolves for the selector");
+        result!.Dispatched.Should().BeFalse("no agent route resolves for the item");
+        result.Reason.Should().Be("no_route");
+
+        await using var db = _factory.CreateDbContext();
+        var item = await db.WorkItems.AsNoTracking().SingleAsync(w => w.Id == id);
+        item.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Be(AgentRouteRefusalReason.NoRouteText);
     }
 
     // ── AC2: Non-existent ID → 404 ────────────────────────────────────────────

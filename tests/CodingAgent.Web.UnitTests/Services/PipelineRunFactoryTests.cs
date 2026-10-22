@@ -311,6 +311,35 @@ public sealed class PipelineRunFactoryTests
         run.ProjectName.Should().BeNull();
     }
 
+    // ── Spec 053: the pinned route ──────────────────────────────────────────
+
+    private static readonly AgentRouteSnapshot Route =
+        new("profile-kiro", "Kiro", JobTemplateProviderType.Kiro, "claude-opus-4", "high", AgentRouteSource.Repository);
+
+    [Fact]
+    public void CreateFromWorkItem_CopiesTheRoutesProfileModelAndEffort()
+    {
+        var run = PipelineRunFactory.CreateFromWorkItem(Guid.NewGuid(), CreateMinimalRequest("ignored") with { Route = Route })!;
+
+        run.Should().BeEquivalentTo(new { AgentProfileId = "profile-kiro", AgentProfileName = "Kiro", ModelName = "claude-opus-4", AgentEffort = "high" });
+    }
+
+    [Fact]
+    public void CreateFromWorkItem_AConsolidation_CopiesTheRoute()
+    {
+        var run = PipelineRunFactory.CreateFromWorkItem(Guid.NewGuid(), CreateConsolidationRequest() with { Route = Route })!;
+
+        run.Should().BeEquivalentTo(new { AgentProfileId = "profile-kiro", AgentProfileName = "Kiro", ModelName = "claude-opus-4", AgentEffort = "high" });
+    }
+
+    [Fact]
+    public void FromDistributionRequest_WithoutARoute_LeavesTheProfileFieldsEmpty()
+    {
+        var run = PipelineRunFactory.FromDistributionRequest(CreateMinimalRequest("run-no-route"));
+
+        run.Should().BeEquivalentTo(new { AgentProfileId = (string?)null, AgentProfileName = (string?)null, AgentEffort = (string?)null });
+    }
+
     private static JobDistributionRequest CreateMinimalRequest(string runId) => new()
     {
         IssueIdentifier = "owner/repo#1",

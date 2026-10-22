@@ -1,173 +1,210 @@
-using CodingAgent.Web.Ui;
 using AwesomeAssertions;
 using Bunit;
-using Moq;
-using CodingAgent.Api.Client;
-using CodingAgent.Web.Components.Pages;
+using CodingAgent.Contracts.Ui;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Components.Pages;
+using CodingAgent.Web.TestUtilities;
+using CodingAgent.Web.Ui;
+using Moq;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
 /// <summary>
-/// bUnit component tests for AgentProfileSection.
+/// bUnit tests for AgentProfileSection (spec 053 req 1.1–1.4): a profile is a job template, the settings of that
+/// template's tool and MCP servers; profiles whose job template is missing are flagged.
 /// </summary>
 public class AgentProfileSectionComponentTests : BunitContext
 {
-    private static readonly string[] s_dotnetMatchLabels = ["dotnet"];
+    private const string KiroTemplate = "dotnet,kiro";
+    private const string ClaudeTemplate = "claude,dotnet";
+    private const string OpenCodeTemplate = "opencode,python";
+    private const string TemplateWithoutTool = "notool";
 
-    private readonly Mock<IUiSettingsClient> _mockClient;
-    private readonly List<ProviderConfig> _agentProviders;
+    private static readonly UiJobTemplate[] JobTemplates =
+    [
+        new(ClaudeTemplate, JobTemplateProviderType.Claude),
+        new(KiroTemplate, JobTemplateProviderType.Kiro),
+        new(TemplateWithoutTool, ""),
+        new(OpenCodeTemplate, JobTemplateProviderType.Opencode),
+    ];
+
+    private readonly Mock<IUiSettingsClient> _client = new();
+    private AgentProfile? _saved;
 
     public AgentProfileSectionComponentTests()
     {
-        _mockClient = new Mock<IUiSettingsClient>();
-        _agentProviders = new List<ProviderConfig>
+        Returns();
+        _client.Setup(s => s.SaveAgentProfileAsync(It.IsAny<AgentProfile>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentProfile, CancellationToken>((p, _) => _saved = p)
+            .Returns(Task.CompletedTask);
+        _client.Setup(s => s.DeleteAgentProfileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+    }
+
+    private void Returns(params AgentProfile[] profiles) =>
+        _client.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiAgentProfilesPage(profiles, JobTemplates));
+
+    private IRenderedComponent<AgentProfileSection> RenderSection() =>
+        Render<AgentProfileSection>(p => p.Add(s => s.ConfigClient, _client.Object));
+
+    private static void OpenAddForm(IRenderedComponent<AgentProfileSection> cut) =>
+        cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile")).Click();
+
+    [Fact]
+    public void WhenNoProfiles_ShowsTheEmptyMessage()
+    {
+        var cut = RenderSection();
+
+        cut.Markup.Should().Contain("Agent Profiles").And.Contain("No agent profiles configured").And.Contain("+ Add Agent Profile");
+    }
+
+    [Fact]
+    public void Table_ShowsNameJobTemplateAndTool()
+    {
+        Returns(AgentRoutingTestData.Profile("p-1", ClaudeTemplate, "Claude dotnet"));
+
+        var cut = RenderSection();
+
+        cut.FindAll("th").Select(h => h.TextContent.Trim()).Should().Equal("Name", "Job template", "MCP", "Enabled", "Actions");
+        var row = cut.Find("[data-testid='profile-row-p-1']");
+        row.TextContent.Should().Contain("Claude dotnet").And.Contain(ClaudeTemplate);
+        row.QuerySelector("[data-testid='profile-tool']")!.TextContent.Should().Be("Claude Code");
+        cut.FindAll("[data-testid='profile-missing-template']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AProfileWhoseJobTemplateIsMissing_IsFlagged()
+    {
+        // Req 1.4: for example after a Helm change.
+        Returns(AgentRoutingTestData.Profile("p-1", "java,kiro", "Java agent"));
+
+        var cut = RenderSection();
+
+        cut.Find("[data-testid='profile-row-p-1'] [data-testid='profile-missing-template']").TextContent.Should().Be("Missing job template");
+    }
+
+    [Fact]
+    public void AProfileOnAJobTemplateWithoutTool_IsFlagged()
+    {
+        Returns(AgentRoutingTestData.Profile("p-1", TemplateWithoutTool, "Toolless"));
+
+        var cut = RenderSection();
+
+        cut.Find("[data-testid='profile-row-p-1'] [data-testid='profile-no-tool']").TextContent.Should().Be("No tool");
+    }
+
+    [Fact]
+    public void Form_OffersTheJobTemplatesWithTheirTool()
+    {
+        var cut = RenderSection();
+        OpenAddForm(cut);
+
+        cut.FindAll("[data-testid='profile-job-template'] option").Select(o => o.TextContent.Trim()).Should().Equal(
+            "-- Select --", "claude,dotnet (Claude Code)", "dotnet,kiro (Kiro)", "notool (no tool)", "opencode,python (OpenCode)");
+        cut.Markup.Should().NotContain("Match Labels").And.NotContain("Agent Provider Config").And.NotContain("Priority");
+    }
+
+    [Theory]
+    [InlineData(KiroTemplate, "profile-agent-name")]
+    [InlineData(OpenCodeTemplate, "profile-base-url")]
+    [InlineData(ClaudeTemplate, "profile-auth-mode")]
+    [InlineData(TemplateWithoutTool, "profile-no-tool-hint")]
+    public void Form_ShowsTheSettingsOfTheChosenTemplatesTool(string jobTemplate, string shown)
+    {
+        string[] settings = ["profile-agent-name", "profile-base-url", "profile-auth-mode", "profile-no-tool-hint"];
+        var cut = RenderSection();
+        OpenAddForm(cut);
+
+        cut.Find("[data-testid='profile-job-template']").Change(jobTemplate);
+
+        foreach (var setting in settings)
+            cut.FindAll($"[data-testid='{setting}']").Should().HaveCount(setting == shown ? 1 : 0, setting);
+    }
+
+    [Fact]
+    public void Save_SendsTheJobTemplateAndTheToolsSettings()
+    {
+        var cut = RenderSection();
+        OpenAddForm(cut);
+        cut.FindAll("input[type='text']")[0].Change("Claude dotnet");
+        cut.Find("[data-testid='profile-job-template']").Change(ClaudeTemplate);
+        cut.Find("[data-testid='profile-auth-mode']").Change(ClaudeCodeAuthModes.Subscription);
+
+        cut.Find("button.btn-save").Click();
+
+        _saved.Should().NotBeNull();
+        _saved!.DisplayName.Should().Be("Claude dotnet");
+        _saved.JobTemplate.Should().Be(ClaudeTemplate);
+        _saved.Settings.Should().Equal(new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Subscription });
+    }
+
+    [Fact]
+    public void Edit_KeepsTheMcpConfigPath_WhichIsNotOnTheForm()
+    {
+        Returns(AgentRoutingTestData.Profile("p-1", KiroTemplate, "Kiro dotnet", settings: new Dictionary<string, string>
         {
-            new() { Id = "ap-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent" }
-        };
+            [ProviderSettingKeys.AgentName] = "reviewer",
+            [ProviderSettingKeys.McpConfigPath] = "/home/ubuntu/custom/mcp.json",
+        }));
+        var cut = RenderSection();
 
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>());
-        _mockClient.Setup(s => s.SaveAgentProfileAsync(It.IsAny<AgentProfile>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockClient.Setup(s => s.DeleteAgentProfileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        cut.Find(".btn-edit").Click();
+        cut.Find("[data-testid='profile-agent-name']").GetAttribute("value").Should().Be("reviewer");
+        cut.Find("button.btn-save").Click();
+
+        _saved!.Id.Should().Be("p-1");
+        _saved.Settings.Should().Equal(new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.AgentName] = "reviewer",
+            [ProviderSettingKeys.McpConfigPath] = "/home/ubuntu/custom/mcp.json",
+        });
     }
 
     [Fact]
-    public void RendersHeader()
+    public void Save_WithoutAJobTemplate_IsRefusedInTheForm()
     {
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-        Assert.Contains("Agent Profiles", cut.Markup);
+        var cut = RenderSection();
+        OpenAddForm(cut);
+        cut.FindAll("input[type='text']")[0].Change("No template");
+
+        cut.Find("button.btn-save").Click();
+
+        cut.Markup.Should().Contain("Job Template is required.");
+        _saved.Should().BeNull();
     }
 
     [Fact]
-    public void WhenNoProfiles_ShowsEmptyMessage()
+    public void ARefusedSave_ShowsTheApisReason()
     {
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-        Assert.Contains("No agent profiles configured", cut.Markup);
+        _client.Setup(s => s.SaveAgentProfileAsync(It.IsAny<AgentProfile>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Another agent profile is named 'Kiro dotnet'."));
+        var cut = RenderSection();
+        OpenAddForm(cut);
+        cut.FindAll("input[type='text']")[0].Change("Kiro dotnet");
+        cut.Find("[data-testid='profile-job-template']").Change(KiroTemplate);
+
+        cut.Find("button.btn-save").Click();
+
+        cut.Find(".status-error").TextContent.Should().Contain("Another agent profile is named 'Kiro dotnet'.");
     }
 
     [Fact]
-    public void WhenProfilesExist_ShowsTable()
+    public void Form_ShowsTheMcpServerSection()
     {
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new() { Id = "p-1", DisplayName = "DotNet Profile", AgentProviderConfigId = "ap-1", MatchLabels = s_dotnetMatchLabels }
-            });
+        var cut = RenderSection();
+        OpenAddForm(cut);
 
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-
-        Assert.Contains("DotNet Profile", cut.Markup);
-        Assert.Contains("dotnet", cut.Markup);
-        Assert.DoesNotContain("No agent profiles configured", cut.Markup);
-    }
-
-    [Fact]
-    public void ProfileTable_ShowsColumns()
-    {
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new() { Id = "p-1", DisplayName = "Test", AgentProviderConfigId = "ap-1" }
-            });
-
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-
-        Assert.Contains("Display Name", cut.Markup);
-        Assert.Contains("Match Labels", cut.Markup);
-        Assert.Contains("Agent Provider", cut.Markup);
-        Assert.Contains("Enabled", cut.Markup);
-        Assert.Contains("Priority", cut.Markup);
-        Assert.Contains("MCP", cut.Markup);
-    }
-
-    [Fact]
-    public void ProfileWithEmptyLabels_ShowsDefaultBadge()
-    {
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new() { Id = "p-1", DisplayName = "Default", AgentProviderConfigId = "ap-1", MatchLabels = [] }
-            });
-
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-
-        Assert.Contains("DEFAULT", cut.Markup);
-        Assert.Contains("(matches all)", cut.Markup);
-    }
-
-    [Fact]
-    public void RendersAddButton()
-    {
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-        Assert.Contains("+ Add Agent Profile", cut.Markup);
-    }
-
-    [Fact]
-    public void ClickAdd_ShowsForm()
-    {
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-
-        var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
-        addBtn.Click();
-
-        Assert.Contains("Create", cut.Markup);
-        Assert.Contains("Display Name", cut.Markup);
-        Assert.Contains("Match Labels", cut.Markup);
-        Assert.Contains("Agent Provider Config", cut.Markup);
-    }
-
-    [Fact]
-    public void Form_ShowsAgentProviderDropdown()
-    {
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-
-        var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
-        addBtn.Click();
-
-        Assert.Contains("Kiro Agent", cut.Markup);
-    }
-
-    [Fact]
-    public void Form_ShowsMcpServerSection()
-    {
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-
-        var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
-        addBtn.Click();
-
-        Assert.Contains("MCP Servers", cut.Markup);
-        Assert.Contains("+ Add MCP Server", cut.Markup);
+        cut.Markup.Should().Contain("MCP Servers").And.Contain("+ Add MCP Server");
     }
 
     [Fact]
     public void McpHeadersPlaceholder_ShowsLineBreaks()
     {
         // An "&#10;" entity in an attribute of a rendered element is not decoded, so it would show as text.
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-        cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile")).Click();
+        var cut = RenderSection();
+        OpenAddForm(cut);
         cut.FindAll("button").First(b => b.TextContent.Contains("+ Add MCP Server")).Click();
 
         cut.FindAll("select").First(s => s.InnerHtml.Contains("HTTP (URL-based)")).Change("http");
@@ -176,181 +213,61 @@ public class AgentProfileSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void ClickCancel_HidesForm()
+    public void ClickCancel_HidesTheForm()
     {
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
+        var cut = RenderSection();
+        OpenAddForm(cut);
 
-        var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
-        addBtn.Click();
-        Assert.Contains("Create", cut.Markup);
+        cut.FindAll("button").First(b => b.TextContent.Contains("Cancel")).Click();
 
-        var cancelBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Cancel"));
-        cancelBtn.Click();
-
-        Assert.DoesNotContain("Display Name *", cut.Markup);
-    }
-
-    [Fact]
-    public void EditProfile_PopulatesForm()
-    {
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new() { Id = "p-1", DisplayName = "My Profile", AgentProviderConfigId = "ap-1", MatchLabels = new[] { "kiro", "dotnet" }, Priority = 5 }
-            });
-
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
-
-        var editBtn = cut.Find(".btn-edit");
-        editBtn.Click();
-
-        Assert.Contains("Edit", cut.Markup);
+        cut.Markup.Should().NotContain("Display Name *");
     }
 
     [Fact]
     public void DeleteProfile_ShowsConfirmation()
     {
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new() { Id = "p-1", DisplayName = "To Delete", AgentProviderConfigId = "ap-1" }
-            });
+        Returns(AgentRoutingTestData.Profile("p-1", KiroTemplate, "To Delete"));
+        var cut = RenderSection();
 
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
+        cut.Find(".btn-delete").Click();
 
-        var deleteBtn = cut.Find(".btn-delete");
-        deleteBtn.Click();
-
-        Assert.Contains("Delete profile", cut.Markup);
-        Assert.Contains("To Delete", cut.Markup);
+        cut.Markup.Should().Contain("Delete profile").And.Contain("To Delete");
     }
 
     [Fact]
-    public void ProfileWithMcpServers_ShowsCount()
+    public void ProfileWithMcpServers_ShowsTheCountOfEnabledOnes()
     {
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new()
-                {
-                    Id = "p-1", DisplayName = "With MCP", AgentProviderConfigId = "ap-1",
-                    McpServers = new[]
-                    {
-                        new McpServerConfig { Name = "context7", Command = "uvx" },
-                        new McpServerConfig { Name = "disabled", Command = "x", Disabled = true }
-                    }
-                }
-            });
+        Returns(AgentRoutingTestData.Profile("p-1", KiroTemplate, "With MCP", mcpServers:
+        [
+            new McpServerConfig { Name = "context7", Command = "uvx" },
+            new McpServerConfig { Name = "disabled", Command = "x", Disabled = true },
+        ]));
 
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
+        var cut = RenderSection();
 
-        // Should show count of enabled MCP servers (1 enabled out of 2)
-        var cells = cut.FindAll("td");
-        Assert.Contains(cells, c => c.TextContent.Trim() == "1");
+        Assert.Contains(cut.FindAll("td"), c => c.TextContent.Trim() == "1");
     }
 
-    /// <summary>
-    /// Regression test for: Icon component crashed when passed an unknown 'title' parameter.
-    /// In kubernetes mode, an enabled profile with match labels renders the Template column's
-    /// "matched" branch — previously rendered as &lt;Icon title="Template matched" /&gt; which
-    /// caused System.InvalidOperationException and killed the Blazor circuit silently.
-    /// Fix: the Icon is now wrapped in a &lt;span title="Template matched"&gt; instead.
-    /// </summary>
-    [Fact]
-    public void KubernetesMode_EnabledProfileWithLabels_RendersWithoutThrowingIconParameterError()
-    {
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new()
-                {
-                    Id = "p-1", DisplayName = "K8s Profile", AgentProviderConfigId = "ap-1",
-                    MatchLabels = s_dotnetMatchLabels, Enabled = true, Priority = 1
-                }
-            });
-
-        // Must not throw — the bug caused an unhandled exception in the Blazor circuit
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders)
-             .Add(s => s.IsKubernetesMode, true));
-
-        // Template column header present
-        Assert.Contains("Template", cut.Markup);
-        // The template key is shown in the column (JobTemplateKey() = "dotnet" for this profile)
-        Assert.Contains("dotnet", cut.Markup);
-        // TODO: [WARNING] `Assert.Contains("dotnet", cut.Markup)` does not constrain the Template
-        // column content: "dotnet" already appears in the MatchLabels column regardless of what the
-        // Template column renders. The assertion would pass if the Template column were removed entirely.
-        // Replace with a more specific check, e.g.:
-        //   var templateCell = cut.Find("td code.monitoring-mono");
-        //   templateCell.TextContent.Should().Be("dotnet",
-        //       "the Template column must show profile.JobTemplateKey()");
-    }
-
-    /// <summary>
-    /// Regression test: NullReferenceException when AgentProfile.McpServers is null.
-    /// </summary>
+    /// <summary>Regression test: NullReferenceException when AgentProfile.McpServers is null.</summary>
     [Fact]
     public void ProfileList_WhenMcpServersIsNull_RendersWithoutException()
     {
-        var profileWithNullMcpServers = new AgentProfile
-        {
-            Id = "p-1",
-            DisplayName = "Legacy Profile",
-            AgentProviderConfigId = "ap-1"
-        } with
-        { McpServers = null! };
+        Returns(AgentRoutingTestData.Profile("p-1", KiroTemplate, "Legacy Profile") with { McpServers = null! });
 
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile> { profileWithNullMcpServers });
-
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
+        var cut = RenderSection();
 
         Assert.Contains("Legacy Profile", cut.Markup);
-        var cells = cut.FindAll("td");
-        Assert.Contains(cells, c => c.TextContent.Trim() == "0");
+        Assert.Contains(cut.FindAll("td"), c => c.TextContent.Trim() == "0");
     }
 
-    /// <summary>
-    /// Regression test: NullReferenceException in EditProfile when McpServerConfig.Headers or Env is null.
-    /// </summary>
+    /// <summary>Regression test: NullReferenceException in EditProfile when McpServerConfig.Headers or Env is null.</summary>
     [Fact]
     public void EditProfile_WhenServerHasNullHeadersAndEnv_OpensFormWithoutException()
     {
-        var serverWithNullFields = new McpServerConfig
-        {
-            Name = "legacy-server",
-            Type = "stdio",
-            Command = "uvx"
-        } with
+        var serverWithNullFields = new McpServerConfig { Name = "legacy-server", Type = "stdio", Command = "uvx" } with
         { Headers = null!, Env = null! };
-
-        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>
-            {
-                new()
-                {
-                    Id = "p-1",
-                    DisplayName = "Profile With Legacy Server",
-                    AgentProviderConfigId = "ap-1",
-                    McpServers = [serverWithNullFields]
-                }
-            });
-
-        var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigClient, _mockClient.Object)
-             .Add(s => s.AgentProviders, _agentProviders));
+        Returns(AgentRoutingTestData.Profile("p-1", KiroTemplate, "Profile With Legacy Server", mcpServers: [serverWithNullFields]));
+        var cut = RenderSection();
 
         cut.Find(".btn-edit").Click();
 

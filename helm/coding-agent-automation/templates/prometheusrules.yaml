@@ -61,12 +61,14 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: "Dispatcher keeps deferring work: no job template matches an agent selector. Check Settings → Label Routing → Agent Profiles and the {{ include "coding-agent-automation.fullname" . }}-job-templates ConfigMap."
+            summary: "Dispatcher keeps deferring work: no job template matches an agent selector. Check the agent profile's job template in Settings → Agents → Agent Profiles, Settings → Agents → Routing and the {{ include "coding-agent-automation.fullname" . }}-job-templates ConfigMap."
             description: >-
-              Work items stay Pending because the dispatcher finds no job template for their agent selector.
+              Work items stay Pending because the dispatcher finds no job template for their agent selector,
+              the job template of the agent profile they were routed to.
               The API logs "DispatchPendingWorkItem: no job template for selector <selector>" with the selector.
-              Add a jobTemplates[] entry for it in values.yaml and redeploy, or change the agent profile or
-              repository labels so the selector matches an existing template.
+              Add a jobTemplates[] entry for it in values.yaml and redeploy. Pointing the agent profile at an
+              existing job template, or routing the work to another profile, helps only work created afterwards:
+              cancel the waiting items and queue them again.
 
         # Alert when web DB is unreachable
         # Uses the app-exported readiness state. When DatabaseReadinessMonitor detects

@@ -35,9 +35,6 @@ public interface IPipelineApiConfigClient
     /// </summary>
     Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsWithSecretsAsync(ProviderKind kind, CancellationToken ct = default);
 
-    // Agent profiles
-    Task<IReadOnlyList<AgentProfile>> GetAgentProfilesAsync(CancellationToken ct = default);
-
     // Quality gate configs
     Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default);
 

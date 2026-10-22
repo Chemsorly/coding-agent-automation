@@ -18,10 +18,10 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// <para>
 /// These tests verify:
 /// (A) A valid trigger creates exactly one <c>Pending</c> WorkItem via <c>IWorkDistributor</c>.
-/// (B) A config-error trigger (permanent failure) creates no WorkItem and returns null.
+/// (B) A refused trigger (permanent failure) creates no WorkItem and throws the API's reason (spec 053 req 2.9).
 /// </para>
 /// <para>
-/// Issue #3642: a permanent failure (no job template for the agent selector) also logs the selector at
+/// Issue #3642: a permanent failure (the API refused the work item) also logs the reason at
 /// Error and increments <c>consolidation.dispatch.permanent_failures</c>. The counter lives on the
 /// process-global <see cref="PipelineTelemetry.Meter"/>, so the class is in the <c>Metrics</c> collection.
 /// </para>
@@ -29,13 +29,10 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 [Collection("Metrics")]
 public sealed class ConsolidationServiceSynchronousTriggerTests
 {
-    private static readonly string[] SelectorLabels = ["dotnet", "kiro", "dotnet10"];
-
     // ── Shared mocks ──────────────────────────────────────────────────────────
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
-    private readonly Mock<IConsolidationSelectorResolver> _mockSelectorResolver = new();
 
     // Template used across all tests
     private static readonly PipelineJobTemplate Template = new()
@@ -65,14 +62,6 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             });
         _mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { Template });
-
-        // Default: selector resolver returns valid labels
-        _mockSelectorResolver
-            .Setup(r => r.ResolveAsync(
-                It.IsAny<ProviderConfig?>(),
-                It.IsAny<PipelineConfiguration>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationAgentSelection(AgentSelectorKey.From(SelectorLabels), null));
     }
 
     private ConsolidationService CreateSut(PipelineConfiguration? config = null, ILogger? logger = null)
@@ -87,9 +76,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             logger ?? new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            new Mock<IProviderConfigStore>().Object,
-            WorkDistributor: _mockWorkDistributor.Object,
-            SelectorResolver: _mockSelectorResolver.Object));
+            WorkDistributor: _mockWorkDistributor.Object));
     }
 
     // ── Test A: Valid trigger creates exactly one Pending WorkItem ────────────
@@ -165,8 +152,9 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
 
     /// <summary>
     /// Acceptance criterion (issue #3026, Test B — updated for issue #3028):
-    /// When IWorkDistributor.DistributeAsync returns a permanent failure,
-    /// TriggerAsync must return null. No store writes occur (issue #3028).
+    /// When IWorkDistributor.DistributeAsync returns a permanent failure, TriggerAsync throws
+    /// <see cref="WorkItemRefusedException"/> with the API's reason (spec 053 req 2.9). No store writes occur
+    /// (issue #3028).
     /// </summary>
     [Fact]
     public async Task TriggerAsync_ConfigError_CreatesNoWorkItemAndSurfacesPermanentFailure()
@@ -177,19 +165,20 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             .ReturnsAsync(new DistributionResult(
                 Success: false,
                 WorkItemId: null,
-                ErrorMessage: "no job template for agent selector",
+                ErrorMessage: AgentRouteRefusalReason.NoRouteText,
                 IsPermanentFailure: true));
 
         var sut = CreateSut();
 
         // Act
-        var run = await sut.TriggerAsync(
+        var act = () => sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation,
             new TemplateId(Template.Id),
             CancellationToken.None);
 
-        // Assert: TriggerAsync returns null
-        run.Should().BeNull("a permanent dispatch failure must not create a ConsolidationRun");
+        // Assert: the refusal reaches the caller with the API's text
+        await act.Should().ThrowAsync<WorkItemRefusedException>()
+            .WithMessage(AgentRouteRefusalReason.NoRouteText);
 
         // Assert: IWorkDistributor.DistributeAsync was called exactly once
         _mockWorkDistributor.Verify(
@@ -251,34 +240,6 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             CancellationToken.None);
 
         retrigger.Should().NotBeNull("after transient failure, re-trigger must succeed");
-    }
-
-    /// <summary>
-    /// When selector resolver returns null (startup race), TriggerAsync returns null without calling distributor.
-    /// </summary>
-    [Fact]
-    public async Task TriggerAsync_NoProfiles_ReturnsNullWithoutCallingDistributor()
-    {
-        _mockSelectorResolver
-            .Setup(r => r.ResolveAsync(
-                It.IsAny<ProviderConfig?>(),
-                It.IsAny<PipelineConfiguration>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConsolidationAgentSelection?)null);
-
-        var sut = CreateSut();
-
-        var run = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation,
-            new TemplateId(Template.Id),
-            CancellationToken.None);
-
-        run.Should().BeNull("no profiles means transient failure — no dispatch attempted");
-
-        _mockWorkDistributor.Verify(
-            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "distributor must not be called when selector resolution fails");
     }
 
     /// <summary>
@@ -356,24 +317,22 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             "when DistributeAsync throws, TriggerAsync must return null (not a ConsolidationRun)");
     }
 
-    // ── Issue #3642: a run whose agent selector has no job template ──────────
+    // ── Issue #3642 / spec 053: a run the API refuses ────────────────────────
 
     /// <summary>
-    /// <c>POST /api/work-items</c> answers 422 for a consolidation run whose selector has no job template, and
-    /// <c>KubernetesWorkDistributor</c> maps that to a permanent failure naming the selector. TriggerAsync must
-    /// return null, log the failure at Error with the selector, and count it.
+    /// <c>POST /api/work-items</c> answers 422 for a consolidation run it cannot route, and
+    /// <c>KubernetesWorkDistributor</c> maps that to a permanent failure with the API's reason. TriggerAsync must
+    /// throw it, log the failure at Error with the reason, and count it.
     /// </summary>
     [Fact]
-    public async Task TriggerAsync_NoJobTemplateForSelector_ReturnsNull_LogsSelectorAtError_AndCountsPermanentFailure()
+    public async Task TriggerAsync_RefusedWorkItem_Throws_LogsTheReasonAtError_AndCountsPermanentFailure()
     {
-        // The selector the service builds from SelectorLabels (AgentSelectorKey.From normalizes and joins them).
-        var expectedSelector = AgentSelectorKey.From(SelectorLabels);
         _mockWorkDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(
                 Success: false,
                 WorkItemId: null,
-                ErrorMessage: $"No job template for agent selector '{expectedSelector}'",
+                ErrorMessage: AgentRouteRefusalReason.NoRouteText,
                 IsPermanentFailure: true));
 
         var sink = new CapturingSink();
@@ -381,17 +340,18 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
         var sut = CreateSut(logger: logger);
         using var collector = new MetricCollector<long>(PipelineTelemetry.ConsolidationDispatchPermanentFailures);
 
-        var run = await sut.TriggerAsync(
+        var act = () => sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation,
             new TemplateId(Template.Id),
             CancellationToken.None);
 
-        run.Should().BeNull("a run that can never be dispatched must not be reported as queued");
+        await act.Should().ThrowAsync<WorkItemRefusedException>(
+            "a run that can never be dispatched must not be reported as queued");
 
         var failureLog = sink.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Error).Subject;
-        failureLog.Properties.Should().ContainKey("AgentSelector");
-        failureLog.Properties["AgentSelector"].ToString().Should().Contain(expectedSelector,
-            "the operator needs to know which selector has no template");
+        failureLog.Properties.Should().ContainKey("Error");
+        failureLog.Properties["Error"].ToString().Should().Contain(AgentRouteRefusalReason.NoRouteText,
+            "the operator needs to know what to fix");
         failureLog.RenderMessage().Should().Contain("permanent dispatch failure");
 
         var measurements = collector.GetMeasurementSnapshot();

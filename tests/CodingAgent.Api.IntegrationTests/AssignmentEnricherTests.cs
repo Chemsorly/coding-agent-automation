@@ -1,27 +1,37 @@
 using AwesomeAssertions;
+using CodingAgent.Api.IntegrationTests.AgentRouting;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.TestUtilities;
 using Moq;
+using RoutingTable = CodingAgent.Pipeline.Models.AgentRouting;
 
 namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
-/// Unit tests for <see cref="AssignmentEnricher.EnrichAsync"/> core logic
-/// (the <c>EnrichCoreAsync</c> private path), covering:
-/// <list type="bullet">
-///   <item>Profile-not-found → returns null</item>
-///   <item>PrepareDispatchCoreAsync returns null → returns null</item>
-///   <item>Success path → returns enriched request with all fresh fields populated</item>
-///   <item>Exception in EnrichCoreAsync → caught, warning logged, returns null</item>
-///   <item>Protected logger-only constructor (null logger) → falls back to Serilog.Log.Logger</item>
-/// </list>
+/// <see cref="AssignmentEnricher.EnrichAsync"/> (spec 053 design "Claim", DD6): the claim runs on the route pinned at
+/// creation, or for an item queued before agent routing on the current routing; the profile must exist and be enabled,
+/// its job template must still be the one the item was queued for and must have a tool, and the built agent config's
+/// Id must be unique. Each of those is <see cref="EnrichmentResult.Refused"/>; every other reason to serve no assignment
+/// is <see cref="EnrichmentResult.Unavailable"/>. The repository template's stack labels pick the quality gates and
+/// reviewers. Also the fresh configuration of an assignment, and the consolidation path.
 /// </summary>
 public sealed class AssignmentEnricherTests
 {
+    private const string ProfileId = "profile-1";
+    private const string ProfileName = "Test Profile";
+    private const string JobTemplate = AgentRoutingTestData.DefaultJobTemplate;
+
+    /// <summary>The route the API pinned on the work item when it created it.</summary>
+    private static readonly AgentRouteSnapshot PinnedRoute =
+        new(ProfileId, ProfileName, JobTemplateProviderType.Kiro, "opus", "high", AgentRouteSource.GlobalDefault);
+
     // ── Controllable DispatchInfrastructure stub ───────────────────────────────────
 
     /// <summary>
@@ -30,24 +40,17 @@ public sealed class AssignmentEnricherTests
     /// </summary>
     private sealed class StubDispatchInfrastructure : DispatchInfrastructure
     {
-        private readonly Func<DispatchCoreRequest, CancellationToken,
-            Task<(IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>,
-                  DispatchInfrastructure.IssueContextResult, IReadOnlyList<ProviderConfig>,
-                  PipelineConfiguration, bool, string?, int)?>> _handler;
+        private readonly Func<DispatchCoreRequest, CancellationToken, Task<CoreResult?>> _handler;
 
         public DispatchCoreRequest? CapturedRequest { get; private set; }
 
-        public StubDispatchInfrastructure(
-            Func<DispatchCoreRequest, CancellationToken,
-                Task<(IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>,
-                      DispatchInfrastructure.IssueContextResult, IReadOnlyList<ProviderConfig>,
-                      PipelineConfiguration, bool, string?, int)?>> handler)
+        public StubDispatchInfrastructure(Func<DispatchCoreRequest, CancellationToken, Task<CoreResult?>> handler)
             : base()  // protected no-arg ctor; real deps unused (PrepareDispatchCoreAsync is overridden)
         {
             _handler = handler;
         }
 
-        internal override Task<(IReadOnlyList<QualityGateConfiguration> QualityGates,
+        internal override async Task<(IReadOnlyList<QualityGateConfiguration> QualityGates,
             IReadOnlyList<ReviewerConfiguration> Reviewers,
             DispatchInfrastructure.IssueContextResult IssueContext,
             IReadOnlyList<ProviderConfig> ProviderConfigs,
@@ -57,7 +60,9 @@ public sealed class AssignmentEnricherTests
             int RefreshCount)?> PrepareDispatchCoreAsync(DispatchCoreRequest request, CancellationToken ct)
         {
             CapturedRequest = request;
-            return _handler(request, ct);
+            if (await _handler(request, ct) is not { } r)
+                return null;
+            return (r.QualityGates, r.Reviewers, r.IssueContext, r.ProviderConfigs, r.Config, false, null, 0);
         }
 
         /// <summary>The repository list <see cref="BuildProjectEpicContextAsync"/> returns (null: none usable).</summary>
@@ -88,24 +93,28 @@ public sealed class AssignmentEnricherTests
         }
     }
 
+    /// <summary>What the stub's <see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/> returns.</summary>
+    private sealed record CoreResult(
+        IReadOnlyList<QualityGateConfiguration> QualityGates,
+        IReadOnlyList<ReviewerConfiguration> Reviewers,
+        DispatchInfrastructure.IssueContextResult IssueContext,
+        IReadOnlyList<ProviderConfig> ProviderConfigs,
+        PipelineConfiguration Config);
+
     // ── Helpers ─────────────────────────────────────────────────────────────────────
 
-    private static JobDistributionRequest MakeIdentity(string agentSelector = "dotnet") => new()
+    private static JobDistributionRequest MakeIdentity() => new()
     {
         IssueIdentifier = new IssueIdentifier("owner/repo#42"),
         IssueProviderConfigId = "issue-prov-1",
         RepoProviderConfigId = "repo-prov-1",
         InitiatedBy = "test",
         TaskType = WorkItemTaskType.Implementation,
-        AgentSelector = agentSelector,
+        AgentSelector = JobTemplate,
+        ResolvedProfileId = ProfileId,
+        Route = PinnedRoute,
         TimeoutSeconds = 3600,
-        // New-schema: PayloadSchemaVersion == 1 (identity-only payload; ProviderConfigs is null)
-        // TODO: [WARNING] PayloadSchemaVersion is not set here (field remains null). The comment above
-        // claims new-schema semantics but this fixture is old-schema by the discriminator definition.
-        // AssignmentEnricherTests call EnrichAsync directly (not via GetAssignment) so the discriminator
-        // is not exercised here — no test is broken. However, if a future test calls GetAssignment with
-        // this fixture, it will silently route to the old-schema path. Set PayloadSchemaVersion = 1 here
-        // to match the comment and prevent future misclassification.
+        PayloadSchemaVersion = 1,
     };
 
     private static PipelineProject MakeProject() => new()
@@ -115,15 +124,11 @@ public sealed class AssignmentEnricherTests
         SteeringContent = "project-steering",
     };
 
-    private static AgentProfile MakeProfile(string id = "profile-1", string agentProviderConfigId = "agent-cfg-1") =>
-        new()
-        {
-            Id = id,
-            DisplayName = "Test Profile",
-            AgentProviderConfigId = agentProviderConfigId,
-            MatchLabels = ["dotnet"],
-            Enabled = true,
-        };
+    private static AgentProfile MakeProfile(
+        string id = ProfileId, string jobTemplate = JobTemplate, bool enabled = true,
+        IReadOnlyList<McpServerConfig>? mcpServers = null) =>
+        AgentRoutingTestData.Profile(id, jobTemplate, id == ProfileId ? ProfileName : $"{id} profile", enabled,
+            new Dictionary<string, string> { [ProviderSettingKeys.AgentName] = "dev" }, mcpServers);
 
     private static DispatchInfrastructure.IssueContextResult MakeIssueContext() =>
         new(
@@ -157,346 +162,306 @@ public sealed class AssignmentEnricherTests
         }
     ];
 
-    private static (
-        IReadOnlyList<QualityGateConfiguration>,
-        IReadOnlyList<ReviewerConfiguration>,
-        DispatchInfrastructure.IssueContextResult,
-        IReadOnlyList<ProviderConfig>,
-        PipelineConfiguration,
-        bool,
-        string?,
-        int)? MakeCoreResult(IReadOnlyList<ProviderConfig>? providerConfigs = null)
-        => (
-            (IReadOnlyList<QualityGateConfiguration>)[],
-            (IReadOnlyList<ReviewerConfiguration>)[],
-            MakeIssueContext(),
-            providerConfigs ?? MakeProviderConfigs(),
-            new PipelineConfiguration(),
-            false,
-            (string?)null,
-            0
-        );
+    /// <summary>The core result, with the agent config the enricher passed added as given, as the real infra does.</summary>
+    private static CoreResult MakeCoreResult(DispatchCoreRequest request, IReadOnlyList<ProviderConfig>? providerConfigs = null) =>
+        new([], [], MakeIssueContext(),
+            [.. providerConfigs ?? MakeProviderConfigs(), .. request.AgentConfig is { } agent ? new[] { agent } : []],
+            new PipelineConfiguration());
 
-    /// <summary>
-    /// Creates a no-op <see cref="IConsolidationJobPreparationService"/> mock for tests
-    /// that exercise the implementation task type path and never call the consolidation preparer.
-    /// </summary>
+    /// <summary>A consolidation preparer that fails the test if it is called (implementation-path tests).</summary>
     private static Mock<IConsolidationJobPreparationService> MakeNoOpConsolidationPreparer()
     {
         var mock = new Mock<IConsolidationJobPreparationService>();
-        // Default Moq behavior for Task-returning methods is null — set up a fallback so any
-        // unexpected call fails explicitly rather than returning null and producing an NRE.
         mock.Setup(s => s.PrepareAsync(
                 It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
+                It.IsAny<ProviderConfig?>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException(
                 "ConsolidationJobPreparationService.PrepareAsync was not expected to be called by this test."));
         return mock;
     }
 
-    /// <summary>
-    /// Creates a no-op <see cref="IProjectStore"/> mock and a matching
-    /// <see cref="ConsolidationTemplateResolver"/> stub for tests that do not exercise
-    /// the <c>InjectProjectSecretsAsync</c> path.
-    /// </summary>
-    private static (Mock<IProjectStore> Store, ConsolidationTemplateResolver Resolver) MakeProjectStubs()
+    /// <summary>The enricher under test with its stubs; every part can be replaced per test.</summary>
+    private sealed class Setup
     {
-        var mock = new Mock<IProjectStore>();
-        mock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        mock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        return (mock, new ConsolidationTemplateResolver(mock.Object));
+        public IReadOnlyList<AgentProfile> Profiles { get; init; } = [MakeProfile()];
+
+        /// <summary>All templates: the repository template (stack labels, repository rows) and consolidation templates.</summary>
+        public IReadOnlyList<PipelineJobTemplate> Templates { get; init; } = [];
+
+        /// <summary>The project's templates (the decomposition tracker check).</summary>
+        public IReadOnlyList<PipelineJobTemplate> ProjectTemplates { get; init; } = [];
+
+        /// <summary>The stored routing table; null stores none.</summary>
+        public RoutingTable? Routing { get; init; }
+
+        public JobTemplateStore JobTemplates { get; init; } = AgentRoutingTestData.JobTemplates();
+
+        public StubDispatchInfrastructure Infra { get; init; } =
+            new((request, _) => Task.FromResult<CoreResult?>(MakeCoreResult(request)));
+
+        public Mock<IConsolidationJobPreparationService> Preparer { get; init; } = MakeNoOpConsolidationPreparer();
+
+        public IPipelineRunHistoryService? RunHistory { get; init; }
+
+        public Serilog.ILogger Logger { get; init; } = Serilog.Log.Logger;
+
+        public AssignmentEnricher Build()
+        {
+            var profileStore = new Mock<IAgentProfileStore>();
+            profileStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Profiles);
+            var projectStore = new Mock<IProjectStore>();
+            projectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+            projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Templates);
+            projectStore.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(ProjectTemplates);
+            var db = new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString());
+            if (Routing is not null)
+                AgentRoutingTestSupport.SeedRouting(db, Routing);
+
+            return new AssignmentEnricher(
+                Infra, profileStore.Object, Preparer.Object, projectStore.Object,
+                new ConsolidationTemplateResolver(projectStore.Object), new AgentRoutingStore(db), JobTemplates, Logger,
+                new ConsolidationRunContextSources(RunHistory));
+        }
     }
 
-    /// <summary>
-    /// Creates a <see cref="StubDispatchInfrastructure"/> that returns the given result,
-    /// plus a profile store mock and the real <see cref="AssignmentEnricher"/> under test.
-    /// </summary>
-    private static (StubDispatchInfrastructure Infra, Mock<IAgentProfileStore> ProfileStore, AssignmentEnricher Enricher) MakeEnricher(
-        IReadOnlyList<AgentProfile>? profiles = null,
-        (IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>,
-            DispatchInfrastructure.IssueContextResult, IReadOnlyList<ProviderConfig>,
-            PipelineConfiguration, bool, string?, int)? coreResult = null,
-        IReadOnlyList<PipelineJobTemplate>? projectTemplates = null)
+    private static JobDistributionRequest Enriched(EnrichmentResult result) =>
+        result.Should().BeOfType<EnrichmentResult.Enriched>().Subject.Request;
+
+    private static EnrichmentResult.Refused Refused(EnrichmentResult result, string reason)
     {
-        var capturedResult = coreResult ?? MakeCoreResult();
-        var infra = new StubDispatchInfrastructure((_, _) => Task.FromResult(capturedResult));
-
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(profiles ?? [MakeProfile()]);
-
-        var projectStoreMock = new Mock<IProjectStore>();
-        projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(projectTemplates ?? []);
-        var consolidationTemplateResolver = new ConsolidationTemplateResolver(projectStoreMock.Object);
-
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
-            projectStoreMock.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-        return (infra, profileStoreMock, enricher);
+        var refused = result.Should().BeOfType<EnrichmentResult.Refused>().Subject;
+        refused.Reason.Should().Be(reason);
+        return refused;
     }
+
+    private static PipelineJobTemplate RepoTemplate(
+        IReadOnlyList<string>? stackLabels = null, IReadOnlyDictionary<WorkItemTaskType, AgentRoute>? rows = null) =>
+        new()
+        {
+            Id = "t-repo", Name = "repo", IssueProviderId = "issue-prov-1", RepoProviderId = "repo-prov-1", Enabled = true,
+            RequiredLabels = stackLabels, AgentRoutes = rows,
+        };
 
     // ── Success path ─────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task EnrichAsync_Success_ReturnsEnrichedRequestWithFreshProviderConfigs()
     {
-        // ARRANGE
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher();
+        var enricher = new Setup().Build();
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await enricher.EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
 
-        // ASSERT: result is not null and has fresh ProviderConfigs
-        result.Should().NotBeNull("success path must return an enriched request");
-        result!.ProviderConfigs.Should().NotBeNullOrEmpty("fresh ProviderConfigs must be set from PrepareDispatchCoreAsync");
+        result.ProviderConfigs.Should().Contain(c => c.Id == "repo-prov-1", "fresh ProviderConfigs come from PrepareDispatchCoreAsync");
     }
 
     [Fact]
-    public async Task EnrichAsync_Success_SetsResolvedProfileId()
+    public async Task EnrichAsync_PinnedRoute_BuildsTheAgentConfigFromTheProfileAndTheRoute()
     {
-        // ARRANGE
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher(profiles: [MakeProfile("my-profile-id")]);
+        var setup = new Setup();
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
 
-        // ASSERT: resolved profile ID is set from the matched profile
-        result.Should().NotBeNull();
-        result!.ResolvedProfileId.Should().Be("my-profile-id", "ResolvedProfileId must reflect the matched agent profile");
+        var agentConfig = setup.Infra.CapturedRequest!.AgentConfig;
+        agentConfig.Should().NotBeNull("spec 053 DD5: the agent config is built from the profile and its route");
+        agentConfig!.Should().BeEquivalentTo(new
+        {
+            Id = ProfileId,
+            Kind = ProviderKind.Agent,
+            ProviderType = AgentToolCatalog.Kiro.ProviderConfigType,
+        });
+        agentConfig.Settings.Should().Contain(ProviderSettingKeys.Model, "opus")
+            .And.Contain(ProviderSettingKeys.Effort, "high")
+            .And.Contain(ProviderSettingKeys.AgentName, "dev");
+        result.ResolvedProfileId.Should().Be(ProfileId);
+        result.AgentProviderConfigId.Should().Be(ProfileId, "the agent looks its config up by this Id");
+        result.Route.Should().Be(PinnedRoute);
     }
 
     [Fact]
-    public async Task EnrichAsync_Success_SetsAgentProviderConfigId()
+    public async Task EnrichAsync_PinnedRoute_IsNotResolvedAgain_WhenTheRoutingChanged()
     {
-        // ARRANGE
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher(profiles: [MakeProfile(agentProviderConfigId: "agent-provider-99")]);
+        // The default row now names another profile; the item keeps the route it was created with.
+        var enricher = new Setup
+        {
+            Profiles = [MakeProfile(), MakeProfile("profile-2")],
+            Routing = AgentRoutingTestData.Routing("profile-2", "sonnet"),
+        }.Build();
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await enricher.EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
 
-        // ASSERT
-        result.Should().NotBeNull();
-        result!.AgentProviderConfigId.Should().Be("agent-provider-99");
+        result.ResolvedProfileId.Should().Be(ProfileId);
+        result.Route.Should().Be(PinnedRoute);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_ItemQueuedBeforeAgentRouting_IsRoutedAtClaim()
+    {
+        // Spec 053 req 4.6: an item stored without a route runs on the current routing, recorded as source "claim".
+        var setup = new Setup { Routing = AgentRoutingTestData.Routing(ProfileId, "sonnet", "low") };
+        var identity = MakeIdentity() with { Route = null, ResolvedProfileId = null };
+
+        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
+
+        result.Route.Should().Be(new AgentRouteSnapshot(
+            ProfileId, ProfileName, JobTemplateProviderType.Kiro, "sonnet", "low", AgentRouteSource.Claim));
+        result.ResolvedProfileId.Should().Be(ProfileId);
+        setup.Infra.CapturedRequest!.AgentConfig!.Settings.Should().Contain(ProviderSettingKeys.Model, "sonnet");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_RepositoryRowsApply_ToAnItemRoutedAtClaim()
+    {
+        var setup = new Setup
+        {
+            Profiles = [MakeProfile(), MakeProfile("profile-2")],
+            Routing = AgentRoutingTestData.Routing(ProfileId),
+            Templates = [RepoTemplate(rows: new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Implementation] = AgentRoutingTestData.Route("profile-2", "row-model"),
+            })],
+        };
+        var identity = MakeIdentity() with { Route = null };
+
+        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
+
+        result.ResolvedProfileId.Should().Be("profile-2");
+        result.Route!.Model.Should().Be("row-model");
     }
 
     [Fact]
     public async Task EnrichAsync_Success_SetsRepoSteeringContentFromProviderConfig()
     {
-        // ARRANGE: provider config with known steering content
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
-        var coreResult = MakeCoreResult(providerConfigs: MakeProviderConfigs("fresh-steering-content"));
-        var (_, _, enricher) = MakeEnricher(coreResult: coreResult);
+        var setup = new Setup
+        {
+            Infra = new((request, _) => Task.FromResult<CoreResult?>(MakeCoreResult(request, MakeProviderConfigs("fresh-steering-content")))),
+        };
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
 
-        // ASSERT: RepoSteeringContent is pulled from the matching ProviderConfig
-        result.Should().NotBeNull();
-        result!.RepoSteeringContent.Should().Be("fresh-steering-content",
+        result.RepoSteeringContent.Should().Be("fresh-steering-content",
             "RepoSteeringContent must be resolved from the fresh ProviderConfig matching RepoProviderConfigId");
     }
 
     [Fact]
     public async Task EnrichAsync_Success_SetsProjectSteeringContent()
     {
-        // ARRANGE
-        var identity = MakeIdentity("dotnet");
         var project = MakeProject() with { SteeringContent = "project-level-steering" };
-        var (_, _, enricher) = MakeEnricher();
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await new Setup().Build().EnrichAsync(MakeIdentity(), project, CancellationToken.None));
 
-        // ASSERT
-        result.Should().NotBeNull();
-        result!.ProjectSteeringContent.Should().Be("project-level-steering");
+        result.ProjectSteeringContent.Should().Be("project-level-steering");
     }
 
     [Fact]
     public async Task EnrichAsync_Success_SetsIssueDetailFromContext()
     {
-        // ARRANGE
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher();
+        var result = Enriched(await new Setup().Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: IssueDetail is populated from the fresh context
-        result.Should().NotBeNull();
-        result!.IssueDetail.Should().NotBeNull("IssueDetail must be populated from fresh issue context");
+        result.IssueDetail.Should().NotBeNull("IssueDetail must be populated from fresh issue context");
         result.IssueDetail!.Title.Should().Be("Fix the crash");
     }
 
     [Fact]
-    public async Task EnrichAsync_Success_SetsQualityGateAndReviewerConfigs()
+    public async Task EnrichAsync_MergesTheProfilesMcpServersWithTheProjects_ProjectWins()
     {
-        // ARRANGE
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher();
+        var enricher = new Setup
+        {
+            Profiles = [MakeProfile(mcpServers:
+            [
+                new McpServerConfig { Name = "context7", Command = "uvx" },
+                new McpServerConfig { Name = "web-search", Command = "uvx", Disabled = false },
+            ])],
+        }.Build();
+        var project = MakeProject() with
+        {
+            McpServers = [new McpServerConfig { Name = "web-search", Command = "uvx", Disabled = true }],
+        };
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await enricher.EnrichAsync(MakeIdentity(), project, CancellationToken.None));
 
-        // ASSERT
-        result.Should().NotBeNull();
-        result!.QualityGateConfigs.Should().NotBeNull("QualityGateConfigs must be set");
-        result.ReviewerConfigs.Should().NotBeNull("ReviewerConfigs must be set");
+        result.McpServers.Should().HaveCount(2);
+        result.McpServers.Should().Contain(s => s.Name == "context7" && s.Command == "uvx");
+        result.McpServers.Single(s => s.Name == "web-search").Disabled.Should().BeTrue("the project's server wins on a name clash");
     }
 
+    // ── Stack labels (spec 053 DD7) ──────────────────────────────────────────────────
+
     /// <summary>
-    /// When both a plain .NET profile and a polyglot profile exist, enriching a work item whose
-    /// AgentSelector carries only the .NET labels (dotnet,dotnet10,kiro) must select the .NET
-    /// profile — not the polyglot — and therefore produce quality-gate configs that include .NET
-    /// but not Python.
-    ///
-    /// The stub handler runs a real <see cref="QualityGateResolver"/> against the captured
-    /// RequiredLabels so the assertion on QualityGateConfigs is meaningful: the resolver only
-    /// matches ".NET" (dotnet label intersects) and not "Python" (python label absent).
+    /// The repository template's stack labels pick the quality gates and reviewers; the agent profile has no say.
+    /// The stub runs a real <see cref="QualityGateResolver"/> on the stack labels it receives.
     /// </summary>
     [Fact]
-    public async Task EnrichAsync_WithPolyglotAndDotNetProfiles_DotNetSelectorSelectsDotNetProfileAndQualityGates()
+    public async Task EnrichAsync_TheRepositoryTemplatesStackLabels_PickTheQualityGates()
     {
-        // ARRANGE
-        var dotnetProfile = new AgentProfile
-        {
-            Id = "dotnet-profile",
-            DisplayName = ".NET Profile",
-            AgentProviderConfigId = "agent-cfg-1",
-            Enabled = true,
-            MatchLabels = ["kiro", "dotnet", "dotnet10"]
-        };
-        var polyglotProfile = new AgentProfile
-        {
-            Id = "polyglot-profile",
-            DisplayName = "Polyglot Profile",
-            AgentProviderConfigId = "agent-cfg-2",
-            Enabled = true,
-            MatchLabels = ["kiro", "dotnet", "dotnet10", "python", "python312"]
-        };
-
         var dotnetQgc = new QualityGateConfiguration { Id = "qgc-dotnet", DisplayName = ".NET", MatchLabels = ["dotnet"], Enabled = true };
         var pythonQgc = new QualityGateConfiguration { Id = "qgc-python", DisplayName = "Python", MatchLabels = ["python"], Enabled = true };
-        IReadOnlyList<QualityGateConfiguration> allQgcs = [dotnetQgc, pythonQgc];
+        var setup = new Setup
+        {
+            Templates = [RepoTemplate(stackLabels: ["dotnet", "dotnet10"])],
+            Infra = new((request, _) => Task.FromResult<CoreResult?>(MakeCoreResult(request) with
+            {
+                QualityGates = new QualityGateResolver().Resolve([dotnetQgc, pythonQgc], request.StackLabels!),
+            })),
+        };
 
-        // The stub handler runs a real QualityGateResolver against req.RequiredLabels so that the
-        // QualityGateConfigs in the result reflect the actual labels used by the selected profile.
-        var infra = new StubDispatchInfrastructure((req, _) => Task.FromResult(
-            ((IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>,
-              DispatchInfrastructure.IssueContextResult, IReadOnlyList<ProviderConfig>,
-              PipelineConfiguration, bool, string?, int)?)(
-                new QualityGateResolver().Resolve(allQgcs, req.RequiredLabels),
-                (IReadOnlyList<ReviewerConfiguration>)[],
-                MakeIssueContext(),
-                MakeProviderConfigs(),
-                new PipelineConfiguration(),
-                false,
-                (string?)null,
-                0)));
+        var result = Enriched(await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([dotnetProfile, polyglotProfile]);
+        setup.Infra.CapturedRequest!.StackLabels.Should().Equal("dotnet", "dotnet10");
+        result.QualityGateConfigs.Should().ContainSingle().Which.Id.Should().Be("qgc-dotnet");
+    }
 
-        var projectStoreMock = new Mock<IProjectStore>();
-        projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<ProjectId>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+    [Fact]
+    public async Task EnrichAsync_WithoutARepositoryTemplate_HasNoStackLabels()
+    {
+        var setup = new Setup();
 
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
-            projectStoreMock.Object, new ConsolidationTemplateResolver(projectStoreMock.Object),
-            Serilog.Log.Logger);
+        await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
 
-        // AgentSelector carries the .NET profile labels — dotnet, dotnet10, kiro (sorted)
-        var identity = MakeIdentity("dotnet,dotnet10,kiro");
-        var project = MakeProject();
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: the .NET profile was selected, not the polyglot
-        result.Should().NotBeNull();
-        result!.ResolvedProfileId.Should().Be("dotnet-profile",
-            "the 3-label .NET profile is the closest fit for a .NET selector; polyglot must not win");
-
-        // ASSERT: QGC contains .NET but not Python
-        // TODO: The QGC assertions below are tautological with respect to the closest-fit fix:
-        // AssignmentEnricher passes the AgentSelector labels (already "dotnet,dotnet10,kiro", no "python")
-        // as RequiredLabels to PrepareDispatchCoreAsync before profile resolution, so the Python QGC
-        // would be absent even with the old OrderByDescending ordering. Only the ResolvedProfileId
-        // assertion above directly exercises the fixed ordering. Consider restructuring the test to
-        // assert QGCs via the profile's MatchLabels rather than the pre-resolution selector labels.
-        result.QualityGateConfigs.Should().NotBeNull();
-        result.QualityGateConfigs!.Should().Contain(q => q.DisplayName == ".NET",
-            "dotnet label in selector intersects with .NET QGC");
-        result.QualityGateConfigs!.Should().NotContain(q => q.DisplayName == "Python",
-            "python label is absent from the .NET selector so the Python QGC must not match");
+        setup.Infra.CapturedRequest!.StackLabels.Should().NotBeNull("an empty list resolves the label-less gates and reviewers")
+            .And.BeEmpty();
     }
 
     [Fact]
     public async Task EnrichAsync_Success_PreservesIdentityFields()
     {
-        // ARRANGE: identity has RunId, task type, etc. that must survive enrichment
-        var identity = MakeIdentity("dotnet") with
+        var identity = MakeIdentity() with
         {
             RunId = "run-42",
             BrainProviderConfigId = "brain-prov-1",
             PipelineProviderConfigId = "pipeline-prov-1",
         };
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher();
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await new Setup().Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
 
-        // ASSERT: identity fields that are not enriched must be preserved
-        result.Should().NotBeNull();
-        result!.RunId.Should().Be("run-42", "RunId must be preserved from the identity payload");
+        result.RunId.Should().Be("run-42", "RunId must be preserved from the identity payload");
         result.IssueProviderConfigId.Should().Be("issue-prov-1");
         result.RepoProviderConfigId.Should().Be("repo-prov-1");
         result.BrainProviderConfigId.Should().Be("brain-prov-1");
         result.PipelineProviderConfigId.Should().Be("pipeline-prov-1");
+        result.AgentSelector.Should().Be(JobTemplate);
     }
 
     [Fact]
     public async Task EnrichAsync_Success_PassesCorrectCoreRequestToInfra()
     {
-        // ARRANGE: verify the DispatchCoreRequest built for PrepareDispatchCoreAsync has correct IDs
-        var identity = MakeIdentity("dotnet") with
+        var identity = MakeIdentity() with
         {
             IssueProviderConfigId = "iss-42",
             RepoProviderConfigId = "repo-77",
         };
-        var project = MakeProject();
-        var (infra, _, enricher) = MakeEnricher();
+        var setup = new Setup();
 
-        // ACT
-        await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
-        // ASSERT: the request passed to infra carries the correct identity IDs
-        infra.CapturedRequest.Should().NotBeNull();
-        infra.CapturedRequest!.IssueProviderId.Value.Should().Be("iss-42");
-        infra.CapturedRequest.RepoProviderId.Value.Should().Be("repo-77");
-        infra.CapturedRequest.RequiredLabels.Should().Contain("dotnet");
-        infra.CapturedRequest.AdditionalRepoProviderIds.Should().BeNull("only a project epic clones other repositories");
-        infra.CapturedRequest.PullRequest.Should().BeNull("only a review is about a pull request");
+        var captured = setup.Infra.CapturedRequest;
+        captured.Should().NotBeNull();
+        captured!.IssueProviderId.Value.Should().Be("iss-42");
+        captured.RepoProviderId.Value.Should().Be("repo-77");
+        captured.AdditionalRepoProviderIds.Should().BeNull("only a project epic clones other repositories");
+        captured.PullRequest.Should().BeNull("only a review is about a pull request");
     }
 
     [Fact]
@@ -504,7 +469,7 @@ public sealed class AssignmentEnricherTests
     {
         // A review's subject is a pull request in the repository. In GitLab, and whenever the tracker is a
         // different system, the tracker's #5 is an unrelated issue, so the context never comes from it.
-        var identity = MakeIdentity("dotnet") with
+        var identity = MakeIdentity() with
         {
             IssueIdentifier = new IssueIdentifier("5"),
             IssueProviderConfigId = "repo-prov-1",
@@ -520,11 +485,11 @@ public sealed class AssignmentEnricherTests
                 Number = 5
             }
         };
-        var (infra, _, enricher) = MakeEnricher();
+        var setup = new Setup();
 
-        await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
+        await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
-        var pullRequest = infra.CapturedRequest!.PullRequest;
+        var pullRequest = setup.Infra.CapturedRequest!.PullRequest;
         pullRequest.Should().NotBeNull();
         pullRequest!.Identifier.Should().Be("5");
         pullRequest.Title.Should().Be("Add pagination");
@@ -532,97 +497,7 @@ public sealed class AssignmentEnricherTests
         pullRequest.Url.Should().Be("https://gitlab.example.com/group/repo/-/merge_requests/5");
     }
 
-    [Fact]
-    public async Task EnrichAsync_ProjectEpic_UsesTheCurrentRepoListAndRequestsItsRepositoriesForCloning()
-    {
-        // ARRANGE: an epic in its project's epic tracker is a project epic; the repo list comes from
-        // the current configuration, not from the payload
-        var identity = MakeIdentity("dotnet") with
-        {
-            TaskType = WorkItemTaskType.Decomposition,
-            IssueProviderConfigId = "issue-epics",
-            RepoProviderConfigId = "repo-api"
-        };
-        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
-        var (infra, _, enricher) = MakeEnricher();
-        infra.ProjectEpicContext = ShopProjectContext();
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: every project repository is requested (the primary one is skipped downstream)
-        infra.CapturedRequest.Should().NotBeNull();
-        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().Equal("repo-api", "repo-web");
-        result!.ProjectContext.Should().BeSameAs(infra.ProjectEpicContext);
-    }
-
-    [Fact]
-    public async Task EnrichAsync_RepoEpicWithAStaleRepoListInThePayload_DropsItAndClonesNothing()
-    {
-        // ARRANGE: a WorkItem queued before the deploy carries a repo list, but its epic lives in a
-        // template's own tracker (not the project's epic tracker), so it is a repo epic
-        var identity = MakeIdentity("dotnet") with
-        {
-            TaskType = WorkItemTaskType.Decomposition,
-            IssueProviderConfigId = "issue-api",
-            RepoProviderConfigId = "repo-api",
-            ProjectContext = ShopProjectContext()
-        };
-        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
-        var (infra, _, enricher) = MakeEnricher(projectTemplates: [ApiTemplate()]);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT
-        result!.ProjectContext.Should().BeNull("a repo epic's sub-issues stay in its own tracker");
-        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull();
-        infra.ProjectEpicContextCalls.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task EnrichAsync_ProjectEpicWithoutAUsableRepoList_ReturnsNull()
-    {
-        // ARRANGE: without the repo list the sub-issues would land in the epic tracker
-        var identity = MakeIdentity("dotnet") with
-        {
-            TaskType = WorkItemTaskType.Decomposition,
-            IssueProviderConfigId = "issue-epics",
-            RepoProviderConfigId = "repo-api"
-        };
-        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
-        var (infra, _, enricher) = MakeEnricher();
-        infra.ProjectEpicContext = null;
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT
-        result.Should().BeNull();
-        infra.CapturedRequest.Should().BeNull("the job is not prepared at all");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_EpicInNeitherTheEpicTrackerNorATemplateTracker_ReturnsNull()
-    {
-        // ARRANGE: the project's epic tracker changed after the WorkItem was queued; the epic's
-        // tracker is no longer in scope, and its sub-issues would land where nothing polls
-        var identity = MakeIdentity("dotnet") with
-        {
-            TaskType = WorkItemTaskType.Decomposition,
-            IssueProviderConfigId = "issue-old-epics",
-            RepoProviderConfigId = "repo-api"
-        };
-        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
-        var (infra, _, enricher) = MakeEnricher(projectTemplates: [ApiTemplate()]);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT
-        result.Should().BeNull();
-        infra.CapturedRequest.Should().BeNull("the job is not prepared at all");
-    }
+    // ── Decomposition scope ──────────────────────────────────────────────────────────
 
     private static PipelineJobTemplate ApiTemplate() =>
         new() { Id = "t-api", Name = "api", IssueProviderId = "issue-api", RepoProviderId = "repo-api" };
@@ -637,54 +512,184 @@ public sealed class AssignmentEnricherTests
         ]
     };
 
-    // ── Profile-not-found path ────────────────────────────────────────────────────
+    private static JobDistributionRequest EpicIdentity(string issueProviderConfigId) => MakeIdentity() with
+    {
+        TaskType = WorkItemTaskType.Decomposition,
+        IssueProviderConfigId = issueProviderConfigId,
+        RepoProviderConfigId = "repo-api",
+    };
 
     [Fact]
-    public async Task EnrichAsync_NoProfileMatchesSelector_ReturnsNull()
+    public async Task EnrichAsync_ProjectEpic_UsesTheCurrentRepoListAndRequestsItsRepositoriesForCloning()
     {
-        // ARRANGE: profile store has only "dotnet" profile, but selector is "python"
-        var identity = MakeIdentity("python");
-        var project = MakeProject();
+        // An epic in its project's epic tracker is a project epic; the repo list comes from the current
+        // configuration, not from the payload
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var setup = new Setup();
+        setup.Infra.ProjectEpicContext = ShopProjectContext();
 
-        var infraCallCount = 0;
-        var infra = new StubDispatchInfrastructure((_, _) =>
-        {
-            infraCallCount++;
-            return Task.FromResult(MakeCoreResult());
-        });
+        var result = Enriched(await setup.Build().EnrichAsync(EpicIdentity("issue-epics"), project, CancellationToken.None));
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: returns null, PrepareDispatchCoreAsync never called
-        result.Should().BeNull("no matching profile means enrichment cannot proceed");
-        infraCallCount.Should().Be(0, "PrepareDispatchCoreAsync must not be called when no profile matches");
+        setup.Infra.CapturedRequest!.AdditionalRepoProviderIds.Should().Equal("repo-api", "repo-web");
+        result.ProjectContext.Should().BeSameAs(setup.Infra.ProjectEpicContext);
     }
 
     [Fact]
-    public async Task EnrichAsync_EmptySelectorMatchesCatchAllProfile_ReturnsEnrichedResult()
+    public async Task EnrichAsync_RepoEpicWithAStaleRepoListInThePayload_DropsItAndClonesNothing()
     {
-        // ARRANGE: empty selector → empty required labels → Superset strategy returns true for any profile
-        // (LabelMatchStrategies.Superset: if targetSet.Count == 0, always returns true)
-        var identity = MakeIdentity(agentSelector: "");
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher(profiles: [MakeProfile()]);
+        // A WorkItem queued before the deploy carries a repo list, but its epic lives in a template's own tracker
+        var identity = EpicIdentity("issue-api") with { ProjectContext = ShopProjectContext() };
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var setup = new Setup { ProjectTemplates = [ApiTemplate()] };
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await setup.Build().EnrichAsync(identity, project, CancellationToken.None));
 
-        // ASSERT: empty selector acts as catch-all — first enabled profile is matched
-        result.Should().NotBeNull("empty selector matches any profile per the Superset strategy (targetSet.Count==0 → true)");
+        result.ProjectContext.Should().BeNull("a repo epic's sub-issues stay in its own tracker");
+        setup.Infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull();
+        setup.Infra.ProjectEpicContextCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_ProjectEpicWithoutAUsableRepoList_IsUnavailable()
+    {
+        // Without the repo list the sub-issues would land in the epic tracker
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var setup = new Setup();
+        setup.Infra.ProjectEpicContext = null;
+
+        var result = await setup.Build().EnrichAsync(EpicIdentity("issue-epics"), project, CancellationToken.None);
+
+        result.Should().Be(EnrichmentResult.Unavailable.Instance, "not a routing reason: the agent retries (DD6)");
+        setup.Infra.CapturedRequest.Should().BeNull("the job is not prepared at all");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_ProjectEpic_RepoListReadFails_IsUnavailable()
+    {
+        // The real infrastructure swallows a failed template read into "no repo list" (DD6: a 503, not a refusal).
+        var configStore = new Mock<IConfigurationStore>();
+        configStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("DB timeout"));
+        var infra = new DispatchInfrastructure(
+            Mock.Of<ITokenVendingService>(), Mock.Of<IProviderFactory>(), Mock.Of<ILabelService>(),
+            new DispatchResolutionService(new QualityGateResolver(), new ReviewerResolver(), configStore.Object));
+        var profileStore = new Mock<IAgentProfileStore>();
+        profileStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([MakeProfile()]);
+        var projectStore = new Mock<IProjectStore>();
+        projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var enricher = new AssignmentEnricher(
+            infra, profileStore.Object, MakeNoOpConsolidationPreparer().Object, projectStore.Object,
+            new ConsolidationTemplateResolver(projectStore.Object),
+            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
+            AgentRoutingTestData.JobTemplates(), Serilog.Log.Logger);
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics", TemplateIds = ["t-api"] };
+
+        var result = await enricher.EnrichAsync(EpicIdentity("issue-epics"), project, CancellationToken.None);
+
+        result.Should().Be(EnrichmentResult.Unavailable.Instance);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_EpicInNeitherTheEpicTrackerNorATemplateTracker_IsUnavailable()
+    {
+        // The project's epic tracker changed after the WorkItem was queued; the epic's sub-issues would land where
+        // nothing polls
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var setup = new Setup { ProjectTemplates = [ApiTemplate()] };
+
+        var result = await setup.Build().EnrichAsync(EpicIdentity("issue-old-epics"), project, CancellationToken.None);
+
+        result.Should().Be(EnrichmentResult.Unavailable.Instance);
+        setup.Infra.CapturedRequest.Should().BeNull("the job is not prepared at all");
+    }
+
+    // ── Refusals (spec 053 design "Claim") ───────────────────────────────────────────
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnrichAsync_PinnedProfileGoneOrDisabled_IsRefused_ProfileUnavailable(bool disabled)
+    {
+        var setup = new Setup { Profiles = disabled ? [MakeProfile(enabled: false)] : [MakeProfile("profile-other")] };
+
+        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+
+        Refused(result, AgentRouteRefusalReason.ProfileUnavailable).Text
+            .Should().Be($"agent profile '{ProfileName}' no longer exists");
+        setup.Infra.CapturedRequest.Should().BeNull("a refused claim prepares nothing");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_TheProfilesJobTemplateChangedSinceQueueing_IsRefused_TemplateChanged()
+    {
+        var setup = new Setup
+        {
+            Profiles = [MakeProfile(jobTemplate: "java,opencode")],
+            JobTemplates = AgentRoutingTestData.JobTemplates((JobTemplate, JobTemplateProviderType.Kiro), ("java,opencode", JobTemplateProviderType.Opencode)),
+        };
+
+        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+
+        Refused(result, AgentRouteRefusalReason.TemplateChanged).Text
+            .Should().Be($"the route now names job template java,opencode; the work was queued for {JobTemplate}");
+        setup.Infra.CapturedRequest.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnrichAsync_TheJobTemplateIsGone_IsRefused_NoTool()
+    {
+        var setup = new Setup { JobTemplates = AgentRoutingTestData.JobTemplates(("java,opencode", JobTemplateProviderType.Opencode)) };
+
+        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+
+        Refused(result, AgentRouteRefusalReason.NoTool).Text
+            .Should().Be($"Job template {JobTemplate} of agent profile '{ProfileName}' has no providerType");
+        setup.Infra.CapturedRequest.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnrichAsync_TheJobTemplateHasNoProviderType_IsRefused_NoTool()
+    {
+        var setup = new Setup { JobTemplates = AgentRoutingTestData.JobTemplates((JobTemplate, "")) };
+
+        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+
+        Refused(result, AgentRouteRefusalReason.NoTool);
+    }
+
+    [Theory]
+    [InlineData(WorkItemTaskType.Implementation)]
+    [InlineData(WorkItemTaskType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition)]
+    [InlineData(WorkItemTaskType.Triage)]
+    [InlineData(WorkItemTaskType.Consolidation)]
+    public async Task EnrichAsync_ItemQueuedBeforeAgentRouting_WithoutARoute_IsRefused_NoRoute(WorkItemTaskType taskType)
+    {
+        // D15: nothing picks a profile no route names, at claim either.
+        var setup = new Setup { Routing = RoutingTable.Empty, Preparer = new Mock<IConsolidationJobPreparationService>() };
+        var identity = MakeIdentity() with { TaskType = taskType, Route = null, ResolvedProfileId = null };
+
+        var result = await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
+
+        Refused(result, AgentRouteRefusalReason.NoRoute).Text.Should().Be(AgentRouteRefusalReason.NoRouteText);
+        setup.Infra.CapturedRequest.Should().BeNull();
+        setup.Preparer.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task EnrichAsync_TheAgentConfigIdCollidesWithAnotherProviderConfig_IsRefused_ConfigCollision()
+    {
+        // The agent takes the first provider config with its Id, so a clash would hand it the wrong config.
+        var clash = new ProviderConfig { Id = ProfileId, Kind = ProviderKind.Repository, DisplayName = "clash", ProviderType = "GitHub" };
+        var setup = new Setup
+        {
+            Infra = new((request, _) => Task.FromResult<CoreResult?>(MakeCoreResult(request, [.. MakeProviderConfigs(), clash]))),
+        };
+
+        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+
+        Refused(result, AgentRouteRefusalReason.ConfigCollision).Text
+            .Should().Be($"agent config Id {ProfileId} collides with another provider config");
     }
 
     // ── Project review ──────────────────────────────────────────────────────────────
@@ -696,21 +701,21 @@ public sealed class AssignmentEnricherTests
     {
         var identity = MakeIdentity() with { TaskType = taskType };
         var project = MakeProject() with { ProjectReviewEnabled = true };
-        var (infra, _, enricher) = MakeEnricher();
-        infra.ProjectReviewRepositories =
+        var setup = new Setup();
+        setup.Infra.ProjectReviewRepositories =
         [
             new RepositoryTarget { TemplateName = "api", Description = "", RepoProviderId = "repo-api" },
             new RepositoryTarget { TemplateName = "mobile", Description = "", RepoProviderId = "repo-mobile" }
         ];
 
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await setup.Build().EnrichAsync(identity, project, CancellationToken.None));
 
-        var reviewer = result!.ProjectReviewers.Should().ContainSingle().Subject;
+        var reviewer = result.ProjectReviewers.Should().ContainSingle().Subject;
         reviewer.Name.Should().Be(PipelineConfigurationDefaults.DefaultProjectReviewerName);
         reviewer.Prompt.Should().Be(PipelineConfigurationDefaults.DefaultProjectReviewPrompt);
         result.ProjectReviewRepositories!.Select(r => r.TemplateName).Should().Equal("api", "mobile");
-        infra.ProjectReviewOwnRepository.Should().Be("repo-prov-1", "the run's own repository is the workspace, not a clone");
-        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().Equal(["repo-api", "repo-mobile"],
+        setup.Infra.ProjectReviewOwnRepository.Should().Be("repo-prov-1", "the run's own repository is the workspace, not a clone");
+        setup.Infra.CapturedRequest!.AdditionalRepoProviderIds.Should().Equal(["repo-api", "repo-mobile"],
             "the other repositories get clone-only provider configs");
     }
 
@@ -721,63 +726,42 @@ public sealed class AssignmentEnricherTests
         {
             ProjectReviewers = [new ReviewAgent { Name = "Product", Prompt = "Check it" }]
         };
-        var (infra, _, enricher) = MakeEnricher();
+        var setup = new Setup();
 
-        var result = await enricher.EnrichAsync(MakeIdentity(), project, CancellationToken.None);
+        var result = Enriched(await setup.Build().EnrichAsync(MakeIdentity(), project, CancellationToken.None));
 
-        result!.ProjectReviewers.Should().BeEmpty();
+        result.ProjectReviewers.Should().BeEmpty();
         result.ProjectReviewRepositories.Should().BeNull();
-        infra.ProjectReviewRepositoriesCalls.Should().Be(0);
-        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull();
+        setup.Infra.ProjectReviewRepositoriesCalls.Should().Be(0);
+        setup.Infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull();
     }
 
     [Fact]
     public async Task EnrichAsync_RepoEpicDecomposition_GetsNoProjectReview()
     {
         // A decomposition has no code review, so it gets no project reviewers even when the project review is on
-        var identity = MakeIdentity() with { TaskType = WorkItemTaskType.Decomposition, IssueProviderConfigId = "issue-prov-1" };
+        var identity = MakeIdentity() with { TaskType = WorkItemTaskType.Decomposition };
         var project = MakeProject() with { ProjectReviewEnabled = true };
-        var (infra, _, enricher) = MakeEnricher(projectTemplates:
-        [
-            new PipelineJobTemplate { Id = "t1", Name = "web", IssueProviderId = "issue-prov-1", RepoProviderId = "repo-prov-1", Enabled = true }
-        ]);
+        var setup = new Setup { ProjectTemplates = [RepoTemplate()] };
 
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await setup.Build().EnrichAsync(identity, project, CancellationToken.None));
 
-        result!.ProjectReviewers.Should().BeEmpty();
-        infra.ProjectReviewRepositoriesCalls.Should().Be(0);
-        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull("a repo epic clones no other repository");
+        result.ProjectReviewers.Should().BeEmpty();
+        setup.Infra.ProjectReviewRepositoriesCalls.Should().Be(0);
+        setup.Infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull("a repo epic clones no other repository");
     }
 
     // ── PrepareDispatchCoreAsync returns null ─────────────────────────────────────
 
     [Fact]
-    public async Task EnrichAsync_PrepareDispatchCoreReturnsNull_ReturnsNull()
+    public async Task EnrichAsync_PrepareDispatchCoreReturnsNull_IsUnavailable()
     {
-        // ARRANGE: infra returns null (e.g., issue provider config not found)
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
+        // E.g. the issue provider config is gone: not a routing reason, so the agent retries.
+        var setup = new Setup { Infra = new((_, _) => Task.FromResult<CoreResult?>(null)) };
 
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            Task.FromResult<(IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>,
-                DispatchInfrastructure.IssueContextResult, IReadOnlyList<ProviderConfig>,
-                PipelineConfiguration, bool, string?, int)?>(null));
+        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: null from infra propagates as null from enricher
-        result.Should().BeNull("null from PrepareDispatchCoreAsync must return null from EnrichAsync");
+        result.Should().Be(EnrichmentResult.Unavailable.Instance);
     }
 
     // ── Exception propagation path ────────────────────────────────────────────────
@@ -785,62 +769,21 @@ public sealed class AssignmentEnricherTests
     [Fact]
     public async Task EnrichAsync_InfraThrows_PropagatesException()
     {
-        // ARRANGE: infra throws a transient exception (DB timeout, provider failure, etc.)
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
+        // A transient failure propagates so GetAssignment answers 503 and the agent retries.
+        var setup = new Setup { Infra = new((_, _) => throw new TimeoutException("DB connection timeout")) };
 
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            throw new InvalidOperationException("DB connection timeout"));
+        var act = () => setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT + ASSERT: exception propagates so the caller can return 503.
-        // The old behavior (swallow + return null → degraded 200) is intentionally removed.
-        var act = () => enricher.EnrichAsync(identity, project, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*DB connection timeout*",
-                "transient exceptions must propagate from EnrichAsync so GetAssignment can return 503");
-        // TODO: [WARNING] This test only exercises path: profile resolution succeeds → infra throws.
-        // There is no test for the path where LoadAgentProfilesAsync itself throws. Under the new
-        // behavior, that exception also propagates (catch-all re-throws), but no test confirms this.
-        // Add a test with profileStoreMock throwing from LoadAgentProfilesAsync to ensure a future
-        // refactor that adds a separate try/catch around profile loading does not silently regress.
-        // TODO: [WARNING] InvalidOperationException is used as the "transient exception" type here,
-        // but the same type is thrown by EnrichRequestAsync for permanent failures (no-profile-matched).
-        // Use a more discriminating type (e.g., TimeoutException) to make the test's intent clearer and
-        // guard against future type-based routing logic that might treat InvalidOperationException as permanent.
+        await act.Should().ThrowAsync<TimeoutException>().WithMessage("*DB connection timeout*");
     }
 
     [Fact]
     public async Task EnrichAsync_OperationCanceledException_IsNotSwallowed()
     {
-        // ARRANGE: cancellation should propagate, not be swallowed
-        var identity = MakeIdentity("dotnet");
-        var project = MakeProject();
+        var setup = new Setup { Infra = new((_, _) => throw new OperationCanceledException()) };
 
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            throw new OperationCanceledException());
+        var act = () => setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT + ASSERT: OperationCanceledException propagates (it is excluded from the catch)
-        var act = () => enricher.EnrichAsync(identity, project, CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>(
             "cancellation must not be swallowed by the catch-all in EnrichAsync");
     }
@@ -850,16 +793,14 @@ public sealed class AssignmentEnricherTests
     [Fact]
     public async Task EnrichAsync_NullIdentity_ThrowsArgumentNullException()
     {
-        var (_, _, enricher) = MakeEnricher();
-        var act = () => enricher.EnrichAsync(null!, MakeProject(), CancellationToken.None);
+        var act = () => new Setup().Build().EnrichAsync(null!, MakeProject(), CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("identity");
     }
 
     [Fact]
     public async Task EnrichAsync_NullProject_ThrowsArgumentNullException()
     {
-        var (_, _, enricher) = MakeEnricher();
-        var act = () => enricher.EnrichAsync(MakeIdentity(), null!, CancellationToken.None);
+        var act = () => new Setup().Build().EnrichAsync(MakeIdentity(), null!, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("project");
     }
 
@@ -868,15 +809,6 @@ public sealed class AssignmentEnricherTests
     [Fact]
     public void ProtectedCtor_NullLogger_FallsBackToSerilogLogLogger()
     {
-        // Arrange + Act: passing null logger to the protected ctor should not throw.
-        // The ctor has: _logger = logger ?? Serilog.Log.Logger
-        // We verify the object is constructed without exception.
-        // TODO: [WARNING] The assertion `enricherSubclass.Should().NotBeNull()` can never fail
-        // because constructing any reference type and storing it in a local variable guarantees
-        // non-null. It does not verify that _logger was actually set to Serilog.Log.Logger.
-        // A stronger test would call a method that exercises the logger (e.g. pass the subclass
-        // a mock sink or check that no exception is thrown during a log call) to confirm the
-        // fallback logger is functional. As-is, the test only proves the constructor does not throw.
         var enricherSubclass = new NullLoggerEnricher(null!);
         enricherSubclass.Should().NotBeNull();
     }
@@ -889,25 +821,15 @@ public sealed class AssignmentEnricherTests
 
     // ── Consolidation task type path ──────────────────────────────────────────────
 
-    // Helpers for consolidation tests
-
     private static JobDistributionRequest MakeConsolidationIdentity(
-        string agentSelector = "dotnet",
         ConsolidationRunType runType = ConsolidationRunType.BrainConsolidation,
         string? templateId = "tmpl-1",
-        bool autoDispatch = false) => new()
+        bool autoDispatch = false) => MakeIdentity() with
         {
-            IssueIdentifier = new IssueIdentifier("owner/repo#42"),
-            IssueProviderConfigId = "issue-prov-1",
-            RepoProviderConfigId = "repo-prov-1",
-            InitiatedBy = "test",
             TaskType = WorkItemTaskType.Consolidation,
-            AgentSelector = agentSelector,
-            TimeoutSeconds = 3600,
             ConsolidationRunType = runType,
             ConsolidationTemplateId = templateId,
             AutoDispatch = autoDispatch,
-            PayloadSchemaVersion = 1,
         };
 
     private static ConsolidationJobPreparationResult MakeConsolidationPreparationResult(
@@ -932,43 +854,36 @@ public sealed class AssignmentEnricherTests
             BrainProviderConfigId = brainProviderConfigId,
         };
 
-    /// <summary>
-    /// Creates an AssignmentEnricher wired for consolidation tests.
-    /// The infra stub is set up to fail if called (consolidation must not call dispatch infra).
-    /// </summary>
-    private static (StubDispatchInfrastructure Infra, Mock<IConsolidationJobPreparationService> ConsolidationPreparer, AssignmentEnricher Enricher) MakeConsolidationEnricher(
+    /// <summary>A preparer returning <paramref name="result"/>; dispatch infra must not be called for consolidation.</summary>
+    private static Setup ConsolidationSetup(
+        ConsolidationJobPreparationResult? result = null,
+        IPipelineRunHistoryService? runHistory = null,
         IReadOnlyList<AgentProfile>? profiles = null,
-        ConsolidationJobPreparationResult? preparationResult = null,
-        IPipelineRunHistoryService? runHistory = null)
+        IReadOnlyList<PipelineJobTemplate>? templates = null,
+        RoutingTable? routing = null)
     {
-        // Infra must NOT be called for consolidation items — configure to throw if invoked
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            throw new InvalidOperationException(
-                "DispatchInfrastructure.PrepareDispatchCoreAsync must not be called for consolidation tasks."));
-
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(profiles ?? [MakeProfile()]);
-
-        var preparerMock = new Mock<IConsolidationJobPreparationService>();
-        preparerMock
-            .Setup(s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(preparationResult ?? MakeConsolidationPreparationResult());
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger,
-            new ConsolidationRunContextSources(runHistory));
-        return (infra, preparerMock, enricher);
+        var preparer = new Mock<IConsolidationJobPreparationService>();
+        preparer.Setup(s => s.PrepareAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<ProviderConfig?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result ?? MakeConsolidationPreparationResult());
+        return new Setup
+        {
+            Infra = new((_, _) => throw new InvalidOperationException(
+                "DispatchInfrastructure.PrepareDispatchCoreAsync must not be called for consolidation tasks.")),
+            Preparer = preparer,
+            RunHistory = runHistory,
+            Profiles = profiles ?? [MakeProfile()],
+            Templates = templates ?? [],
+            Routing = routing,
+        };
     }
 
-    // ── Consolidation run history: last successful run ─────────────────────
+    /// <summary>The arguments of the preparer's one call.</summary>
+    private static (ConsolidationRunType Type, TemplateId? TemplateId, ProviderConfig? AgentConfig) PrepareCall(Setup setup)
+    {
+        var call = setup.Preparer.Invocations.Should().ContainSingle().Subject;
+        return ((ConsolidationRunType)call.Arguments[0], (TemplateId?)call.Arguments[1], (ProviderConfig?)call.Arguments[2]);
+    }
 
     private static PipelineRunSummary MakeConsolidationRunSummary(string scopeKey, DateTimeOffset completedAt) => new()
     {
@@ -1004,11 +919,11 @@ public sealed class AssignmentEnricherTests
             MakeConsolidationRunSummary("BrainConsolidation:brain-2", latest.AddDays(1)),
             MakeConsolidationRunSummary("BrainConsolidation:brain-1", latest),
         ]);
-        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object);
 
-        var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
+        var result = Enriched(await ConsolidationSetup(runHistory: history.Object).Build()
+            .EnrichAsync(identity, MakeProject(), CancellationToken.None));
 
-        result!.ConsolidationLastSuccessfulRunUtc.Should().Be(latest);
+        result.ConsolidationLastSuccessfulRunUtc.Should().Be(latest);
     }
 
     [Fact]
@@ -1018,788 +933,205 @@ public sealed class AssignmentEnricherTests
         history
             .Setup(h => h.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TimeoutException("DB timeout"));
-        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object);
 
-        var result = await enricher.EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None);
+        var result = Enriched(await ConsolidationSetup(runHistory: history.Object).Build()
+            .EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None));
 
-        result.Should().NotBeNull("the run history only adds context; dispatch must not fail on it");
-        result!.ConsolidationLastSuccessfulRunUtc.Should().BeNull();
+        result.ConsolidationLastSuccessfulRunUtc.Should().BeNull("the run history only adds context; dispatch must not fail on it");
     }
 
     [Fact]
-    public async Task EnrichAsync_ConsolidationTask_CallsConsolidationPreparerNotDispatchInfra()
+    public async Task EnrichAsync_ConsolidationTask_PassesTheBuiltAgentConfigToThePreparer_NotDispatchInfra()
     {
-        // ARRANGE
-        var identity = MakeConsolidationIdentity();
-        var project = MakeProject();
-        var (infra, preparer, enricher) = MakeConsolidationEnricher();
+        var setup = ConsolidationSetup();
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        Enriched(await setup.Build().EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None));
 
-        // ASSERT: result is not null; preparer was called; dispatch infra was NOT called
-        result.Should().NotBeNull("consolidation enrichment must succeed when a profile matches");
-        preparer.Verify(
-            s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()),
-            Times.Once,
-            "IConsolidationJobPreparationService.PrepareAsync must be called exactly once");
-        infra.CapturedRequest.Should().BeNull(
+        var (_, _, agentConfig) = PrepareCall(setup);
+        agentConfig.Should().NotBeNull("spec 053 DD5: the consolidation runs on the routed profile's config");
+        agentConfig!.Id.Should().Be(ProfileId);
+        agentConfig.Settings.Should().Contain(ProviderSettingKeys.Model, "opus").And.Contain(ProviderSettingKeys.Effort, "high");
+        setup.Infra.CapturedRequest.Should().BeNull(
             "DispatchInfrastructure.PrepareDispatchCoreAsync must NOT be called for consolidation tasks");
     }
 
     [Fact]
-    public async Task EnrichAsync_ConsolidationTask_ReturnsEnrichedProviderConfigs()
+    public async Task EnrichAsync_ConsolidationTask_ReturnsThePreparersProviderConfigs()
     {
-        // ARRANGE: preparer returns a specific repo provider config
-        var identity = MakeConsolidationIdentity();
-        var project = MakeProject();
         var prepResult = MakeConsolidationPreparationResult(repoProviderConfigId: "repo-prov-consolidation");
-        var (_, _, enricher) = MakeConsolidationEnricher(preparationResult: prepResult);
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await ConsolidationSetup(prepResult).Build()
+            .EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None));
 
-        // ASSERT: ProviderConfigs from the preparer are forwarded
-        result.Should().NotBeNull();
-        result!.ProviderConfigs.Should().NotBeNullOrEmpty(
-            "ProviderConfigs must be set from IConsolidationJobPreparationService.PrepareAsync");
-        result.ProviderConfigs!.Should().Contain(pc => pc.Id == "repo-prov-consolidation",
-            "the vended repo provider config must be present in the result");
-        // TODO: [WARNING] This assertion only checks containment, not exact equality. It would
-        // pass if the enricher appended extra spurious provider configs alongside the expected one,
-        // or if the identity payload's ProviderConfigs were merged in. Consider asserting
-        // result.ProviderConfigs.Should().BeEquivalentTo(prepResult.ProviderConfigs) to verify
-        // the result is exactly what the preparer returned, with no additions.
-    }
-
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_SetsRepoProviderConfigId()
-    {
-        // ARRANGE
-        var identity = MakeConsolidationIdentity();
-        var project = MakeProject();
-        var prepResult = MakeConsolidationPreparationResult(repoProviderConfigId: "resolved-repo-id");
-        var (_, _, enricher) = MakeConsolidationEnricher(preparationResult: prepResult);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: RepoProviderConfigId comes from the preparation result (template-resolved)
-        result.Should().NotBeNull();
-        result!.RepoProviderConfigId.Should().Be("resolved-repo-id",
+        result.ProviderConfigs.Should().BeEquivalentTo(prepResult.ProviderConfigs);
+        result.RepoProviderConfigId.Should().Be("repo-prov-consolidation",
             "RepoProviderConfigId must be set from the consolidation preparation result");
     }
 
     [Fact]
     public async Task EnrichAsync_ConsolidationTask_SetsPipelineConfiguration()
     {
-        // ARRANGE: preparer returns a pipeline config with a custom setting
-        var identity = MakeConsolidationIdentity();
-        var project = MakeProject();
-        var customConfig = new PipelineConfiguration { AgentTimeout = TimeSpan.FromHours(2) };
         var prepResult = new ConsolidationJobPreparationResult
         {
             ProviderConfigs = [],
             RepoProviderConfigId = "",
-            PipelineConfiguration = customConfig,
+            PipelineConfiguration = new PipelineConfiguration { AgentTimeout = TimeSpan.FromHours(2) },
         };
-        var (_, _, enricher) = MakeConsolidationEnricher(preparationResult: prepResult);
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await ConsolidationSetup(prepResult).Build()
+            .EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None));
 
-        // ASSERT: PipelineConfiguration comes from the preparation result
-        result.Should().NotBeNull();
-        result!.PipelineConfiguration.Should().NotBeNull();
         result.PipelineConfiguration!.AgentTimeout.Should().Be(TimeSpan.FromHours(2),
             "PipelineConfiguration must reflect the per-template config from ConsolidationJobPreparationService");
     }
 
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_PassesCorrectRunTypeToPrep()
+    [Theory]
+    [InlineData("tmpl-abc-123")]
+    [InlineData(null)]
+    public async Task EnrichAsync_ConsolidationTask_PassesTheRunTypeAndTemplateIdToThePreparer(string? templateId)
     {
-        // ARRANGE: identity with RefactoringDetection run type
-        // TODO: [WARNING] This test and PassesCorrectTemplateIdToPrep duplicate the full mock-wiring
-        // already encapsulated by MakeConsolidationEnricher. The captured-argument technique could use
-        // the preparerMock returned by that helper (via preparerMock.Invocations) instead of inlining
-        // a separate Callback setup. As-is, future changes to the helper won't update these tests,
-        // causing silent divergence between the "capture" tests and the rest of the consolidation suite.
-        var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.RefactoringDetection);
-        var project = MakeProject();
+        var setup = ConsolidationSetup();
+        var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.RefactoringDetection, templateId: templateId);
 
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            throw new InvalidOperationException("Must not call dispatch infra."));
+        await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        ConsolidationRunType? capturedType = null;
-        var preparerMock = new Mock<IConsolidationJobPreparationService>();
-        preparerMock
-            .Setup(s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
-                (type, _, _, _) => capturedType = type)
-            .ReturnsAsync(MakeConsolidationPreparationResult());
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: PrepareAsync was called with the correct run type
-        capturedType.Should().Be(ConsolidationRunType.RefactoringDetection,
-            "the run type from the identity must be forwarded to ConsolidationJobPreparationService");
+        var (type, passedTemplateId, _) = PrepareCall(setup);
+        type.Should().Be(ConsolidationRunType.RefactoringDetection);
+        passedTemplateId?.Value.Should().Be(templateId);
+        if (templateId is null)
+            passedTemplateId.Should().BeNull("a global run has no template");
     }
 
     [Fact]
-    public async Task EnrichAsync_ConsolidationTask_PassesCorrectTemplateIdToPrep()
+    public async Task EnrichAsync_ConsolidationTask_SetsTheRoutedProfile()
     {
-        // ARRANGE: identity with a specific template ID
-        var identity = MakeConsolidationIdentity(templateId: "tmpl-abc-123");
-        var project = MakeProject();
+        var result = Enriched(await ConsolidationSetup().Build()
+            .EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None));
 
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            throw new InvalidOperationException("Must not call dispatch infra."));
-
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        TemplateId? capturedTemplateId = null;
-        var preparerMock = new Mock<IConsolidationJobPreparationService>();
-        preparerMock
-            .Setup(s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
-                (_, tid, _, _) => capturedTemplateId = tid)
-            .ReturnsAsync(MakeConsolidationPreparationResult());
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: PrepareAsync was called with the template ID cast from the string
-        capturedTemplateId.Should().NotBeNull(
-            "a non-null ConsolidationTemplateId must be passed as a TemplateId to PrepareAsync");
-        capturedTemplateId!.Value.Value.Should().Be("tmpl-abc-123",
-            "the template ID must match the identity's ConsolidationTemplateId");
+        result.ResolvedProfileId.Should().Be(ProfileId);
+        result.AgentProviderConfigId.Should().Be(ProfileId,
+            "AgentProviderConfigId is the built agent config's Id, never the repository provider");
+        result.Route.Should().Be(PinnedRoute);
     }
 
     [Fact]
-    public async Task EnrichAsync_ConsolidationTask_NullTemplateId_PassesNullToPrep()
+    public async Task EnrichAsync_ConsolidationTask_ItemQueuedBeforeAgentRouting_UsesTheConsolidationTemplatesRow()
     {
-        // ARRANGE: identity with null template ID (global consolidation run)
-        var identity = MakeConsolidationIdentity(templateId: null);
-        var project = MakeProject();
+        // Req 4.3: a consolidation routes by the template that triggered it, not by the repository.
+        var trigger = new PipelineJobTemplate
+        {
+            Id = "tmpl-1", Name = "brain", IssueProviderId = "ip", RepoProviderId = "other-repo",
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route("profile-2", "brain-model"),
+            },
+        };
+        var setup = ConsolidationSetup(
+            profiles: [MakeProfile(), MakeProfile("profile-2")], templates: [trigger], routing: AgentRoutingTestData.Routing(ProfileId));
+        var identity = MakeConsolidationIdentity() with { Route = null };
 
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            throw new InvalidOperationException("Must not call dispatch infra."));
+        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        TemplateId? capturedTemplateId = new TemplateId("unexpected"); // sentinel
-        var preparerMock = new Mock<IConsolidationJobPreparationService>();
-        preparerMock
-            .Setup(s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
-                (_, tid, _, _) => capturedTemplateId = tid)
-            .ReturnsAsync(MakeConsolidationPreparationResult());
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: PrepareAsync was called with null templateId
-        capturedTemplateId.Should().BeNull(
-            "a null ConsolidationTemplateId must be passed as null to PrepareAsync (global run)");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_SetsResolvedProfileId()
-    {
-        // ARRANGE: profile with a known ID
-        var identity = MakeConsolidationIdentity();
-        var project = MakeProject();
-        var (_, _, enricher) = MakeConsolidationEnricher(
-            profiles: [MakeProfile(id: "consolidation-profile-99")]);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: ResolvedProfileId is set from the matched agent profile
-        result.Should().NotBeNull();
-        result!.ResolvedProfileId.Should().Be("consolidation-profile-99",
-            "ResolvedProfileId must reflect the matched agent profile for consolidation tasks");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_SetsAgentProviderConfigId()
-    {
-        // ARRANGE: profile with a known agent provider config ID
-        var identity = MakeConsolidationIdentity();
-        var project = MakeProject();
-        var (_, _, enricher) = MakeConsolidationEnricher(
-            profiles: [MakeProfile(agentProviderConfigId: "agent-cfg-consolidation")]);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: AgentProviderConfigId comes from the profile, not from identity.RepoProviderConfigId
-        result.Should().NotBeNull();
-        result!.AgentProviderConfigId.Should().Be("agent-cfg-consolidation",
-            "AgentProviderConfigId must be set from the resolved profile, not fall back to RepoProviderConfigId");
-        result.AgentProviderConfigId.Should().NotBe(identity.RepoProviderConfigId,
-            "consolidation enrichment must not incorrectly use RepoProviderConfigId as the agent provider");
+        result.ResolvedProfileId.Should().Be("profile-2");
+        result.Route!.Source.Should().Be(AgentRouteSource.Claim);
+        PrepareCall(setup).AgentConfig!.Settings.Should().Contain(ProviderSettingKeys.Model, "brain-model");
     }
 
     [Fact]
     public async Task EnrichAsync_ConsolidationTask_SetsProjectSteeringContent()
     {
-        // ARRANGE: project with known steering content
-        var identity = MakeConsolidationIdentity();
         var project = MakeProject() with { SteeringContent = "consolidation-project-steering" };
-        var (_, _, enricher) = MakeConsolidationEnricher();
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await ConsolidationSetup().Build().EnrichAsync(MakeConsolidationIdentity(), project, CancellationToken.None));
 
-        // ASSERT: ProjectSteeringContent comes from the project context
-        result.Should().NotBeNull();
-        result!.ProjectSteeringContent.Should().Be("consolidation-project-steering",
-            "ProjectSteeringContent must be populated from the PipelineProject for consolidation tasks");
+        result.ProjectSteeringContent.Should().Be("consolidation-project-steering");
     }
 
     [Fact]
     public async Task EnrichAsync_ConsolidationTask_PreservesConsolidationIdentityFields()
     {
-        // ARRANGE: identity with all consolidation-specific fields set
         var identity = MakeConsolidationIdentity(
             runType: ConsolidationRunType.RefactoringDetection,
             templateId: "tmpl-preserve",
-            autoDispatch: true);
-        var project = MakeProject();
-        var (_, _, enricher) = MakeConsolidationEnricher();
+            autoDispatch: true) with { IssueDetail = null };
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await ConsolidationSetup().Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
 
-        // ASSERT: consolidation identity fields survive enrichment unchanged
-        result.Should().NotBeNull();
-        result!.TaskType.Should().Be(WorkItemTaskType.Consolidation,
-            "TaskType must not be overwritten by enrichment");
-        result.ConsolidationRunType.Should().Be(ConsolidationRunType.RefactoringDetection,
-            "ConsolidationRunType must be preserved from the identity payload");
-        result.ConsolidationTemplateId.Should().Be("tmpl-preserve",
-            "ConsolidationTemplateId must be preserved from the identity payload");
-        result.AutoDispatch.Should().BeTrue(
-            "AutoDispatch must be preserved from the identity payload");
+        result.TaskType.Should().Be(WorkItemTaskType.Consolidation);
+        result.ConsolidationRunType.Should().Be(ConsolidationRunType.RefactoringDetection);
+        result.ConsolidationTemplateId.Should().Be("tmpl-preserve");
+        result.AutoDispatch.Should().BeTrue();
+        result.IssueDetail.Should().BeNull("consolidation agents do not fetch or process issues");
     }
 
     [Fact]
-    public async Task EnrichAsync_ConsolidationTask_DoesNotCallDispatchInfra_IssueFieldsIdentityPreserved()
+    public async Task EnrichAsync_ConsolidationTask_ProfileGone_IsRefused_WithoutCallingThePreparer()
     {
-        // ARRANGE: consolidation identity with null IssueDetail (as in a real minimal payload)
-        var identity = MakeConsolidationIdentity() with { IssueDetail = null };
-        var project = MakeProject();
-        var (infra, _, enricher) = MakeConsolidationEnricher();
+        var setup = ConsolidationSetup(profiles: [MakeProfile("profile-other")]);
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = await setup.Build().EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None);
 
-        // ASSERT: dispatch infra was not called (no issue fetch attempted)
-        infra.CapturedRequest.Should().BeNull(
-            "DispatchInfrastructure.PrepareDispatchCoreAsync must not be called for consolidation tasks");
-        // IssueDetail is identity-preserved (null) — not re-fetched from issue-provider infrastructure
-        result.Should().NotBeNull();
-        result!.IssueDetail.Should().BeNull(
-            "IssueDetail must be identity-preserved (null) for consolidation tasks — not fetched from issue infrastructure");
+        Refused(result, AgentRouteRefusalReason.ProfileUnavailable);
+        setup.Preparer.Invocations.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task EnrichAsync_ConsolidationTask_NoProfileMatch_ReturnsNull()
+    public async Task EnrichAsync_ConsolidationTask_AgentConfigIdCollision_IsRefused()
     {
-        // ARRANGE: profile store has only "dotnet" profile, but identity selector is "python"
-        var identity = MakeConsolidationIdentity(agentSelector: "python");
-        var project = MakeProject();
+        var prepResult = MakeConsolidationPreparationResult(repoProviderConfigId: ProfileId) with
+        {
+            ProviderConfigs =
+            [
+                new ProviderConfig { Id = ProfileId, Kind = ProviderKind.Repository, DisplayName = "clash", ProviderType = "GitHub" },
+                new ProviderConfig { Id = ProfileId, Kind = ProviderKind.Agent, DisplayName = "agent", ProviderType = "KiroCli" },
+            ],
+        };
 
-        var infra = new StubDispatchInfrastructure((_, _) =>
-            throw new InvalidOperationException("Must not call dispatch infra."));
+        var result = await ConsolidationSetup(prepResult).Build()
+            .EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None);
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]); // only "dotnet" profile
-
-        var preparerMock = new Mock<IConsolidationJobPreparationService>();
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: returns null when no profile matches; preparer is NOT called
-        result.Should().BeNull(
-            "consolidation enrichment must return null when no agent profile matches the selector");
-        preparerMock.Verify(
-            s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never,
-            "ConsolidationJobPreparationService.PrepareAsync must not be called when profile resolution fails");
+        Refused(result, AgentRouteRefusalReason.ConfigCollision);
     }
 
     [Fact]
-    public async Task EnrichAsync_ImplementationTask_StillCallsDispatchInfra()
+    public async Task EnrichAsync_ImplementationTask_DoesNotCallTheConsolidationPreparer()
     {
-        // ARRANGE: implementation task — must still use the dispatch infra path (regression guard)
-        var identity = MakeIdentity("dotnet") with { TaskType = WorkItemTaskType.Implementation };
-        var project = MakeProject();
+        var setup = new Setup();
 
-        var infra = new StubDispatchInfrastructure((_, _) => Task.FromResult(MakeCoreResult()));
+        var result = Enriched(await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
 
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        var consolidationPreparerMock = new Mock<IConsolidationJobPreparationService>();
-        consolidationPreparerMock
-            .Setup(s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException(
-                "IConsolidationJobPreparationService.PrepareAsync must not be called for implementation tasks."));
-
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, consolidationPreparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: dispatch infra WAS called; consolidation preparer was NOT called
-        infra.CapturedRequest.Should().NotBeNull(
+        setup.Infra.CapturedRequest.Should().NotBeNull(
             "DispatchInfrastructure.PrepareDispatchCoreAsync must be called for implementation tasks");
-        result.Should().NotBeNull("implementation enrichment must succeed");
-        result!.TaskType.Should().Be(WorkItemTaskType.Implementation,
-            "TaskType must be preserved for implementation tasks");
-        consolidationPreparerMock.Verify(
-            s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never,
-            "IConsolidationJobPreparationService.PrepareAsync must NOT be called for implementation tasks");
-    }
-
-    // TODO: [WARNING] Missing test: EnrichAsync_ConsolidationTask_SetsRepoSteeringContent
-    // The production code in EnrichConsolidationCoreAsync computes RepoSteeringContent from
-    // (preparation.ProviderConfigs ?? []).TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent
-    // This depends on both RepoProviderConfigId and the matching ProviderConfig entry being wired
-    // correctly. No consolidation test currently asserts result.RepoSteeringContent. A regression
-    // where it is null or from the wrong provider config would go undetected. Add a test that
-    // sets a known SteeringContent on the repo ProviderConfig returned by the preparer and
-    // asserts result.RepoSteeringContent equals that value.
-
-    // TODO: [WARNING] Missing test: consolidation path when preparation.ProviderConfigs is null.
-    // The production code uses (preparation.ProviderConfigs ?? []) defensively. This null-coalescing
-    // branch is untested. Add a test that returns a ConsolidationJobPreparationResult with
-    // ProviderConfigs = null and asserts the enricher returns a result with ProviderConfigs = []
-    // rather than throwing a NullReferenceException.
-
-    // TODO: [WARNING] Missing test: consolidation path when IConsolidationJobPreparationService.PrepareAsync
-    // throws a non-OCE exception. The standard dispatch path has EnrichAsync_ExceptionInEnrichCore_CaughtAndReturnsNull
-    // to verify that exceptions propagate (not get swallowed). The consolidation path goes through the
-    // same outer try/catch in EnrichAsync, but there is no test confirming the exception is caught and
-    // re-thrown (returning 503) rather than silently returning null. Add a test that sets PrepareAsync
-    // to throw InvalidOperationException and asserts the exception propagates from EnrichAsync.
-
-    // TODO: [WARNING] Missing test: consolidation path when _consolidationPreparer is null (the
-    // null-guard at EnrichConsolidationCoreAsync that logs a warning and returns null). Use the
-    // protected AssignmentEnricher(ILogger, IConsolidationJobPreparationService?) constructor
-    // without a preparer, pass a TaskType=Consolidation request, and assert the result is null
-    // and no exception is thrown.
-
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_NoOpPreparerViaProtectedCtor_ThrowsInvalidOperationException()
-    {
-        // ARRANGE: construct via the protected (logger + profileStore) constructor, which assigns
-        // NoOpConsolidationPreparer.Instance when no preparer is supplied.
-        // Wire a mock profile store so the enricher can resolve a profile before hitting the sentinel.
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakeProfile()]);
-
-        var enricher = new WithProfileStoreEnricher(Serilog.Log.Logger, profileStoreMock.Object);
-        var identity = MakeConsolidationIdentity();
-        var project = MakeProject();
-
-        // ACT + ASSERT: the NoOpConsolidationPreparer.PrepareAsync sentinel must throw
-        // InvalidOperationException to prevent silent mis-enrichment when a test subclass
-        // constructed via the protected ctor receives a Consolidation task.
-        var act = () => enricher.EnrichAsync(identity, project, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>(
-            "NoOpConsolidationPreparer.PrepareAsync must throw to provide a clear fail-fast diagnostic " +
-            "rather than silently producing an empty-config assignment");
-    }
-
-    // ── ResolveProfile: profile-ID lookup and label fallback (issue #3560) ──────────
-
-    [Fact]
-    public async Task EnrichAsync_ResolvedProfileId_UsesSecondProfileConfig_NotFirstProfileConfig()
-    {
-        // ARRANGE: two profiles share the same template key "dotnet,dotnet10,kiro".
-        // Profile 2 has a different AgentProviderConfigId and McpServers.
-        var profile1 = new AgentProfile
-        {
-            Id = "profile-main",
-            DisplayName = "Main Profile",
-            AgentProviderConfigId = "cfg-main",
-            MatchLabels = ["kiro", "dotnet", "dotnet10"],
-            Enabled = true,
-            JobTemplate = "kiro,dotnet,dotnet10",
-        };
-        var profile2 = new AgentProfile
-        {
-            Id = "profile-variant",
-            DisplayName = "Variant Profile",
-            AgentProviderConfigId = "cfg-variant",
-            MatchLabels = ["kiro", "dotnet", "dotnet10", "sonnet"],
-            Enabled = true,
-            JobTemplate = "kiro,dotnet,dotnet10",
-            McpServers = [new McpServerConfig { Name = "context7", Type = "http", Url = "https://mcp.context7.com/mcp" }],
-        };
-
-        // Identity carries the variant profile's ID — the enricher must use the variant.
-        var identity = MakeIdentity("dotnet,dotnet10,kiro") with
-        {
-            ResolvedProfileId = "profile-variant",
-            PayloadSchemaVersion = 1,
-        };
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher(profiles: [profile1, profile2]);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: result uses the variant profile's provider config and MCP servers
-        result.Should().NotBeNull();
-        result!.AgentProviderConfigId.Should().Be("cfg-variant",
-            "enricher must use the profile identified by ResolvedProfileId, not the first profile matching the selector");
-        result.McpServers.Should().NotBeNull();
-        result.McpServers!.Any(s => s.Name == "context7").Should().BeTrue(
-            "McpServers from the resolved profile must be included");
-        // TODO: [WARNING] Missing assertion for RequiredLabels. Requirement 6 changed RequiredLabels
-        // in DispatchCoreRequest from the identity's selector labels to profile.MatchLabels.
-        // For profile2 (MatchLabels = ["kiro","dotnet","dotnet10","sonnet"]) vs. the selector
-        // "dotnet,dotnet10,kiro" (no "sonnet"), reverting that one line in AssignmentEnricher.cs
-        // would leave quality gates silently resolved against the template key's labels instead of
-        // the profile's. Add: infra.CapturedRequest.RequiredLabels.Should().BeEquivalentTo(
-        //   profile2.MatchLabels, "quality gates must follow the resolved profile's MatchLabels");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_NullResolvedProfileId_FallsBackToLabelResolution()
-    {
-        // ARRANGE: identity has no ResolvedProfileId (queued before this change).
-        // The fallback must resolve the profile from the selector labels.
-        var profile = MakeProfile(id: "profile-by-label", agentProviderConfigId: "cfg-by-label");
-        var identity = MakeIdentity("dotnet") with
-        {
-            ResolvedProfileId = null,
-            PayloadSchemaVersion = 1,
-        };
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher(profiles: [profile]);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: the profile resolved from labels is used
-        result.Should().NotBeNull();
-        result!.AgentProviderConfigId.Should().Be("cfg-by-label",
-            "with no ResolvedProfileId the enricher must fall back to label-based profile resolution");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_DisabledResolvedProfile_FallsBackToLabelResolution()
-    {
-        // ARRANGE: identity references a profile that is now disabled.
-        var disabledProfile = new AgentProfile
-        {
-            Id = "disabled-profile",
-            DisplayName = "Disabled",
-            AgentProviderConfigId = "cfg-disabled",
-            MatchLabels = ["dotnet"],
-            Enabled = false,
-        };
-        var activeProfile = MakeProfile(id: "active-profile", agentProviderConfigId: "cfg-active");
-        var identity = MakeIdentity("dotnet") with
-        {
-            ResolvedProfileId = "disabled-profile",
-            PayloadSchemaVersion = 1,
-        };
-        var project = MakeProject();
-        var (_, _, enricher) = MakeEnricher(profiles: [disabledProfile, activeProfile]);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: falls back to the enabled profile resolved from labels
-        result.Should().NotBeNull();
-        result!.AgentProviderConfigId.Should().Be("cfg-active",
-            "a disabled ResolvedProfileId must trigger fallback to label-based resolution");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_Consolidation_ResolvedProfileId_UsesVariantProfileConfig()
-    {
-        // ARRANGE: two consolidation profiles share the same template.
-        // Identity carries the variant profile's ID.
-        var profile1 = new AgentProfile
-        {
-            Id = "consol-main",
-            DisplayName = "Consol Main",
-            AgentProviderConfigId = "consol-cfg-main",
-            MatchLabels = ["kiro", "dotnet"],
-            Enabled = true,
-        };
-        var profile2 = new AgentProfile
-        {
-            Id = "consol-variant",
-            DisplayName = "Consol Variant",
-            AgentProviderConfigId = "consol-cfg-variant",
-            MatchLabels = ["kiro", "dotnet"],
-            Enabled = true,
-        };
-
-        var capturedProfile = (AgentProfile?)null;
-        var preparerMock = new Mock<IConsolidationJobPreparationService>();
-        preparerMock
-            .Setup(s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
-                (_, _, p, _) => capturedProfile = p)
-            .ReturnsAsync(MakeConsolidationPreparationResult());
-
-        var identity = MakeConsolidationIdentity(agentSelector: "dotnet,kiro") with
-        {
-            ResolvedProfileId = "consol-variant",
-            PayloadSchemaVersion = 1,
-        };
-        var project = MakeProject();
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<AgentProfile>)[profile1, profile2]);
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            new StubDispatchInfrastructure((_, _) =>
-                throw new InvalidOperationException("dispatch infra must not be called for consolidation")),
-            profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT
-        result.Should().NotBeNull();
-        capturedProfile.Should().NotBeNull();
-        capturedProfile!.Id.Should().Be("consol-variant",
-            "the variant profile (identified by ResolvedProfileId) must be passed to PrepareAsync");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_Consolidation_NullResolvedProfileId_FallsBackToLabelResolution()
-    {
-        // ARRANGE: consolidation identity with no ResolvedProfileId.
-        var profile = new AgentProfile
-        {
-            Id = "consol-fallback",
-            DisplayName = "Fallback",
-            AgentProviderConfigId = "consol-fallback-cfg",
-            MatchLabels = ["kiro", "dotnet"],
-            Enabled = true,
-        };
-
-        var capturedProfile = (AgentProfile?)null;
-        var preparerMock = new Mock<IConsolidationJobPreparationService>();
-        preparerMock
-            .Setup(s => s.PrepareAsync(
-                It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(),
-                It.IsAny<AgentProfile?>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<ConsolidationRunType, TemplateId?, AgentProfile?, CancellationToken>(
-                (_, _, p, _) => capturedProfile = p)
-            .ReturnsAsync(MakeConsolidationPreparationResult());
-
-        var identity = MakeConsolidationIdentity(agentSelector: "dotnet,kiro") with
-        {
-            ResolvedProfileId = null,
-            PayloadSchemaVersion = 1,
-        };
-        var project = MakeProject();
-        var profileStoreMock = new Mock<IAgentProfileStore>();
-        profileStoreMock.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<AgentProfile>)[profile]);
-        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
-        var enricher = new AssignmentEnricher(
-            new StubDispatchInfrastructure((_, _) =>
-                throw new InvalidOperationException("dispatch infra must not be called for consolidation")),
-            profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: the label-resolved profile is passed to PrepareAsync
-        result.Should().NotBeNull();
-        capturedProfile!.Id.Should().Be("consol-fallback",
-            "null ResolvedProfileId must trigger label-based fallback for consolidation enrichment");
-    }
-
-    private sealed class WithProfileStoreEnricher : AssignmentEnricher
-    {
-        // Uses the protected (logger + profileStore) constructor without a real preparer,
-        // so _consolidationPreparer defaults to NoOpConsolidationPreparer.Instance.
-        public WithProfileStoreEnricher(Serilog.ILogger logger, IAgentProfileStore profileStore)
-            : base(logger, profileStore) { }
+        result.TaskType.Should().Be(WorkItemTaskType.Implementation);
+        setup.Preparer.Invocations.Should().BeEmpty();
     }
 
     // ── BrainProviderConfigId forwarding (issue #2618) ───────────────────────────
 
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_SetsBrainProviderConfigIdFromPreparation()
+    [Theory]
+    [InlineData(null, "brain-prov-42", "brain-prov-42")]
+    [InlineData(null, null, null)]
+    [InlineData("stale-brain", "fresh-brain", "fresh-brain")]
+    public async Task EnrichAsync_ConsolidationTask_TakesTheBrainProviderFromThePreparation(
+        string? stored, string? prepared, string? expected)
     {
-        // ARRANGE: preparation result has BrainProviderConfigId set;
-        // identity simulates a pre-fix stored payload where BrainProviderConfigId is null.
-        var identity = MakeConsolidationIdentity() with { BrainProviderConfigId = null };
-        var project = MakeProject();
-        var prepResult = MakeConsolidationPreparationResult(brainProviderConfigId: "brain-prov-42");
-        var (_, _, enricher) = MakeConsolidationEnricher(preparationResult: prepResult);
+        // The preparation result is authoritative: a stale or missing stored value is overwritten.
+        var identity = MakeConsolidationIdentity() with { BrainProviderConfigId = stored };
 
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+        var result = Enriched(await ConsolidationSetup(MakeConsolidationPreparationResult(brainProviderConfigId: prepared)).Build()
+            .EnrichAsync(identity, MakeProject(), CancellationToken.None));
 
-        // ASSERT: the null stored in the identity (DB payload) is overwritten by the fresh preparation result
-        result.Should().NotBeNull();
-        result!.BrainProviderConfigId.Should().Be("brain-prov-42",
-            "EnrichConsolidationCoreAsync must forward BrainProviderConfigId from the preparation result, " +
-            "overwriting the null stored in the pre-fix DB payload");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_NullBrainProvider_LeavesNullInResult()
-    {
-        // ARRANGE: global consolidation run — no brain provider in either preparation result or identity
-        var identity = MakeConsolidationIdentity() with { BrainProviderConfigId = null };
-        var project = MakeProject();
-        // brainProviderConfigId defaults to null — simulates a global run with no template
-        var prepResult = MakeConsolidationPreparationResult();
-        var (_, _, enricher) = MakeConsolidationEnricher(preparationResult: prepResult);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // TODO: [WARNING] This assertion is tautological: both identity.BrainProviderConfigId and
-        // preparation.BrainProviderConfigId are null. The `with` expression in EnrichConsolidationCoreAsync
-        // simply overwrites null with null, so the assertion would pass even if the
-        // `BrainProviderConfigId = preparation.BrainProviderConfigId` line were removed entirely —
-        // the identity's null value is preserved unchanged. To make this a real regression guard, set
-        // identity.BrainProviderConfigId to a non-null sentinel (e.g. "old-brain") and assert it is
-        // overwritten to null, locking in the unconditional-overwrite behaviour for the null-prep case.
-        // ASSERT: null is preserved for global runs — no regression
-        result.Should().NotBeNull();
-        result!.BrainProviderConfigId.Should().BeNull(
-            "BrainProviderConfigId must remain null for global consolidation runs that have no template/brain provider");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_StaleBrainProviderConfigId_OverwrittenByFreshPreparation()
-    {
-        // ARRANGE: identity has a stale/outdated BrainProviderConfigId from a prior payload version;
-        // the fresh preparation result resolves a different (correct) ID from the current template.
-        var identity = MakeConsolidationIdentity() with { BrainProviderConfigId = "stale-brain" };
-        var project = MakeProject();
-        var prepResult = MakeConsolidationPreparationResult(brainProviderConfigId: "fresh-brain");
-        var (_, _, enricher) = MakeConsolidationEnricher(preparationResult: prepResult);
-
-        // ACT
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: the enricher always uses the freshly-resolved value; stale stored values are overwritten.
-        // This locks in the unconditional-overwrite contract — the preparation result is authoritative.
-        result.Should().NotBeNull();
-        result!.BrainProviderConfigId.Should().Be("fresh-brain",
-            "EnrichConsolidationCoreAsync must unconditionally overwrite BrainProviderConfigId with the " +
-            "freshly-resolved value from the preparation result, even when the stored payload is non-null");
+        result.BrainProviderConfigId.Should().Be(expected);
     }
 }
-///
-/// Fix A (issue #2575) repairs OCE laundering in <c>TokenVendingService.PrepareAgentConfigsAsync</c>
-/// so that a cancelled HTTP call surfaces as OCE rather than being wrapped in
-/// <c>InvalidOperationException("Aborting dispatch")</c>.
-///
-/// This class verifies the downstream half of the chain:
-/// <list type="bullet">
-///   <item>The <c>when (ex is not OperationCanceledException)</c> guard in <see cref="AssignmentEnricher.EnrichAsync"/>
-///   suppresses the Error log and lets OCE propagate when the enricher core throws OCE.</item>
-///   <item>Before Fix A, the OCE was wrapped in InvalidOperationException, so the guard was never reached
-///   and the error was logged at Error level and counted as a dispatch failure.</item>
-/// </list>
+
+/// <summary>
+/// An OperationCanceledException from enrichment propagates without an Error log (issue #2575, Fix A), and any other
+/// exception is logged at Error and propagates, so the caller answers 503.
 /// </summary>
 public sealed class AssignmentEnricherOceCancellationTests
 {
-    // ── StubDispatchInfrastructure ────────────────────────────────────────────────
-
-    /// <summary>
-    /// Subclass of DispatchInfrastructure that throws a supplied exception from
-    /// PrepareDispatchCoreAsync to simulate downstream failure.
-    /// </summary>
+    /// <summary>Throws a supplied exception from PrepareDispatchCoreAsync to simulate a downstream failure.</summary>
     private sealed class ThrowingDispatchInfrastructure : DispatchInfrastructure
     {
         private readonly Exception _toThrow;
@@ -1820,8 +1152,6 @@ public sealed class AssignmentEnricherOceCancellationTests
             => throw _toThrow;
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────────
-
     private static JobDistributionRequest MakeIdentity() => new()
     {
         IssueIdentifier = new IssueIdentifier("owner/repo#42"),
@@ -1829,7 +1159,8 @@ public sealed class AssignmentEnricherOceCancellationTests
         RepoProviderConfigId = "repo-prov-1",
         InitiatedBy = "test",
         TaskType = WorkItemTaskType.Implementation,
-        AgentSelector = "dotnet",
+        AgentSelector = AgentRoutingTestData.DefaultJobTemplate,
+        Route = new AgentRouteSnapshot("profile-1", "Test Profile", JobTemplateProviderType.Kiro, "auto", "auto", AgentRouteSource.GlobalDefault),
         TimeoutSeconds = 3600,
     };
 
@@ -1839,114 +1170,60 @@ public sealed class AssignmentEnricherOceCancellationTests
         Name = "Test Project",
     };
 
-    private static AssignmentEnricher MakeEnricherWithThrowingInfra(
-        Exception toThrow, Mock<Serilog.ILogger> mockLogger)
+    private static AssignmentEnricher MakeEnricherWithThrowingInfra(Exception toThrow, Mock<Serilog.ILogger> mockLogger)
     {
-        var infra = new ThrowingDispatchInfrastructure(toThrow);
-
         var profileStoreMock = new Mock<IAgentProfileStore>();
         profileStoreMock
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new AgentProfile
-            {
-                Id = "profile-1",
-                DisplayName = "Test Profile",
-                AgentProviderConfigId = "agent-cfg-1",
-                MatchLabels = ["dotnet"],
-                Enabled = true,
-            }]);
+            .ReturnsAsync([AgentRoutingTestData.Profile("profile-1", displayName: "Test Profile")]);
 
         var noopProjectStore = new Mock<IProjectStore>();
         noopProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         noopProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-        var consolidationTemplateResolver = new ConsolidationTemplateResolver(noopProjectStore.Object);
-        return new AssignmentEnricher(infra, profileStoreMock.Object, new Mock<IConsolidationJobPreparationService>().Object,
-            noopProjectStore.Object, consolidationTemplateResolver, mockLogger.Object);
+        return new AssignmentEnricher(
+            new ThrowingDispatchInfrastructure(toThrow), profileStoreMock.Object, new Mock<IConsolidationJobPreparationService>().Object,
+            noopProjectStore.Object, new ConsolidationTemplateResolver(noopProjectStore.Object),
+            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
+            AgentRoutingTestData.JobTemplates(), mockLogger.Object);
     }
 
-    // ── OCE does not trigger Error log ────────────────────────────────────────────
+    private static Mock<Serilog.ILogger> MockLogger()
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        // Serilog calls ForContext internally; return the same mock logger
+        mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
+            .Returns(mockLogger.Object);
+        mockLogger.Setup(l => l.ForContext<It.IsAnyType>()).Returns(mockLogger.Object);
+        return mockLogger;
+    }
 
-    /// <summary>
-    /// Regression test for the "Aborting dispatch" laundering chain (issue #2575, Fix A).
-    ///
-    /// Before Fix A: TokenVendingService wrapped OCE in InvalidOperationException, which
-    /// passed through the `when (ex is not OperationCanceledException)` guard in EnrichAsync,
-    /// triggering an Error log and recording a dispatch failure.
-    ///
-    /// After Fix A: OCE propagates unchanged from TokenVendingService → PrepareDispatchCoreAsync
-    /// → EnrichCoreAsync. The guard `when (ex is not OperationCanceledException)` catches all
-    /// non-OCE exceptions, so an OCE thrown from EnrichCoreAsync must NOT trigger the Error log.
-    ///
-    /// This test verifies that the guard works as intended: an OperationCanceledException thrown
-    /// during enrichment does NOT produce an Error-level log entry.
-    /// </summary>
     [Fact]
     public async Task EnrichAsync_WhenEnrichCoreThrowsOce_DoesNotLogError()
     {
-        // ARRANGE: infra throws OCE, simulating what token vending does after Fix A
-        var mockLogger = new Mock<Serilog.ILogger>();
-        // Mock the ForContext call that Serilog uses internally — return the same mock logger
-        // so calls on the contextual logger are also captured.
-        mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
-                  .Returns(mockLogger.Object);
-        mockLogger.Setup(l => l.ForContext<It.IsAnyType>()).Returns(mockLogger.Object);
-
+        var mockLogger = MockLogger();
         var enricher = MakeEnricherWithThrowingInfra(new OperationCanceledException(), mockLogger);
 
-        // ACT — the OCE must propagate, not be swallowed or re-wrapped
-        // TODO [WARNING]: This test passes CancellationToken.None to EnrichAsync, then relies on
-        // ThrowingDispatchInfrastructure to throw a bare `new OperationCanceledException()` regardless
-        // of token state. It does not verify the realistic scenario where HttpContext.RequestAborted
-        // fires and the OCE carries a specific CancellationToken. While sufficient to test the
-        // catch-filter logic in EnrichAsync, it does not cover cases where OCE.CancellationToken
-        // might interact differently with logging enrichers that inspect the token. Consider adding
-        // a variant that links a real CancellationTokenSource, cancels it, and passes the linked
-        // token to EnrichAsync to exercise the full realistic path. (TestQualityReviewer warning)
         var act = () => enricher.EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>(
             "the OCE must propagate from EnrichAsync — the `when (ex is not OCE)` guard must not catch it");
 
-        // ASSERT — Error log must NOT have been called.
-        // AssignmentEnricher calls: _logger.Error("... {IssueIdentifier} ...", identity.IssueIdentifier)
-        // which resolves to Serilog's generic overload Error<T>(string, T) with T = IssueIdentifier.
-        // The `when (ex is not OperationCanceledException)` guard must prevent this call for OCE.
         mockLogger.Verify(
-            l => l.Error(
-                It.IsAny<string>(),
-                It.IsAny<IssueIdentifier>()),
+            l => l.Error(It.IsAny<string>(), It.IsAny<IssueIdentifier>()),
             Times.Never,
-            "the Error log in the catch block must be suppressed by the `when (ex is not OCE)` guard; " +
             "a client cancellation must not be recorded as a dispatch failure");
     }
 
-    /// <summary>
-    /// Complementary test: a non-OCE exception (e.g., InvalidOperationException from a DB timeout)
-    /// MUST trigger the Error log. This guards against an accidental over-broad OCE catch
-    /// that would suppress all error logging.
-    /// </summary>
     [Fact]
     public async Task EnrichAsync_WhenEnrichCoreThrowsNonOce_LogsError()
     {
-        // ARRANGE: infra throws a transient non-OCE, simulating a DB or network error
-        var mockLogger = new Mock<Serilog.ILogger>();
-        mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
-                  .Returns(mockLogger.Object);
-        mockLogger.Setup(l => l.ForContext<It.IsAnyType>()).Returns(mockLogger.Object);
+        var mockLogger = MockLogger();
+        var enricher = MakeEnricherWithThrowingInfra(new InvalidOperationException("simulated DB timeout"), mockLogger);
 
-        var enricher = MakeEnricherWithThrowingInfra(
-            new InvalidOperationException("simulated DB timeout"), mockLogger);
-
-        // ACT — non-OCE propagates through the Error-logging catch
         var act = () => enricher.EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>();
 
-        // ASSERT — Error log MUST have been called (verifies the guard is not over-broad)
-        // AssignmentEnricher calls: _logger.Error("... {IssueIdentifier} ...", identity.IssueIdentifier)
-        // which resolves to Serilog's generic overload Error<T>(string, T) with T = IssueIdentifier.
         mockLogger.Verify(
-            l => l.Error(
-                It.IsAny<string>(),
-                It.IsAny<IssueIdentifier>()),
+            l => l.Error(It.IsAny<string>(), It.IsAny<IssueIdentifier>()),
             Times.Once,
             "a non-OCE exception must still trigger the Error log in EnrichAsync");
     }

@@ -45,7 +45,7 @@ internal static class UiProviderEndpoints
     /// repository and pipeline providers of a repository this way); the URL rule applies to it too.
     /// </summary>
     internal static async Task<IResult> SaveProviderConfig(
-        [FromBody] ProviderConfig draft, IProviderConfigStore store, JobTemplateStore templates, IAgentProfileStore profileStore, CancellationToken ct,
+        [FromBody] ProviderConfig draft, IProviderConfigStore store, CancellationToken ct,
         string? copyFrom = null, ProviderKind? copyFromKind = null)
     {
         var stored = await store.GetProviderConfigByIdAsync(draft.Id, draft.Kind, ct);
@@ -88,7 +88,7 @@ internal static class UiProviderEndpoints
             }
         }
 
-        return await ConfigEndpoints.SaveProviderConfig(config, store, templates, profileStore, ct);
+        return await ConfigEndpoints.SaveProviderConfig(config, store, ct);
     }
 
     /// <summary>POST …/check — the credentials (and, when given, the repository or project) work.</summary>

@@ -59,7 +59,7 @@ public class RunPageComponentTests : BunitContext
 
         mockRunHistory
             .Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, null));
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, new CodingAgent.Contracts.Ui.UiRunAgent(null, null, null)));
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient
@@ -103,20 +103,36 @@ public class RunPageComponentTests : BunitContext
 
     // ── Tests ─────────────────────────────────────────────────────────────
 
-    /// <summary>Spec 051 2.2a: the API names the agent provider in the run detail; the page needs no provider configs.</summary>
+    /// <summary>Spec 053 req 8.2: the Agent row names the profile, model and effort the run recorded.</summary>
     [Fact]
-    public void AgentProviderName_FromTheRunDetail_IsShown()
+    public void TheAgentRow_NamesProfileModelAndEffort()
     {
         var summary = MakeSummary(PipelineRunType.Implementation, PipelineStep.Completed);
         RegisterServices(summary);
         var runs = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         runs.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, "Kiro (team pool)"));
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, new CodingAgent.Contracts.Ui.UiRunAgent("Claude dotnet", "claude-opus-5-5", "high")));
         Services.AddSingleton(runs.Object);
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
 
-        Assert.Contains("Kiro (team pool)", cut.Markup);
+        cut.Find("[data-testid='run-agent'] .v").TextContent.Should().Be("Claude dotnet · claude-opus-5-5 · effort high");
+    }
+
+    /// <summary>Spec 053 req 8.2: a run recorded before agent routing has no profile; its model is shown with "—".</summary>
+    [Fact]
+    public void TheAgentRow_OfAnOlderRun_ShowsItsModelAndADash()
+    {
+        var summary = MakeSummary(PipelineRunType.Implementation, PipelineStep.Completed);
+        RegisterServices(summary);
+        var runs = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        runs.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, new CodingAgent.Contracts.Ui.UiRunAgent(null, "sonnet", null)));
+        Services.AddSingleton(runs.Object);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.Find("[data-testid='run-agent'] .v").TextContent.Should().Be("— · sonnet");
     }
 
     /// <summary>
@@ -1595,7 +1611,7 @@ public class RunPageReconnectTests : BunitContext
         var mockRunHistory = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mockRunHistory
             .Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, null));
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(summary, new CodingAgent.Contracts.Ui.UiRunAgent(null, null, null)));
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient
@@ -1739,8 +1755,8 @@ public class RunPageReconnectTests : BunitContext
         // First call returns the active summary (page load); subsequent calls return completed.
         mockRunHistory
             .SetupSequence(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(activeSummary, null))
-            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(completedSummary, null));
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(activeSummary, new CodingAgent.Contracts.Ui.UiRunAgent(null, null, null)))
+            .ReturnsAsync(new CodingAgent.Contracts.Ui.UiRunDetail(completedSummary, new CodingAgent.Contracts.Ui.UiRunAgent(null, null, null)));
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
         mockConfigClient

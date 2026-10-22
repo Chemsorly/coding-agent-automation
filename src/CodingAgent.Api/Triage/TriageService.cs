@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -7,6 +8,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using ILogger = Serilog.ILogger;
 
@@ -47,6 +49,7 @@ public sealed class TriageService
     private readonly IConfigurationStore _config;
     private readonly IOrchestratorRunService _runService;
     private readonly TriageTrackerOperations _tracker;
+    private readonly WorkItemRouter _router;
     private readonly ILogger _logger;
 
     public TriageService(
@@ -55,6 +58,7 @@ public sealed class TriageService
         IConfigurationStore config,
         IOrchestratorRunService runService,
         TriageTrackerOperations tracker,
+        WorkItemRouter router,
         ILogger logger)
     {
         _dbFactory = dbFactory;
@@ -62,6 +66,7 @@ public sealed class TriageService
         _config = config;
         _runService = runService;
         _tracker = tracker;
+        _router = router;
         _logger = logger;
     }
 
@@ -375,18 +380,13 @@ public sealed class TriageService
     private async Task<JobDistributionRequest> BuildDistributionRequestAsync(
         TriageRecord record, PipelineProject project, PipelineJobTemplate executor, Guid workItemId, CancellationToken ct)
     {
-        var rawRepoConfig = await _config.GetProviderConfigByIdAsync(executor.RepoProviderId, ProviderKind.Repository, ct)
+        _ = await _config.GetProviderConfigByIdAsync(executor.RepoProviderId, ProviderKind.Repository, ct)
             ?? throw new TriageRequestException(StatusCodes.Status400BadRequest,
                 $"The repository of template '{executor.Name}' is not configured");
-        var repoConfig = RepositorySettings.WithTemplateSettings(rawRepoConfig, executor);
         var globalConfig = await _config.LoadPipelineConfigAsync(ct);
         var config = PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project);
-        var labels = LabelResolver.ResolveRequiredLabels(repoConfig, globalConfig);
-        var profile = ProfileResolver.ResolveByRequiredLabels(await _config.LoadAgentProfilesAsync(ct), labels)
-            ?? throw new TriageRequestException(StatusCodes.Status400BadRequest,
-                $"No agent profile matches the labels of '{executor.Name}' ({string.Join(", ", labels)})");
 
-        return new JobDistributionRequest
+        var request = new JobDistributionRequest
         {
             IssueIdentifier = TriageConstants.IssueIdentifierFor(record.Id),
             IssueProviderConfigId = TriageConstants.ProviderConfigId,
@@ -396,7 +396,6 @@ public sealed class TriageService
             InitiatedBy = InitiatedByConstants.Manual,
             TaskType = WorkItemTaskType.Triage,
             RunType = PipelineRunType.Triage,
-            AgentSelector = profile.JobTemplateKey(),
             TimeoutSeconds = (int)config.AgentTimeout.TotalSeconds,
             ProjectId = Guid.TryParse(project.Id, out var pid) ? pid : null,
             ProjectName = project.Name,
@@ -409,6 +408,10 @@ public sealed class TriageService
                 Labels = [],
             },
         };
+
+        // Spec 053 req 4.2: the API routes the triage like every other work item; a refusal is the start's 400.
+        var routed = await _router.RouteAsync(request, PipelineTelemetry.RoutingStages.Create, ct);
+        return routed.Request ?? throw new TriageRequestException(StatusCodes.Status400BadRequest, routed.RefusalText!);
     }
 
     private void AddRun(Guid workItemId, JobDistributionRequest distribution)

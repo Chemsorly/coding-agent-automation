@@ -1,86 +1,58 @@
+@using CodingAgent.Pipeline
 @using CodingAgent.Pipeline.Models
 
 <section class="settings-section">
     <h2>Agent Profiles</h2>
-    <p class="section-description">Profiles map agents to their capabilities via labels. When a job is dispatched, the agent's labels are matched against profile labels (ALL must match) to determine MCP servers and provider config.</p>
+    <p class="section-description">A profile is how an agent runs: the Helm job template it runs on (which sets the tool), the tool's settings and its MCP servers. Which profile, model and effort run each task type is set in Routing.</p>
 
     @if (_profiles.Count == 0)
     {
-        <div class="monitoring-empty">No agent profiles configured. Create at least one profile to enable job dispatch.</div>
+        <div class="monitoring-empty">No agent profiles configured. Create at least one profile, then set the default route in Routing.</div>
     }
     else
     {
         <div class="monitoring-table-wrap">
             <table class="monitoring-table">
                 <colgroup>
-                    <col style="width: 180px;" />  @* Display Name *@
-                    <col style="width: 220px;" />  @* Match Labels *@
-                    <col style="width: 160px;" />  @* Agent Provider *@
-                    <col style="width: 70px;" />   @* Enabled *@
-                    <col style="width: 70px;" />   @* Priority *@
+                    <col style="width: 200px;" />  @* Name *@
+                    <col style="width: 260px;" />  @* Job template *@
                     <col style="width: 60px;" />   @* MCP *@
-                    @if (IsKubernetesMode)
-                    {
-                        <col style="width: 80px;" />  @* Template *@
-                    }
+                    <col style="width: 70px;" />   @* Enabled *@
                     <col style="width: 100px;" />  @* Actions *@
                 </colgroup>
                 <thead>
                     <tr>
-                        <th>Display Name</th>
-                        <th class="th-has-hint">Match Labels <span class="th-hint" tabindex="0" role="img" aria-label="ALL match — profile matches only if ALL its labels exist on the agent" data-tooltip="ALL match — profile matches only if ALL its labels exist on the agent">?</span></th>
-                        <th>Agent Provider</th>
-                        <th>Enabled</th>
-                        <th>Priority</th>
+                        <th>Name</th>
+                        <th>Job template</th>
                         <th>MCP</th>
-                        @if (IsKubernetesMode)
-                        {
-                            <th>Template</th>
-                        }
+                        <th>Enabled</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var profile in _profiles.OrderByDescending(p => p.Priority))
+                    @foreach (var profile in _profiles.OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase))
                     {
-                        <tr>
+                        var key = profile.JobTemplateKey();
+                        var template = TemplateOf(key);
+                        <tr data-testid="profile-row-@profile.Id">
+                            <td>@profile.DisplayName</td>
                             <td>
-                                @profile.DisplayName
-                                @if (profile.MatchLabels.Count == 0)
+                                <code class="monitoring-mono">@(string.IsNullOrEmpty(key) ? "—" : key)</code>
+                                @if (AgentToolCatalog.Find(template?.Tool) is { } tool)
                                 {
-                                    <span class="badge-default">DEFAULT</span>
+                                    <span class="sidebar-label" data-testid="profile-tool">@tool.DisplayName</span>
+                                }
+                                @if (_jobTemplates.Count > 0 && template is null)
+                                {
+                                    <span class="badge-disabled-table" data-testid="profile-missing-template" title="The Helm values define no job template with this key, so work routed to this profile is not started.">Missing job template</span>
+                                }
+                                else if (template is { Tool.Length: 0 })
+                                {
+                                    <span class="badge-disabled-table" data-testid="profile-no-tool" title="The job template has no providerType, so work routed to this profile is refused.">No tool</span>
                                 }
                             </td>
-                            <td class="match-labels-cell">
-                                @if (profile.MatchLabels.Count > 0)
-                                {
-                                    @foreach (var label in profile.MatchLabels)
-                                    {
-                                        <span class="sidebar-label">@label</span>
-                                    }
-                                }
-                                else
-                                {
-                                    <span class="monitoring-muted">(matches all)</span>
-                                }
-                            </td>
-                            <td class="monitoring-mono">@GetProviderName(profile.AgentProviderConfigId)</td>
-                            <td><StatusIcon Enabled="profile.Enabled" /></td>
-                            <td>@profile.Priority</td>
                             <td>@(profile.McpServers?.Count(s => !s.Disabled) ?? 0)</td>
-                            @if (IsKubernetesMode)
-                            {
-                                <td>
-                                    @if (profile.Enabled && profile.MatchLabels.Count > 0)
-                                    {
-                                        <code class="monitoring-mono">@profile.JobTemplateKey()</code>
-                                    }
-                                    else
-                                    {
-                                        <span class="monitoring-muted" title="@(profile.MatchLabels.Count == 0 ? "Default profile — no template lookup needed" : "Profile disabled")">—</span>
-                                    }
-                                </td>
-                            }
+                            <td><StatusIcon Enabled="profile.Enabled" /></td>
                             <td>
                                 <button class="btn-edit" @onclick="() => EditProfile(profile)">Edit</button>
                                 <button class="btn-delete" @onclick="() => ConfirmDelete(profile)">Delete</button>
@@ -94,7 +66,9 @@
 
     @if (_showForm)
     {
-        <div class="provider-form" style="margin-top: 12px;">
+        var formTool = AgentToolCatalog.Find(TemplateOf(_form.JobTemplate)?.Tool);
+        <div class="provider-form-row" style="margin-top: 12px;">
+        <div class="provider-form">
             <h3>@(_editingProfile != null ? "Edit" : "Create") Agent Profile</h3>
 
             @if (!string.IsNullOrEmpty(_formError))
@@ -107,28 +81,61 @@
                 <input type="text" @bind="_form.DisplayName" placeholder="e.g. Kiro .NET Agent" />
             </div>
             <div class="form-group">
-                <label>Match Labels <span class="form-hint">(comma-separated · the repository labels this profile serves; they also pick quality gates and reviewers)</span></label>
-                <input type="text" @bind="_form.MatchLabels" placeholder="e.g. kiro, dotnet" />
+                <label>Job Template * <span class="form-hint">(a Helm <code>jobTemplates[]</code> entry; its <code>providerType</code> is the tool)</span></label>
+                @if (_jobTemplates.Count > 0)
+                {
+                    <select data-testid="profile-job-template" @bind="_form.JobTemplate">
+                        <option value="">-- Select --</option>
+                        @foreach (var template in _jobTemplates)
+                        {
+                            <option value="@template.Key">@template.Key (@(AgentToolCatalog.Find(template.Tool)?.DisplayName ?? "no tool"))</option>
+                        }
+                        @if (!string.IsNullOrEmpty(_form.JobTemplate) && TemplateOf(_form.JobTemplate) is null)
+                        {
+                            <option value="@_form.JobTemplate">@_form.JobTemplate (missing)</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <input type="text" data-testid="profile-job-template" @bind="_form.JobTemplate" placeholder="e.g. dotnet,kiro" />
+                }
             </div>
-            <div class="form-group">
-                <label>Agent Provider Config *</label>
-                <select @bind="_form.AgentProviderConfigId">
-                    <option value="">-- Select --</option>
-                    @foreach (var p in AgentProviders)
-                    {
-                        <option value="@p.Id">@p.DisplayName</option>
-                    }
-                </select>
-            </div>
+            @if (formTool == AgentToolCatalog.Kiro)
+            {
+                <div class="form-group">
+                    <label>Agent Name</label>
+                    <input type="text" data-testid="profile-agent-name" @bind="_form.AgentName" placeholder="Blank: the CLI's own agent" />
+                </div>
+            }
+            else if (formTool == AgentToolCatalog.OpenCode)
+            {
+                <div class="form-group">
+                    <label>Base URL</label>
+                    <input type="text" data-testid="profile-base-url" @bind="_form.BaseUrl" placeholder="@AgentDefaults.OpenCodeBaseUrl" />
+                </div>
+            }
+            else if (formTool == AgentToolCatalog.ClaudeCode)
+            {
+                <div class="form-group">
+                    <label>Auth Mode</label>
+                    <select data-testid="profile-auth-mode" @bind="_form.AuthMode">
+                        <option value="@ClaudeCodeAuthModes.Auto">auto — API key if configured, otherwise subscription token</option>
+                        <option value="@ClaudeCodeAuthModes.ApiKey">API key — billed per token</option>
+                        <option value="@ClaudeCodeAuthModes.Subscription">Subscription token — Claude plan, from claude setup-token</option>
+                    </select>
+                    <span class="form-hint">Which credential from the agent Secret the CLI uses: <code>claude-api-key</code> or <code>claude-oauth-token</code>. Only that one reaches the CLI.</span>
+                </div>
+            }
+            else if (!string.IsNullOrEmpty(_form.JobTemplate) && _jobTemplates.Count > 0)
+            {
+                <p class="form-hint" data-testid="profile-no-tool-hint">This job template has no <code>providerType</code> in the Helm values, so work routed to this profile is refused until it has one.</p>
+            }
             <div class="form-group form-checkbox">
                 <label>
                     <input type="checkbox" @bind="_form.Enabled" />
                     Enabled
                 </label>
-            </div>
-            <div class="form-group">
-                <label>Priority <span class="form-hint">(higher = preferred when multiple profiles match)</span></label>
-                <input type="number" @bind="_form.Priority" />
             </div>
 
             <div class="form-group">
@@ -231,6 +238,50 @@
                 <button class="btn-cancel" @onclick="CancelForm">Cancel</button>
             </div>
         </div>
+        <div class="provider-help">
+            @if (formTool == AgentToolCatalog.Kiro)
+            {
+                <h4><Icon Name="bot" /> Kiro CLI</h4>
+                <p>The agent runs the Kiro CLI, bundled with the Kiro images. Run <code>kiro-cli login</code> once per credential PVC (device code flow).</p>
+                <p class="help-heading">Fields:</p>
+                <ul>
+                    <li><strong>Agent Name</strong> — leave blank unless you have a custom agent configured</li>
+                </ul>
+            }
+            else if (formTool == AgentToolCatalog.ClaudeCode)
+            {
+                <h4><Icon Name="bot" /> Claude Code</h4>
+                <p>The agent runs the Claude Code CLI headless (<code>claude -p</code>), bundled with the <code>claude-*</code> images.</p>
+                <p class="help-heading">Credentials (agent Secret, e.g. via external-secrets):</p>
+                <ul>
+                    <li><code>claude-api-key</code> — Anthropic API key from the Claude Console, billed per token</li>
+                    <li><code>claude-oauth-token</code> — one-year subscription token from <code>claude setup-token</code> (Pro, Max, Team or Enterprise). Renew it before it expires; the CLI gives no warning</li>
+                </ul>
+                <p class="help-tip">💡 The CLI also loads the repository's own <code>CLAUDE.md</code>, <code>.claude/</code> settings, hooks and <code>.mcp.json</code>. Pipeline steering goes to <code>~/.claude/rules/</code>, outside the repository.</p>
+            }
+            else if (formTool == AgentToolCatalog.OpenCode)
+            {
+                <h4>🌐 OpenCode</h4>
+                <p>The agent talks to an OpenCode server over HTTP; it runs as a sidecar in the agent container.</p>
+                <p class="help-heading">Fields:</p>
+                <ul>
+                    <li><strong>Base URL</strong> — the OpenCode server URL (default: <code>http://127.0.0.1:4096</code>, container-internal)</li>
+                </ul>
+                <p class="help-heading">Configuration:</p>
+                <ul>
+                    <li>Set <code>OPENCODE_CONFIG_CONTENT</code> env var with provider JSON config</li>
+                    <li>Or mount config to <code>~/.config/opencode/opencode.json</code></li>
+                    <li>LLM API keys: <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, or <code>OPENROUTER_API_KEY</code></li>
+                </ul>
+            }
+            else
+            {
+                <h4><Icon Name="bot" /> Job template</h4>
+                <p>Pick the Helm job template the profile runs on. Its <code>providerType</code> decides the tool and the settings shown here.</p>
+            }
+            <p class="help-tip">💡 The model and effort are set per task type in Routing, not on the profile.</p>
+        </div>
+        </div>
     }
     else
     {
@@ -254,12 +305,10 @@
     private const string McpHeadersPlaceholder = "Authorization=Bearer mytoken\nX-Org=myorg";
 
     [Parameter, EditorRequired] public IUiSettingsClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
-    [Parameter] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = [];
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
-    /// <summary>When true, the Template column and validation are active (k8s mode).</summary>
-    [Parameter] public bool IsKubernetesMode { get; set; }
 
     private List<AgentProfile> _profiles = new();
+    private IReadOnlyList<UiJobTemplate> _jobTemplates = [];
     private bool _showForm;
     private AgentProfile? _editingProfile;
     private ProfileForm _form = new();
@@ -281,7 +330,9 @@
     {
         try
         {
-            _profiles = (await ConfigClient.GetAgentProfilesAsync(CancellationToken.None)).ToList();
+            var page = await ConfigClient.GetAgentProfilesAsync(CancellationToken.None);
+            _profiles = page.Profiles.ToList();
+            _jobTemplates = page.JobTemplates;
         }
         catch (Exception ex)
         {
@@ -289,16 +340,17 @@
         }
     }
 
+    /// <summary>The Helm job template with this key (normalized as the API does), or null.</summary>
+    private UiJobTemplate? TemplateOf(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        var normalized = new AgentProfile { DisplayName = "", JobTemplate = key }.JobTemplateKey();
+        return _jobTemplates.FirstOrDefault(t => string.Equals(t.Key, normalized, StringComparison.Ordinal));
+    }
+
     private void ShowAddForm()
     {
         _editingProfile = null;
-        // TODO: [WARNING] Requirement 10 says "For a new profile, preselect the template whose key equals
-        // the normalized match labels, if one exists." The preselection logic is not implemented: new
-        // profiles always open with the blank "Use Match Labels as key" option regardless of MatchLabels.
-        // To implement: after the user changes _form.MatchLabels, resolve JobTemplateStore.NormalizeLabels
-        // of the entered labels and compare against each template key; if a match exists, populate
-        // _form.JobTemplate with that key. This requires either a reactive MatchLabels binding or
-        // a deferred lookup in SaveProfile just before building the AgentProfile object.
         _form = new ProfileForm { Enabled = true };
         _formError = null;
         _showMcpForm = false;
@@ -309,14 +361,15 @@
     private void EditProfile(AgentProfile profile)
     {
         _editingProfile = profile;
+        var settings = profile.Settings ?? new Dictionary<string, string>();
         _form = new ProfileForm
         {
             DisplayName = profile.DisplayName,
-            MatchLabels = string.Join(", ", profile.MatchLabels),
-            AgentProviderConfigId = profile.AgentProviderConfigId,
+            JobTemplate = profile.JobTemplateKey(),
             Enabled = profile.Enabled,
-            Priority = profile.Priority,
-            JobTemplate = profile.JobTemplate ?? "",
+            AgentName = settings.GetValueOrDefault(ProviderSettingKeys.AgentName, ""),
+            BaseUrl = settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
+            AuthMode = ClaudeCodeAuthModes.Normalize(settings.GetValueOrDefault(ProviderSettingKeys.AuthMode)),
             McpServers = profile.McpServers.Select(s => new McpServerFormModel
             {
                 Name = s.Name,
@@ -343,24 +396,18 @@
 
     private async Task SaveProfile()
     {
-        _formError = null;
-
-        var labels = ParseLabels(_form.MatchLabels);
-        _formError = ValidateProfileForm(labels);
+        _formError = ValidateProfileForm();
         if (_formError is not null) return;
 
+        // A new record rather than the loaded one with changes: the retired labels, provider config and priority stay
+        // empty, so the configuration move never takes the profile for an unconverted one.
         var profile = new AgentProfile
         {
             Id = _editingProfile?.Id ?? Guid.NewGuid().ToString(),
             DisplayName = _form.DisplayName.Trim(),
-            MatchLabels = labels,
-            AgentProviderConfigId = _form.AgentProviderConfigId,
+            JobTemplate = _form.JobTemplate.Trim(),
             Enabled = _form.Enabled,
-            Priority = _form.Priority,
-            // In Kubernetes mode use the selected template; outside k8s mode preserve the existing value.
-            JobTemplate = IsKubernetesMode
-                ? (string.IsNullOrWhiteSpace(_form.JobTemplate) ? null : _form.JobTemplate)
-                : _editingProfile?.JobTemplate,
+            Settings = BuildSettings(AgentToolCatalog.Find(TemplateOf(_form.JobTemplate)?.Tool)),
             McpServers = _form.McpServers.Select(MapMcpServerFormToConfig).ToList()
         };
 
@@ -377,23 +424,32 @@
         }
     }
 
-    private string? ValidateProfileForm(IReadOnlyList<string> labels)
+    private string? ValidateProfileForm()
     {
         if (string.IsNullOrWhiteSpace(_form.DisplayName))
             return "Display Name is required.";
-
-        if (string.IsNullOrEmpty(_form.AgentProviderConfigId))
-            return "Agent Provider Config is required.";
-
-        if (labels.Count == 0)
-        {
-            var existingDefault = _profiles.FirstOrDefault(p =>
-                p.MatchLabels.Count == 0 && (_editingProfile == null || p.Id != _editingProfile.Id));
-            if (existingDefault != null)
-                return $"A default profile already exists: \"{existingDefault.DisplayName}\". Only one default (empty MatchLabels) is allowed.";
-        }
-
+        if (string.IsNullOrWhiteSpace(_form.JobTemplate))
+            return "Job Template is required.";
         return null;
+    }
+
+    /// <summary>
+    /// The tool settings of <paramref name="tool"/> from the form (spec 053 req 1.1). The MCP config path is not on the
+    /// form and keeps its stored value.
+    /// </summary>
+    private Dictionary<string, string> BuildSettings(AgentTool? tool)
+    {
+        var settings = new Dictionary<string, string>();
+        if (tool == AgentToolCatalog.Kiro && !string.IsNullOrWhiteSpace(_form.AgentName))
+            settings[ProviderSettingKeys.AgentName] = _form.AgentName.Trim();
+        else if (tool == AgentToolCatalog.OpenCode)
+            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? AgentDefaults.OpenCodeBaseUrl : _form.BaseUrl.Trim();
+        else if (tool == AgentToolCatalog.ClaudeCode)
+            settings[ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Normalize(_form.AuthMode);
+
+        if (_editingProfile?.Settings?.GetValueOrDefault(ProviderSettingKeys.McpConfigPath) is { Length: > 0 } mcpConfigPath)
+            settings[ProviderSettingKeys.McpConfigPath] = mcpConfigPath;
+        return settings;
     }
 
     private McpServerConfig MapMcpServerFormToConfig(McpServerFormModel s)
@@ -421,6 +477,7 @@
         };
     }
 
+
     private void ConfirmDelete(AgentProfile profile)
     {
         _deletingProfile = profile;
@@ -431,42 +488,30 @@
     {
         if (_deletingProfile == null) return;
 
+        var profileId = _deletingProfile.Id;
+        _showDeleteConfirm = false;
+        _deletingProfile = null;
         try
         {
-            await ConfigClient.DeleteAgentProfileAsync(_deletingProfile.Id, CancellationToken.None);
-            _showDeleteConfirm = false;
-            _deletingProfile = null;
+            await ConfigClient.DeleteAgentProfileAsync(profileId, CancellationToken.None);
             await LoadProfiles();
             await OnShowStatus.InvokeAsync(("Agent profile deleted.", false));
         }
         catch (Exception ex)
         {
+            // A profile that routes name is refused with the list of those routes.
             await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
         }
-    }
-
-    private string GetProviderName(string configId)
-    {
-        var provider = AgentProviders.FirstOrDefault(p => p.Id == configId);
-        return provider?.DisplayName ?? Truncate(configId, 16);
-    }
-
-    private static IReadOnlyList<string> ParseLabels(string? input)
-    {
-        if (string.IsNullOrWhiteSpace(input)) return [];
-        return input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(l => !string.IsNullOrWhiteSpace(l))
-            .ToList();
     }
 
     private sealed class ProfileForm
     {
         public string DisplayName { get; set; } = "";
-        public string MatchLabels { get; set; } = "";
-        public string AgentProviderConfigId { get; set; } = "";
-        public bool Enabled { get; set; } = true;
-        public int Priority { get; set; } = 0;
         public string JobTemplate { get; set; } = "";
+        public bool Enabled { get; set; } = true;
+        public string AgentName { get; set; } = "";
+        public string BaseUrl { get; set; } = AgentDefaults.OpenCodeBaseUrl;
+        public string AuthMode { get; set; } = ClaudeCodeAuthModes.Auto;
         public List<McpServerFormModel> McpServers { get; set; } = new();
     }
 

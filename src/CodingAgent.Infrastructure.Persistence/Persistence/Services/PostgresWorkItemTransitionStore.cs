@@ -87,20 +87,28 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
             RepoProviderConfigId = ids.Repo,
             BrainProviderConfigId = ids.Brain,
             PipelineProviderConfigId = ids.Pipeline,
-            ProjectId = row.ProjectId
+            ProjectId = row.ProjectId,
+            Route = ids.Route,
         };
     }
 
     /// <summary>
-    /// Reads the provider config IDs the dispatch request stored in a WorkItem's JSON payload.
+    /// Reads the provider config IDs and the pinned route (spec 053) the dispatch request stored in a WorkItem's JSON
+    /// payload. The route is null for work items created before spec 053.
     /// </summary>
-    private static (string? Repo, string? Brain, string? Pipeline) ReadPayloadProviderConfigIds(string payload)
+    private static (string? Repo, string? Brain, string? Pipeline, CodingAgent.Pipeline.Models.AgentRouteSnapshot? Route) ReadPayloadProviderConfigIds(string payload)
     {
         using var doc = JsonDocument.Parse(payload);
         var root = doc.RootElement;
+        var route = root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("route", out var routeElement)
+            && routeElement.ValueKind == JsonValueKind.Object
+                ? routeElement.Deserialize<CodingAgent.Pipeline.Models.AgentRouteSnapshot>(CodingAgent.Pipeline.PipelineJsonOptions.Lenient)
+                : null;
         return (ReadString(root, "repoProviderConfigId"),
                 ReadString(root, "brainProviderConfigId"),
-                ReadString(root, "pipelineProviderConfigId"));
+                ReadString(root, "pipelineProviderConfigId"),
+                route);
 
         static string? ReadString(JsonElement root, string name) =>
             root.ValueKind == JsonValueKind.Object

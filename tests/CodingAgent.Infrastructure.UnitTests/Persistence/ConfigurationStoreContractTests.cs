@@ -382,8 +382,6 @@ public sealed class ApiConfigurationStoreContractTests : ConfigurationStoreContr
                 (IReadOnlyList<ProviderConfig>)_providerConfigs.Values.Where(p => p.Kind == kind).ToList());
 
         // Stubs for the other sub-interfaces the composite store wraps
-        mock.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
         mock.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         mock.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))

@@ -57,6 +57,15 @@ public sealed class PipelineRunSummary
     /// <summary>Model configured for the agent provider used in this run.</summary>
     public string? ModelName { get; init; }
 
+    /// <summary>Id of the agent profile the run's route named (spec 053 req 8.1); null for runs recorded before.</summary>
+    public string? AgentProfileId { get; init; }
+
+    /// <summary>Display name of that agent profile when the run was created; null for runs recorded before.</summary>
+    public string? AgentProfileName { get; init; }
+
+    /// <summary>Effort of the run's route (<c>auto</c> is the tool's default); null for runs recorded before.</summary>
+    public string? AgentEffort { get; init; }
+
     /// <summary>Whether a brain repository was used for this run.</summary>
     public bool BrainRepoUsed { get; init; }
 

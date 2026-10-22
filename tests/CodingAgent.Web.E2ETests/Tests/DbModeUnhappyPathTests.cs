@@ -50,14 +50,13 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         var profiles = await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
         if (!profiles.Any(p => p.Id == "profile-unhappy-e2e"))
         {
-            await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+            await Fixture.SeedRoutedProfileAsync(new AgentProfile
             {
                 Id = "profile-unhappy-e2e",
                 DisplayName = "Unhappy Path Agent Profile",
-                MatchLabels = new[] { "unhappy-e2e" },
-                AgentProviderConfigId = "agent-e2e",
+                JobTemplate = E2ERouting.Key("unhappy-e2e"),
                 Enabled = true
-            }, CancellationToken.None);
+            });
         }
     }
 

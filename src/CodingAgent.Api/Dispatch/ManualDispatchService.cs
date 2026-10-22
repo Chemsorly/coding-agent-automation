@@ -238,10 +238,11 @@ internal sealed class ManualDispatchService(
         if (request is null)
             throw new DispatchRefusedException("Could not dispatch — orchestration preparation failed (check logs for details).");
 
-        // The in-process distributor only enqueues, so a successful dispatch is always "queued".
+        // The in-process distributor only enqueues, so a successful dispatch is always "queued". A refusal carries
+        // its reason, such as "No agent route: set the default route in Settings → Agents → Routing" (spec 053 req 2.9).
         var outcome = await orchestration.DistributeAndFinalizeAsync(request, ct);
         if (!outcome.Success)
-            throw new DispatchRefusedException(distributionFailed);
+            throw new DispatchRefusedException(outcome is { IsRefused: true, ErrorMessage: { } reason } ? reason : distributionFailed);
         return outcome;
     }
 

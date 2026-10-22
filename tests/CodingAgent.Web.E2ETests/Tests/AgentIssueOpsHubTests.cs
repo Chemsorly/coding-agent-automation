@@ -70,14 +70,13 @@ public sealed class AgentIssueOpsHubTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-issue-ops",
             DisplayName = "Issue Ops Agent Profile",
-            MatchLabels = new[] { "issue-ops" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = E2ERouting.Key("issue-ops"),
             Enabled = true
-        }, CancellationToken.None);
+        });
 
         // Connect agent BEFORE dispatch so FakeJobController can bootstrap it
         var fakeAgent = new FakeAgentClient(agentId, "issue-ops");

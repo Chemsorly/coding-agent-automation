@@ -11,10 +11,11 @@ namespace CodingAgent.Web.Ui;
 /// </summary>
 public interface IUiChatClient
 {
-    Task<UiChatOptions> GetOptionsAsync(CancellationToken ct = default);
+    /// <summary>The launchable profiles with their models and efforts; the models of <paramref name="projectId"/>'s repository rows count (spec 053 req 6.2).</summary>
+    Task<UiChatOptions> GetOptionsAsync(string? projectId = null, CancellationToken ct = default);
 
-    /// <summary>Launches a chat pod and waits until it connects, up to the connect timeout.</summary>
-    Task<UiChatSession> StartAsync(string profileId, string? projectId, CancellationToken ct = default);
+    /// <summary>Launches a chat pod and waits until it connects, up to the connect timeout. Without a model or effort, the preselection is used.</summary>
+    Task<UiChatSession> StartAsync(string profileId, string? projectId, string? model = null, string? effort = null, CancellationToken ct = default);
 
     /// <summary>Sends a prompt; the reply streams to the hub group of <paramref name="sessionId"/>.</summary>
     Task SendPromptAsync(string agentId, string sessionId, string text, CancellationToken ct = default);
@@ -31,14 +32,16 @@ public sealed class UiChatClient(HttpClient http, IUiAccessTokenSource tokens) :
 
     private static string Agent(string agentId) => $"{Chat}/{Uri.EscapeDataString(agentId)}";
 
-    public Task<UiChatOptions> GetOptionsAsync(CancellationToken ct = default) =>
-        GetAsync($"{Chat}/options", UiJsonContext.Default.UiChatOptions, ct);
+    public Task<UiChatOptions> GetOptionsAsync(string? projectId = null, CancellationToken ct = default) =>
+        GetAsync(
+            string.IsNullOrEmpty(projectId) ? $"{Chat}/options" : $"{Chat}/options?projectId={Uri.EscapeDataString(projectId)}",
+            UiJsonContext.Default.UiChatOptions, ct);
 
-    public Task<UiChatSession> StartAsync(string profileId, string? projectId, CancellationToken ct = default) =>
+    public Task<UiChatSession> StartAsync(string profileId, string? projectId, string? model = null, string? effort = null, CancellationToken ct = default) =>
         SendForResultAsync(
             HttpMethod.Post,
             Chat,
-            JsonContent.Create(new UiChatStartRequest(profileId, projectId), UiJsonContext.Default.UiChatStartRequest),
+            JsonContent.Create(new UiChatStartRequest(profileId, projectId, model, effort), UiJsonContext.Default.UiChatStartRequest),
             UiJsonContext.Default.UiChatSession,
             ct);
 

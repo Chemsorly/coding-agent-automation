@@ -103,24 +103,6 @@ public class ReviewCodeStepIsolatedTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_ResolvesFromConfigStore_WhenPreResolvedIsNull()
-    {
-        _configStore.Setup(x => x.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ReviewerConfiguration>());
-        _configStore.Setup(x => x.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-
-        var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
-        context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
-        context.PreResolvedReviewerConfigs = null;
-
-        await new ReviewCodeStep().ExecuteAsync(context, CancellationToken.None);
-
-        _configStore.Verify(x => x.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
     public async Task ExecuteAsync_AlwaysReturnsContinue()
     {
         var context = BuildContext();

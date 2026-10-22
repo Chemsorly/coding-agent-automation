@@ -329,6 +329,60 @@ public static class PipelineTelemetry
         "consolidation.dispatch.permanent_failures", UnitFailure,
         "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");
 
+    /// <summary>
+    /// Counter: agent routing refusals (spec 053 req 9.10), recorded by the API. A refusal at creation leaves no work
+    /// item, so <see cref="RunOutcomes"/> never sees it. Tags: <c>task_type</c>, <c>stage</c> (<see cref="RoutingStages"/>)
+    /// and <c>reason</c> (<c>AgentRouteRefusalReason</c>). Not pre-initialized (#3639).
+    /// </summary>
+    public static readonly Counter<long> RoutingRefusals = Meter.CreateCounter<long>(
+        "pipeline.routing.refusals", "{refusal}",
+        "Agent routing refusals by task type, stage (create, dispatch, claim) and reason");
+
+    /// <summary>Where a route was refused: the <c>stage</c> tag of <see cref="RoutingRefusals"/>.</summary>
+    public static class RoutingStages
+    {
+        public const string Create = "create";
+        public const string Dispatch = "dispatch";
+        public const string Claim = "claim";
+    }
+
+    /// <summary>The route attributes of the work item creation and claim spans (spec 053 req 9.6, 9.11).</summary>
+    public static class RoutingAttributes
+    {
+        public const string AgentProfile = "pipeline.agent_profile";
+        public const string Model = "pipeline.model";
+        public const string Effort = "pipeline.effort";
+        public const string RouteSource = "pipeline.route_source";
+        public const string RouteRefusal = "pipeline.route_refusal";
+    }
+
+    /// <summary>Records one routing refusal; <paramref name="reason"/> is an <c>AgentRouteRefusalReason</c> value.</summary>
+    public static void RecordRoutingRefusal(WorkItemTaskType taskType, string stage, string reason) =>
+        RoutingRefusals.Add(1,
+            new KeyValuePair<string, object?>("task_type", taskType.ToString()),
+            new KeyValuePair<string, object?>("stage", stage),
+            new KeyValuePair<string, object?>("reason", reason));
+
+    /// <summary>Sets the route attributes on <paramref name="activity"/> (the current span, when there is one).</summary>
+    public static void SetRouteAttributes(Activity? activity, string profileName, string model, string effort, string source)
+    {
+        if (activity is null)
+            return;
+        activity.SetTag(RoutingAttributes.AgentProfile, profileName);
+        activity.SetTag(RoutingAttributes.Model, model);
+        activity.SetTag(RoutingAttributes.Effort, effort);
+        activity.SetTag(RoutingAttributes.RouteSource, source);
+    }
+
+    /// <summary>Marks <paramref name="activity"/> as a routing refusal: the reason attribute and the Error status.</summary>
+    public static void SetRouteRefusal(Activity? activity, string reason, string text)
+    {
+        if (activity is null)
+            return;
+        activity.SetTag(RoutingAttributes.RouteRefusal, reason);
+        activity.SetStatus(ActivityStatusCode.Error, text);
+    }
+
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
         "token_vending.failures", UnitFailure, "Token vending failures");

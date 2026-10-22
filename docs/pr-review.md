@@ -157,7 +157,7 @@ Individual agent failures are contained — if one agent crashes or times out, t
 
 ## Reviewer Configurations
 
-Reviewer Configurations define per-stack review agents. They map label sets to groups of specialized reviewers, enabling different code review strategies per technology stack.
+Reviewer Configurations define per-stack review agents. They map a repository's stack labels to groups of specialized reviewers, enabling different code review strategies per technology stack. Stack labels pick no agent: see [Agent Routing](agent-routing.md).
 
 ### Configuration Model
 
@@ -165,7 +165,7 @@ Reviewer Configurations define per-stack review agents. They map label sets to g
 |-------|------|---------|-------------|
 | `Id` | string | auto-generated GUID | Unique identifier |
 | `DisplayName` | string | (required) | Human-readable name |
-| `MatchLabels` | string[] | `[]` | Labels for matching. Empty = matches all jobs unconditionally |
+| `MatchLabels` | string[] | `[]` | The stack labels it applies to. Empty = applies to every repository |
 | `Agents` | ReviewAgent[] | (required) | Ordered list of review agents |
 | `Enabled` | bool | `true` | Whether this config participates in resolution |
 | `ExecutionOrder` | int | `0` | Ordering priority (lower = first) |
@@ -176,7 +176,7 @@ Each `ReviewAgent` has:
 
 ### Resolution Logic
 
-1. All enabled configs whose `MatchLabels` intersect with the job's labels are selected (ANY match)
+1. All enabled configs whose `MatchLabels` intersect with the repository's stack labels are selected (ANY match)
 2. Configs with empty `MatchLabels` always match (global fallback)
 3. Results sorted by `ExecutionOrder` ascending, then `DisplayName` alphabetically
 4. Agents from all matching configs are flattened into a single ordered list
@@ -191,7 +191,7 @@ When no custom reviewers are configured, the system uses two built-in configurat
 **.NET Reviewers** applies to repositories labelled `dotnet`:
 - **DotNetSpecialist** — .NET-specific patterns, performance, API usage
 
-Reset to defaults via Settings → Label Routing → Reviewer Configs → "Reset collection to defaults" (asks for confirmation).
+Reset to defaults via Settings → Quality → Reviewer Configs → "Reset collection to defaults" (asks for confirmation).
 
 ### Project Review
 

@@ -4,6 +4,7 @@ using CodingAgent.Api.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Moq;
 using Xunit;
 
@@ -333,6 +334,32 @@ public class ManualDispatchServiceTests
         (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage("Could not dispatch — epic is already being processed or queued, or no agents are available.");
     }
 
+    // ── Spec 053 req 2.9: a refused work item shows the API's reason in the drawer ──
+
+    private void IsRefused() =>
+        _orchestration.Setup(o => o.DistributeAndFinalizeAsync(_prepared, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(false, Queued: false, AgentRouteRefusalReason.NoRouteText) { IsRefused = true });
+
+    [Fact]
+    public async Task Dispatch_ARefusedIssuePullRequestOrEpic_ShowsTheReason()
+    {
+        HasIssue(_issues, "42", "Issue");
+        HasIssue(_issues, "e-1", "The epic", AgentLabels.Epic);
+        _repository.Setup(r => r.GetOpenPullRequestAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new PullRequestSummary
+        {
+            Number = 7, Identifier = "7", Title = "T", Description = "", Labels = [], BranchName = "b", TargetBranch = "main", Url = "u", IsDraft = false
+        });
+        IsRefused();
+
+        var issue = () => Service().DispatchIssueAsync(Target(), "42", CancellationToken.None);
+        var pullRequest = () => Service().DispatchPullRequestAsync(Target(), 7, CancellationToken.None);
+        var epic = () => Service().DispatchEpicAsync(Target(), "e-1", CancellationToken.None);
+
+        (await issue.Should().ThrowAsync<DispatchRefusedException>()).WithMessage(AgentRouteRefusalReason.NoRouteText);
+        (await pullRequest.Should().ThrowAsync<DispatchRefusedException>()).WithMessage(AgentRouteRefusalReason.NoRouteText);
+        (await epic.Should().ThrowAsync<DispatchRefusedException>()).WithMessage(AgentRouteRefusalReason.NoRouteText);
+    }
+
     // ── Re-dispatch ──
 
     private static PipelineRunSummary FailedRun(
@@ -362,6 +389,16 @@ public class ManualDispatchServiceTests
             && r.BrainProviderId == "brain-1" && r.PipelineProviderId == "ci-1" && r.InitiatedBy == InitiatedByConstants.Manual
             && r.Project == Project), It.IsAny<CancellationToken>()), Times.Once);
         _orchestration.Verify(o => o.DistributeAndFinalizeAsync(_prepared, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RedispatchRunAsync_WhenRefused_ShowsTheReason()
+    {
+        IsRefused();
+
+        var act = () => Service().RedispatchRunAsync(FailedRun(), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<DispatchRefusedException>()).WithMessage(AgentRouteRefusalReason.NoRouteText);
     }
 
     [Fact]

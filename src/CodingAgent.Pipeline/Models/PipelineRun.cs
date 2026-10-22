@@ -219,6 +219,15 @@ public sealed partial class PipelineRun
     /// <summary>Model configured for the agent provider used in this run (e.g. "auto", "claude-sonnet-4.6").</summary>
     public string? ModelName { get; set; }
 
+    /// <summary>Id of the agent profile the run's route named (spec 053 req 8.1); null for runs recorded before.</summary>
+    public string? AgentProfileId { get; set; }
+
+    /// <summary>Display name of that agent profile when the run was created; null for runs recorded before.</summary>
+    public string? AgentProfileName { get; set; }
+
+    /// <summary>Effort of the run's route (<c>auto</c> is the tool's default); null for runs recorded before.</summary>
+    public string? AgentEffort { get; set; }
+
     /// <summary>Names of review agents that were executed during this run.</summary>
     public IReadOnlyList<string> CodeReviewAgentsRun { get; set; } = Array.Empty<string>();
 
@@ -464,6 +473,9 @@ public sealed partial class PipelineRun
         CodeReviewWarningCount = CodeReviewWarningCount,
         CodeReviewSuggestionCount = CodeReviewSuggestionCount,
         ModelName = ModelName,
+        AgentProfileId = AgentProfileId,
+        AgentProfileName = AgentProfileName,
+        AgentEffort = AgentEffort,
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,
         BrainContextLoaded = BrainContextLoaded,

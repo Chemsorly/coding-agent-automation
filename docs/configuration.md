@@ -2,7 +2,7 @@
 
 Pipeline behavior is configured in the web UI (Settings page) and stored in PostgreSQL. Deployment details (images, replicas, chat pods, age-based retention) come from the Helm chart instead.
 
-See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these settings affect the state machine, [Label Routing](label-routing.md) for per-stack quality gate and reviewer configuration, and [Projects](projects.md) for per-project settings inheritance.
+See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these settings affect the state machine, [Agent Routing](agent-routing.md) for agent profiles, routing and per-stack quality gate and reviewer configuration, and [Projects](projects.md) for per-project settings inheritance.
 
 ## Where Settings Live
 
@@ -10,22 +10,23 @@ Each setting has one home:
 
 | Scope | What it holds | Where to edit it |
 |-------|---------------|------------------|
-| Global settings | Every setting in the [reference](#settings-reference) below: the pipeline's policy defaults, and the loop, retention and delivery settings | Settings → Global Defaults (the model-fetch timeout is under Settings → Providers → Agent) |
+| Global settings | Every setting in the [reference](#settings-reference) below: the pipeline's policy defaults, and the loop, retention and delivery settings | Settings → Global Defaults (the model-fetch timeout is under Settings → Agents → Routing) |
 | Project | Overrides of the settings marked **Project** in the reference, plus secrets, steering and MCP servers | Settings → Projects → (project) |
-| Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly`, the housekeeping limit, and the repository's agent labels, secrets, setup steps, steering and commit blacklist | Pipelines page |
+| Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly`, the housekeeping limit, and the repository's stack labels, agent routing rows, secrets, setup steps, steering and commit blacklist | Pipelines page |
 | Repository provider | The connection: type, owner and repository, base branch, credentials | Settings → Providers → Repository |
-| Label catalogs | Agent profiles, quality gate configs and reviewer configs, each chosen by the repository's labels | Settings → Label Routing |
+| Agents | Agent profiles (job template, tool settings, MCP servers) and the global routing table (profile, model and effort per task type) | Settings → Agents |
+| Quality catalogs | Quality gate configs and reviewer configs, each chosen by the repository's stack labels | Settings → Quality |
 | Deployment | Images, concurrency per label set, chat pod lifetimes, age-based retention | Helm `values.yaml` and environment variables |
 
 How the layers combine:
 
 - A project override replaces the global value; an empty override inherits it. `codeReview` is merged field by field.
 - A template can turn `BrainReadOnly` on, never off.
-- Secrets merge by name, and the repository's win over the project's. MCP servers merge by name, and the project's win over the agent profile's. Project and repository steering are both written. The repository's labels, secrets, setup steps and steering are read from the pipeline job template.
+- Secrets merge by name, and the repository's win over the project's. MCP servers merge by name, and the project's win over the agent profile's. Project and repository steering are both written. The repository's stack labels, routing rows, secrets, setup steps and steering are read from the pipeline job template.
 - A repository's blacklist (set on the pipeline job template) replaces the global or project blacklist. `.agent` and `.brain` are always excluded.
-- A repository's labels (set on the pipeline job template) replace `defaultRequiredAgentLabels`. Every quality gate config and reviewer config whose labels match applies.
+- A repository's routing row for a task type replaces the global row for it (see [Agent Routing — Resolution Order](agent-routing.md#resolution-order)). Every quality gate config and reviewer config whose labels match the repository's stack labels applies.
 
-A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by repository labels (see [Label Routing](label-routing.md)); a project can add its own reviewer, the [project review](pr-review.md#project-review).
+A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by the repository's stack labels (see [Agent Routing](agent-routing.md#stack-labels-quality-gates-and-reviewers)); a project can add its own reviewer, the [project review](pr-review.md#project-review).
 
 ### Limits
 
@@ -103,7 +104,7 @@ External CI runs when a Pipeline/CI provider is set on the pipeline job template
 
 ### Code Review
 
-Implementation runs review their changes before the pull request is opened. PR review runs review a pull request once and never change code. Which reviewers run is set per repository label in [Reviewer Configs](label-routing.md), plus the project's reviewer when its [project review](pr-review.md#project-review) is on; whether a repository's pull requests are reviewed is the pipeline job template's Review switch.
+Implementation runs review their changes before the pull request is opened. PR review runs review a pull request once and never change code. Which reviewers run is set per repository stack label in [Reviewer Configs](agent-routing.md#reviewer-configurations), plus the project's reviewer when its [project review](pr-review.md#project-review) is on; whether a repository's pull requests are reviewed is the pipeline job template's Review switch.
 
 | Setting | Default | Range | Project | Description |
 |---------|---------|-------|---------|-------------|
@@ -142,7 +143,6 @@ See [Triage](triage.md). Whether the loop picks up `agent:triage` issues is a te
 
 | Setting | Default | Range | Project | Description |
 |---------|---------|-------|---------|-------------|
-| `defaultRequiredAgentLabels` | *(empty)* | | | Agent labels for repositories whose provider sets none; empty = any agent |
 | `brainReadOnly` | false | | ✓ | Runs read the brain but never write to it, and brain consolidation does not run. A project or template can also turn it on (see [Brain Consolidation](feedback-and-consolidation.md#brain-consolidation-per-brain)) |
 | `brainPushMaxRetries` | 3 | 0–10 | | Attempts to push brain changes, by runs and by brain consolidation |
 | `enableIssueImageExtraction` | true | | | Download images from issue and PR bodies and give them to the agent |
@@ -155,9 +155,9 @@ See [Triage](triage.md). Whether the loop picks up `agent:triage` issues is a te
 | `workItemRetentionCount` | -1 | -1–1000000 | | Finished work items kept per project; 0 or -1 keeps all |
 | `feedbackCommentOutboxMaxAttempts` | 5 | 1–100 | | Attempts to post a run's feedback comment before giving up on it |
 
-### Agent Provider
+### Routing
 
-Edited under Settings → Providers → Agent, in the Kiro provider form in Kubernetes mode.
+Edited under Settings → Agents → Routing, next to Fetch Models.
 
 | Setting | Default | Range | Project | Description |
 |---------|---------|-------|---------|-------------|
@@ -179,6 +179,8 @@ The stored configuration has five fields that are not settings, and no page offe
 
 These settings had no effect and were removed: `issuePageSize`, `lastUsedProviderIds`, `failedWorkspaceRetentionDays`, `agentDisconnectGracePeriod`, `agentBusyProgressTimeout`, `heartbeatSweepIntervalSeconds`, `heartbeatTimeoutSeconds`, `outputBufferCapacity`, `outputLinesCapacity`, `chatHistoryCapacity`, `qualityGateHistoryCapacity`, `retryErrorsCapacity`, `closedLoopMaxBackoffInterval`, `dbRetentionSweepInterval`, `imageDownloadTimeoutSeconds`, `maxConsolidationDispatchRetries` and `codeReview.reviewIsolation`, as well as the agent provider's timeout. Stored configurations and exports that still contain them load normally, and the values are ignored.
 
+`defaultRequiredAgentLabels` was removed with agent routing (spec 053): labels no longer pick agents, and a repository without stack labels gets only the quality gate and reviewer configs without match labels. The configuration move wrote the routes it produced down as routing rows; a configuration or export that still contains it loads normally.
+
 ## Chat Pod Lifecycle
 
 These settings control the lifetime of ephemeral chat session pods. Pod dispatch is handled by `ChatJobDispatcher`; the per-session idle-kill loop and K8s job polling run in `ChatSessionWatcher`; cross-replica heartbeat storage uses `ChatHeartbeatTracker` (only when Redis is configured). Settings map to `workDistribution.dispatch.*` in `values.yaml` and are bound via `WorkDistribution:Dispatch:*` environment variables on the Pipeline API and Job Controller.
@@ -194,7 +196,7 @@ These settings control the lifetime of ephemeral chat session pods. Pod dispatch
 
 ## Quality Gate Settings
 
-Quality gates are configured per-stack via Quality Gate Configurations (see [Label Routing](label-routing.md#quality-gate-configurations)). Each QGC has these fields:
+Quality gates are configured per-stack via Quality Gate Configurations (see [Agent Routing](agent-routing.md#quality-gate-configurations)). Each QGC has these fields:
 
 | Field | Description |
 |-------|-------------|
@@ -231,11 +233,11 @@ Per-template controls (on `PipelineJobTemplate`):
 
 Pipeline Job Templates define which provider combination to use when polling for issues. Each template links an issue provider, repository provider, and optional brain/CI providers. Multiple templates enable round-robin polling across repositories.
 
-Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating a template via the "+ Add Template" form, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels.
+Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating a template via the "+ Add Template" form, the UI shows a preview of the quality gates and reviewers the repository's stack labels pick. The table shows each template's resolved agent routes in one line.
 
 Editing an existing template happens on its **repository page** at `/pipelines/{templateId}`, reachable by clicking the template name or the "Edit" link in the Pipelines table. The repository page splits template configuration into two cards:
 
-- **Binding card** (global admins only): providers, brain, CI provider, required labels, enabled. These are the operator-level settings.
+- **Binding card** (global admins only): providers, brain, CI provider, stack labels, enabled, and the repository's agent routing rows (see [Agent Routing — Repository Rows](agent-routing.md#repository-rows)). These are the operator-level settings. Other readers see the resolved route per task type.
 - **Behaviour card** (global admins only): name, workflow switches, housekeeping, steering instructions, setup steps, secrets (write-only), and commit blacklist.
 
 Changes on the repository page apply from the next poll cycle. A template keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project. Templates can be added, edited, moved and removed while the loop runs.
@@ -429,15 +431,15 @@ Project-level steering (configured on the Project, not the provider) is written 
 
 Claude Code also loads what the repository itself provides — `CLAUDE.md`, `.claude/rules/`, `.claude/settings.json` (including hooks) and `.mcp.json` — because the workspace is its working directory.
 
-## Claude Code Agent Provider
+## Claude Code Agents
 
-Agent provider configs of type `ClaudeCode` run the Claude Code CLI headless (`claude -p --output-format stream-json`), one process per call, with the prompt on stdin.
+Agent profiles on a job template with `providerType: claude` run the Claude Code CLI headless (`claude -p --output-format stream-json`), one process per call, with the prompt on stdin.
 
-| Setting | Description |
-|---------|-------------|
-| Model | Full model ID to pin a version (e.g. `claude-opus-5-5`, `claude-opus-4-8`), an alias for the latest of a family (`opus`, `sonnet`, `haiku`, `fable`), or `auto` for the CLI default. The CLI cannot list models, so the form suggests a fixed list and accepts any other ID. |
-| Effort | `low`, `medium`, `high`, `xhigh`, `max` or `auto` — passed as `--effort` |
-| Auth Mode | `auto` (API key if configured, else subscription token), `apiKey`, or `subscription`. Exactly one credential reaches the CLI, because an API key always wins over a subscription token in the CLI's precedence order. |
+| Setting | Where | Description |
+|---------|-------|-------------|
+| Model | Route (Settings → Agents → Routing, or the repository's rows) | Full model ID to pin a version (e.g. `claude-opus-5-5`, `claude-opus-4-8`), an alias for the latest of a family (`opus`, `sonnet`, `haiku`, `fable`), or `auto` for the CLI default. The CLI cannot list models, so the routing table suggests a fixed list and accepts any other ID. |
+| Effort | Route | `low`, `medium`, `high`, `xhigh`, `max` or `auto` — passed as `--effort` |
+| Auth Mode | Agent profile | `auto` (API key if configured, else subscription token), `apiKey`, or `subscription`. Exactly one credential reaches the CLI, because an API key always wins over a subscription token in the CLI's precedence order. |
 
 Credentials live in the agent Secret (`claude-api-key`, `claude-oauth-token`; see [Deployment](deployment.md)). The subscription token comes from `claude setup-token`, is valid for one year, needs a Pro, Max, Team or Enterprise plan, and expires without warning — renew it before then. The CLI runs with `--dangerously-skip-permissions`, the same trust level as Kiro's `--trust-all-tools`; the agent pod is the sandbox. MCP servers from the agent profile are written to `~/.claude/pipeline-mcp.json` and passed with `--mcp-config`; a repository's `.mcp.json` servers load as well.
 
@@ -531,5 +533,5 @@ MCP servers can be configured at the **agent profile level** (global) or at the 
 
 This allows projects to selectively override or augment the profile's MCP configuration without having to redefine the entire list.
 
-**Chat session isolation**: A chat session runs an agent profile: its job template, its agent provider config and its MCP servers. When a project is selected, its MCP servers (merged with the profile's), secrets, steering content, and project identity are sent on the first prompt of the chat session. Subsequent prompts do not re-send secrets or steering content. Repository-level steering and repo secrets are not sent to chat sessions.
+**Chat session isolation**: A chat session runs an agent profile: its job template, its tool settings and its MCP servers, with the model and effort chosen on the Agent Chat page. The model list is `auto`, the models the routes name for that profile (the global rows and the chat project's repository rows) and, for Claude Code, its built-in list. When a project is selected, its MCP servers (merged with the profile's), secrets, steering content, and project identity are sent on the first prompt of the chat session. Subsequent prompts do not re-send secrets or steering content. Repository-level steering and repo secrets are not sent to chat sessions.
 

@@ -48,7 +48,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     {
         var cut = RenderSection();
 
-        Assert.Contains("Agent Routing", cut.Markup);
         Assert.Contains("Brain Repository", cut.Markup);
         Assert.Contains("Issue Images", cut.Markup);
         Assert.Contains("Data Retention", cut.Markup);
@@ -63,7 +62,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                DefaultRequiredAgentLabels = "kiro,dotnet",
                 BrainPushMaxRetries = 5,
                 MaxIssueImages = 12,
                 MaxImageSizeBytes = 8 * 1_048_576,
@@ -73,7 +71,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
 
         var cut = RenderSection();
 
-        Assert.Equal("kiro,dotnet", cut.Find("input[type='text']").GetAttribute("value"));
         var numberInputs = cut.FindAll("input[type='number']");
         Assert.Contains(numberInputs, i => i.GetAttribute("value") == "5");
         Assert.Contains(numberInputs, i => i.GetAttribute("value") == "12");
@@ -83,14 +80,12 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void LoadsNullLabels_AsEmptyString()
+    public void DoesNotOfferTheRetiredDefaultAgentLabels()
     {
-        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { DefaultRequiredAgentLabels = null });
-
+        // Spec 053 req 5.4: stack labels pick quality gates and reviewers only, so there is no global fallback.
         var cut = RenderSection();
 
-        Assert.Equal("", cut.Find("input[type='text']").GetAttribute("value"));
+        Assert.DoesNotContain("Default Required Agent Labels", cut.Markup);
     }
 
     [Fact]
@@ -122,7 +117,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
         await SaveAsync(cut);
 
         Assert.NotNull(_saved);
-        Assert.Null(_saved!.DefaultRequiredAgentLabels);
         Assert.Equal(3, _saved.BrainPushMaxRetries);
         Assert.True(_saved.BrainReadOnly);
         Assert.False(_saved.EnableNativeImageParts);

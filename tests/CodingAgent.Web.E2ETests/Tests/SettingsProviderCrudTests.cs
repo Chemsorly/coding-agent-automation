@@ -336,14 +336,13 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         // pattern (ResetAll at test start), but the stray "profile-setup-e2e" AgentProfile is an untested
         // side effect that could affect tests that enumerate all agent profiles. Document the assumption that
         // ResetAll will clean it, or remove it in a finally block if test isolation is required.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-setup-e2e",
             DisplayName = "Setup E2E Agent Profile",
-            MatchLabels = new[] { "setup-e2e" },
-            AgentProviderConfigId = "agent-e2e",
+            JobTemplate = "setup-e2e",
             Enabled = true
-        }, ct);
+        });
 
         // ── Step 7: Connect a fake agent so FakeJobController can deliver the job ────────
 

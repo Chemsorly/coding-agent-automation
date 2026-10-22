@@ -318,21 +318,6 @@ public sealed class ApiBackedConfigStoresTests
         mockClient.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
-    // ── ApiConfigurationStore agent profile mutations ────────────────────────
-
-    [Fact]
-    public async Task ApiConfigurationStore_LoadAgentProfiles_CachesResult()
-    {
-        var client = EmptyClient();
-        var store = MakeConfigStore(client.Object);
-
-        await store.LoadAgentProfilesAsync(CancellationToken.None);
-        await store.LoadAgentProfilesAsync(CancellationToken.None);
-
-        client.Verify(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()), Times.Once,
-            "second load within TTL must not call API");
-    }
-
     // ── ApiConfigurationStore QGC mutations ──────────────────────────────────
 
     [Fact]
@@ -504,20 +489,20 @@ public sealed class ApiBackedConfigStoresTests
     public async Task ConfigurationStore_InvalidateCaches_ClearsAllComposedStores()
     {
         var (store, client) = CreateConfigStore();
-        client.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentProfile>() as IReadOnlyList<AgentProfile>);
+        client.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<QualityGateConfiguration>() as IReadOnlyList<QualityGateConfiguration>);
         client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        await store.LoadAgentProfilesAsync(CancellationToken.None);
+        await store.LoadQualityGateConfigsAsync(CancellationToken.None);
         await store.LoadPipelineConfigAsync(CancellationToken.None);
 
         store.InvalidateCaches();
 
-        await store.LoadAgentProfilesAsync(CancellationToken.None);
+        await store.LoadQualityGateConfigsAsync(CancellationToken.None);
         await store.LoadPipelineConfigAsync(CancellationToken.None);
 
-        client.Verify(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        client.Verify(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
         client.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
@@ -549,8 +534,6 @@ public sealed class ApiBackedConfigStoresTests
         var store = MakeConfigStore(client.Object);
         var writes = new Func<Task>[]
         {
-            () => store.SaveAgentProfileAsync(new AgentProfile { Id = "a", DisplayName = "A", AgentProviderConfigId = "k" }, CancellationToken.None),
-            () => store.DeleteAgentProfileAsync("a", CancellationToken.None),
             () => store.SaveQualityGateConfigAsync(new QualityGateConfiguration { Id = "q", DisplayName = "Q" }, CancellationToken.None),
             () => store.DeleteQualityGateConfigAsync("q", CancellationToken.None),
             () => store.SaveReviewerConfigAsync(new ReviewerConfiguration { DisplayName = "R", Agents = [] }, CancellationToken.None),
@@ -579,8 +562,6 @@ public sealed class ApiBackedConfigStoresTests
             .ReturnsAsync(Array.Empty<ProviderConfig>());
         client.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
-        client.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
         client.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
         client.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))

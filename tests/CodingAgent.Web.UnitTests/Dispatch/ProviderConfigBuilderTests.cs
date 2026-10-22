@@ -27,6 +27,9 @@ public class ProviderConfigBuilderTests
     private const string BrainProviderId = "brain-1";
     private const string PipelineProviderId = "pipeline-1";
 
+    /// <summary>The agent config the enricher builds from the routed profile and route (spec 053 DD5).</summary>
+    private static readonly ProviderConfig AgentConfig = CreateConfig(AgentProviderId, ProviderKind.Agent);
+
     public ProviderConfigBuilderTests()
     {
         var resolution = new DispatchResolutionService(
@@ -53,14 +56,11 @@ public class ProviderConfigBuilderTests
     private void SetupConfigStore()
     {
         var repoConfig = CreateConfig(RepoProviderId, ProviderKind.Repository);
-        var agentConfig = CreateConfig(AgentProviderId, ProviderKind.Agent);
         var brainConfig = CreateConfig(BrainProviderId, ProviderKind.Repository);
         var pipelineConfig = CreateConfig(PipelineProviderId, ProviderKind.Pipeline);
 
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { repoConfig, brainConfig });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { agentConfig });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { pipelineConfig });
 
@@ -77,11 +77,35 @@ public class ProviderConfigBuilderTests
         SetupConfigStore();
 
         var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None);
 
         result.Should().HaveCount(2);
         result[0].Id.Should().Be(RepoProviderId);
         result[1].Id.Should().Be(AgentProviderId);
+    }
+
+    [Fact]
+    public async Task BuildAsync_AddsTheGivenAgentConfig_WithoutLoadingAgentProviderConfigs()
+    {
+        SetupConfigStore();
+
+        var result = await _infra.BuildAgentProviderConfigsAsync(
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None);
+
+        result[1].Should().BeSameAs(AgentConfig);
+        _mockConfigStore.Verify(
+            s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BuildAsync_WithoutAgentConfig_ReturnsTheOtherConfigsOnly()
+    {
+        SetupConfigStore();
+
+        var result = await _infra.BuildAgentProviderConfigsAsync(
+            RepoProviderId, null, null, PipelineProviderId, _logger, CancellationToken.None);
+
+        result.Select(c => c.Id).Should().Equal(RepoProviderId, PipelineProviderId);
     }
 
     [Fact]
@@ -90,7 +114,7 @@ public class ProviderConfigBuilderTests
         SetupConfigStore();
 
         var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, BrainProviderId, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, BrainProviderId, null, _logger, CancellationToken.None);
 
         result.Should().HaveCount(3);
         result.Should().Contain(c => c.Id == BrainProviderId);
@@ -102,7 +126,7 @@ public class ProviderConfigBuilderTests
         SetupConfigStore();
 
         var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, PipelineProviderId, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, null, PipelineProviderId, _logger, CancellationToken.None);
 
         result.Should().HaveCount(3);
         result.Should().Contain(c => c.Id == PipelineProviderId);
@@ -114,7 +138,7 @@ public class ProviderConfigBuilderTests
         SetupConfigStore();
 
         var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, BrainProviderId, PipelineProviderId, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, BrainProviderId, PipelineProviderId, _logger, CancellationToken.None);
 
         result.Should().HaveCount(4);
         result[0].Id.Should().Be(RepoProviderId);
@@ -145,14 +169,12 @@ public class ProviderConfigBuilderTests
         var additionalRepoConfig = CreateConfig("repo-2", ProviderKind.Repository);
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { CreateConfig(RepoProviderId, ProviderKind.Repository), additionalRepoConfig });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { CreateConfig(AgentProviderId, ProviderKind.Agent) });
         _mockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
         var (jobConfigs, cloneConfigs) = CapturePreparedConfigs();
 
         var result = await _infra.PrepareProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None,
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None,
             additionalRepoProviderIds: new[] { "repo-2" });
 
         jobConfigs.Select(c => c.Id).Should().Equal(RepoProviderId, AgentProviderId);
@@ -167,7 +189,7 @@ public class ProviderConfigBuilderTests
         var (_, cloneConfigs) = CapturePreparedConfigs();
 
         await _infra.PrepareProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, BrainProviderId, null, _logger, CancellationToken.None,
+            RepoProviderId, AgentConfig, BrainProviderId, null, _logger, CancellationToken.None,
             additionalRepoProviderIds: new[] { RepoProviderId, BrainProviderId, null!, "", RepoProviderId });
 
         cloneConfigs.Should().BeEmpty("the job's own repository and brain already have job configs");
@@ -180,7 +202,7 @@ public class ProviderConfigBuilderTests
         CapturePreparedConfigs();
 
         await _infra.PrepareProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None);
 
         _mockTokenVending.Verify(t => t.PrepareReadOnlyCloneConfigsAsync(
             It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -192,8 +214,6 @@ public class ProviderConfigBuilderTests
         // Setup with no brain config in the store
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { CreateConfig(RepoProviderId, ProviderKind.Repository) });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { CreateConfig(AgentProviderId, ProviderKind.Agent) });
         // Brain not found in cached list, and DB fallback returns null
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(BrainProviderId, ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
@@ -201,7 +221,7 @@ public class ProviderConfigBuilderTests
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
 
         var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, BrainProviderId, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, BrainProviderId, null, _logger, CancellationToken.None);
 
         // Brain is optional (required:false) — should gracefully exclude it
         result.Should().HaveCount(2);
@@ -220,7 +240,7 @@ public class ProviderConfigBuilderTests
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
 
         var act = () => _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
     }
@@ -242,7 +262,7 @@ public class ProviderConfigBuilderTests
             .ReturnsAsync([template]);
 
         var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None);
 
         var repoConfig = result.Should().Contain(c => c.Id == RepoProviderId).Subject;
         repoConfig.RequiredLabels.Should().BeEquivalentTo(["kiro", "dotnet"],
@@ -270,13 +290,11 @@ public class ProviderConfigBuilderTests
         };
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { repoConfigWithOldLabels });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { CreateConfig(AgentProviderId, ProviderKind.Agent) });
         _mockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>()); // no template → null → five fields cleared
 
         var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None);
 
         var repoConfig = result.Should().Contain(c => c.Id == RepoProviderId).Subject;
         repoConfig.RequiredLabels.Should().BeNull(
@@ -309,7 +327,7 @@ public class ProviderConfigBuilderTests
             .ReturnsAsync(vendedConfigs);
 
         var result = await _infra.PrepareProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
+            RepoProviderId, AgentConfig, null, null, _logger, CancellationToken.None);
 
         // Should return the token-vended configs, not the raw ones
         result.Should().BeSameAs(vendedConfigs);

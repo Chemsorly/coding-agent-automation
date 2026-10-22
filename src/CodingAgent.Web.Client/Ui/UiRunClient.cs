@@ -12,7 +12,7 @@ public interface IUiRunClient
 {
     Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(RunHistoryQuery query, CancellationToken ct = default);
 
-    /// <summary>The run and its agent provider's name, or null when it does not exist or the user cannot read it.</summary>
+    /// <summary>The run and the agent profile, model and effort it ran with, or null when it does not exist or the user cannot read it.</summary>
     Task<UiRunDetail?> GetRunAsync(Guid runId, CancellationToken ct = default);
 
     /// <summary>

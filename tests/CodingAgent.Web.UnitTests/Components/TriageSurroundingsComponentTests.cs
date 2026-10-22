@@ -64,7 +64,7 @@ public class TriageSurroundingsComponentTests : BunitContext
             StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-10),
             CompletedAtOffset = DateTimeOffset.UtcNow,
             ProjectId = ShopProjectId,
-        }, null));
+        }, new CodingAgent.Contracts.Ui.UiRunAgent(null, null, null)));
         var triages = new Mock<CodingAgent.Web.Ui.IUiTriageClient>();
         triages.Setup(t => t.FindByRunAsync(runId.ToString(), It.IsAny<CancellationToken>())).ReturnsAsync(TriageId);
         var hub = new Mock<IUiHubConnection>();

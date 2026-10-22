@@ -193,38 +193,6 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         queryString.Should().Contain("includeSecrets=True");
     }
 
-    // ── GetAgentProfilesAsync ──────────────────────────────────────────────────
-
-    [Fact]
-    public async Task GetAgentProfilesAsync_Returns_DeserializedList()
-    {
-        var profiles = new List<AgentProfile>
-        {
-            new() { Id = "ap1", DisplayName = "Agent 1", AgentProviderConfigId = "prov-1" }
-        };
-        StubGet("/api/config/agent-profiles", profiles);
-
-        var result = await _client.GetAgentProfilesAsync();
-
-        result.Should().HaveCount(1);
-        result[0].Id.Should().Be("ap1");
-        result[0].DisplayName.Should().Be("Agent 1");
-    }
-
-    [Fact]
-    public async Task GetAgentProfilesAsync_NullResponse_ReturnsEmptyList()
-    {
-        _server.Given(Request.Create().WithPath("/api/config/agent-profiles").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("null"));
-
-        var result = await _client.GetAgentProfilesAsync();
-
-        result.Should().BeEmpty();
-    }
-
     // ── GetQualityGateConfigsAsync ─────────────────────────────────────────────
 
     [Fact]

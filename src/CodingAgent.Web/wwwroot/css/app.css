@@ -579,9 +579,6 @@ select option { background: var(--surface); color: var(--text); }
     color: var(--text); font-size: 0.85rem; white-space: nowrap;
 }
 
-/* Match Labels column in Agent Profiles: allow chips to wrap so the column doesn't overflow */
-.match-labels-cell { white-space: normal !important; }
-
 /* Agent detail in run modal */
 
 .agent-history-list { display: flex; flex-direction: column; gap: 4px; }
