@@ -693,7 +693,7 @@ public static class ConfigEndpoints
     /// in the bundle. A job template this cluster does not have is not refused, so a bundle from another cluster imports;
     /// the Agent Profiles page flags it.
     /// </summary>
-    private static IReadOnlyList<string> ValidateImportedRouting(ConfigBundle bundle, IReadOnlyDictionary<string, string> toolsByKey)
+    private static List<string> ValidateImportedRouting(ConfigBundle bundle, IReadOnlyDictionary<string, string> toolsByKey)
     {
         AgentRouting? routing;
         try

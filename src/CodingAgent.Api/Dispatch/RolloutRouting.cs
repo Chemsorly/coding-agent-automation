@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
@@ -70,7 +71,7 @@ public sealed class RolloutRouting(
             await db.SaveChangesAsync(ct);
             Log.Information(
                 "Rollout routing: work item {WorkItemId} stored without a selector now runs on job template {AgentSelector} ({RouteSource})",
-                id, entity.AgentSelector, AgentRouteLabels.Source(AgentRouteSource.Dispatch));
+                id, LogSanitizer.SanitizeForLog(entity.AgentSelector), AgentRouteLabels.Source(AgentRouteSource.Dispatch));
             return (entity.AgentSelector, null);
         }
         catch (DbUpdateConcurrencyException)

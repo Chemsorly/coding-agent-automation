@@ -149,7 +149,7 @@ internal sealed class DispatchWorkItemService
     /// and the PVC availability result (from
     /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/>).
     /// </returns>
-    internal async Task<(Dictionary<string, int> concurrencyBySelector, PvcAvailabilityResult pvcResult)>
+    internal static async Task<(Dictionary<string, int> concurrencyBySelector, PvcAvailabilityResult pvcResult)>
         BuildDispatchPreambleAsync(
             PipelineDbContext db, DispatchLifecycleService lifecycle, CancellationToken ct)
     {

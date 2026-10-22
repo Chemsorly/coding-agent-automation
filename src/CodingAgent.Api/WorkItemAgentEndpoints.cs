@@ -191,8 +191,9 @@ public static class WorkItemAgentEndpoints
             case EnrichmentResult.Refused refused:
                 // Spec 053 req 4.5: the route can no longer run, and no retry changes that. The item fails with the
                 // reason, and 410 makes an agent of any release exit 0 (WorkItemHttpClient).
-                await FailRefusedAsync(id, refused, statusTransitions, dbFactory, ct);
-                return TypedResults.StatusCode(StatusCodes.Status410Gone);
+                return await FailRefusedAsync(id, refused, statusTransitions, dbFactory, ct)
+                    ? TypedResults.StatusCode(StatusCodes.Status410Gone)
+                    : EnrichmentFailed();
             case EnrichmentResult.Unavailable:
                 Log.Error("GetAssignment {WorkItemId}: the assignment cannot be enriched now; returning 503", id);
                 return EnrichmentFailed();
@@ -311,14 +312,15 @@ public static class WorkItemAgentEndpoints
     /// when the Job Controller later reports Succeeded, and the reason code in the payload
     /// (<see cref="AgentRouteRefusalReason.PayloadProperty"/>) keeps a late Running report from recovering it.
     /// </summary>
-    private static async Task FailRefusedAsync(
+    /// <returns>False when no transition service is registered: the item is not failed, so the caller answers 503.</returns>
+    private static async Task<bool> FailRefusedAsync(
         Guid id, EnrichmentResult.Refused refused, WorkItemStatusTransitionService? statusTransitions,
         IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
     {
         if (statusTransitions is null)
         {
-            Log.Error("GetAssignment {WorkItemId}: refused ({RefusalReason}) but no transition service is registered; the item is not failed", id, refused.Reason);
-            return;
+            Log.Error("GetAssignment {WorkItemId}: refused ({RefusalReason}) but no transition service is registered; the item is not failed, returning 503", id, refused.Reason);
+            return false;
         }
         await RecordRefusalAsync(id, refused.Reason, dbFactory, ct);
         var outcome = await statusTransitions.TransitionAsync(id, new WorkItemStatusRequest
@@ -330,25 +332,53 @@ public static class WorkItemAgentEndpoints
         Log.Warning(
             "GetAssignment {WorkItemId}: refused for a routing reason ({RefusalReason}: {RefusalText}); work item failed ({Outcome}), returning 410",
             id, refused.Reason, refused.Text, outcome);
+        return true;
     }
 
-    /// <summary>Writes the refusal's reason code into the work item's payload; the claim reads nothing else from it later.</summary>
+    /// <summary>How often the refusal's reason code is written when another writer (a Running report) moves the item meanwhile.</summary>
+    private const int RefusalWriteAttempts = 3;
+
+    /// <summary>
+    /// Writes the refusal's reason code into the work item's payload; the claim reads nothing else from it later. Without
+    /// it, a Succeeded report after the agent exits on the 410 would recover the item as a race, so a concurrent write
+    /// is retried on the item as it is now.
+    /// </summary>
     private static async Task RecordRefusalAsync(
         Guid id, string reason, IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var entity = await db.WorkItems.FindAsync([id], ct);
-        if (entity?.Payload is null || System.Text.Json.Nodes.JsonNode.Parse(entity.Payload) is not System.Text.Json.Nodes.JsonObject payload)
-            return;
-        payload[AgentRouteRefusalReason.PayloadProperty] = reason;
-        entity.Payload = payload.ToJsonString();
+        for (var attempt = 1; attempt <= RefusalWriteAttempts; attempt++)
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var entity = await db.WorkItems.FindAsync([id], ct);
+            if (entity?.Payload is null || ParsePayload(id, entity.Payload) is not { } payload)
+                return;
+            payload[AgentRouteRefusalReason.PayloadProperty] = reason;
+            entity.Payload = payload.ToJsonString();
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // Another writer moved the item meanwhile; read it again.
+            }
+        }
+        Log.Warning("GetAssignment {WorkItemId}: the refusal reason {RefusalReason} could not be written after {Attempts} attempts",
+            id, reason, RefusalWriteAttempts);
+    }
+
+    /// <summary>The payload as a JSON object, or null when it is not one; the transition still fails the item.</summary>
+    private static System.Text.Json.Nodes.JsonObject? ParsePayload(Guid id, string payload)
+    {
         try
         {
-            await db.SaveChangesAsync(ct);
+            return System.Text.Json.Nodes.JsonNode.Parse(payload) as System.Text.Json.Nodes.JsonObject;
         }
-        catch (DbUpdateConcurrencyException)
+        catch (System.Text.Json.JsonException ex)
         {
-            // Another writer moved the item meanwhile; the transition below decides what it becomes.
+            Log.Warning(ex, "GetAssignment {WorkItemId}: the payload cannot be read; the refusal reason is not written", id);
+            return null;
         }
     }
 

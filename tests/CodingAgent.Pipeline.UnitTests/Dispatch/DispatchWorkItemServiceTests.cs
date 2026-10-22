@@ -423,13 +423,12 @@ public sealed class DispatchWorkItemServiceTests
             await seedDb.SaveChangesAsync();
         }
 
-        var svc = CreateService(maxConcurrent: 5);
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"]);
 
         await using var db = await dbFactory.CreateDbContextAsync();
 
         // Act
-        var (concurrencyBySelector, pvcResult) = await svc.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
+        var (concurrencyBySelector, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
 
         // Assert — concurrency snapshot
         var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
@@ -490,7 +489,7 @@ public sealed class DispatchWorkItemServiceTests
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
         await using var db = await CreateDbFactory().CreateDbContextAsync();
 
-        var (_, pvcResult) = await CreateService().BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
+        var (_, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
 
         pvcResult.AvailablePvcs.Should().Equal(["pvc-1"], "a running chat Job mounts pvc-0");
     }
@@ -504,7 +503,7 @@ public sealed class DispatchWorkItemServiceTests
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
         await using var db = await CreateDbFactory().CreateDbContextAsync();
 
-        var (_, pvcResult) = await CreateService().BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
+        var (_, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
 
         pvcResult.AvailablePvcs.Should().Equal(["pvc-0", "pvc-1"]);
     }

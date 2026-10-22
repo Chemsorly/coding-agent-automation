@@ -177,9 +177,11 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
     public async Task PutRouting_RefusesEveryInvalidRow_WithOneLinePerRow_AndStoresNothing()
     {
         await SeedAsync();
+        var stored = await Routing.LoadAsync(Ct);
         var routing = new RoutingTable
         {
-            Default = AgentRoutingTestData.Route(KiroProfileId),
+            // A valid default unlike the stored one, so a save of the valid rows alone would show.
+            Default = AgentRoutingTestData.Route(ClaudeProfileId, "claude-opus-5-5", "high"),
             ByTaskType = new Dictionary<WorkItemTaskType, AgentRoute>
             {
                 [WorkItemTaskType.Decomposition] = AgentRoutingTestData.Route(ClaudeProfileId, model: " "),
@@ -197,7 +199,7 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
             "PR review: Kiro does not accept effort 'xhigh' (use auto, low, medium, high, max)",
             "Triage: OpenCode has no effort setting; use auto",
             "Consolidation: agent profile 'Disabled agent' is disabled");
-        (await Routing.LoadAsync(Ct))!.ByTaskType.Should().BeEmpty();
+        (await Routing.LoadAsync(Ct)).Should().BeEquivalentTo(stored, "an invalid table stores nothing, not even its valid rows");
     }
 
     [Fact]
@@ -520,11 +522,14 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
     {
         await SeedAsync();
         var routingBefore = AgentRoutingStore.Serialize((await Routing.LoadAsync(Ct))!);
+        var profilesBefore = JsonSerializer.Serialize((await Profiles.LoadAgentProfilesAsync(Ct)).OrderBy(p => p.Id), Json);
 
         using var response = await Admin.PutAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
 
         ((int)response.StatusCode).Should().BeInRange(400, 499, body);
         AgentRoutingStore.Serialize((await Routing.LoadAsync(Ct))!).Should().Be(routingBefore);
         (await StoredTemplateAsync()).AgentRoutes.Should().BeNull();
+        JsonSerializer.Serialize((await Profiles.LoadAgentProfilesAsync(Ct)).OrderBy(p => p.Id), Json)
+            .Should().Be(profilesBefore, "a refused profile body stores no profile");
     }
 }

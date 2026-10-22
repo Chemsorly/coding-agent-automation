@@ -418,8 +418,20 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     /// </summary>
     private static string? KeepStoredModel(PipelineRunEntity entity, string? storedModel)
     {
-        if (entity.ModelName is not null || storedModel is null || entity.SummaryJson is null
-            || System.Text.Json.Nodes.JsonNode.Parse(entity.SummaryJson) is not System.Text.Json.Nodes.JsonObject summary)
+        if (entity.ModelName is not null || storedModel is null || entity.SummaryJson is null)
+            return entity.SummaryJson;
+
+        System.Text.Json.Nodes.JsonObject? summary;
+        try
+        {
+            summary = System.Text.Json.Nodes.JsonNode.Parse(entity.SummaryJson) as System.Text.Json.Nodes.JsonObject;
+        }
+        catch (JsonException)
+        {
+            // A summary that cannot be read is stored as it is; only the model is not kept.
+            return entity.SummaryJson;
+        }
+        if (summary is null)
             return entity.SummaryJson;
         summary[JsonOptions.PropertyNamingPolicy?.ConvertName(nameof(PipelineRunSummary.ModelName)) ?? nameof(PipelineRunSummary.ModelName)] = storedModel;
         return summary.ToJsonString(JsonOptions);

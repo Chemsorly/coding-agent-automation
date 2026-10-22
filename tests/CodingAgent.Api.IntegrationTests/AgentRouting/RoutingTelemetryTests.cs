@@ -57,18 +57,18 @@ public sealed class RoutingTelemetryTests
 
     // ── Listeners ────────────────────────────────────────────────────────────
 
-    /// <summary>The measurements of one instrument of <see cref="PipelineTelemetry.SourceName"/> while it is alive.</summary>
+    /// <summary>The measurements of one instrument of <paramref name="meterName"/> while it is alive.</summary>
     private sealed class InstrumentListener : IDisposable
     {
         private readonly MeterListener _listener = new();
 
         public ConcurrentBag<Dictionary<string, string>> Measurements { get; } = [];
 
-        public InstrumentListener(string instrumentName)
+        public InstrumentListener(string instrumentName, string meterName = PipelineTelemetry.SourceName)
         {
             _listener.InstrumentPublished = (instrument, l) =>
             {
-                if (instrument.Meter.Name == PipelineTelemetry.SourceName && instrument.Name == instrumentName)
+                if (instrument.Meter.Name == meterName && instrument.Name == instrumentName)
                     l.EnableMeasurementEvents(instrument);
             };
             _listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
@@ -157,6 +157,7 @@ public sealed class RoutingTelemetryTests
     public async Task TheRolloutRouting_CountsADispatchRefusal()
     {
         using var refusals = new InstrumentListener("pipeline.routing.refusals");
+        using var attempts = new InstrumentListener("workdistribution.dispatch.attempts", WorkDistributionTelemetry.MeterName);
         var id = Guid.NewGuid();
         using (var db = _db.CreateDbContext())
         {
@@ -180,6 +181,8 @@ public sealed class RoutingTelemetryTests
             ["stage"] = "dispatch",
             ["reason"] = AgentRouteRefusalReason.NoRoute,
         });
+        attempts.Measurements.Should().ContainSingle(m => m["reason"] == "no_route", "req 9.12: the dispatch attempt names the refusal")
+            .Which.Should().Contain("result", "deferred");
     }
 
     [Fact]

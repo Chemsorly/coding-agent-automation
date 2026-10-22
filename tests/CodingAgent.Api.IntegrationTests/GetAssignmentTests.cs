@@ -438,6 +438,23 @@ public sealed class GetAssignmentTests
     }
 
     [Fact]
+    public async Task GetAssignment_RoutingRefusal_WithoutATransitionService_Answers503_AndLeavesTheItemDispatched()
+    {
+        // A 410 makes the agent exit; without the transition the item would sit Dispatched until the sweep.
+        var dbFactory = CreateDbFactory($"GetAssignment-RefusedNoTransitions-{Guid.NewGuid():N}");
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched,
+            JsonSerializer.Serialize(MakeMinimalRequest(), PipelineJsonOptions.Default));
+        var enricher = new FakeAssignmentEnricher((_, _) => Task.FromResult<EnrichmentResult>(
+            new EnrichmentResult.Refused(AgentRouteRefusalReason.ProfileUnavailable, "agent profile 'Kiro' no longer exists")));
+
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, CreateNullProjectStore(), enricher);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        (await ReadWorkItemAsync(dbFactory, id)).Status.Should().Be(WorkItemStatus.Dispatched);
+    }
+
+    [Fact]
     public async Task GetAssignment_ARefusedItem_StaysFailed_AfterTheJobControllerReportsSucceededAndTheHubRunning()
     {
         var dbFactory = CreateDbFactory($"GetAssignment-RefusedStays-{Guid.NewGuid():N}");
