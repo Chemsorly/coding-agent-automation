@@ -64,7 +64,7 @@ public sealed class ConsolidationServiceStoreDelegationTests
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
-            new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), DefaultRequiredAgentLabels = "kiro" },
+            new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
             _mockProjectStore.Object,
             WorkDistributor: mockWorkDistributor.Object));
 

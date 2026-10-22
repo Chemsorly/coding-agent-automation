@@ -1085,13 +1085,9 @@ public sealed class ConfigEndpointTests
     public async Task AgentProfiles_Delete_Returns200()
     {
         var profileId = Guid.NewGuid().ToString();
-        var profile = new AgentProfile
-        {
-            Id = profileId,
-            DisplayName = "Profile To Delete",
-            AgentProviderConfigId = "prov-delete-test"
-        };
-        await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default);
+        var profile = AgentRoutingTestData.Profile(profileId, displayName: $"Profile To Delete {profileId[..8]}");
+        (await _admin.PutAsJsonAsync("/api/ui/settings/agent-profiles", profile, PipelineJsonOptions.Default))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
 
         var delete = await _admin.DeleteAsync($"/api/ui/settings/agent-profiles/{profileId}");
         delete.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -1388,7 +1384,6 @@ public sealed class ConfigEndpointTests
         {
             Id = agentProfileId.ToString(),
             DisplayName = "AllTypes Profile",
-            AgentProviderConfigId = providerId.ToString()
         };
         var qgc = new QualityGateConfiguration
         {
@@ -1432,7 +1427,9 @@ public sealed class ConfigEndpointTests
                 {
                     Id = agentProfileId,
                     Name = agentProfile.DisplayName,
-                    Configuration = JsonSerializer.Serialize(agentProfile, PipelineJsonOptions.Default)
+                    // A profile as a bundle from before spec 053 has it, naming its agent provider config.
+                    Configuration = AgentRoutingLegacyFixture.LegacyProfileJson(
+                        agentProfileId.ToString(), agentProfile.DisplayName, [], providerId.ToString())
                 }
             ],
             QualityGateConfigs =
@@ -1502,7 +1499,7 @@ public sealed class ConfigEndpointTests
         var profiles = await _factory.Services.GetRequiredService<CodingAgent.Pipeline.Interfaces.IAgentProfileStore>()
             .LoadAgentProfilesAsync(CancellationToken.None);
         profiles.Should().ContainSingle(p => p.Id == agentProfileId.ToString(), "the imported profile is kept")
-            .Which.AgentProviderConfigId.Should().BeEmpty("the profile is in the spec 053 shape");
+            .Which.Settings.Should().NotBeNull("the move writes the profile in the spec 053 shape");
 
         // QualityGateConfigs
         var gates = await _client.GetFromJsonAsync<List<QualityGateConfiguration>>(

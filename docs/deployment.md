@@ -63,6 +63,8 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 
 ### Install
 
+> **Upgrading to the release with agent routing (Spec 053):** take a config export first (Settings → Data Management → Import / Export); there is no way back for the data move. On its first start the API moves the configuration once: agent profiles keep their IDs and lose their match labels and priority, each profile takes the tool settings of its agent provider config, today's routes are written down as global and repository routing rows, the agent provider configs are deleted, and repository labels that only named an agent tool are dropped. Afterwards check the move's summary line in the API log and Settings → Agents → Routing. Repositories that had no matching profile now run on the default route, and a warning names each of them. While old and new pods overlap, dispatches and claims can fail for a few minutes: agents retry their claim on another replica, and the Scheduler dispatches again once it runs the new release. Open browser tabs must reload. No chart change is needed. See [Agent Routing](agent-routing.md).
+
 > **Upgrading to the release with the WebAssembly UI (Spec 052):** the upgrade is a hard cut. The UI may be unavailable briefly while the web pods roll out, and every open tab reloads once; the pipeline keeps running. Sticky-session annotations are now optional and can stay. With Traefik, no values change is needed. With ingress-nginx, the UI's long calls now pass through the ingress: chat launch (up to 2 minutes), triage, browse, dispatch and provider calls, and config import. Add `nginx.ingress.kubernetes.io/proxy-read-timeout: "300"` and `nginx.ingress.kubernetes.io/proxy-body-size: "16m"` to `web.ingress.annotations`; the defaults are 60 seconds and 1 MB.
 
 > **Upgrading to the release with sign-in (Spec 049):** every page of the web UI now requires a signed-in user. Serve the UI at the root of its own host (`web.ingress`, or `kubectl port-forward` for the local admin) before you upgrade; path-prefix proxies such as the Rancher service proxy stop working. Read the generated admin password as shown in [Authentication](authentication.md#local-admin-password), then configure OIDC and role bindings.
@@ -186,7 +188,7 @@ jobTemplates:
         effect: NoSchedule
 ```
 
-Each agent tool has one image with every tech stack (`coding-agent-kiro`, `coding-agent-opencode`, `coding-agent-claude`), so the templates of one tool's stacks use the same image and differ in `labels`, `maxConcurrent` and resources. See [Label Routing — Agent Images](label-routing.md#agent-images).
+Each agent tool has one image with every tech stack (`coding-agent-kiro`, `coding-agent-opencode`, `coding-agent-claude`), so one job template per tool is enough; add another template of a tool only for different capacity or resources. Agent profiles name their job template, and the routing table names the profiles. A repository whose work should run on another template than the default route's needs its own routing rows (see [Agent Routing — Repository Rows](agent-routing.md#repository-rows)). See [Agent Routing — Agent Images](agent-routing.md#agent-images).
 
 ### Leader Election Without Kubernetes
 

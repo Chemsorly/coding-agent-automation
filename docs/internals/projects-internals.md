@@ -48,7 +48,7 @@ Pipeline runs carry project metadata for filtering:
 | `ProjectName` | `PipelineRun.ProjectName` | Human-readable name |
 | OpenTelemetry tag | `pipeline.project_id` | On all trace spans |
 | OpenTelemetry tag | `pipeline.project_name` | On all trace spans |
-| Metric dimension | `pipeline.project_name` | On `pipeline.run.outcomes` only. The token and cost counters (`pipeline.run.tokens`, `pipeline.run.cost_usd`) are tagged by `run_type`, `phase` and `provider`, and no metric has `pipeline.project_id` |
+| Metric dimension | `pipeline.project_name` | On `pipeline.run.outcomes` only, next to `run_type`, `outcome`, `failure_reason`, `provider` and `model`. The token and cost counters (`pipeline.run.tokens`, `pipeline.run.cost_usd`) are tagged by `run_type`, `phase` and `provider`, and no metric has `pipeline.project_id` |
 
 ## Data Flow (Mono-Repo)
 

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
@@ -17,14 +16,10 @@ public sealed class LegacyProfileCompatibilityTests
     [Fact]
     public void PreviousReleaseProfileRecord_RefusesAProfileOfTheNewShape()
     {
-        // What the configuration move writes, and what the release writes once the old members are gone (task 6.1).
-        var newShape = JsonNode.Parse(JsonSerializer.Serialize(
-            AgentRoutingTestData.Profile("p", "dotnet,kiro", "Kiro"), PipelineJsonOptions.Default))!.AsObject();
-        newShape.Remove("agentProviderConfigId");
-        newShape.Remove("matchLabels");
-        newShape.Remove("priority");
+        // What the configuration move and this release write: no provider config, labels or priority (task 6.1).
+        var newShape = JsonSerializer.Serialize(AgentRoutingTestData.Profile("p", "dotnet,kiro", "Kiro"), PipelineJsonOptions.Default);
 
-        var read = () => JsonSerializer.Deserialize<PreviousReleaseAgentProfile>(newShape.ToJsonString(), PipelineJsonOptions.Lenient);
+        var read = () => JsonSerializer.Deserialize<PreviousReleaseAgentProfile>(newShape, PipelineJsonOptions.Lenient);
 
         read.Should().Throw<JsonException>().WithMessage("*AgentProviderConfigId*");
     }

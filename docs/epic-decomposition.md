@@ -22,6 +22,8 @@ Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync → Downl
   → Post summary comment → Label: agent:done
 ```
 
+> **Agent:** Both phases (the `DecompositionAnalysis` and the `Decomposition` run) run on the Decomposition route of the template they run with: its repository's Decomposition row, else the global Decomposition row, else the default route (see [Agent Routing](agent-routing.md)). Each phase is routed when it is queued, so a routing change between the phases applies to phase 2.
+
 > **Context for the agent:** Both phases download existing issues for deduplication context. In addition to open issues (up to `MaxOpenIssuesForContext`), decomposition runs also include recently-closed sibling issues (up to ~25% of the context budget, lookback 30 days). This helps the agent avoid creating sub-issues that duplicate recently completed work.
 
 ## Epic Scope: Repo Epics and Project Epics

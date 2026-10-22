@@ -140,7 +140,7 @@ secrets:
   opencodeConfigContent: ""
 
   # Optional: credentials for claude providerType agent jobs (Claude Code CLI). Set one or both;
-  # the agent provider config's "Auth mode" picks which one a run uses (auto = API key if set,
+  # the agent profile's "Auth mode" picks which one a run uses (auto = API key if set,
   # otherwise the subscription token). Each key is omitted from the Secret when empty.
   # claudeApiKey: Anthropic API key from the Claude Console (billed per token).
   claudeApiKey: ""

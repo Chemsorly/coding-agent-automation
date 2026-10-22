@@ -85,7 +85,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
         // Spec 053 req 5.4: stack labels pick quality gates and reviewers only, so there is no global fallback.
         var cut = RenderSection();
 
-        Assert.Empty(cut.FindAll($"[data-setting='{nameof(PipelineConfiguration.DefaultRequiredAgentLabels)}']"));
         Assert.DoesNotContain("Default Required Agent Labels", cut.Markup);
     }
 
@@ -118,7 +117,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
         await SaveAsync(cut);
 
         Assert.NotNull(_saved);
-        Assert.Null(_saved!.DefaultRequiredAgentLabels);
         Assert.Equal(3, _saved.BrainPushMaxRetries);
         Assert.True(_saved.BrainReadOnly);
         Assert.False(_saved.EnableNativeImageParts);

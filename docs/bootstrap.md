@@ -30,8 +30,10 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
    > **First-startup seeding:** On first boot against an empty database, the API automatically creates the Default project and seeds the default reviewer configurations. No manual action is required.
 
 4. Configure the two areas:
-   - Go to **Settings** and configure: Providers (Issue, Repository, Agent, optionally Pipeline/CI), Agent Profiles, Quality Gate Configs, Reviewer Configs
+   - Go to **Settings** and configure: Providers (Issue, Repository, optionally Pipeline/CI), Agents → Agent Profiles (the job template and the tool's settings), Agents → Routing (the default route: profile, model and effort), Quality Gate Configs, Reviewer Configs
    - Go to **Pipelines** and configure: Pipeline Job Templates (use the **+ Add** button)
+
+   Until the default route is set, every work item is refused with `No agent route: set the default route in Settings → Agents → Routing`. See [Agent Routing](agent-routing.md).
 
 5. Create a pipeline job template and start a run, or enable closed-loop mode to process `agent:next` issues automatically.
 
@@ -41,7 +43,7 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
 
 Use the HTTP API to export configuration from the old instance and import it into the new one.
 
-> ⚠️ **`POST /api/config/import` is destructive.** It clears ALL existing configuration (providers, profiles, quality gate configs, reviewer configs, projects, and job templates) before inserting the uploaded bundle. Run history, work items, and consolidation data are preserved. The operation is transactional — it fully commits or fully rolls back.
+> ⚠️ **`POST /api/config/import` is destructive.** It clears ALL existing configuration (providers, profiles, quality gate configs, reviewer configs, projects, job templates and agent routing) before inserting the uploaded bundle. Run history, work items, and consolidation data are preserved. The operation is transactional — it fully commits or fully rolls back.
 
 > **Authentication:** Both endpoints require the `Authorization: Bearer <OPERATOR_API_KEY>` header with the operator-tier key. Agent pod keys (derived keys) are rejected with HTTP 403. Use the master key from `secrets.agentApiKey` in your Helm values for bootstrap operations. See [Authentication](#authentication) below.
 
@@ -77,7 +79,9 @@ On success, the response body is:
 }
 ```
 
-On validation failure (invalid JSON, empty bundle, no file), HTTP 400 is returned with an error message.
+On validation failure (invalid JSON, empty bundle, no file, invalid settings or agent routing), HTTP 400 is returned with an error message and nothing is imported.
+
+A bundle exported before agent routing (with agent provider configs and label-matched profiles) is converted during the import, as the upgrade converts the stored configuration: see the agent routing upgrade note in [Deployment](deployment.md).
 
 ### Authentication
 
@@ -99,10 +103,11 @@ The export bundle is a flat JSON object with arrays for each entity type:
   "qualityGateConfigs": [ ... ],
   "reviewerConfigs": [ ... ],
   "projects": [ ... ],
-  "jobTemplates": [ ... ]
+  "jobTemplates": [ ... ],
+  "agentRouting": "{...}"
 }
 ```
 
-The `pipelineConfig`, per-entity `configuration`, and project `settings` fields contain serialized JSON strings (double-encoded). This is the format the system uses internally and is preserved in the export.
+The `pipelineConfig`, per-entity `configuration`, project `settings` and `agentRouting` fields contain serialized JSON strings (double-encoded). This is the format the system uses internally and is preserved in the export.
 
 For a full example response see [HTTP API Reference — GET /api/config/export](api-reference.md#get-apiconfigexport).

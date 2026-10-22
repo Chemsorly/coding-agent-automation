@@ -21,7 +21,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder:
 2. [PR Review](docs/pr-review.md) — PR review pipeline, inline comments, configuration
 3. [Epic Decomposition](docs/epic-decomposition.md) — Two-phase workflow, label state machine, approval process
 4. [Issue Workflows](docs/github-issue-workflows.md) — Label system, user flows, closed-loop mode
-5. [Label Routing](docs/label-routing.md) — Label hierarchy, agent selection, quality gate configs
+5. [Agent Routing](docs/agent-routing.md) — Agent profiles, routing per task type, stack labels for quality gates and reviewers
 6. [Configuration](docs/configuration.md) — Pipeline settings, job templates, provider setup, MCP servers
 7. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
 8. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
@@ -129,12 +129,12 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 - **Confidence gate** — After analysis, the pipeline evaluates whether the issue is clear enough to implement. Vague or blocked issues are rejected with feedback (`agent:needs-refinement`), and issues that don't require code changes are closed as won't-do (`agent:wont-do`).
 - **Quality gates** — Automated checks that must pass before a PR is created: compilation, tests, and optionally external CI pipelines.
 - **Closed-loop mode** — The pipeline polls for labeled issues and processes them autonomously without manual dispatch. Configurable poll interval and circuit breaker.
-- **Label routing** — Repository labels determine which agent container handles the job, which quality gates run, and which review agents are used.
+- **Agent routing** — A routing table picks the agent profile, model and effort per task type, globally or per repository; a repository's stack labels pick its quality gates and review agents.
 
 ## Features
 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, picking jobs from a shared queue
-- **Multi-stack support** — Label-based routing dispatches jobs to the right agent and backend (dotnet, python, java × Kiro CLI, OpenCode, Claude Code) with stack-specific quality gates
+- **Multi-stack support** — Every agent image carries every stack (dotnet, python, java) for Kiro CLI, OpenCode and Claude Code; stack labels pick stack-specific quality gates
 - **PR review pipeline** — Automated code review for pull requests, triggered by labeling PRs with `agent:next`
 - **Epic decomposition** — Two-phase workflow that breaks epics into implementation-ready sub-issues with human approval
 - **Multi-agent code review** — Specialized review agents (Correctness, Security, etc.) run in parallel with inline PR comments
@@ -183,7 +183,7 @@ Open the web UI in your browser (check `kubectl get ingress -n coding-agent` or 
 
 2. **Configure providers** — Go to Settings → Providers in the web UI and set up Issue, Repository, Agent, and (optionally) Pipeline/CI providers.
 
-3. **Configure label routing** — Set up Agent Profiles, Quality Gate Configs, and Reviewer Configs for your stack.
+3. **Configure agent routing** — Set up Agent Profiles and the default route (Settings → Agents), then Quality Gate Configs and Reviewer Configs for your stacks (Settings → Quality).
 
 4. **Create a pipeline job template** — In `jobTemplates[]` in `values.yaml`, define the pod spec for your agent stack. Then link providers in the web UI and enable the desired work types (implementation, review, decomposition).
 

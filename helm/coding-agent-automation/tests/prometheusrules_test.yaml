@@ -55,7 +55,7 @@ tests:
           path: spec.groups[0].rules[?(@.alert == "WorkItemNoJobTemplate")].labels.severity
           value: warning
 
-  - it: WorkItemNoJobTemplate summary points to the Agent Profiles page and the job-templates ConfigMap
+  - it: WorkItemNoJobTemplate summary points to the Agent Profiles and Routing pages and the job-templates ConfigMap
     set:
       monitoring.prometheusRules.enabled: true
     asserts:
@@ -64,7 +64,13 @@ tests:
           pattern: "no job template matches an agent selector"
       - matchRegex:
           path: spec.groups[0].rules[?(@.alert == "WorkItemNoJobTemplate")].annotations.summary
-          pattern: "Agent Profiles"
+          pattern: "Settings → Agents → Agent Profiles"
+      - matchRegex:
+          path: spec.groups[0].rules[?(@.alert == "WorkItemNoJobTemplate")].annotations.summary
+          pattern: "Settings → Agents → Routing"
+      - notMatchRegex:
+          path: spec.groups[0].rules[?(@.alert == "WorkItemNoJobTemplate")].annotations.summary
+          pattern: "Label Routing"
       - matchRegex:
           path: spec.groups[0].rules[?(@.alert == "WorkItemNoJobTemplate")].annotations.summary
           pattern: "-job-templates ConfigMap"

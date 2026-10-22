@@ -21,8 +21,6 @@ public class SettingsCoverageTests : BunitContext
     private static readonly string[] InternalSettings =
     [
         nameof(PipelineConfiguration.ClosedLoopAutoStart),
-        // Retired by spec 053 (req 5.4): its field is gone; task 6.1 deletes the setting and this entry.
-        nameof(PipelineConfiguration.DefaultRequiredAgentLabels),
         nameof(PipelineConfiguration.LoopResumeRequestedAt),
         nameof(PipelineConfiguration.PipelineInjectedPaths),
         nameof(PipelineConfiguration.TransientRetryDelay),

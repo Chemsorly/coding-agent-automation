@@ -107,11 +107,12 @@ The rules a plausible change could break. Details are in the linked entries.
 <!-- 2026-08-22 -->
 **Rule:** CI builds every image, control plane and agents, from the same commit in the same run.
 **Why:** Agents and control plane share MessagePack wire types, so building them together removes version skew; a wire-contract snapshot test is unnecessary.
+**Accepting:** agent pods that run during a deploy keep the previous release until their job ends, so for one deploy what the control plane sends an agent must stay readable by the previous agent (spec 053 kept the JSON property names of the assignment and its agent config for that).
 **Revisit when:** agent images are pinned or released separately; then add a wire-contract snapshot test.
 
 ### One agent image per agent tool, with every tech stack
 <!-- 2026-10-04 -->
-**Rule:** Each agent tool (Kiro, OpenCode, Claude Code) has one image, a target of `dockerfiles/agent.Dockerfile`, that carries every supported stack: .NET 10 SDK, JDK 21 + Maven and Python 3.12. A repository's labels pick the agent profile, and the profile names its job template; templates of different stacks point at the same image.
+**Rule:** Each agent tool (Kiro, OpenCode, Claude Code) has one image, a target of `dockerfiles/agent.Dockerfile`, that carries every supported stack: .NET 10 SDK, JDK 21 + Maven and Python 3.12. The routing table picks the agent profile and the profile names its job template, so one job template per tool is enough.
 **Why:** The agent worker needs the .NET SDK in every image anyway, so per-stack images saved little, while nine near-copies of the Dockerfile drifted apart, CI built eighteen agent images per run, and no image could run a polyglot repository. **Accepting:** a larger image and a slower first pull on a new node, every stack's CVE findings in every agent image, and one version per stack.
 **Not:** one image per agent tool and stack.
 **Revisit when:** a stack needs two versions side by side (for example Java 17 and 21), or image size measurably slows pod start.
@@ -249,19 +250,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** per-template circuit breaking; no breaker.
 **Revisit when:** several teams with separate infrastructure share the system.
 
-### Agent label routing: layered resolution from provider to global default
-<!-- 2026-07-04 -->
-**Rule:** The required labels of the repository's pipeline job template choose which agent runs a job; without them, the global default labels apply.
-**Why:** Repos can target different agent stacks (dotnet, python) without per-repo config when the default fits.
-**Not:** template-only selectors; per-issue routing.
-**Revisit when:** a third layer (per issue or per template) is needed.
-
-### Agent profile names its job template; the closest fit picks the profile
-<!-- 2026-10-10 -->
-**Rule:** A Helm job template is an image plus a capacity pool. An agent profile names its job template, its agent provider config (model, effort, auth mode) and its MCP servers, so several profiles can share one template. A repository's labels pick the profile: among the profiles whose labels cover all of the repository's labels, the one with the fewest labels wins, then the higher Priority, then the Id. The profile's labels also pick the quality gates and reviewers. A job keeps the profile it was dispatched with.
-**Why:** The three layers exist to fan out: one image, several models or MCP server sets. While a profile's labels were its template's key, every variant needed its own Helm entry, and "most labels wins" let a variant or polyglot profile take over other repositories and run its quality gates on them. **Accepting:** profiles that share a template share its `maxConcurrent`; a variant needs an extra label on the repositories that should use it.
-**Not:** a template reference on the agent provider config; the provider config folded into the profile; "most labels wins".
-**Revisit when:** a repository needs to pick its profile directly instead of through labels.
+### Agents are routed per task type; stack labels pick quality gates and reviewers
+<!-- 2026-10-21 -->
+**Rule:** An agent profile is how an agent runs: its Helm job template (image, capacity and tool), the tool's settings and its MCP servers. A routing table picks a profile, a model and an effort per task type: a required default row, an optional row per task type, and optional rows per repository with no repository default. The API resolves the route once, when it creates a work item (the repository row, else the global task row, else the default), pins it on the work item and checks it again when an agent claims it. A row that does not resolve refuses the work with the reason; nothing falls back to another profile. A repository's stack labels pick only its quality gates and reviewers.
+**Why:** Task types need different models, and one subscription serves several models, which a model per profile could only express by duplicating profiles. The label chain picked agents through fallbacks (the repository's labels, the global default labels, the first matching profile), and work whose labels resolved to nothing went to an agent nobody had chosen. Folding the provider config into the profile, rejected before, is now right: with the model and effort on the route, the provider config held only tool settings, and as a separate object it was one more thing to keep consistent with the job template's tool.
+**Accepting:** a repository whose work should run on another job template than the default route's needs its own rows; profiles on one job template share its capacity; the Routing page is last write wins, like every settings page; queued and running work keeps the route it was created with.
+**Not:** task types on profiles; label-based agent routing; a model or an effort on the profile; a fallback to any profile that no route names.
+**Revisit when:** a team needs to choose its own agents: project-level routing (#3577).
 
 ## Pipeline behavior
 
@@ -613,18 +608,18 @@ The rules a plausible change could break. Details are in the linked entries.
 1. Every setting is read by code. A setting nothing reads is removed, not wired up, and its MessagePack key is retired.
 2. Every setting has a field on a settings page and a row in `docs/configuration.md`, except four internal fields that are not settings. Tests enforce both.
 3. A value outside its range is refused when global settings, a project or an import is saved. A stored project override outside its range is skipped with a warning, so it affects only its own setting.
-4. The scopes stay as they are: global settings, project overrides, the pipeline job template (bindings, workflow switches, `BrainReadOnly`, housekeeping limit, and the repository's labels, secrets, setup steps, steering and blacklist), the repository connection (credentials only) and the label catalogs. The record is not split, and system settings are not moved to Helm.
+4. The scopes stay as they are: global settings, project overrides, the pipeline job template (bindings, workflow switches, `BrainReadOnly`, housekeeping limit, and the repository's stack labels, routing rows, secrets, setup steps, steering and blacklist), the repository connection (credentials only) and the agent and quality catalogs. The record is not split, and system settings are not moved to Helm.
 
 A setting's limits are standard `[Range]` attributes, the one source for the API check, the resolver and the settings pages' input limits.
 **Why:** A 2026-09-27 review found settings that did nothing, working settings without a field, limits that differed between pages, and one bad project override discarding all of the project's overrides. Code review settings now live on one Code Review page. A repository connection belongs to no project and can be shared, so repository settings live on the template, which belongs to one project (2026-10-10).
-**Not:** a settings registry that generates the pages and the docs table (a large UI rewrite that loses the hand-tuned layouts); system settings in Helm (more restarts, no problem solved); project-level label routing (labels also select the agent profile, so it would need project context everywhere labels are resolved).
+**Not:** a settings registry that generates the pages and the docs table (a large UI rewrite that loses the hand-tuned layouts); system settings in Helm (more restarts, no problem solved); project-level agent routing (its trigger is in [Agents are routed per task type](#agents-are-routed-per-task-type-stack-labels-pick-quality-gates-and-reviewers)).
 **Revisit when:** the guard tests or the hand-written pages become the main cost of adding a setting; then generate the pages from the attributes.
 
 ### Project review: one project reviewer per project, with read-only clones of the project's other repositories
 <!-- 2026-10-02 -->
 **Rule:** A project can turn on a project review. Its reviewer joins every code review of the project's repositories, in implementation runs and PR review runs, after the reviewers that the repository's labels pick. It shares their findings, inline comments and fix rounds. It reads read-only clones of the project's other repositories, which never reach the diff or a commit. It checks the change against the whole project: cross-repository contracts, decisions in the connected MCP servers, documentation and brain lessons for this project. A fix that belongs in another repository is a `[WARNING]`, so fix rounds don't chase it. The settings page edits one reviewer, and the project stores a list. Project epics use the same clones.
-**Why:** Repository labels choose reviewers, and they describe the tech stack: the same labels pick the agent image and the quality gates. A reviewer that knows the product doesn't fit them. **Accepting:** a GitLab or personal-access-token repository keeps its own token for the clone. The agent strips the token from the clone, blocks pushes and deletes a clone it can't make read-only, but the run still holds the tokens of the project's other GitLab repositories. Use short-lived project access tokens.
-**Not:** "product labels" on repositories (labels route agent images, and a label without a matching agent profile blocks dispatch); a shared reviewer catalog (project instructions are project-specific); letting a project pick label reviewer sets (adds no project knowledge).
+**Why:** Repository stack labels choose reviewers, and they describe the tech stack: the same labels pick the quality gates. A reviewer that knows the product doesn't fit them. **Accepting:** a GitLab or personal-access-token repository keeps its own token for the clone. The agent strips the token from the clone, blocks pushes and deletes a clone it can't make read-only, but the run still holds the tokens of the project's other GitLab repositories. Use short-lived project access tokens.
+**Not:** "product labels" on repositories (stack labels describe the tech stack and also pick the quality gates); a shared reviewer catalog (project instructions are project-specific); letting a project pick label reviewer sets (adds no project knowledge).
 **Revisit when:** projects need several distinct reviewers in the UI, or GitLab tokens can be narrowed to read-only.
 
 ### Project overrides: nested settings deep-merge
@@ -741,3 +736,4 @@ Decisions that no longer hold. Don't bring one back without asking the owner.
 
 - Target user: single operator/power-user — no RBAC for now (2026-07-04, retired 2026-10-05): superseded by [Web UI sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database) and [admin is global-only](#admin-is-global-only-project-bindings-scope-actions-and-visibility).
 - Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only (2026-07-25, retired 2026-10-10): superseded by [Refactoring scan issues are independent](#refactoring-scan-issues-are-independent-ordered-work-goes-through-epics).
+- Agent label routing: layered resolution from provider to global default (2026-07-04, retired 2026-10-21) and Agent profile names its job template; the closest fit picks the profile (2026-10-10, retired 2026-10-21): superseded by [Agents are routed per task type](#agents-are-routed-per-task-type-stack-labels-pick-quality-gates-and-reviewers).

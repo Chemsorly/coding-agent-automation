@@ -59,8 +59,6 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         var stored = (await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).Single(p => p.DisplayName == "E2E Test Profile");
         Assert.Equal("dotnet,kiro", stored.JobTemplate);
         Assert.Equal("e2e-agent", stored.Settings![ProviderSettingKeys.AgentName]);
-        Assert.Empty(stored.MatchLabels);
-        Assert.Equal("", stored.AgentProviderConfigId);
 
         // Assert: persists after reload
         await settingsPage.NavigateAsync();

@@ -30,7 +30,6 @@ public class ChatPromptBuilderTests
         {
             Id = "profile-1",
             DisplayName = "Test Profile",
-            AgentProviderConfigId = "agent-cfg-1",
             McpServers = mcpServers ?? []
         };
 

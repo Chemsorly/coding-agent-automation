@@ -95,7 +95,6 @@ public class ConsolidationServicePropertyTests : IDisposable
         var config = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
 
         var mockProjectStore = new Mock<IProjectStore>();

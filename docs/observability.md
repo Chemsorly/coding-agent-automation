@@ -22,7 +22,8 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
-| `pipeline.run.outcomes` | Counter | `{run}` | `run_type`, `outcome`, `failure_reason`, `pipeline.project_name` | Terminal run outcomes, once per terminal transition. See [Outcome mapping](#outcome-mapping) |
+| `pipeline.run.outcomes` | Counter | `{run}` | `run_type`, `outcome`, `failure_reason`, `pipeline.project_name`, `provider`, `model` | Terminal run outcomes, once per terminal transition. `provider` is the tool of the work item's pinned route and `model` the route's model, not the model the agent reports: `auto` stays `auto`. Both are `unknown` for work created before agent routing. See [Outcome mapping](#outcome-mapping) |
+| `pipeline.routing.refusals` | Counter | `{refusal}` | `task_type`, `stage`, `reason` | Agent routing refusals. `stage`: `create`, `dispatch`, `claim`; `reason`: `no_route`, `profile_unavailable`, `no_tool`, `template_missing`, `template_changed`, `config_collision`. A refusal at creation leaves no work item, so `pipeline.run.outcomes` never sees it. Not pre-initialized: the series appears with the first refusal. See [Routing](#routing) |
 | `pipeline.run.duration` | Histogram | s | `run_type`, `outcome` | Dispatched → terminal |
 | `pipeline.run.step.duration` | Histogram | s | `run_type`, `step` | Duration of each step visit, recorded on every step transition |
 | `pipeline.run.sub_issues` | Counter | `{issue}` | `result` (`created`, `failed`) | Sub-issues per decomposition run, once per run |
@@ -47,7 +48,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | Metric | Type | Unit | Tags | Recorded by | Description |
 |--------|------|------|------|-------------|-------------|
 | `workdistribution.dispatch_latency_seconds` | Histogram | s | `agent_selector` | API | WorkItem creation (or original enqueue) → dispatched |
-| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error`. `no_template` drives `WorkItemNoJobTemplate` (see [Alerts](#alerts)) |
+| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `no_route`, `pvc_unavailable`, `lock_timeout`, `k8s_error`. `no_template` drives `WorkItemNoJobTemplate` (see [Alerts](#alerts)). `no_route` is a work item a previous release queued without an agent route whose route is refused now; the dispatcher fails it |
 | `workdistribution.pod_start_seconds` | Histogram | s | — | API | Dispatched → the agent's first `GET /assignment` |
 | `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | Scheduler leader | Kiro credential PVCs, polled every 10 s by the Scheduler leader. Emits nothing before the first successful poll and on non-leaders |
 | `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | — | API | A dispatch found no free credential PVC |
@@ -114,12 +115,14 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.project_name` | project display name | From the run's `PipelineRuns` row, or else the WorkItem's project. `unknown` only when neither resolves |
 | `step` | `PipelineStep` enum name | PascalCase, only on `pipeline.run.step.duration` |
 | `phase` | `analysis`, `analysis_review`, `codegen`, `review`, `quality_gate`, `acceptance_criteria`, `pr_description`, `reflection`, `decomposition`, `other` | One closed set for every `phase` tag and the `pipeline.phase` span attribute — see [Phase normalization](#phase-normalization) |
-| `provider` | `kiro`, `opencode`, `claude`, `unknown` | Agent provider; anything else is recorded as `unknown` |
-| `model` | provider-specific model name | Only on `pipeline.run.agent_sessions`; `unknown` when not reported |
+| `provider` | `kiro`, `opencode`, `claude`, `unknown` | Agent provider; anything else is recorded as `unknown`. On `pipeline.run.outcomes` it is the tool of the pinned route |
+| `model` | model name, or `auto` | On `pipeline.run.agent_sessions` the model the agent reports (`unknown` when not reported); on `pipeline.run.outcomes` the pinned route's model (`unknown` for work created before agent routing) |
+| `task_type` | `Implementation`, `Review`, `Decomposition`, `Triage`, `Consolidation` | Only on `pipeline.routing.refusals` |
+| `reason` | `no_route`, `profile_unavailable`, `no_tool`, `template_missing`, `template_changed`, `config_collision` | On `pipeline.routing.refusals`. `workdistribution.dispatch.attempts` has its own `reason` set |
 | `token_type` | `input`, `output`, `reasoning`, `cache_read`, `cache_write` | Only on `pipeline.run.token_usage` |
 | `billing` | `api`, `subscription`, `unknown` | Only on `pipeline.run.billing_cost_usd` |
 | `gate` / `infrastructure_failure` | `compilation`, `tests`, `external_ci` / `true`, `false` | Only on `pipeline.run.quality_gate.results`; an infrastructure failure is an OOM or container kill rather than a code failure |
-| `stage` | `pre_pr`, `post_pr` | Only on `pipeline.run.ci.wait` |
+| `stage` | `pre_pr`, `post_pr` / `create`, `dispatch`, `claim` | `pre_pr`, `post_pr` on `pipeline.run.ci.wait`; `create`, `dispatch`, `claim` on `pipeline.routing.refusals` |
 | `kind` | `stall_kill`, `process_death`, `process_timeout` | Only on `pipeline.run.agent_stalls` |
 | `repo_provider_id` | provider config UUID | Only on `pipeline.housekeeping.*` |
 
@@ -168,11 +171,11 @@ Counters are not seeded at startup. Seeding every closed-tag combination with `A
 
 ```promql
 sum by (outcome) (
-  max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range]))
+  max by (run_type, outcome, failure_reason, pipeline_project_name, provider, model, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range]))
   - (
-    max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (last_over_time(pipeline_run_outcomes_total[6h] offset $__range))
+    max by (run_type, outcome, failure_reason, pipeline_project_name, provider, model, service_instance_id) (last_over_time(pipeline_run_outcomes_total[6h] offset $__range))
     or
-    max by (run_type, outcome, failure_reason, pipeline_project_name, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range])) * 0
+    max by (run_type, outcome, failure_reason, pipeline_project_name, provider, model, service_instance_id) (max_over_time(pipeline_run_outcomes_total[$__range])) * 0
   )
 )
 ```
@@ -291,13 +294,39 @@ The Helm chart defines its alert rules in `helm/coding-agent-automation/template
 |-------|------------|-----|----------|------------|
 | `WorkItemNoJobTemplate` | `sum(increase(workdistribution_dispatch_attempts_total{reason="no_template"}[10m])) > 0` | 10m | `warning` | The dispatcher keeps deferring work because no job template matches an agent selector |
 
-**`WorkItemNoJobTemplate` covers the permanent no-template case.** A work item whose agent selector has no job template, neither directly nor through its agent profile, is deferred on every dispatch cycle and stays Pending. The templates come from `jobTemplates[]` in the Helm values and change only with a redeploy, so this does not clear by itself. It is not one of the transient dispatch failures (no free credential PVC, a Kubernetes error) that the next cycle retries without an alert; the rule fires only after the deferrals have gone on for 10 minutes. It needs no threshold and no zero baseline: the dispatcher retries every cycle, so the series keeps incrementing after it first appears, and `increase()` over the window sees that. It counts items the dispatcher attempts in a cycle.
+**`WorkItemNoJobTemplate` covers the permanent no-template case.** A work item's agent selector is the job template of the agent profile it was routed to. A work item whose selector names no job template is deferred on every dispatch cycle and stays Pending. The templates come from `jobTemplates[]` in the Helm values and change only with a redeploy, so this does not clear by itself. It is not one of the transient dispatch failures (no free credential PVC, a Kubernetes error) that the next cycle retries without an alert; the rule fires only after the deferrals have gone on for 10 minutes. It needs no threshold and no zero baseline: the dispatcher retries every cycle, so the series keeps incrementing after it first appears, and `increase()` over the window sees that. It counts items the dispatcher attempts in a cycle.
 
-The counter has no selector label. The API logs `DispatchPendingWorkItem: no job template for selector <selector>` with the selector. To fix it, add a `jobTemplates[]` entry for that selector and redeploy, or change the agent profile (Settings → Label Routing → Agent Profiles) or the repository labels so the selector matches an existing template.
+The counter has no selector label. The API logs `DispatchPendingWorkItem: no job template for selector <selector>` with the selector. To fix it, add a `jobTemplates[]` entry for that selector and redeploy. Pointing the agent profile at an existing job template (Settings → Agents → Agent Profiles) or routing the work to another profile (Settings → Agents → Routing) helps only work created afterwards: queued work keeps the route it was created with, so cancel the waiting items and queue them again. The Agent Profiles page and the repository pages flag a profile whose job template the Helm values do not define.
 
 **`WorkItemsPendingTooLong` only sees items that dispatch.** It is a quantile of `workdistribution_dispatch_latency_seconds`, which the API records when an item moves from Pending to Dispatched. An item that never dispatches never enters that histogram, so the alert cannot fire for it.
 
 **There is no pending-age alert.** A threshold on `workdistribution.pending.oldest_age_seconds` would fire on waits that are not a fault: the lowest dispatch tier can wait many hours and then dispatch. The `no_template` counter is the signal for the permanent case.
+
+**There is no routing refusal alert.** `pipeline.routing.refusals` has no alert rule; the [Routing](#routing) section shows how to find refusals.
+
+### Routing
+
+The API resolves a work item's agent route when it creates the work item and checks it again when an agent claims it (see [Agent Routing](agent-routing.md)). Every refusal counts in `pipeline.routing.refusals` with its `stage`:
+
+- `create`: `POST /api/work-items` answers `422` and no work item exists;
+- `dispatch`: a work item a previous release queued without a route, which the dispatcher fails (`no_route` on `workdistribution.dispatch.attempts`);
+- `claim`: `GET /api/work-items/{id}/assignment` answers `410` and the work item fails with the reason.
+
+The span that creates a work item and the span of `GET /api/work-items/{id}/assignment` carry the route:
+
+| Attribute | Value |
+|-----------|-------|
+| `pipeline.agent_profile` | The profile's display name |
+| `pipeline.model` | The route's model; `auto` lets the tool choose |
+| `pipeline.effort` | The route's effort; `auto` is the tool's default |
+| `pipeline.route_source` | `repository`, `global task row`, `global default`; `claim` for work queued before agent routing and routed when an agent claimed it, `dispatch` for work the dispatcher routed |
+| `pipeline.route_refusal` | Set on a refusal instead, to the `reason` of `pipeline.routing.refusals`. The span status is Error with the refusal text |
+
+The routing log lines (the route or refusal of every work item creation, a refused claim, the claim-time route of work queued before agent routing, and the warnings and summary of the configuration move) carry structured properties, so Loki queries do not depend on the message text: `TaskType`, `TemplateId`, `TemplateName`, `AgentProfileId`, `AgentProfile`, `Model`, `Effort`, `RouteSource`, `RefusalReason` (the counter's `reason`) and `RefusalText` (the text the work item or the API answer shows). They never contain tool settings or MCP environment values. All routing refusals:
+
+```logql
+{service_name="coding-agent-api"} | RefusalReason != ""
+```
 
 ## Traces
 
@@ -410,7 +439,7 @@ The Scheduler emits spans only when actual work occurs — idle ticks produce no
 | `Chat.Dispatch` | `agent_selector` | `ChatJobDispatcher.DispatchChatPodAsync` — chat pod start |
 | `Chat.Terminate` | `agent_id` | `ChatJobDispatcher.TerminateChatSessionAsync` — chat pod stop |
 
-The API creates no span for the run itself; the run's trace is the agent's `WorkItemAgent.Execute` → `ExecutePipeline` tree, parented to the API request that created the WorkItem.
+The API creates no span for the run itself; the run's trace is the agent's `WorkItemAgent.Execute` → `ExecutePipeline` tree, parented to the API request that created the WorkItem. The request spans of `POST /api/work-items` and `GET /api/work-items/{id}/assignment` carry the route attributes (`pipeline.agent_profile`, `pipeline.model`, `pipeline.effort`, `pipeline.route_source`, or `pipeline.route_refusal`): see [Routing](#routing).
 
 ### Pipeline Spans
 
@@ -491,6 +520,8 @@ All emitted by the agent pod.
 | `pipeline.project_id` | UUID | Project identifier — set only on **spans** (not on metric tags; use `pipeline.project_name` for metrics since it is 1:1 with `pipeline.project_id`) |
 | `pipeline.project_name` | string | Project display name |
 | `pipeline.consolidation_type` | `BrainConsolidation`, `RefactoringDetection` | Consolidation run type (on `ExecuteConsolidation` span) |
+| `pipeline.agent_profile`, `pipeline.model`, `pipeline.effort`, `pipeline.route_source` | string | The work item's agent route, on the API's creation and claim request spans; see [Routing](#routing) |
+| `pipeline.route_refusal` | `no_route`, `profile_unavailable`, `no_tool`, `template_missing`, `template_changed`, `config_collision` | Set instead of the route when it is refused; the span status is Error |
 | `code_review.iteration` | integer | Code review iteration index (1-based) |
 | `code_review.max_iterations` | integer | Total configured review iterations |
 | `code_review.parallel` | `true`/`false` | Whether review agents ran in parallel |

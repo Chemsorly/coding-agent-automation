@@ -854,7 +854,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ClosedLoopMaxConsecutivePollFailures = 10,
             ClosedLoopMaxPagesToFetch = 20
         };
-        var copy = config with { DefaultRequiredAgentLabels = "kiro" };
+        var copy = config with { BrainReadOnly = true };
         Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoopPollInterval);
         Assert.Equal(5, copy.ClosedLoopMaxRunsPerCycle);
         Assert.Equal(10, copy.ClosedLoopMaxConsecutivePollFailures);

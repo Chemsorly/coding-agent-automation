@@ -127,13 +127,13 @@ public class AgentRoutingSerializationTests
     }
 
     [Fact]
-    public void AgentProfile_WithoutAgentProviderConfigId_Deserializes()
+    public void AgentProfile_InTheSpec053Shape_Deserializes()
     {
-        // Review-3 M2: the member is no longer required, so a converted profile without one can be read and written.
+        // Review-3 M2: a converted profile has no provider config, labels or priority; it is read and written as is.
         var profile = JsonSerializer.Deserialize<AgentProfile>(
             """{"id":"p","displayName":"Kiro","jobTemplate":"dotnet,kiro","settings":{}}""", PipelineJsonOptions.Lenient)!;
 
-        profile.AgentProviderConfigId.Should().BeEmpty();
+        profile.JobTemplateKey().Should().Be("dotnet,kiro");
         profile.Settings.Should().BeEmpty();
     }
 

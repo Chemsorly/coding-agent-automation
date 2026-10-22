@@ -189,6 +189,38 @@ public class RetiredKeysDeserializationTests
     }
 
     [Fact]
+    public void MessagePack_DeserializeWithRetiredKey24_DoesNotThrow()
+    {
+        // Spec 053 task 6.1: Key(24) was DefaultRequiredAgentLabels, a string. It lies inside the array the current type
+        // writes, so the old value replaces the nil slot instead of extending the array.
+        var config = new PipelineConfiguration { MaxRetries = 4 };
+        var baseBytes = MessagePackSerializer.Serialize(config, MsgPackOptions);
+
+        var reader = new MessagePackReader(baseBytes);
+        var arrayLength = reader.ReadArrayHeader();
+        arrayLength.Should().BeGreaterThan(24);
+
+        var bufferWriter = new System.Buffers.ArrayBufferWriter<byte>();
+        var writer = new MessagePackWriter(bufferWriter);
+        writer.WriteArrayHeader(arrayLength);
+        for (var i = 0; i < arrayLength; i++)
+        {
+            var before = reader.Consumed;
+            reader.Skip();
+            var after = reader.Consumed;
+            if (i == 24)
+                writer.Write("kiro,dotnet");
+            else
+                writer.WriteRaw(baseBytes.AsSpan()[(int)before..(int)after]);
+        }
+
+        writer.Flush();
+
+        var deserialized = MessagePackSerializer.Deserialize<PipelineConfiguration>(bufferWriter.WrittenMemory.ToArray(), MsgPackOptions);
+        deserialized!.MaxRetries.Should().Be(4);
+    }
+
+    [Fact]
     public void MessagePack_DeserializeWithRetiredKey33And34_DoesNotThrow()
     {
         // Arrange: a config with Key(33)=IssuePageSize and Key(34)=LastUsedProviderIds

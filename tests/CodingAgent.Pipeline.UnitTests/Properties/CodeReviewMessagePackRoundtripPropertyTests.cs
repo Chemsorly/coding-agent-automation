@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.CodeReview.Models;
 using CodingAgent.Pipeline.Models;
 using FsCheck;
@@ -53,21 +54,18 @@ public class CodeReviewMessagePackRoundtripPropertyTests
 
         var gen =
             from displayName in Gen.Elements("Default Agent", "Review Bot", "Code Generator")
-            from agentProviderConfigId in Gen.Elements("apc-001", "apc-002", "apc-003")
+            from jobTemplate in Gen.Elements("dotnet,kiro", "claude,dotnet", "opencode,python")
+            from agentName in Gen.Elements("", "reviewer", "builder")
             from enabled in Gen.Elements(true, false)
-            from priority in Gen.Choose(0, 10)
-            from labelCount in Gen.Choose(0, 4)
-            from labels in Gen.ListOf(Gen.Elements("dotnet", "python", "kiro", "linux", "windows"))
             from mcpCount in Gen.Choose(0, 3)
             from mcpServers in Gen.ListOf(mcpServerGen)
             select new AgentProfile
             {
                 Id = Guid.NewGuid().ToString(),
                 DisplayName = displayName,
-                MatchLabels = labels.Take(labelCount).ToList(),
-                AgentProviderConfigId = agentProviderConfigId,
+                JobTemplate = jobTemplate,
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.AgentName] = agentName },
                 Enabled = enabled,
-                Priority = priority,
                 McpServers = mcpServers.Take(mcpCount).ToList()
             };
 
@@ -77,10 +75,9 @@ public class CodeReviewMessagePackRoundtripPropertyTests
 
             deserialized.Id.Should().Be(original.Id);
             deserialized.DisplayName.Should().Be(original.DisplayName);
-            deserialized.MatchLabels.Should().BeEquivalentTo(original.MatchLabels);
-            deserialized.AgentProviderConfigId.Should().Be(original.AgentProviderConfigId);
+            deserialized.JobTemplate.Should().Be(original.JobTemplate);
+            deserialized.Settings.Should().BeEquivalentTo(original.Settings);
             deserialized.Enabled.Should().Be(original.Enabled);
-            deserialized.Priority.Should().Be(original.Priority);
             deserialized.McpServers.Should().HaveCount(original.McpServers.Count);
 
             for (var i = 0; i < original.McpServers.Count; i++)

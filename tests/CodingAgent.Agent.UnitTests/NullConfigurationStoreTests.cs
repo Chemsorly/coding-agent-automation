@@ -142,7 +142,6 @@ public class NullConfigurationStoreTests
         var profile = new AgentProfile
         {
             DisplayName = "Test Profile",
-            AgentProviderConfigId = "agent-config-1"
         };
 
         // Act
@@ -691,9 +690,7 @@ public static class NullConfigStoreArbitrary
             select new AgentProfile
             {
                 DisplayName = displayName,
-                AgentProviderConfigId = agentConfigId,
                 Enabled = enabled,
-                Priority = priority
             };
 
         return gen.ToArbitrary();

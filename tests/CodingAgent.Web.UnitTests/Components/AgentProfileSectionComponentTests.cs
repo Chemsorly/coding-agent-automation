@@ -61,7 +61,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void Table_ShowsNameJobTemplateAndTool_AndNoLabelsProviderOrPriority()
+    public void Table_ShowsNameJobTemplateAndTool()
     {
         Returns(AgentRoutingTestData.Profile("p-1", ClaudeTemplate, "Claude dotnet"));
 
@@ -124,7 +124,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void Save_SendsTheJobTemplateAndTheToolsSettings_AndNoRetiredFields()
+    public void Save_SendsTheJobTemplateAndTheToolsSettings()
     {
         var cut = RenderSection();
         OpenAddForm(cut);
@@ -138,9 +138,6 @@ public class AgentProfileSectionComponentTests : BunitContext
         _saved!.DisplayName.Should().Be("Claude dotnet");
         _saved.JobTemplate.Should().Be(ClaudeTemplate);
         _saved.Settings.Should().Equal(new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Subscription });
-        _saved.MatchLabels.Should().BeEmpty();
-        _saved.AgentProviderConfigId.Should().BeEmpty();
-        _saved.Priority.Should().Be(0);
     }
 
     [Fact]

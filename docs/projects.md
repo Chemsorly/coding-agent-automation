@@ -92,9 +92,9 @@ Besides overrides, a project holds settings of its own:
 
 | Setting | Type | Description |
 |---------|------|-------------|
-| `McpServers` | List? | Project-level MCP server configurations. Merged with the resolved agent profile's MCP servers at dispatch time. `null` = inherit profile list unchanged. |
+| `McpServers` | List? | Project-level MCP server configurations. Merged with the MCP servers of the work item's routed agent profile when an agent claims the work. `null` = inherit profile list unchanged. |
 
-**Merge semantics**: At dispatch time, project-level MCP servers are merged with the resolved agent profile's servers:
+**Merge semantics**: When an agent claims the work, project-level MCP servers are merged with the servers of the routed agent profile:
 - A project server with the same `Name` (case-insensitive) as a profile server **replaces** it
 - Project servers with new names are **appended** to the profile list
 - `null` (or empty list) = inherit profile list unchanged
@@ -294,7 +294,7 @@ Projects are managed in the **Settings** page under the "Projects" group in the 
 | **Templates** | The project's templates by name, with add/remove controls and a "Move to…" action |
 | **Secrets** | Environment variables injected into every run of the project. Merged with repository-level secrets; the repository value wins on a key collision |
 | **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*". The tab also holds the **Steering Instructions** text (`SteeringContent`) and the Blacklisted Paths override |
-| **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |
+| **MCP Servers** | Project MCP servers, merged with the routed agent profile's servers when an agent claims the work. A server with the same name overrides the profile's; others are added |
 | **Project Review** | The project review switch and the project reviewer's instructions, prefilled with the default ones; "Reset to default" restores them. Instructions equal to the default are stored empty, so the project follows later changes to the default |
 
 The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. The template name and the "Edit" link in each row navigate to the template's **repository page** (`/pipelines/{templateId}`). Projects with `EpicIssueProviderId` set show a 🧩 indicator.
@@ -307,7 +307,8 @@ Each pipeline job template has its own repository page at `/pipelines/{templateI
 - Repository and issue tracker (display-only once saved)
 - Brain provider and brain read-only toggle
 - Pipeline/CI provider
-- Required agent labels (determines agent routing and quality gates), with a label preview
+- Stack labels (pick the quality gates and reviewers, no agent), with a label preview
+- Agent routing: the repository's own route per task type, saved with its own button. A task type without a row inherits the global routing. Others see the resolved route per task type (see [Agent Routing](agent-routing.md#repository-rows))
 - Enabled toggle
 
 **Behaviour card** — how the pipeline works on the repository. Editable only by global admins. Contains:

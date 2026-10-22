@@ -74,7 +74,6 @@ public class PipelineConfigurationTests
             ClosedLoopMaxConsecutivePollFailures = 10,
             ClosedLoopMaxPagesToFetch = 20,
             ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(10),
-            DefaultRequiredAgentLabels = "kiro,dotnet",
             BrainPushMaxRetries = 5,
             OrphanedLabelSweepIntervalMinutes = 60,
             MaxRefactoringProposals = 5,
@@ -127,7 +126,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(66,
+        keyPropertyCount.Should().Be(65,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -162,7 +161,6 @@ public class PipelineConfigurationTests
         config.ClosedLoopCircuitBreakerCooldown.Should().Be(PipelineConstants.DefaultClosedLoopCircuitBreakerCooldown);
 
         // Agent sub-config defaults
-        config.DefaultRequiredAgentLabels.Should().BeNull();
         config.BrainPushMaxRetries.Should().Be(3);
         config.BrainReadOnly.Should().BeFalse();
         config.OrphanedLabelSweepIntervalMinutes.Should().Be(PipelineConstants.DefaultOrphanedLabelSweepIntervalMinutes);

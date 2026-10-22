@@ -204,10 +204,10 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         await settingsPage.NavigateAsync();
         await settingsPage.SelectTreeNodeAsync("Advanced");
 
-        await Page.WaitForSelectorAsync("text=Agent Routing", new() { Timeout = 5_000 });
+        await Page.WaitForSelectorAsync("text=Brain Repository", new() { Timeout = 5_000 });
         var markup = await Page.ContentAsync();
-        Assert.Contains("Agent Routing", markup);
-        Assert.Contains("Default Required Agent Labels", markup);
+        // Agent routing moved to its own page (spec 053 req 5.4).
+        Assert.DoesNotContain("Default Required Agent Labels", markup);
         Assert.Contains("Brain Repository", markup);
         Assert.Contains("Brain Push Max Retries", markup);
         Assert.Contains("Issue Images", markup);
@@ -247,17 +247,16 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
     }
 
     [Fact]
-    public async Task Advanced_ModifyLabels_PersistsToStore()
+    public async Task Advanced_ModifyAndSave_PersistsToStore()
     {
         var settingsPage = new SettingsPage(Page, BaseUrl);
         await settingsPage.NavigateAsync();
         await settingsPage.SelectTreeNodeAsync("Advanced");
 
-        await Page.WaitForSelectorAsync("text=Default Required Agent Labels", new() { Timeout = 5_000 });
-
-        // Fill in labels
-        var labelsInput = Page.Locator("input[type='text']").First;
-        await labelsInput.FillAsync("kiro,python");
+        // The default agent labels that used to be the first field here are gone (spec 053 req 5.4).
+        var retriesInput = Page.Locator("[data-setting='BrainPushMaxRetries'] input[type='number']");
+        await retriesInput.WaitForAsync(new() { Timeout = 5_000 });
+        await retriesInput.FillAsync("6");
 
         // Save
         var saveBtn = Page.Locator("button:has-text('Save Advanced')");
@@ -267,6 +266,6 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         // Verify persisted
         var configStore = Fixture.Factory.ConfigStore;
         var config = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
-        Assert.Equal("kiro,python", config.DefaultRequiredAgentLabels);
+        Assert.Equal(6, config.BrainPushMaxRetries);
     }
 }
