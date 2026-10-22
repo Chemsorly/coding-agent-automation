@@ -98,9 +98,12 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             // 422 = POST /api/work-items refused the run (spec 053 DD2): no agent route, or a route that cannot run.
             // A configuration error, so retrying gives the same answer. IsPermanentFailure tells the caller to report
             // it with the API's reason, not as a transient failure.
-            _logger.LogInformation(
-                "CreateAsync refused the work item for issue {IssueIdentifier}: {RefusalText} (permanent failure)",
-                request.IssueIdentifier, ex.Message);
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation(ex,
+                    "CreateAsync refused the work item for issue {IssueIdentifier}: {RefusalText} (permanent failure)",
+                    request.IssueIdentifier, ex.Message);
+            }
             return new DistributionResult(false, null, ex.Message, IsPermanentFailure: true);
         }
         catch (HttpRequestException ex)

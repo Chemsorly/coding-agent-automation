@@ -301,6 +301,28 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
     }
 
     [Fact]
+    public async Task MovingAProfileToAToolThatRefusesTheEffortOfItsRoutes_IsRefused_WithTheRows()
+    {
+        // Req 2.5: Kiro has no xhigh. A Claude profile moved onto a Kiro job template would leave rows that every later
+        // save of the routing table refuses.
+        await SeedAsync(
+            AgentRoutingTestData.Routing(KiroProfileId, "auto", "auto",
+                (WorkItemTaskType.Decomposition, AgentRoutingTestData.Route(ClaudeProfileId, "claude-opus-5-5", "xhigh"))),
+            Rows(WorkItemTaskType.Review, AgentRoutingTestData.Route(ClaudeProfileId, "claude-opus-5-5", "high")));
+        var claude = (await Profiles.LoadAgentProfilesAsync(Ct)).Single(p => p.Id == ClaudeProfileId);
+
+        var moved = await Admin.PutAsJsonAsync(ProfilesUrl, claude with { JobTemplate = AgentRoutingSettingsFactory.KiroTemplate }, Json);
+
+        moved.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ReasonAsync(moved)).Should()
+            .StartWith($"Agent profile 'Claude agent' cannot move to job template {AgentRoutingSettingsFactory.KiroTemplate}")
+            .And.Contain("Global · Decomposition: Kiro does not accept effort 'xhigh'")
+            .And.NotContain("Repository routing-api", "Kiro accepts high");
+        (await Profiles.LoadAgentProfilesAsync(Ct)).Single(p => p.Id == ClaudeProfileId).JobTemplate
+            .Should().Be(AgentRoutingSettingsFactory.ClaudeTemplate);
+    }
+
+    [Fact]
     public async Task AProfileNoRouteNames_CanBeDisabledAndDeleted()
     {
         await SeedAsync();

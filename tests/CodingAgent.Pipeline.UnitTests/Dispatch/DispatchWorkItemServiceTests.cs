@@ -119,11 +119,10 @@ public sealed class DispatchWorkItemServiceTests
     [Fact]
     public async Task BuildConcurrencySnapshotAsync_EmptyDb_ReturnsEmptyDictionary()
     {
-        var svc = CreateService();
         var dbFactory = CreateDbFactory();
         await using var db = await dbFactory.CreateDbContextAsync();
 
-        var result = await svc.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
+        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
 
         result.Should().BeEmpty("no active items — concurrency map must be empty");
     }
@@ -131,7 +130,6 @@ public sealed class DispatchWorkItemServiceTests
     [Fact]
     public async Task BuildConcurrencySnapshotAsync_WithDispatchedAndRunningItems_CountsByNormalizedSelector()
     {
-        var svc = CreateService();
         var dbFactory = CreateDbFactory();
 
         // Seed: 2 Dispatched + 1 Running for "kiro,dotnet" (in various orderings)
@@ -143,7 +141,7 @@ public sealed class DispatchWorkItemServiceTests
         await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "opencode,python");
 
         await using var db = await dbFactory.CreateDbContextAsync();
-        var result = await svc.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
+        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
 
         // "dotnet,kiro" == "kiro,dotnet" after NormalizeLabels (sorted)
         var normalizedKiroDotnet = JobTemplateStore.NormalizeLabels("kiro,dotnet");
@@ -162,7 +160,6 @@ public sealed class DispatchWorkItemServiceTests
     [Fact]
     public async Task BuildConcurrencySnapshotAsync_IgnoresPendingAndTerminalStatuses()
     {
-        var svc = CreateService();
         var dbFactory = CreateDbFactory();
 
         // Seed items in statuses that must NOT be counted
@@ -170,7 +167,7 @@ public sealed class DispatchWorkItemServiceTests
             await SeedWorkItemAsync(dbFactory, status, "kiro,dotnet");
 
         await using var db = await dbFactory.CreateDbContextAsync();
-        var result = await svc.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
+        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
 
         result.Should().BeEmpty(
             "Pending, Succeeded, Failed, and Cancelled items must not appear in the concurrency snapshot");

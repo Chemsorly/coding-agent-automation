@@ -427,7 +427,7 @@ public sealed class GetAssignmentTests
             new EnrichmentResult.Refused(AgentRouteRefusalReason.ProfileUnavailable, text)));
 
         var result = await WorkItemAgentEndpoints.GetAssignment(
-            id, dbFactory, CreateNullProjectStore(), enricher, CancellationToken.None, CreateStatusTransitions(dbFactory));
+            id, dbFactory, CreateNullProjectStore(), enricher, CreateStatusTransitions(dbFactory), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult>()
             .Which.StatusCode.Should().Be(StatusCodes.Status410Gone, "an agent of any release exits 0 on 410");
@@ -446,7 +446,7 @@ public sealed class GetAssignmentTests
         var transitions = CreateStatusTransitions(dbFactory);
         var enricher = new FakeAssignmentEnricher((_, _) => Task.FromResult<EnrichmentResult>(
             new EnrichmentResult.Refused(AgentRouteRefusalReason.NoTool, "Job template dotnet,kiro of agent profile 'Kiro' has no providerType")));
-        await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, CreateNullProjectStore(), enricher, CancellationToken.None, transitions);
+        await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, CreateNullProjectStore(), enricher, transitions, CancellationToken.None);
 
         // The pod exits 0 on the 410, so the Job Controller reports Succeeded; an agent of the previous release may
         // have reported Running before it read the 410.
@@ -467,7 +467,7 @@ public sealed class GetAssignmentTests
         var enricher = new FakeAssignmentEnricher((_, _) => Task.FromResult<EnrichmentResult>(EnrichmentResult.Unavailable.Instance));
 
         var result = await WorkItemAgentEndpoints.GetAssignment(
-            id, dbFactory, CreateNullProjectStore(), enricher, CancellationToken.None, CreateStatusTransitions(dbFactory));
+            id, dbFactory, CreateNullProjectStore(), enricher, CreateStatusTransitions(dbFactory), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>()
             .Which.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable, "the agent retries");

@@ -249,12 +249,11 @@ public static class AgentRoutingMove
         var dispatchable = toolsByKey.Keys.ToHashSet(StringComparer.Ordinal);
         var today = new Dictionary<(string, WorkItemTaskType), Cell?>();
 
-        foreach (var row in state.Templates)
+        foreach (var template in state.Templates.Select(row => row.Template))
         {
-            var template = row.Template;
             var dispatch = LegacyRouting.DispatchProfile(template, state.DefaultRequiredAgentLabels, profiles);
             foreach (var taskType in new[] { WorkItemTaskType.Implementation, WorkItemTaskType.Review, WorkItemTaskType.Decomposition, WorkItemTaskType.Triage })
-                today[(template.Id, taskType)] = ToCell(dispatch, state);
+                today[(template.Id, taskType)] = ToCell(dispatch, state, toolsByKey);
 
             // Operator triage pins no profile; its claim re-resolves from the selector. The move keeps the
             // dispatch-time profile (req 7.3).
@@ -277,19 +276,34 @@ public static class AgentRoutingMove
                     "(the Scheduler did not filter by job template); the Consolidation route uses {AgentProfile}, as the Consolidation page did",
                     template.Name, unfiltered?.DisplayName ?? "none", consolidation?.DisplayName ?? "none");
             }
-            today[(template.Id, WorkItemTaskType.Consolidation)] = ToCell(consolidation, state);
+            today[(template.Id, WorkItemTaskType.Consolidation)] = ToCell(consolidation, state, toolsByKey);
         }
         return today;
     }
 
-    private static Cell? ToCell(LegacyProfile? profile, MoveState state)
+    private static Cell? ToCell(LegacyProfile? profile, MoveState state, IReadOnlyDictionary<string, string> toolsByKey)
     {
         if (profile is null)
             return null;
         IReadOnlyDictionary<string, string> settings = state.AgentConfigs.TryGetValue(profile.AgentProviderConfigId, out var config)
             ? config.Settings
             : new Dictionary<string, string>();
-        return new Cell(profile, new AgentRoute(profile.Id, Model(settings), Effort(settings)));
+        var tool = toolsByKey.TryGetValue(profile.JobTemplateKey(), out var providerType) ? AgentToolCatalog.Find(providerType) : null;
+        return new Cell(profile, new AgentRoute(profile.Id, Model(settings), EffortRun(tool, Effort(settings))));
+    }
+
+    /// <summary>
+    /// Req 7.3: the effort the tool ran at, so the route keeps today's behaviour and the Routing page can save it. kiro-cli
+    /// runs <c>xhigh</c> at <c>high</c> (<c>KiroCliAgentProvider.ToKiroEffort</c>), and a tool without efforts ignored it.
+    /// A profile whose job template has no tool keeps its effort; the move disables it.
+    /// </summary>
+    private static string EffortRun(AgentTool? tool, string effort)
+    {
+        if (tool is null || AgentToolCatalog.AcceptsEffort(tool, effort))
+            return effort;
+        if (effort == "xhigh" && AgentToolCatalog.AcceptsEffort(tool, "high"))
+            return "high";
+        return AgentToolCatalog.Auto;
     }
 
     /// <summary>Req 7.7: a blank model is <c>auto</c>, as the providers treat it.</summary>
@@ -378,11 +392,7 @@ public static class AgentRoutingMove
             }
 
             var key = profile.JobTemplateKey();
-            var reason = config is null ? "its agent provider config does not exist"
-                : string.IsNullOrEmpty(key) ? "it names no job template"
-                : toolsByKey.Count > 0 && toolsByKey.TryGetValue(key, out var tool) && AgentToolCatalog.Find(tool) is null
-                    ? $"its job template {key} has no providerType"
-                    : null;
+            var reason = DisableReason(config is not null, key, toolsByKey);
             var enabled = profile.Enabled && reason is null;
             if (profile.Enabled && reason is not null)
             {
@@ -395,6 +405,18 @@ public static class AgentRoutingMove
             entity.Configuration = LegacyProfileJson.Convert(entity.Configuration!, key, settings, enabled);
         }
         return (legacyProfiles.Count, disabled);
+    }
+
+    /// <summary>Why a profile is moved disabled, or null when it can stay enabled.</summary>
+    private static string? DisableReason(bool hasAgentConfig, string jobTemplateKey, IReadOnlyDictionary<string, string> toolsByKey)
+    {
+        if (!hasAgentConfig)
+            return "its agent provider config does not exist";
+        if (string.IsNullOrEmpty(jobTemplateKey))
+            return "it names no job template";
+        if (toolsByKey.Count > 0 && toolsByKey.TryGetValue(jobTemplateKey, out var tool) && AgentToolCatalog.Find(tool) is null)
+            return $"its job template {jobTemplateKey} has no providerType";
+        return null;
     }
 
     // ── Step 6: stack labels ─────────────────────────────────────────────────

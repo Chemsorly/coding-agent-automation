@@ -19,6 +19,7 @@ public sealed class AgentRoutingE2ETests : E2ETestBase
     private const string KiroProfileId = "profile-routing-kiro";
     private const string OpenCodeProfileId = "profile-routing-opencode";
     private const string TemplateId = "template-routing-rows";
+    private static readonly string[] EpicLabels = ["agent:epic"];
 
     public AgentRoutingE2ETests(E2EFixture fixture) : base(fixture) { }
 
@@ -119,7 +120,7 @@ public sealed class AgentRoutingE2ETests : E2ETestBase
             Identifier = "5301",
             Title = "Epic: routed decomposition",
             Description = "## Goal\nSplit this epic",
-            Labels = new[] { "agent:epic" }
+            Labels = EpicLabels
         });
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with { ClosedLoopPollInterval = TimeSpan.FromSeconds(1) }, CancellationToken.None);

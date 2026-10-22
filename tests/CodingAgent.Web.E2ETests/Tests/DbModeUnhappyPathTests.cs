@@ -54,7 +54,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
             {
                 Id = "profile-unhappy-e2e",
                 DisplayName = "Unhappy Path Agent Profile",
-                JobTemplate = E2ERouting.Key(new[] { "unhappy-e2e" }),
+                JobTemplate = E2ERouting.Key("unhappy-e2e"),
                 Enabled = true
             });
         }

@@ -122,11 +122,11 @@ public sealed class ChatServiceTests
         {
             Tool = JobTemplateProviderType.Kiro,
             Models = new[] { "auto", DefaultModel },
-            Efforts = new[] { "auto" }.Concat(AgentToolCatalog.Kiro.Efforts),
+            Efforts = AgentToolCatalog.Kiro.Efforts.Prepend("auto"),
         });
-        options["claude"].Models.Should().Equal(new[] { "auto", "claude-row-model" }.Concat(AgentToolCatalog.ClaudeCode.BuiltInModels),
+        options["claude"].Models.Should().Equal(AgentToolCatalog.ClaudeCode.BuiltInModels.Prepend("claude-row-model").Prepend("auto"),
             "Claude Code also offers its built-in models");
-        options["claude"].Efforts.Should().Equal(new[] { "auto" }.Concat(AgentToolCatalog.ClaudeCode.Efforts));
+        options["claude"].Efforts.Should().Equal(AgentToolCatalog.ClaudeCode.Efforts.Prepend("auto"));
         options["opencode"].Models.Should().Equal("auto", "openai/gpt-row");
         options["opencode"].Efforts.Should().Equal(["auto"], "OpenCode has no effort");
     }

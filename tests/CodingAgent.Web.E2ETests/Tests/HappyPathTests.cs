@@ -43,7 +43,7 @@ public sealed class HappyPathTests : E2ETestBase
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 

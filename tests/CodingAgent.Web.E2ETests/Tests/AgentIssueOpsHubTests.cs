@@ -74,7 +74,7 @@ public sealed class AgentIssueOpsHubTests : HeadlessE2ETestBase
         {
             Id = "profile-issue-ops",
             DisplayName = "Issue Ops Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "issue-ops" }),
+            JobTemplate = E2ERouting.Key("issue-ops"),
             Enabled = true
         });
 

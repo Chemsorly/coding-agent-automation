@@ -11,7 +11,7 @@ namespace CodingAgent.Web.E2ETests.PageObjects;
 /// - After FillAsync on @bind inputs, BlurAsync() is required to trigger Blazor's onchange handler.
 /// - When the form is open, <c>button.btn-add</c> inside the form is the "Add MCP Server" button.
 /// </summary>
-public sealed class AgentProfileSectionHelper
+public sealed partial class AgentProfileSectionHelper
 {
     private readonly IPage _page;
 
@@ -98,7 +98,7 @@ public sealed class AgentProfileSectionHelper
         await DeleteConfirmDialog.WaitForAsync(new() { Timeout = 3_000 });
         await DeleteConfirmDialog.Locator("button.btn-delete").ClickAsync();
         await _page.Locator("div.inline-status, div.settings-status")
-            .Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex("deleted|Failed to delete") })
+            .Filter(new() { HasTextRegex = DeleteOutcome() })
             .First.WaitForAsync(new() { Timeout = 10_000 });
     }
 
@@ -125,4 +125,7 @@ public sealed class AgentProfileSectionHelper
         }
         return false;
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex("deleted|Failed to delete")]
+    private static partial System.Text.RegularExpressions.Regex DeleteOutcome();
 }

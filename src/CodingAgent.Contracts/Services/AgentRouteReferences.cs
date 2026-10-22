@@ -24,6 +24,34 @@ public static class AgentRouteReferences
         return found;
     }
 
+    /// <summary>
+    /// The rows naming <paramref name="profile"/> whose effort the tool of its job template does not accept (req 2.5), one
+    /// line per row and labelled like <see cref="Find"/>. A profile saved onto a job template of another tool must not
+    /// leave such rows, or every later save of the routing table is refused. Empty when the tool is unknown.
+    /// </summary>
+    public static IReadOnlyList<string> EffortsItsToolRefuses(
+        AgentProfile profile, AgentRouting? routing, IEnumerable<PipelineJobTemplate> templates,
+        IReadOnlyDictionary<string, string> toolsByKey)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(templates);
+        ArgumentNullException.ThrowIfNull(toolsByKey);
+        if (!toolsByKey.TryGetValue(profile.JobTemplateKey(), out var providerType) || AgentToolCatalog.Find(providerType) is not { } tool)
+            return [];
+
+        var rows = new List<(string Label, AgentRoute Route)>();
+        if (routing?.Default is { } defaultRoute)
+            rows.Add(($"Global · {AgentRouteLabels.DefaultRow}", defaultRoute));
+        rows.AddRange(Routes(routing?.ByTaskType).Select(r => ($"Global · {r.Label}", r.Route)));
+        foreach (var template in templates.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase))
+            rows.AddRange(Routes(template.AgentRoutes).Select(r => ($"Repository {template.Name} · {r.Label}", r.Route)));
+
+        return rows
+            .Where(r => Names(r.Route, profile.Id))
+            .SelectMany(r => AgentRouteValidator.ValidateEffort(r.Label, r.Route.Effort, tool))
+            .ToList();
+    }
+
     /// <summary>The refusal of <paramref name="action"/> ("disabled", "deleted") while <paramref name="routes"/> name the profile.</summary>
     public static string RefusalText(string profileName, string action, IReadOnlyList<string> routes)
     {
@@ -38,6 +66,13 @@ public static class AgentRouteReferences
             : AgentRouteLabels.TaskTypes
                 .Where(t => rows.TryGetValue(t, out var route) && Names(route, profileId))
                 .Select(AgentRouteLabels.TaskType);
+
+    private static IEnumerable<(string Label, AgentRoute Route)> Routes(IReadOnlyDictionary<WorkItemTaskType, AgentRoute>? rows) =>
+        rows is null
+            ? []
+            : AgentRouteLabels.TaskTypes
+                .Where(rows.ContainsKey)
+                .Select(t => (AgentRouteLabels.TaskType(t), rows[t]));
 
     private static bool Names(AgentRoute? route, string profileId) =>
         route is not null && string.Equals(route.ProfileId, profileId, StringComparison.Ordinal);

@@ -36,7 +36,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         {
             Id = profileId,
             DisplayName = displayName,
-            JobTemplate = E2ERouting.Key(new[] { "kiro", "dotnet" }),
+            JobTemplate = E2ERouting.Key("kiro", "dotnet"),
             Enabled = true
         });
 
@@ -975,7 +975,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         {
             Id = "profile-pending-reg",
             DisplayName = "Pending Reg Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 
@@ -1031,7 +1031,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         {
             Id = "profile-prio-test",
             DisplayName = "Priority Test Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
         // Note: dispatch without connecting agents so items stay Pending long enough to assert
@@ -1115,7 +1115,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         {
             Id = "profile-kiro-dotnet-lifecycle",
             DisplayName = "K8s Lifecycle Test Profile",
-            JobTemplate = E2ERouting.Key(new[] { "kiro", "dotnet" }),
+            JobTemplate = E2ERouting.Key("kiro", "dotnet"),
             Enabled = true
         });
 

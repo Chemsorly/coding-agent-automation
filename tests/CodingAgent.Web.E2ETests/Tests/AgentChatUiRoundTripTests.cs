@@ -58,7 +58,7 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         {
             Id = ChatProfileId,
             DisplayName = "Chat Round Trip Profile",
-            JobTemplate = E2ERouting.Key(new[] { "kiro", "dotnet" }),
+            JobTemplate = E2ERouting.Key("kiro", "dotnet"),
             Enabled = true
         }, DefaultModel);
         await Fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(ChatProfileId, DefaultModel, "auto",

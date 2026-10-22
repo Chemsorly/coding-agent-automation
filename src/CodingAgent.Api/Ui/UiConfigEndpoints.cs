@@ -56,8 +56,9 @@ internal static class UiConfigEndpoints
     /// </summary>
     internal static async Task<IResult> GetPipelinesPage(
         IUserAccess access, IProjectStore projects, IProviderConfigStore providers, IConfigurationStore config,
-        IAgentProfileStore profiles, AgentRoutingStore routing, JobTemplateStore jobTemplates, CancellationToken ct)
+        [AsParameters] PipelinesPageRoutingStores routingStores, CancellationToken ct)
     {
+        var (profiles, routing, jobTemplates) = routingStores;
         var global = access.CanRead(null);
         var readable = (await projects.LoadProjectsAsync(ct)).Where(p => access.CanRead(p.Id)).ToList();
         var owned = readable.SelectMany(p => p.TemplateIds).ToHashSet(StringComparer.Ordinal);
@@ -100,3 +101,7 @@ internal static class UiConfigEndpoints
         return TypedResults.Ok(new UiPipelineSettings(settings.MaxRetries, settings.TriageRetentionDays));
     }
 }
+
+/// <summary>The stores the Pipelines page resolves its routes from.</summary>
+internal sealed record PipelinesPageRoutingStores(
+    IAgentProfileStore Profiles, AgentRoutingStore Routing, JobTemplateStore JobTemplates);

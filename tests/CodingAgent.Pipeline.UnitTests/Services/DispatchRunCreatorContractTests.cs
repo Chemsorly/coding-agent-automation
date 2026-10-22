@@ -14,6 +14,8 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// 1. DispatchRunCreationService implements the interface over the run lifecycle.
 /// 2. A mock of the interface can fully replace the concrete dependency.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance",
+    Justification = "The tests call the service through the interface on purpose: the interface is the contract under test.")]
 public class DispatchRunCreatorContractTests
 {
     private readonly OrchestratorRunService _runService;

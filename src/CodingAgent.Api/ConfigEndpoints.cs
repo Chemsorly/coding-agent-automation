@@ -169,7 +169,8 @@ public static class ConfigEndpoints
 
     /// <summary>
     /// Saves a profile (spec 053 req 1.3, 1.5): it needs tool settings, a display name no other profile has and a job
-    /// template the Helm values define with a tool; it cannot be disabled while routes name it.
+    /// template the Helm values define with a tool; it cannot be disabled while routes name it, nor moved to a job
+    /// template whose tool refuses the effort of a route that names it (req 2.5).
     /// </summary>
     internal static async Task<IResult> SaveAgentProfile(
         [FromBody] AgentProfile profile,
@@ -194,7 +195,23 @@ public static class ConfigEndpoints
                 return TypedResults.BadRequest(AgentRouteReferences.RefusalText(stored?.DisplayName ?? profile.DisplayName, "disabled", routes));
         }
 
+        if (stored is not null && stored.JobTemplateKey() != profile.JobTemplateKey()
+            && await RefusedEffortsAsync(profile, templates, routing, projects, ct) is { } refused)
+            return TypedResults.BadRequest(refused);
+
         return await SaveAsync(() => store.SaveAgentProfileAsync(profile, ct));
+    }
+
+    /// <summary>The refusal of a profile's move to another job template while routes name it with an effort its tool refuses.</summary>
+    private static async Task<string?> RefusedEffortsAsync(
+        AgentProfile profile, JobTemplateStore templates, AgentRoutingStore routing, IProjectStore projects, CancellationToken ct)
+    {
+        var rows = AgentRouteReferences.EffortsItsToolRefuses(
+            profile, await routing.LoadAsync(ct), await projects.LoadAllTemplatesAsync(ct), templates.ToolsByKey());
+        return rows.Count == 0
+            ? null
+            : $"Agent profile '{profile.DisplayName}' cannot move to job template {profile.JobTemplateKey()} while routes name it " +
+              $"with an effort its tool does not accept: {string.Join("; ", rows)}. Change those routes first.";
     }
 
     /// <summary>Deletes a profile, unless routes name it (spec 053 req 1.5).</summary>
@@ -397,34 +414,30 @@ public static class ConfigEndpoints
         if (conflict is not null)
             return TypedResults.BadRequest(conflict);
 
-        // Validate secret key names: must match ^[A-Za-z_][A-Za-z0-9_]*$ (same rule as project secrets).
-        if (template.Secrets is { Count: > 0 })
-        {
-            // TODO: [WARNING] No server-side check for duplicate secret keys. Because Secrets is a
-            // Dictionary<string,string>, duplicate keys in the JSON payload are silently resolved by the
-            // serializer (last value wins) rather than reported as a validation error. The prior UI guard
-            // in RepoProviderSection.razor ("Duplicate key.") was removed and not reintroduced on the
-            // template path. If the client-side guard in RepositorySettingsEditor.razor is bypassed,
-            // users get no feedback about duplicates. Consider adding a duplicate-key check here.
-            foreach (var key in template.Secrets.Keys)
-            {
-                if (!SecretKeyPattern.IsMatch(key))
-                    return TypedResults.BadRequest(
-                        $"Secret name '{key}' is invalid; names must start with a letter or underscore and contain only letters, digits and underscores.");
-            }
-        }
-
-        // Validate setup steps: each step must have both a name and a command.
-        if (template.SetupSteps is { Count: > 0 })
-        {
-            foreach (var step in template.SetupSteps)
-            {
-                if (string.IsNullOrWhiteSpace(step.Name) || string.IsNullOrWhiteSpace(step.Command))
-                    return TypedResults.BadRequest("Each setup step must have a name and a command.");
-            }
-        }
+        if (InvalidSecretOrSetupStep(template) is { } invalid)
+            return TypedResults.BadRequest(invalid);
 
         return await SaveAsync(() => store.SaveTemplateAsync(projectId, template, ct));
+    }
+
+    /// <summary>The first invalid secret name or setup step of <paramref name="template"/>, or null.</summary>
+    private static string? InvalidSecretOrSetupStep(PipelineJobTemplate template)
+    {
+        // Validate secret key names: must match ^[A-Za-z_][A-Za-z0-9_]*$ (same rule as project secrets).
+        // TODO: [WARNING] No server-side check for duplicate secret keys. Because Secrets is a
+        // Dictionary<string,string>, duplicate keys in the JSON payload are silently resolved by the
+        // serializer (last value wins) rather than reported as a validation error. The prior UI guard
+        // in RepoProviderSection.razor ("Duplicate key.") was removed and not reintroduced on the
+        // template path. If the client-side guard in RepositorySettingsEditor.razor is bypassed,
+        // users get no feedback about duplicates. Consider adding a duplicate-key check here.
+        if (template.Secrets?.Keys.FirstOrDefault(key => !SecretKeyPattern.IsMatch(key)) is { } invalidKey)
+            return $"Secret name '{invalidKey}' is invalid; names must start with a letter or underscore and contain only letters, digits and underscores.";
+
+        // Validate setup steps: each step must have both a name and a command.
+        if (template.SetupSteps?.Any(step => string.IsNullOrWhiteSpace(step.Name) || string.IsNullOrWhiteSpace(step.Command)) == true)
+            return "Each setup step must have a name and a command.";
+
+        return null;
     }
 
     internal static async Task<IResult> DeleteTemplate(
@@ -675,9 +688,10 @@ public static class ConfigEndpoints
     }
 
     /// <summary>
-    /// The routing problems in an import bundle (spec 053 req 7.12). Only its shape is checked: task types, models,
-    /// efforts when the tool is known, and that each route's profile is in the bundle. A job template this cluster does
-    /// not have is not refused, so a bundle from another cluster imports; the Agent Profiles page flags it.
+    /// The routing problems in an import bundle (spec 053 req 7.12): its global table and its templates' repository rows.
+    /// Only their shape is checked: task types, models, efforts when the tool is known, and that each route's profile is
+    /// in the bundle. A job template this cluster does not have is not refused, so a bundle from another cluster imports;
+    /// the Agent Profiles page flags it.
     /// </summary>
     private static IReadOnlyList<string> ValidateImportedRouting(ConfigBundle bundle, IReadOnlyDictionary<string, string> toolsByKey)
     {
@@ -690,16 +704,55 @@ public static class ConfigEndpoints
         {
             return [$"The agent routing cannot be read: {ex.Message}"];
         }
-        if (routing is null)
-            return [];
 
+        var errors = new List<string>();
+        var templateRows = ImportedTemplateRows(bundle, errors);
+        if (routing is null && templateRows.Count == 0)
+            return errors;
+
+        var profiles = ImportedProfiles(bundle);
+        if (routing is not null)
+            errors.AddRange(AgentRouteValidator.ValidateImport(routing, profiles, toolsByKey));
+        foreach (var (name, rows) in templateRows)
+        {
+            errors.AddRange(AgentRouteValidator.ValidateImport(new AgentRouting { ByTaskType = rows }, profiles, toolsByKey)
+                .Select(error => $"Template {name}: {error}"));
+        }
+        return errors;
+    }
+
+    /// <summary>The repository rows of the bundle's templates; a template whose configuration cannot be read adds an error.</summary>
+    private static List<(string Name, IReadOnlyDictionary<WorkItemTaskType, AgentRoute> Rows)> ImportedTemplateRows(
+        ConfigBundle bundle, List<string> errors)
+    {
+        var rows = new List<(string, IReadOnlyDictionary<WorkItemTaskType, AgentRoute>)>();
+        foreach (var dto in bundle.JobTemplates ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(dto.Configuration))
+                continue;
+            try
+            {
+                if (JsonSerializer.Deserialize<PipelineJobTemplate>(dto.Configuration, PipelineJsonOptions.Lenient)?.AgentRoutes is { Count: > 0 } routes)
+                    rows.Add((dto.Name, routes));
+            }
+            catch (JsonException ex)
+            {
+                errors.Add($"Template {dto.Name} cannot be read: {ex.Message}");
+            }
+        }
+        return rows;
+    }
+
+    /// <summary>The bundle's agent profiles that can be read.</summary>
+    private static List<AgentProfile> ImportedProfiles(ConfigBundle bundle)
+    {
         var profiles = new List<AgentProfile>();
-        foreach (var dto in bundle.AgentProfiles ?? [])
+        foreach (var configuration in (bundle.AgentProfiles ?? []).Select(dto => dto.Configuration))
         {
             try
             {
-                if (!string.IsNullOrWhiteSpace(dto.Configuration)
-                    && JsonSerializer.Deserialize<AgentProfile>(dto.Configuration, PipelineJsonOptions.Lenient) is { } profile)
+                if (!string.IsNullOrWhiteSpace(configuration)
+                    && JsonSerializer.Deserialize<AgentProfile>(configuration, PipelineJsonOptions.Lenient) is { } profile)
                     profiles.Add(profile);
             }
             catch (JsonException)
@@ -707,7 +760,7 @@ public static class ConfigEndpoints
                 // A profile that cannot be read is not in the bundle for a route that names it.
             }
         }
-        return AgentRouteValidator.ValidateImport(routing, profiles, toolsByKey);
+        return profiles;
     }
 
     /// <summary>

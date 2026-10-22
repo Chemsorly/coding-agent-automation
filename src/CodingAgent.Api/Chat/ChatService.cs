@@ -87,10 +87,14 @@ internal sealed class ChatService(
     /// <summary>
     /// Spec 053 req 6.3a: the global default route's model and effort when it names the profile, else <c>auto</c>.
     /// </summary>
-    internal static (string Model, string Effort) Defaults(AgentProfile profile, AgentTool tool, AgentRouting routing) =>
-        routing.Default is { } route && string.Equals(route.ProfileId, profile.Id, StringComparison.Ordinal)
-            ? (route.Model, AgentToolCatalog.AcceptsEffort(tool, route.Effort) ? route.Effort : AgentToolCatalog.Auto)
-            : (AgentToolCatalog.Auto, AgentToolCatalog.Auto);
+    internal static (string Model, string Effort) Defaults(AgentProfile profile, AgentTool tool, AgentRouting routing)
+    {
+        if (routing.Default is not { } route || !string.Equals(route.ProfileId, profile.Id, StringComparison.Ordinal))
+            return (AgentToolCatalog.Auto, AgentToolCatalog.Auto);
+
+        var effort = AgentToolCatalog.AcceptsEffort(tool, route.Effort) ? route.Effort : AgentToolCatalog.Auto;
+        return (route.Model, effort);
+    }
 
     /// <summary>The profile's tool when a chat can be launched for it: enabled, its job template exists and has a tool.</summary>
     private static AgentTool? LaunchableTool(AgentProfile profile, IReadOnlyDictionary<string, string> toolsByKey) =>
@@ -159,8 +163,11 @@ internal sealed class ChatService(
         await sessions.SaveAsync(new ChatSessionRecord(
             agentId, ownerIdentitySource, ownerSubject, project?.Id, profile.Id, ChatWindowId: Guid.NewGuid().ToString(),
             Model: model, Effort: effort));
-        logger.LogInformation("Chat pod {AgentId} launched for profile {ProfileId} with model {Model} and effort {Effort}",
-            agentId, profile.Id, model, effort);
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation("Chat pod {AgentId} launched for profile {ProfileId} with model {Model} and effort {Effort}",
+                agentId, profile.Id, model, effort);
+        }
         return new UiChatSession(agentId, model);
     }
 

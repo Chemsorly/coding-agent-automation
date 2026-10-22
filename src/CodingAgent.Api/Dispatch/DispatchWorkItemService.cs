@@ -75,7 +75,7 @@ internal sealed class DispatchWorkItemService
     /// Dictionary mapping template selector → active-item count.
     /// Empty dictionary when no active items exist.
     /// </returns>
-    internal async Task<Dictionary<string, int>> BuildConcurrencySnapshotAsync( // NOSONAR S2325 — instance API: callers and tests use an instance
+    internal static async Task<Dictionary<string, int>> BuildConcurrencySnapshotAsync(
         PipelineDbContext db,
         CancellationToken ct)
     {

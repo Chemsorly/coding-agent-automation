@@ -214,9 +214,9 @@ public class AssignmentEnricher
                 return Refuse(identity, template, resolved.RefusalReason!, resolved.RefusalText!);
             route = resolved.Snapshot! with { Source = AgentRouteSource.Claim };
             _logger.Information(
-                "Routed {TaskType} work for {TemplateName} at claim to {AgentProfile} · {Model} · {Effort} ({RouteSource}; queued before agent routing, profile {AgentProfileId})",
+                "Routed {TaskType} work for {TemplateName} at claim to {AgentProfile} · {Model} · {Effort} ({RouteSource}; queued before agent routing, profile {AgentProfileId}, template {TemplateId})",
                 identity.TaskType, template?.Name ?? "no template", route.ProfileName, route.Model, route.Effort,
-                AgentRouteLabels.Source(route.Source), route.ProfileId);
+                AgentRouteLabels.Source(route.Source), route.ProfileId, template?.Id);
         }
 
         var profile = profiles.FirstOrDefault(p => string.Equals(p.Id, route.ProfileId, StringComparison.Ordinal) && p.Enabled);
@@ -284,34 +284,13 @@ public class AssignmentEnricher
         var profile = claim!.Profile;
 
         // ── Step 2: Re-derive a decomposition's scope from the current configuration ──
-        // Only a project epic (in its project's epic tracker) gets the project's repo list. The scope is
-        // taken from the configuration at claim time, not from the payload, so a WorkItem queued before
-        // a configuration change or a deploy gets the scope its epic has now.
         DecompositionProjectContext? projectContext = null;
         if (identity.TaskType == WorkItemTaskType.Decomposition)
         {
-            if (project.IsEpicTracker(identity.IssueProviderConfigId))
-            {
-                projectContext = await _infra.BuildProjectEpicContextAsync(project, _logger, ct);
-                if (projectContext is null)
-                {
-                    // Without the repo list the project epic's sub-issues would land in the epic tracker
-                    _logger.Error(
-                        "AssignmentEnricher: project epic {IssueIdentifier} has no usable repository list in project {ProjectId}; cannot enrich assignment",
-                        identity.IssueIdentifier, project.Id);
-                    return EnrichmentResult.Unavailable.Instance;
-                }
-            }
-            else if (!await IsTemplateTrackerAsync(project, identity.IssueProviderConfigId, ct))
-            {
-                // Neither the project's epic tracker nor a template's tracker, for example because the project
-                // was deleted or its epic tracker changed after the WorkItem was queued: the epic's sub-issues
-                // would land in a tracker nothing polls.
-                _logger.Error(
-                    "AssignmentEnricher: epic {IssueIdentifier} is in neither the epic tracker nor a template tracker of project {ProjectId}; cannot enrich assignment",
-                    identity.IssueIdentifier, project.Id);
+            var scope = await DecompositionScopeAsync(identity, project, ct);
+            if (!scope.Usable)
                 return EnrichmentResult.Unavailable.Instance;
-            }
+            projectContext = scope.ProjectContext;
         }
 
         // ── Step 2a: A triage reads every enabled repository of its project, wherever it was reported ──
@@ -369,25 +348,7 @@ public class AssignmentEnricher
         if (CheckConfigCollision(identity, claim, providerConfigs) is { Refusal: { } collision })
             return collision;
 
-        // A tracker issue's triage attempt is recorded when it is claimed, so one that ends without a result still
-        // shows (an operator triage's attempt was recorded when it was started)
-        if (identity.TaskType == WorkItemTaskType.Triage && _triageStore is not null
-            && !TriageConstants.IsOperatorTriage(identity.IssueProviderConfigId) && identity.RunId is { } runId)
-        {
-            var recorded = await _triageStore.RecordAttemptStartAsync(new TriageAttemptStart
-            {
-                WorkItemId = runId,
-                ProjectId = project.Id,
-                IssueProviderConfigId = identity.IssueProviderConfigId,
-                IssueIdentifier = identity.IssueIdentifier,
-                IssueTitle = issueContext.IssueDetail.Title,
-                IssueUrl = issueContext.IssueDetail.Url,
-                StartedAt = DateTimeOffset.UtcNow,
-            }, ct);
-            if (recorded is null)
-                _logger.Warning("AssignmentEnricher: the triage of {IssueIdentifier} belongs to another project; this attempt is not recorded on it",
-                    identity.IssueIdentifier);
-        }
+        await RecordTrackerTriageAttemptAsync(identity, project, issueContext.IssueDetail, ct);
 
         // ── Step 4: Build enriched JobDistributionRequest from identity + fresh data ──
         return new EnrichmentResult.Enriched(identity with
@@ -418,6 +379,68 @@ public class AssignmentEnricher
             AnalysisRefreshCount = refreshCount,
             TriageContextMarkdown = triageContextMarkdown,
         });
+    }
+
+    /// <summary>
+    /// A decomposition's scope, re-derived from the current configuration. Only a project epic (in its project's epic
+    /// tracker) gets the project's repo list. The scope is taken from the configuration at claim time, not from the
+    /// payload, so a WorkItem queued before a configuration change or a deploy gets the scope its epic has now.
+    /// Not usable when the assignment cannot be enriched.
+    /// </summary>
+    private async Task<(bool Usable, DecompositionProjectContext? ProjectContext)> DecompositionScopeAsync(
+        JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
+    {
+        if (project.IsEpicTracker(identity.IssueProviderConfigId))
+        {
+            var projectContext = await _infra.BuildProjectEpicContextAsync(project, _logger, ct);
+            if (projectContext is null)
+            {
+                // Without the repo list the project epic's sub-issues would land in the epic tracker
+                _logger.Error(
+                    "AssignmentEnricher: project epic {IssueIdentifier} has no usable repository list in project {ProjectId}; cannot enrich assignment",
+                    identity.IssueIdentifier, project.Id);
+                return (false, null);
+            }
+            return (true, projectContext);
+        }
+
+        if (!await IsTemplateTrackerAsync(project, identity.IssueProviderConfigId, ct))
+        {
+            // Neither the project's epic tracker nor a template's tracker, for example because the project
+            // was deleted or its epic tracker changed after the WorkItem was queued: the epic's sub-issues
+            // would land in a tracker nothing polls.
+            _logger.Error(
+                "AssignmentEnricher: epic {IssueIdentifier} is in neither the epic tracker nor a template tracker of project {ProjectId}; cannot enrich assignment",
+                identity.IssueIdentifier, project.Id);
+            return (false, null);
+        }
+        return (true, null);
+    }
+
+    /// <summary>
+    /// A tracker issue's triage attempt is recorded when it is claimed, so one that ends without a result still
+    /// shows (an operator triage's attempt was recorded when it was started).
+    /// </summary>
+    private async Task RecordTrackerTriageAttemptAsync(
+        JobDistributionRequest identity, PipelineProject project, IssueDetail issue, CancellationToken ct)
+    {
+        if (identity.TaskType != WorkItemTaskType.Triage || _triageStore is null
+            || TriageConstants.IsOperatorTriage(identity.IssueProviderConfigId) || identity.RunId is not { } runId)
+            return;
+
+        var recorded = await _triageStore.RecordAttemptStartAsync(new TriageAttemptStart
+        {
+            WorkItemId = runId,
+            ProjectId = project.Id,
+            IssueProviderConfigId = identity.IssueProviderConfigId,
+            IssueIdentifier = identity.IssueIdentifier,
+            IssueTitle = issue.Title,
+            IssueUrl = issue.Url,
+            StartedAt = DateTimeOffset.UtcNow,
+        }, ct);
+        if (recorded is null)
+            _logger.Warning("AssignmentEnricher: the triage of {IssueIdentifier} belongs to another project; this attempt is not recorded on it",
+                identity.IssueIdentifier);
     }
 
     /// <summary>

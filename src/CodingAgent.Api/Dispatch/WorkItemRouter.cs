@@ -72,10 +72,13 @@ public sealed class WorkItemRouter(
 
         var snapshot = source is { } overridden ? result.Snapshot! with { Source = overridden } : result.Snapshot!;
         var routeSource = AgentRouteLabels.Source(snapshot.Source);
-        logger.LogInformation(
-            "Routed {TaskType} work for {TemplateName} to {AgentProfile} · {Model} · {Effort} ({RouteSource}; profile {AgentProfileId}, template {TemplateId})",
-            request.TaskType, templateName, snapshot.ProfileName, snapshot.Model, snapshot.Effort, routeSource,
-            snapshot.ProfileId, template?.Id);
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation(
+                "Routed {TaskType} work for {TemplateName} to {AgentProfile} · {Model} · {Effort} ({RouteSource}; profile {AgentProfileId}, template {TemplateId})",
+                request.TaskType, templateName, snapshot.ProfileName, snapshot.Model, snapshot.Effort, routeSource,
+                snapshot.ProfileId, template?.Id);
+        }
         PipelineTelemetry.SetRouteAttributes(Activity.Current, snapshot.ProfileName, snapshot.Model, snapshot.Effort, routeSource);
 
         return new WorkItemRouteResult(
@@ -100,7 +103,7 @@ public sealed class WorkItemRouter(
         var template = request.TaskType == WorkItemTaskType.Consolidation
             ? all.FirstOrDefault(t => string.Equals(t.Id, request.ConsolidationTemplateId, StringComparison.Ordinal))
             : RepositorySettings.TemplateFor(request.RepoProviderConfigId, all);
-        if (template is null)
+        if (template is null && logger.IsEnabled(LogLevel.Information))
         {
             logger.LogInformation(
                 "{TaskType} work for issue {IssueIdentifier} has no template (repository {RepoProviderConfigId}, consolidation template {ConsolidationTemplateId}); only the global routes apply",

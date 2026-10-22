@@ -15,7 +15,7 @@ internal static class E2ERouting
     public const string Model = "test-model";
 
     /// <summary>The job template key of an agent with these labels, as the Helm values of the harness list them.</summary>
-    public static string Key(IEnumerable<string> labels) => string.Join(",", labels);
+    public static string Key(params IEnumerable<string> labels) => string.Join(",", labels);
 
     /// <summary>Saves <paramref name="profile"/> and routes every task type to it (the global default route).</summary>
     public static async Task SeedRoutedProfileAsync(this E2EFixture fixture, AgentProfile profile, string model = Model, string effort = "auto")

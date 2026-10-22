@@ -41,7 +41,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         {
             Id = "profile-fb",
             DisplayName = "Feedback Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 
@@ -133,7 +133,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         {
             Id = "profile-fb-2",
             DisplayName = "Failure Feedback Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 
@@ -221,7 +221,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         {
             Id = "profile-fb-3",
             DisplayName = "No Feedback Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 
@@ -273,7 +273,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         {
             Id = "profile-fb-4",
             DisplayName = "Feedback UI Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 
@@ -373,7 +373,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         {
             Id = "profile-fb-5",
             DisplayName = "Full Feedback Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 

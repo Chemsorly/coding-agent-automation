@@ -466,6 +466,20 @@ public class RepositoryPageServiceTests
         _settings.Verify(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task SaveRoutesAsync_ProjectAdmin_IsDenied()
+    {
+        // The rows are part of the Binding card, which only the global admin edits (spec 053 D17).
+        SetupPage();
+        var svc = CreateService(TestAccess.Scoped((ProjectId, AccessRole.Admin)));
+        await svc.InitializeAsync(TemplateId);
+
+        var (success, _, _) = await svc.SaveRoutesAsync(CodingAgent.Web.Components.Shared.RouteRow.ForRepository(null));
+
+        success.Should().BeFalse();
+        _settings.Verify(s => s.SaveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── Drawer methods with template present ──────────────────────────────
 
     [Fact]

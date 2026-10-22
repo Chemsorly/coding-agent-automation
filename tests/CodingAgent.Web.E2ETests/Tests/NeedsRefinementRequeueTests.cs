@@ -52,7 +52,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         {
             Id             = $"profile-staleness-{agentLabel}",
             DisplayName    = $"Staleness Profile ({agentLabel})",
-            JobTemplate = E2ERouting.Key(new[] { agentLabel }),
+            JobTemplate = E2ERouting.Key(agentLabel),
             Enabled        = true
         });
     }
@@ -287,7 +287,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         {
             Id                    = "profile-staleness-s5",
             DisplayName           = "Staleness Profile (s5)",
-            JobTemplate = E2ERouting.Key(new[] { "staleness-s5" }),
+            JobTemplate = E2ERouting.Key("staleness-s5"),
             Enabled               = true
         });
 

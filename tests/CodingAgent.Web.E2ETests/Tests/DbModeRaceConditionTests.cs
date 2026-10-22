@@ -56,7 +56,7 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
             {
                 Id = "profile-race-e2e",
                 DisplayName = "Race Condition Agent Profile",
-                JobTemplate = E2ERouting.Key(new[] { "race-e2e" }),
+                JobTemplate = E2ERouting.Key("race-e2e"),
                 Enabled = true
             });
         }

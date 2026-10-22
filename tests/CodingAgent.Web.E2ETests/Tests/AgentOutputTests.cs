@@ -70,7 +70,7 @@ public sealed partial class AgentOutputTests : E2ETestBase
         {
             Id = "output-profile-e2e",
             DisplayName = "Output E2E Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "e2e" }),
+            JobTemplate = E2ERouting.Key("e2e"),
             Enabled = true
         });
 

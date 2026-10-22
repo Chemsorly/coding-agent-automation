@@ -269,7 +269,7 @@ public sealed class AutoConsolidationService : BackgroundService
             {
                 // Spec 053 req 2.9: the API refused the run (no agent route, or one that cannot run). No run exists,
                 // so the next check tries again; a run refused when an agent claims it fails and pauses the scope.
-                _logger.Warning(
+                _logger.Warning(ex,
                     "Auto consolidation: {Type} for {Scope} was refused: {RefusalText}",
                     type, scopeKey, ex.Message);
                 return;

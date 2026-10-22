@@ -145,6 +145,30 @@ public sealed class AgentRoutingMoveTests
     }
 
     [Fact]
+    public async Task Move_KiroXHigh_IsRoutedAtHigh_TheEffortKiroRanIt_Req7_3()
+    {
+        // The agent provider form offered xhigh for Kiro, which kiro-cli has no value for and runs at high. A route at
+        // xhigh would make every save of the Routing page fail (req 2.5), so the move writes what the agent ran.
+        var scenario = Fixture.WithDefaultLabels with
+        {
+            ProviderConfigs = Fixture.WithDefaultLabels.ProviderConfigs
+                .Select(c => c.Id != Fixture.KiroConfig ? c : new ProviderConfig
+                {
+                    Id = c.Id, DisplayName = c.DisplayName, Kind = c.Kind, ProviderType = c.ProviderType,
+                    Settings = new Dictionary<string, string>(c.Settings) { [ProviderSettingKeys.Effort] = "xhigh" },
+                })
+                .ToList(),
+        };
+
+        var (db, _) = await MoveAsync(scenario);
+        var moved = await LoadAsync(db);
+
+        moved.Routing.Default.Should().Be(new AgentRoute(Fixture.KiroProfile, "claude-sonnet-4-6", "high"));
+        AgentRouteValidator.ValidateRouting(moved.Routing, moved.Profiles, scenario.ToolsByKey).Should().BeEmpty(
+            "the Routing page can save the moved table");
+    }
+
+    [Fact]
     public async Task Move_LabellessTemplateWithoutDefaultLabels_GetsARowForConsolidationOnly()
     {
         var (db, _) = await MoveAsync(Fixture.WithoutDefaultLabels);

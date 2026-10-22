@@ -22,6 +22,9 @@ namespace CodingAgent.Web.E2ETests.Tests;
 [Collection(E2ECollection.Name)]
 public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
 {
+    private static readonly string[] FrontendLabels = ["frontend"];
+    private static readonly string[] BackendLabels = ["backend"];
+
     public DbModeAgentLifecycleTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAsync(string issueId, string title = "Lifecycle test issue")
@@ -203,7 +206,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-frontend",
             Enabled = true,
-            RequiredLabels = new[] { "frontend" },  // issue #3575: labels live on the template
+            RequiredLabels = FrontendLabels,  // issue #3575: labels live on the template
             // Spec 053: the template's own row routes its work to its profile; labels pick no agent.
             AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Implementation] = new("profile-frontend", E2ERouting.Model, "auto") },
         }, CancellationToken.None);
@@ -215,7 +218,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-backend",
             Enabled = true,
-            RequiredLabels = new[] { "backend" },   // issue #3575: labels live on the template
+            RequiredLabels = BackendLabels,  // issue #3575: labels live on the template
             AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Implementation] = new("profile-backend", E2ERouting.Model, "auto") },
         }, CancellationToken.None);
 

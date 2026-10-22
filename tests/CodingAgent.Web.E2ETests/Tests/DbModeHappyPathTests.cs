@@ -47,7 +47,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         {
             Id = "profile-db-e2e",
             DisplayName = "DB E2E Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
         });
     }
@@ -232,7 +232,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         {
             Id = "profile-secrets-e2e",
             DisplayName = "Secrets Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
         });
 
@@ -282,7 +282,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         {
             Id = "profile-multi-e2e",
             DisplayName = "Multi Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
         });
 
@@ -365,7 +365,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         {
             Id = "profile-db-token-e2e",
             DisplayName = "DB Token Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
         });
 
@@ -446,7 +446,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         {
             Id = "profile-db-brain-e2e",
             DisplayName = "DB Brain Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
         });
 

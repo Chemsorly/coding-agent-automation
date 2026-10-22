@@ -237,7 +237,8 @@ public class RepositoryPageService : DrawerStateAccessorBase
     /// </summary>
     public async Task<(bool Success, string? Error, string? SuccessMessage)> SaveRoutesAsync(IReadOnlyList<RouteRow> rows)
     {
-        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
+        // The rows are part of the Binding card: global admin only (D17), not a project admin.
+        if (await DeniedGlobalAdminAsync() is { } denied) return (false, denied, null);
         if (Template is null || Project is null) return (false, TemplateNotFoundMessage, null);
 
         var updated = Template with { AgentRoutes = RouteRow.ToRepositoryRoutes(rows) };

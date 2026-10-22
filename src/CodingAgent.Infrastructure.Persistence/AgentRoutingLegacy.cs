@@ -58,7 +58,7 @@ internal static class LegacyProfileJson
             Get(node, "displayName")?.GetValue<string>() ?? id,
             labels,
             Get(node, "agentProviderConfigId")?.GetValue<string>() ?? "",
-            Get(node, "enabled") is { } enabled ? enabled.GetValue<bool>() : true,
+            Get(node, "enabled")?.GetValue<bool>() ?? true,
             Get(node, "priority") is { } priority ? priority.GetValue<int>() : 0,
             Get(node, "jobTemplate")?.GetValue<string>());
     }

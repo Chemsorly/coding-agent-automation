@@ -56,7 +56,7 @@ public sealed class CompleteLikeProductionTests : HeadlessE2ETestBase
         {
             Id = "profile-http-completion-e2e",
             DisplayName = "HTTP Completion E2E Agent Profile",
-            JobTemplate = E2ERouting.Key(new[] { "db-e2e" }),
+            JobTemplate = E2ERouting.Key("db-e2e"),
             Enabled = true
         });
     }

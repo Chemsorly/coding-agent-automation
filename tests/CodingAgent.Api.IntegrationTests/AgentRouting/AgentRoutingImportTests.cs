@@ -116,6 +116,33 @@ public sealed class AgentRoutingImportTests : IClassFixture<AgentRoutingImportFa
         (await db.AgentProfiles.SingleAsync()).Name.Should().Be(ProfileId, "the bundle was refused before anything was cleared");
     }
 
+    [Theory]
+    [InlineData("""{"Bogus":{"profileId":"0e5e0000-0000-4000-8000-0000000001a1","model":"auto","effort":"auto"}}""", "Template repo-rows")]
+    [InlineData("""{"Review":{"profileId":"0e5e0000-0000-4000-8000-0000000009ff","model":"auto","effort":"auto"}}""", "is not in the bundle")]
+    public async Task ABundleWithAMalformedRepositoryRow_Is400_AndChangesNothing(string agentRoutes, string reason)
+    {
+        // Req 7.12: a template's own rows are checked like the global table; an unreadable row used to fail in the move.
+        var before = AgentRoutingTestData.Routing(ProfileId);
+        (await ImportAsync(Bundle(AgentRoutingStore.Serialize(before), AgentRoutingTestData.Profile(ProfileId))))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        var bundle = Bundle(AgentRoutingStore.Serialize(before), AgentRoutingTestData.Profile(ProfileId, displayName: "changed"));
+        bundle.JobTemplates =
+        [
+            new JobTemplateDto
+            {
+                Id = Guid.NewGuid(), ProjectId = Guid.NewGuid(), Name = "repo-rows",
+                Configuration = $$"""{"id":"repo-rows","name":"repo-rows","issueProviderId":"issue","repoProviderId":"repo","agentRoutes":{{agentRoutes}}}""",
+            },
+        ];
+
+        var response = await ImportAsync(bundle);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid agent routing").And.Contain(reason);
+        using var db = _factory.CreateDbContext();
+        (await db.AgentProfiles.SingleAsync()).Name.Should().Be(ProfileId, "the bundle was refused before anything was cleared");
+    }
+
     [Fact]
     public async Task AnOldBundleWhoseMoveFails_Answers500()
     {

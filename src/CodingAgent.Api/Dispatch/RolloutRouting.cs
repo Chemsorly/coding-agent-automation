@@ -3,6 +3,7 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -84,7 +85,7 @@ public sealed class RolloutRouting(
         }
     }
 
-    private static IResult NotPending()
+    private static Ok<DispatchPendingResponse> NotPending()
     {
         WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "not_pending");
         return TypedResults.Ok(new DispatchPendingResponse(false, "not_pending"));
