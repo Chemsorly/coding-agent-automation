@@ -239,6 +239,8 @@ sum by (McpServer, McpFailureCategory) (count_over_time({service_name="coding-ag
 
 There is no metric for tool calls, to keep active series low.
 
+The **Attention page** (`/attention`) surfaces MCP server health automatically. For each server, the pipeline examines the runs loaded by the page (newest first). The first run that is not neutral (i.e., the server was either called or unavailable) determines the outcome: if that run shows the server as unavailable in any phase, or shows every call failing with a non-"other" cause (connection, auth, or unknown), the server appears in an "MCP servers" card with the reason and the count of consecutive problem runs. A server is removed from the card as soon as a newer OK run exists for it.
+
 **OpenCode** sources tool-call data from SSE `message.part.updated` tool parts (call counts and error texts) and server statuses from `GET /mcp`; when `GET /mcp` is unavailable the provider falls back to the configured server names in `McpConfigPath` to perform tool-key matching.
 
 ### LLM Usage Telemetry Architecture
