@@ -193,6 +193,44 @@
                 }
             </div>
 
+            @{
+                var _mcpServers = ToolUsageDisplay.ByServer(run);
+            }
+            @if (_mcpServers.Count > 0)
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="run-tools">
+                    <div class="cockpit-detail-sub-label">MCP &amp; web tools</div>
+                    @foreach (var s in _mcpServers)
+                    {
+                        <div data-testid="run-tools-server-@s.Server" style="margin-bottom: 6px;">
+                            <span class="mono">@s.Server</span>
+                            @if (s.Totals.Calls > 0)
+                            {
+                                <text> @s.Totals.Calls call(s)</text>
+                                @if (s.Totals.Failed > 0)
+                                {
+                                    <text> · <span style="color: var(--error, #DC2626);" title="@ToolUsageDisplay.FailureBreakdown(s.Totals)">@s.Totals.Failed failed</span></text>
+                                }
+                            }
+                            else if (s.Unavailable is null)
+                            {
+                                <text> <span style="color: var(--text-muted);">not called</span></text>
+                            }
+                            @if (s.Unavailable is not null)
+                            {
+                                <text> <span class="cockpit-chip" data-testid="run-tools-unavailable-@s.Server">unavailable (@s.Unavailable)</span></text>
+                            }
+                        </div>
+                        @if (s.Tools.Count > 0)
+                        {
+                            <div style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 8px;">
+                                @string.Join(" · ", s.Tools.Select(t => $"{t.Tool} ×{t.Counts.Calls}"))
+                            </div>
+                        }
+                    }
+                </div>
+            }
+
             @if (run.RunType == PipelineRunType.Review)
             {
                 <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
@@ -306,7 +344,7 @@
                         <ChildContent>
                             <div class="monitoring-table-wrap">
                                 <table class="monitoring-table" style="margin-top: 6px;">
-                                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th><th>Tools</th></tr></thead>
                                     <tbody>
                                         @foreach (var phase in phases.OrderByDescending(p => p.Value.Cost ?? 0m).ThenByDescending(p => p.Value.Tokens))
                                         {
@@ -314,6 +352,7 @@
                                                 <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
                                                 <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
                                                 <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                                <td>@(ToolUsageDisplay.PhaseSummary(phase.Value) is { Length: > 0 } t ? t : "—")</td>
                                             </tr>
                                         }
                                     </tbody>

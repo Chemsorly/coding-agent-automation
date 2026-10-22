@@ -81,7 +81,7 @@ fails the run), validates it and renders everything else from it:
 - **Evidence** — every claim with its source, query and link.
 - **What the agent investigated** — the hypotheses (confirmed, ruled out, open), every check in order (where, for
   which hypothesis, result) and what it did not check and why. The agent writes this list; it lets you judge
-  whether it looked in the right places. The page also counts the checks per source.
+  whether it looked in the right places. The page also counts the checks per source. Next to each source that is one of the run's MCP servers, it shows how many calls the investigation really made to it, and ⚠ when it made none or the server was unavailable.
 - **Questions** (inconclusive) and **issue drafts** (root fix, mitigation or prevention, each with a target
   repository).
 
