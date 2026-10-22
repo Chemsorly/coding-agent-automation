@@ -633,7 +633,7 @@ A refused subscription fails with a `HubException` that reads the same whether t
 
 ### Settings (admin)
 
-`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both.
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role, except for four routes the project page and the repository page's Behaviour card use: `GET /pipeline`, `GET /projects/{id}`, `PUT /projects` and `PUT /projects/{projectId}/templates`. These need `admin` on the project. For a project admin, `PUT /projects` keeps the stored enabled flag, epic tracker and brain switches, and `PUT /projects/{projectId}/templates` takes only the Behaviour fields of a template already in that project; a new project or template, or another project's, is `404` (see [Projects](projects.md#project-page)). The settings API covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both.
 
 Secrets never leave the API here, not even for an admin:
 - These values come back as `****`:
@@ -746,6 +746,6 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/loop/status` | User token | Pipeline loop status (template entries filtered for scoped users) |
 | POST | `/api/ui/loop/start`, `/stop`, `/resume` | User token, global operator | Ask the Scheduler leader to start, stop or resume the loop |
 | PUT | `/api/scheduler/loop-status` | OperatorApiKey | The Scheduler leader pushes the loop status |
-| GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
+| GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin (four routes: admin on the project) | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

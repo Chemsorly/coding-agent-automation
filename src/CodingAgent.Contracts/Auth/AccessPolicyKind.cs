@@ -21,6 +21,9 @@ public enum AccessPolicyKind
 
     /// <summary>Global admin.</summary>
     Admin,
+
+    /// <summary>Global admin, or admin on at least one project.</summary>
+    AnyAdmin,
 }
 
 /// <summary>Decides whether a grant satisfies an <see cref="AccessPolicyKind"/>.</summary>
@@ -33,6 +36,7 @@ public static class AccessPolicyRules
         AccessPolicyKind.GlobalRead => grant.GlobalRole >= AccessRole.ReadOnly,
         AccessPolicyKind.GlobalOperate => grant.GlobalRole >= AccessRole.Operator,
         AccessPolicyKind.Admin => grant.GlobalRole == AccessRole.Admin,
+        AccessPolicyKind.AnyAdmin => grant.HasAnyAdmin,
         _ => false,
     };
 }

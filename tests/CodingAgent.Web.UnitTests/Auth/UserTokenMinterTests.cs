@@ -118,6 +118,19 @@ public class UserTokenMinterTests
     }
 
     [Fact]
+    public async Task AProjectAdmin_KeepsTheRoleInTheToken()
+    {
+        // #3577: without the claim the API saw a project admin as a user without roles.
+        _grant = new AccessGrant(AccessRole.None, new Dictionary<string, AccessRole> { [PaymentsId] = AccessRole.Admin }, []);
+
+        var token = await Minter().MintAsync(User(), hub: false);
+
+        var readBack = AccessGrantClaims.FromClaims((await ValidateAsync(token!.Value)).Claims);
+        readBack.RoleFor(PaymentsId).Should().Be(AccessRole.Admin);
+        readBack.GlobalRole.Should().Be(AccessRole.None);
+    }
+
+    [Fact]
     public async Task LocalAdmin_GetsAnAdminToken()
     {
         _grant = new AccessGrant(AccessRole.Admin, new Dictionary<string, AccessRole>(), []);

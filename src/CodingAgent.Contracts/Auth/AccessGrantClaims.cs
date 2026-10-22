@@ -29,8 +29,8 @@ public static class UserTokenClaimTypes
 
 /// <summary>
 /// Writes an <see cref="AccessGrant"/> into token claims and reads it back. The bindings that
-/// produced the grant (<see cref="AccessGrant.Matches"/>) are not carried. Admin is a global role
-/// only: a project-scoped admin claim grants nothing.
+/// produced the grant (<see cref="AccessGrant.Matches"/>) are not carried. A project-scoped admin
+/// (#3577) is carried like the other project roles; it covers nothing global.
 /// </summary>
 public static class AccessGrantClaims
 {
@@ -46,7 +46,7 @@ public static class AccessGrantClaims
 
             foreach (var (projectId, role) in grant.ProjectRoles.OrderBy(p => p.Key, StringComparer.Ordinal))
             {
-                if (role is AccessRole.ReadOnly or AccessRole.Operator)
+                if (role > AccessRole.None)
                     yield return new Claim(UserTokenClaimTypes.ProjectRole, $"{projectId}:{AccessRoleNames.ToName(role)}");
             }
         }
@@ -84,7 +84,7 @@ public static class AccessGrantClaims
             return false;
 
         var id = ProjectIds.Normalize(value[..separator]);
-        if (id is null || !AccessRoleNames.TryParse(value[(separator + 1)..], out role) || role == AccessRole.Admin)
+        if (id is null || !AccessRoleNames.TryParse(value[(separator + 1)..], out role))
             return false;
 
         projectId = id;

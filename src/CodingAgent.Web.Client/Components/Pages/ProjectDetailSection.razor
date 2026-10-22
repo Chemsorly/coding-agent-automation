@@ -3,6 +3,7 @@
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
 @inject IUiProviderClient ProviderConfigs
+@inject IUiConfigClient UiConfig
 @inject IAccessGuard Guard
 @inject CurrentAccess Access
 
@@ -148,9 +149,19 @@
             _project = project;
         }
         _globalConfig = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
-        _issueProviders = (await ProviderConfigs.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-        _allTemplates = (await ConfigClient.GetAllTemplatesAsync(CancellationToken.None)).ToList();
-        _allProjects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+        if (Access.IsAdmin)
+        {
+            _issueProviders = (await ProviderConfigs.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+            _allTemplates = (await ConfigClient.GetAllTemplatesAsync(CancellationToken.None)).ToList();
+            _allProjects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+        }
+        else
+        {
+            // A project admin (#3577) reads no Settings lists; the Pipelines page has the templates and trackers they can see.
+            var page = await UiConfig.GetPipelinesPageAsync(CancellationToken.None);
+            _issueProviders = page.IssueProviders.ToList();
+            _allTemplates = page.Templates.ToList();
+        }
 
         // Populate overview fields
         _name = _project.Name;
@@ -250,7 +261,7 @@
                 }
                 else
                 {
-                    <span>@(_issueProviders.FirstOrDefault(p => p.Id == _epicIssueProviderId)?.DisplayName ?? "— None —")</span>
+                    <span>@(_issueProviders.FirstOrDefault(p => p.Id == _epicIssueProviderId)?.DisplayName ?? (string.IsNullOrEmpty(_epicIssueProviderId) ? "— None —" : _epicIssueProviderId))</span>
                 }
             </div>
             @if (Access.CanAdminister(ProjectId))
