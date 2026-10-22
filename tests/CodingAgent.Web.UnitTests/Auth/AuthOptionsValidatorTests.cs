@@ -12,8 +12,11 @@ public class AuthOptionsValidatorTests
         Admin = new LocalAdminOptions { Enabled = true, Password = "secret" },
         Oidc = new OidcProviderOptions
         {
-            Enabled = true, Name = "Keycloak", Issuer = "https://kc.example.com/realms/acme",
-            ClientId = "coding-agent", ClientSecret = "s3cret",
+            Enabled = true,
+            Name = "Keycloak",
+            Issuer = "https://kc.example.com/realms/acme",
+            ClientId = "coding-agent",
+            ClientSecret = "s3cret",
         },
         Rbac = new RbacOptions
         {

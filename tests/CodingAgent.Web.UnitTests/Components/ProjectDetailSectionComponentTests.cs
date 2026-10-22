@@ -188,7 +188,8 @@ public class ProjectDetailSectionComponentTests : BunitContext
         // preservation block is active. Removing the preservation block would save state A values.
         var initialLoad = new PipelineProject
         {
-            Id = "p1", Name = "Original Name",
+            Id = "p1",
+            Name = "Original Name",
             Enabled = true,                     // A: component loads with Enabled=true
             EpicIssueProviderId = "ep-initial",
             BrainReadOnly = false,
@@ -196,7 +197,8 @@ public class ProjectDetailSectionComponentTests : BunitContext
         };
         var serverGroundTruth = new PipelineProject
         {
-            Id = "p1", Name = "Original Name",
+            Id = "p1",
+            Name = "Original Name",
             Enabled = false,                    // B: server ground truth says false
             EpicIssueProviderId = "ep-stored",
             BrainReadOnly = true,
@@ -236,10 +238,24 @@ public class ProjectDetailSectionComponentTests : BunitContext
     public async Task ProjectAdmin_SaveSecrets_KeepsOperatorOnlyFieldsFromStoredProject()
     {
         // Req 6: preservation block in SaveSecretsAsync must use the reload's values.
-        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
-            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
-        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
-            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+        var initialLoad = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = true,
+            EpicIssueProviderId = "ep-initial",
+            BrainReadOnly = false,
+            BrainConsolidationReviewEnabled = true
+        };
+        var serverGroundTruth = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = false,
+            EpicIssueProviderId = "ep-stored",
+            BrainReadOnly = true,
+            BrainConsolidationReviewEnabled = false
+        };
 
         _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(initialLoad)
@@ -269,10 +285,24 @@ public class ProjectDetailSectionComponentTests : BunitContext
     public async Task ProjectAdmin_SaveSettings_KeepsOperatorOnlyFieldsFromStoredProject()
     {
         // Req 6: preservation block in SaveSettingsAsync must use the reload's values.
-        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
-            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
-        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
-            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+        var initialLoad = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = true,
+            EpicIssueProviderId = "ep-initial",
+            BrainReadOnly = false,
+            BrainConsolidationReviewEnabled = true
+        };
+        var serverGroundTruth = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = false,
+            EpicIssueProviderId = "ep-stored",
+            BrainReadOnly = true,
+            BrainConsolidationReviewEnabled = false
+        };
 
         _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(initialLoad)
@@ -304,10 +334,24 @@ public class ProjectDetailSectionComponentTests : BunitContext
     public async Task ProjectAdmin_SaveMcpServers_KeepsOperatorOnlyFieldsFromStoredProject()
     {
         // Req 6: preservation block in SaveMcpServersAsync must use the reload's values.
-        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
-            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
-        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
-            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+        var initialLoad = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = true,
+            EpicIssueProviderId = "ep-initial",
+            BrainReadOnly = false,
+            BrainConsolidationReviewEnabled = true
+        };
+        var serverGroundTruth = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = false,
+            EpicIssueProviderId = "ep-stored",
+            BrainReadOnly = true,
+            BrainConsolidationReviewEnabled = false
+        };
 
         _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(initialLoad)
@@ -338,10 +382,24 @@ public class ProjectDetailSectionComponentTests : BunitContext
     {
         // Req 6: preservation block in SaveProjectReviewAsync must use the reload's values.
         // Project Review tab only shows for non-default projects.
-        var initialLoad = new PipelineProject { Id = "p1", Name = "Project", Enabled = true,
-            EpicIssueProviderId = "ep-initial", BrainReadOnly = false, BrainConsolidationReviewEnabled = true };
-        var serverGroundTruth = new PipelineProject { Id = "p1", Name = "Project", Enabled = false,
-            EpicIssueProviderId = "ep-stored", BrainReadOnly = true, BrainConsolidationReviewEnabled = false };
+        var initialLoad = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = true,
+            EpicIssueProviderId = "ep-initial",
+            BrainReadOnly = false,
+            BrainConsolidationReviewEnabled = true
+        };
+        var serverGroundTruth = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Project",
+            Enabled = false,
+            EpicIssueProviderId = "ep-stored",
+            BrainReadOnly = true,
+            BrainConsolidationReviewEnabled = false
+        };
 
         _mockStore.SetupSequence(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(initialLoad)
