@@ -27,6 +27,19 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
 {
     public K8sModeTests(E2EFixture fixture) : base(fixture) { }
 
+    /// <summary>
+    /// Routes every task type to a kiro,dotnet profile. The distributor routes each work item when it creates it, and
+    /// without a default route it refuses the work (spec 053 req 2.9).
+    /// </summary>
+    private Task SeedKiroDotnetRouteAsync(string profileId = "profile-k8s-e2e", string displayName = "K8s E2E Profile") =>
+        Fixture.SeedRoutedProfileAsync(new AgentProfile
+        {
+            Id = profileId,
+            DisplayName = displayName,
+            JobTemplate = E2ERouting.Key(new[] { "kiro", "dotnet" }),
+            Enabled = true
+        });
+
     // ═══════════════════════════════════════════════════════════════════════
     // G5: KubernetesWorkDistributor — DistributeAsync synchronously dispatches
     // ═══════════════════════════════════════════════════════════════════════
@@ -34,6 +47,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_DistributeAsync_CreatesWorkItemAsDispatched()
     {
+        await SeedKiroDotnetRouteAsync();
+
         // Act: distribute via the real KubernetesWorkDistributor
         var result = await DistributeDirectlyAsync("k8s-issue-100", "kiro,dotnet");
 
@@ -60,6 +75,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_DistributeAsync_DuplicateIssue_SecondRejected()
     {
+        await SeedKiroDotnetRouteAsync();
+
         // First distribution
         var r1 = await DistributeDirectlyAsync("k8s-issue-101");
         Assert.True(r1.Success);
@@ -115,6 +132,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     {
         // The API host's distributor (the web host has none since spec 051 4.1).
         // Verify it enqueues as Pending (Queued=true — item enters the visible UI queue first)
+        await SeedKiroDotnetRouteAsync();
         var result = await DistributeDirectlyAsync("k8s-type-check-500");
         Assert.True(result.Success);
         Assert.True(result.Queued); // Pending enqueue path: Queued=true
@@ -135,6 +153,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     public async Task K8sMode_CancelWorkItem_TransitionsToCancelled()
     {
         // Arrange: distribute a work item
+        await SeedKiroDotnetRouteAsync();
         var result = await DistributeDirectlyAsync("k8s-cancel-600");
         Assert.True(result.Success);
         var workItemId = result.WorkItemId!;
@@ -158,6 +177,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     public async Task K8sMode_GetJobStatus_ReturnsMappedStatus()
     {
         // Arrange: distribute
+        await SeedKiroDotnetRouteAsync();
         var result = await DistributeDirectlyAsync("k8s-status-700");
         Assert.True(result.Success);
 
@@ -177,7 +197,9 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentFetchesAssignment_ReturnsValidPayload()
     {
-        // Arrange: insert a WorkItem via Pending enqueue path
+        // Arrange: route to a kiro,dotnet profile (the work item pins it when it is created, and the claim checks it),
+        // then insert a WorkItem via Pending enqueue path
+        await SeedKiroDotnetRouteAsync("profile-kiro-dotnet-fetch", "K8s Fetch Test Profile");
         var result = await DistributeDirectlyAsync("k8s-fetch-assign-900");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
@@ -189,15 +211,6 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Title = "K8s fetch assignment test issue",
             Description = "## Requirements\nTest\n\n## Acceptance Criteria\n- [ ] Done",
             Labels = new[] { "agent:next" }
-        });
-
-        // Seed a kiro,dotnet agent profile so AssignmentEnricher can resolve it
-        await Fixture.SeedRoutedProfileAsync(new AgentProfile
-        {
-            Id = "profile-kiro-dotnet-fetch",
-            DisplayName = "K8s Fetch Test Profile",
-            JobTemplate = E2ERouting.Key(new[] { "kiro", "dotnet" }),
-            Enabled = true
         });
 
         // The assignment endpoint works on Pending items too — no need to wait for Dispatched.

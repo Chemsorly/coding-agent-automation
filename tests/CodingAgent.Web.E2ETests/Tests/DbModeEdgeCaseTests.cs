@@ -195,13 +195,14 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         Assert.NotNull(assignment.PipelineConfiguration);
         Assert.NotEmpty(assignment.ProviderConfigs);
         Assert.Equal("repo-e2e", assignment.RepoProviderConfigId);
-        Assert.Equal("agent-e2e", assignment.AgentProviderConfigId);
+        // The agent config is built from the routed profile and carries its Id (spec 053 req 4.7).
+        Assert.Equal("profile-edge-e2e", assignment.AgentProviderConfigId);
         Assert.NotNull(assignment.ResolvedProfileId);
         Assert.Equal("profile-edge-e2e", assignment.ResolvedProfileId);
 
         // Provider configs should include at minimum: repo + agent
         Assert.Contains(assignment.ProviderConfigs, c => c.Id == "repo-e2e");
-        Assert.Contains(assignment.ProviderConfigs, c => c.Id == "agent-e2e");
+        Assert.Contains(assignment.ProviderConfigs, c => c.Id == "profile-edge-e2e" && c.Kind == ProviderKind.Agent);
     }
 
     [Fact]
