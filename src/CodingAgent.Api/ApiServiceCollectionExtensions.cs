@@ -333,6 +333,14 @@ public static class ApiServiceCollectionExtensions
         AddLabelServices(services);
         AddLifecycleAndConsolidation(services);
         AddKubernetes(services);
+
+        // Shared DispatchServiceOptions singleton — all API consumers resolve this one instance,
+        // which is already clamped by DispatchServiceOptionsFactory.Create. Registered after
+        // AddKubernetes (IConfiguration is available at this point) and before AddDispatch /
+        // AddChatDispatch so their lambdas can resolve it via GetRequiredService<DispatchServiceOptions>().
+        services.AddSingleton(sp =>
+            DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>(), Log.Logger));
+
         AddDispatch(services);
         AddChatDispatch(services);
 
@@ -681,7 +689,7 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
             var jobClient = sp.GetService<IKubernetesJobClient>();
-            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            var options = sp.GetRequiredService<DispatchServiceOptions>();
             if (jobClient is null)
                 throw new InvalidOperationException(
                     "API: IKubernetesJobClient is not registered. " +
@@ -721,7 +729,7 @@ public static class ApiServiceCollectionExtensions
             new ModelFetchJobDependencies(
                 sp.GetRequiredService<IKubernetesJobClient>(),
                 sp.GetRequiredService<JobTemplateStore>(),
-                DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()),
+                sp.GetRequiredService<DispatchServiceOptions>(),
                 sp.GetRequiredService<IPipelineConfigStore>(),
                 sp.GetRequiredService<ModelFetchService>(),
                 Logger: Log.Logger)));
@@ -739,8 +747,7 @@ public static class ApiServiceCollectionExtensions
         // collaborators internally, so CodingAgent.Api does not need to reference internal types.
         services.AddSingleton<ChatJobDispatcher>(sp =>
         {
-            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
-            options.ValidateAndClamp(Log.Logger);
+            var options = sp.GetRequiredService<DispatchServiceOptions>();
             var redisStore = ResolveRedisStoreOrNull(sp);
             return new ChatJobDispatcher(
                 sp.GetRequiredService<IKubernetesJobClient>(),
@@ -760,15 +767,13 @@ public static class ApiServiceCollectionExtensions
         // options (warnings are logged once, by the dispatcher).
         services.AddSingleton(sp =>
         {
-            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
-            options.ValidateAndClamp();
+            var options = sp.GetRequiredService<DispatchServiceOptions>();
             return new CodingAgent.Api.Chat.ChatSessionStore(
                 ResolveRedisStoreOrNull(sp), TimeSpan.FromSeconds(options.ChatJobMaxDurationSeconds) + TimeSpan.FromHours(1));
         });
         services.AddSingleton(sp =>
         {
-            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
-            options.ValidateAndClamp();
+            var options = sp.GetRequiredService<DispatchServiceOptions>();
             return ActivatorUtilities.CreateInstance<CodingAgent.Api.Chat.ChatService>(sp, options);
         });
     }

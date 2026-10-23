@@ -510,6 +510,99 @@ public sealed class ConsolidationServiceTests
 
     #endregion
 
+    #region TriggerAsync — cancellation handling
+
+    [Fact]
+    public async Task TriggerAsync_WhenDistributeAsyncThrowsOce_AndTokenIsCancelled_PropagatesAndLogsNoError()
+    {
+        // AC-1 (issue #3845): when DistributeAsync throws OperationCanceledException and the caller's
+        // token is cancelled, TriggerAsync must re-throw — not swallow and return null.
+        // This test FAILS before the fix (the generic catch(Exception) intercepts the OCE and
+        // returns null instead of propagating).
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var sink = new CapturingSink();
+        var capturingLogger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            capturingLogger,
+            _config,
+            _mockProjectStore.Object,
+            WorkDistributor: _mockWorkDistributor.Object));
+
+        var act = () => sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "cancellation must propagate to the caller, not be swallowed as a null return");
+
+        sink.Events.Should().NotContain(e => e.Level == LogEventLevel.Error,
+            "a cancelled operation must not be logged as an unexpected error");
+
+        // Verify DistributeAsync was actually reached — proves the OCE propagated from the
+        // when-filter in TryDistributeAsync, not from an early ct.ThrowIfCancellationRequested()
+        // guard that could be added before the mock call in a future refactor.
+        _mockWorkDistributor.Verify(
+            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "DistributeAsync must be reached so the when-filter in TryDistributeAsync is what rethrows");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WhenDistributeAsyncThrowsOce_AndTokenIsNotCancelled_ReturnsNull()
+    {
+        // AC-2 (issue #3845): when DistributeAsync throws OperationCanceledException but the caller's
+        // token is NOT cancelled (e.g. an HttpClient internal timeout on a child token), TriggerAsync
+        // must still return null. The when-filter must not rethrow OCEs unrelated to the caller's token.
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().BeNull(
+            "an OperationCanceledException not caused by the caller's token must return null, not propagate");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WhenDistributeAsyncThrowsNonCancellation_LogsErrorAndReturnsNull()
+    {
+        // AC-3 (issue #3845): the generic catch(Exception) in TryDistributeAsync must still log at
+        // Error and return null for non-cancellation exceptions — the fix must not change this path.
+        var sink = new CapturingSink();
+        var capturingLogger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("network error"));
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            capturingLogger,
+            _config,
+            _mockProjectStore.Object,
+            WorkDistributor: _mockWorkDistributor.Object));
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().BeNull("non-cancellation exceptions must return null");
+
+        sink.Events.Should().ContainSingle(e =>
+            e.Level == LogEventLevel.Error &&
+            e.RenderMessage().Contains("unexpected error calling DistributeAsync"),
+            "non-cancellation exceptions must be logged at Error level");
+    }
+
+    #endregion
+
     /// <summary>Serilog sink that captures log events for assertion.</summary>
     private sealed class CapturingSink : ILogEventSink
     {
