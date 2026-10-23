@@ -42,6 +42,23 @@ public sealed class AgentChatPage
         await _page.SelectOptionAsync("#chat-model-select", model);
     }
 
+    /// <summary>Selects an effort in the effort dropdown, which appears once a profile is chosen.</summary>
+    public async Task SelectEffortAsync(string effort)
+    {
+        await _page.WaitForSelectorAsync("#chat-effort-select", new() { Timeout = 10_000 });
+        await _page.SelectOptionAsync("#chat-effort-select", effort);
+    }
+
+    /// <summary>
+    /// Asserts that the effort select's DOM value equals <paramref name="expected"/>, retrying with
+    /// Playwright's built-in polling until <paramref name="timeoutMs"/> expires. This tolerates the
+    /// Blazor Server SignalR round-trip that occurs after a profile switch before the re-render lands
+    /// in the browser — a point-in-time read risks a false positive by reading the stale option list.
+    /// </summary>
+    public Task AssertEffortSelectValueAsync(string expected, int timeoutMs = 5_000) =>
+        Assertions.Expect(_page.Locator("#chat-effort-select"))
+            .ToHaveValueAsync(expected, new() { Timeout = timeoutMs });
+
     /// <summary>Clicks the "Launch Chat Pod" button.</summary>
     public async Task LaunchChatPodAsync()
     {
