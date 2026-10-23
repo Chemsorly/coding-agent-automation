@@ -158,4 +158,121 @@ public sealed class AgentRoutingE2ETests : E2ETestBase
             await Fixture.StopLoopAsync();
         }
     }
+
+    // ── Regression tests for issue #3852 — unkeyed option loops ──────────────
+
+    private const string ClaudeCodeProfileId = "profile-routing-claude";
+
+    private async Task SeedKiroAndClaudeProfilesAsync()
+    {
+        await Fixture.ConfigStore.SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(KiroProfileId, "kiro,dotnet", "Routing Kiro"), CancellationToken.None);
+        await Fixture.ConfigStore.SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(ClaudeCodeProfileId, "claude,dotnet", "Routing Claude"), CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Regression for issue #3852: switching from a Kiro profile with effort <c>max</c> to a
+    /// Claude Code profile (without touching effort) must keep <c>max</c> visible in the select.
+    /// Before the fix, Blazor's positional diffing rewrote option[4] (Kiro's <c>max</c>) to
+    /// Claude Code's <c>xhigh</c> and left it selected.
+    /// </summary>
+    [Fact]
+    public async Task RoutingPage_KiroMaxToClaudeCode_EffortRemainsMax()
+    {
+        await SeedKiroAndClaudeProfilesAsync();
+        await Fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(KiroProfileId, "auto", "max"));
+
+        var settingsPage = new SettingsPage(Page, BaseUrl);
+        var routing = new AgentRoutingSectionHelper(Page);
+        await settingsPage.NavigateAsync();
+        await settingsPage.SelectTreeNodeAsync("Routing");
+        await routing.WaitForTableAsync();
+
+        // Switch profile only — ClaudeCode.Efforts includes 'max' so AfterProfileChanged keeps it.
+        await routing.Table.SetRouteAsync("default", ClaudeCodeProfileId, "auto");
+
+        // Use retry assertion (ToHaveValueAsync) to tolerate the Blazor Server SignalR round-trip
+        // between SetRouteAsync returning and the re-render patching the effort option list.
+        // A one-shot InputValueAsync read races the re-render and produces a false positive.
+        await routing.Table.AssertSelectValueAsync("route-effort-default", "max");
+
+        await routing.SaveAsync();
+        var stored = await Routing.LoadAsync(CancellationToken.None);
+        Assert.Equal("max", stored!.Default!.Effort);
+    }
+
+    /// <summary>
+    /// Regression for issue #3852: switching from a Claude Code profile with effort <c>max</c>
+    /// to a Kiro profile (without touching effort) must keep <c>max</c> visible in the select.
+    /// Before the fix, removing Claude Code's extra <c>xhigh</c> option caused the browser to
+    /// fall back to the first option (<c>auto</c>).
+    /// </summary>
+    [Fact]
+    public async Task RoutingPage_ClaudeCodeMaxToKiro_EffortRemainsMax()
+    {
+        await SeedKiroAndClaudeProfilesAsync();
+        await Fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(ClaudeCodeProfileId, "auto", "max"));
+
+        var settingsPage = new SettingsPage(Page, BaseUrl);
+        var routing = new AgentRoutingSectionHelper(Page);
+        await settingsPage.NavigateAsync();
+        await settingsPage.SelectTreeNodeAsync("Routing");
+        await routing.WaitForTableAsync();
+
+        // Switch profile only — Kiro.Efforts includes 'max' so AfterProfileChanged keeps it.
+        await routing.Table.SetRouteAsync("default", KiroProfileId, "auto");
+
+        // Use retry assertion (ToHaveValueAsync) to tolerate the Blazor Server SignalR round-trip.
+        await routing.Table.AssertSelectValueAsync("route-effort-default", "max");
+
+        await routing.SaveAsync();
+        var stored = await Routing.LoadAsync(CancellationToken.None);
+        Assert.Equal("max", stored!.Default!.Effort);
+    }
+
+    /// <summary>
+    /// Regression for issue #3852: switching a row from a disabled profile to an enabled profile
+    /// that sorts after it must show the chosen profile in the select.
+    /// Before the fix, Blazor's positional diffing shifted option positions when the disabled
+    /// profile's option was removed, causing the next enabled profile to appear selected.
+    /// </summary>
+    [Fact]
+    public async Task RoutingPage_LeavingDisabledProfile_ProfileSelectShowsChosenProfile()
+    {
+        const string DisabledId = "profile-repro-a-kiro";
+        const string ProfileB = "profile-repro-b-kiro";
+        const string ProfileC = "profile-repro-c-kiro";
+
+        // Display names "Repro A (disabled)", "Repro B", "Repro C" sort alphabetically,
+        // which matches the API's OrderBy(DisplayName) ordering → [A, B, C] in the select.
+        await Fixture.ConfigStore.SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(DisabledId, "kiro,dotnet", "Repro A (disabled)", enabled: false),
+            CancellationToken.None);
+        await Fixture.ConfigStore.SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(ProfileB, "kiro,dotnet", "Repro B"), CancellationToken.None);
+        await Fixture.ConfigStore.SaveAgentProfileAsync(
+            AgentRoutingTestData.Profile(ProfileC, "kiro,dotnet", "Repro C"), CancellationToken.None);
+        // Route to the disabled profile so OfferedProfiles includes it on the Default row.
+        await Fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(DisabledId, "auto", "auto"));
+
+        var settingsPage = new SettingsPage(Page, BaseUrl);
+        var routing = new AgentRoutingSectionHelper(Page);
+        await settingsPage.NavigateAsync();
+        await settingsPage.SelectTreeNodeAsync("Routing");
+        await routing.WaitForTableAsync();
+
+        // Switch to ProfileC; DisabledId is removed from OfferedProfiles (not enabled, not row.ProfileId).
+        await routing.Table.SetRouteAsync("default", ProfileC, "auto");
+
+        // Use retry assertion (ToHaveValueAsync) to tolerate the Blazor Server SignalR round-trip.
+        // Without @key, Blazor removes the disabled-profile option after the re-render lands, shifting
+        // option positions; a one-shot read before that re-render still sees ProfileC (just set by
+        // SelectOptionAsync) and produces a false positive.
+        await routing.Table.AssertSelectValueAsync("route-profile-default", ProfileC);
+
+        await routing.SaveAsync();
+        var stored = await Routing.LoadAsync(CancellationToken.None);
+        Assert.Equal(ProfileC, stored!.Default!.ProfileId);
+    }
 }
