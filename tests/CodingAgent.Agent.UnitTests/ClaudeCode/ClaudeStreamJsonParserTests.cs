@@ -258,7 +258,7 @@ public class ClaudeStreamJsonParserTests
 
     [Theory]
     [InlineData("authentication_failed", null, AgentErrorCategory.PermanentAuthFailure)]
-    [InlineData("billing_error", null, AgentErrorCategory.PermanentAuthFailure)]
+    [InlineData("billing_error", null, AgentErrorCategory.ProviderBillingLimit)]
     [InlineData(null, 403, AgentErrorCategory.PermanentAuthFailure)]
     [InlineData("rate_limit", null, AgentErrorCategory.ProviderRateLimit)]
     [InlineData(null, 429, AgentErrorCategory.ProviderRateLimit)]

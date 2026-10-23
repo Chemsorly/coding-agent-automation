@@ -167,7 +167,7 @@ public sealed class TriageService
         await using (var db = await _dbFactory.CreateDbContextAsync(ct))
         {
             db.Triages.Add(TriageEntityMapper.ToEntity(record));
-            db.WorkItems.Add(WorkItemDispatchEndpoints.BuildWorkItemEntity(distribution, workItemId));
+            db.WorkItems.Add(WorkItemEntityBuilder.BuildWorkItemEntity(distribution, workItemId));
             await db.SaveChangesAsync(ct);
         }
 
@@ -242,7 +242,7 @@ public sealed class TriageService
                 UpdatedAt = DateTimeOffset.UtcNow,
             };
             TriageEntityMapper.CopyInto(updated, entity);
-            db.WorkItems.Add(WorkItemDispatchEndpoints.BuildWorkItemEntity(distribution, workItemId));
+            db.WorkItems.Add(WorkItemEntityBuilder.BuildWorkItemEntity(distribution, workItemId));
             try
             {
                 await db.SaveChangesAsync(ct);

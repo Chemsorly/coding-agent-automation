@@ -1052,12 +1052,102 @@ public class QualityGateExecutorEdgeCaseTests
             "the run must end on the terminal step FinalizePullRequest set, not on the retry loop's RunningQualityGates");
     }
 
-    // TODO [WARNING]: The first guard in HandlePostPrCiAsync (line 153 — after WaitForPostPrCiAsync,
-    // before the retry loop) has no dedicated test for ConflictRestart. If that guard were silently
-    // reverted to `== PipelineStep.Failed`, the test below would not catch the regression because
-    // ciConflictRestart is placed at sequence position #4 (inside RunRetryLoopAsync), not #3.
-    // A missing test case: place ciConflictRestart at sequence position #3 (instead of ciFailure)
-    // and omit position #4 — that would validate the first guard independently.
+    /// <summary>
+    /// Regression test for issue #3843: when the first post-PR CI poll (inside
+    /// <c>WaitForPostPrCiAsync</c>, before the retry loop) returns ConflictRestart, the first
+    /// guard in <c>HandlePostPrCiAsync</c> must return immediately — no LLM retry agent is
+    /// invoked and <c>FinalizeDraftPrAsync</c> must NOT be called, even when retries remain.
+    /// </summary>
+    [Fact]
+    public async Task HandlePostPrCiAsync_ConflictRestartOnFirstPostPrCiPoll_WithRetriesLeft_RequeuesAsAgentNext()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+        var ciConflictRestart = new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] };
+
+        // SEQUENCE (position-sensitive):
+        //   call #1 — pre-PR CI via AppendExternalCiIfNeededAsync → pass
+        //   call #2 — cleanup-path CI via RunPostRetryCleanupAndFinalizeAsync → pass
+        //   call #3 — post-PR CI via WaitForPostPrCiAsync → ConflictRestart (triggers the fix; no call #4)
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)          // call #1 — pre-PR CI passes
+            .ReturnsAsync(ciPassed)          // call #2 — cleanup-path CI passes
+            .ReturnsAsync(ciConflictRestart); // call #3 — first post-PR CI poll → ConflictRestart
+
+        // MaxRetries=1: retries are available but must NOT be used — ConflictRestart exits before retry loop.
+        await _executor.ProceedToQualityGatesAsync(BuildContext(maxRetries: 1), CancellationToken.None);
+
+        // ConflictRestart guard fired at first guard in HandlePostPrCiAsync → no draft PR
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "FinalizeDraftPrAsync must not be called when ConflictRestart is detected on the first post-PR CI poll");
+
+        // Only the pre-PR cleanup agent must have run (Times.Once). A retry agent invocation
+        // would be a second ExecuteAsync call. Times.Once verifies the cleanup ran AND no retry ran.
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once,
+            "only the pre-PR cleanup agent must run; no retry agent should be invoked when ConflictRestart is detected before the retry loop");
+
+        // run state must reflect the ConflictRestart outcome
+        _run.CurrentStep.Should().Be(PipelineStep.ConflictRestart);
+        _run.FinalLabel.Should().Be(AgentLabels.Next);
+    }
+
+    /// <summary>
+    /// Regression test for issue #3843: when the first post-PR CI poll returns ConflictRestart
+    /// AND RetryCount is already at MaxRetries (no retries left), the first guard in
+    /// <c>HandlePostPrCiAsync</c> must still return immediately — <c>FinalizeDraftPrAsync</c>
+    /// must NOT be called and the run must be re-queued as agent:next.
+    /// </summary>
+    [Fact]
+    public async Task HandlePostPrCiAsync_ConflictRestartOnFirstPostPrCiPoll_AtMaxRetries_RequeuesAsAgentNext()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+        var ciConflictRestart = new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] };
+
+        // SEQUENCE (position-sensitive):
+        //   call #1 — pre-PR CI → pass
+        //   call #2 — cleanup-path CI → pass
+        //   call #3 — first post-PR CI poll → ConflictRestart (no retries; exits immediately)
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)           // call #1 — pre-PR CI passes
+            .ReturnsAsync(ciPassed)           // call #2 — cleanup-path CI passes
+            .ReturnsAsync(ciConflictRestart);  // call #3 — first post-PR CI poll → ConflictRestart
+
+        // MaxRetries=0: no retries available. ConflictRestart must still re-queue as agent:next,
+        // not fall through to FinalizeDraftPrAsync.
+        await _executor.ProceedToQualityGatesAsync(BuildContext(maxRetries: 0), CancellationToken.None);
+
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "FinalizeDraftPrAsync must not be called when ConflictRestart is detected at MaxRetries");
+
+        // Only the pre-PR cleanup agent must have run. No retry agent should fire even when
+        // MaxRetries=0 would have caused FinalizeDraftPrAsync to be called instead of re-queuing.
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once,
+            "only the pre-PR cleanup agent must run; no retry agent should be invoked when ConflictRestart is detected at MaxRetries");
+
+        _run.CurrentStep.Should().Be(PipelineStep.ConflictRestart);
+        _run.FinalLabel.Should().Be(AgentLabels.Next);
+    }
 
     /// <summary>
     /// Regression test for issue #2651: when <c>AppendExternalCiIfNeededAsync</c> detects a

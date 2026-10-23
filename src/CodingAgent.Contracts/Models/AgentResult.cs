@@ -23,6 +23,12 @@ public enum AgentErrorCategory
     /// does not know) — permanent until the agent provider's settings are fixed.
     /// </summary>
     ProviderMisconfigured,
+
+    /// <summary>
+    /// The provider refused the call for billing reasons, for example the API credit balance is too low —
+    /// permanent until the account is topped up or the profile switches to another auth mode.
+    /// </summary>
+    ProviderBillingLimit,
 }
 
 public sealed class AgentResult

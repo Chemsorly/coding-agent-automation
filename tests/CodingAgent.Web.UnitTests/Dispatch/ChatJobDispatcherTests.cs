@@ -886,10 +886,10 @@ public class ChatJobDispatcherTests
         await act.Should().NotThrowAsync();
     }
 
-    // ─── 22. TerminateChatSessionAsync — watcher completes → no force delete ─
+    // ─── 22. Watcher drains naturally → no force delete ──────────────────────
 
     [Fact]
-    public async Task TerminateChatSessionAsync_WatcherCompletesWithinGrace_NoForceDelete()
+    public async Task WatcherTask_WhenJobCompletesNaturally_NoForceDeleteCalled()
     {
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
@@ -3058,5 +3058,303 @@ public class ChatJobDispatcherTests
 
         mockClient.Verify(c => c.CancelChat(It.IsAny<string>()), Times.Once,
             "CancelChat must be called once when the mock registry returns an AgentEntry with the chat-session-id label");
+    }
+
+    // ─── New (a): DispatchChatPodAsync — caller cancels during the connect poll ──
+
+    /// <summary>
+    /// When the caller's <see cref="CancellationToken"/> fires while the dispatcher is inside
+    /// the agent-connect poll loop, the outer <c>catch (OperationCanceledException)</c> in
+    /// <c>PollForAgentConnectionAsync</c> must call <c>DeleteJobAsync</c> with
+    /// <c>CancellationToken.None</c> (via <c>TryCleanupFailedDispatch</c>) and then re-throw.
+    /// Covers the uncovered branch at ~L398–401.
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_CallerCancellationDuringConnectPoll_CallsDeleteWithNoneAndPropagatesOCE()
+    {
+        var jobClientMock = CreateJobClientMock();
+        string? capturedJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) => capturedJobName = j.Metadata.Name)
+            .Returns(Task.CompletedTask);
+
+        // No agent registered in registry → poll loops until cancelled
+        await using var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            options: CreateOptions(connectTimeoutSeconds: 30));
+
+        using var cts = new CancellationTokenSource();
+        // Cancel after 300 ms — well within the 500 ms Task.Delay in each poll iteration
+        _ = Task.Run(async () => { await Task.Delay(300); cts.Cancel(); });
+
+        var act = async () => await dispatcher.DispatchChatPodAsync(TestSelector, null, null, cts.Token);
+
+        // Must propagate OperationCanceledException, not ChatPodTimeoutException
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // TryCleanupFailedDispatch is called with CancellationToken.None from the caller-cancel catch
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == capturedJobName),
+            TestNamespace,
+            It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once,
+            "DeleteJobAsync must be called with CancellationToken.None from the caller-cancel catch");
+    }
+
+    // ─── New (a2): caller cancel AND DeleteJobAsync also throws ──────────────────
+
+    /// <summary>
+    /// When the caller cancels AND <c>DeleteJobAsync</c> inside <c>TryCleanupFailedDispatch</c>
+    /// also throws, the original <c>OperationCanceledException</c> must still propagate.
+    /// Covers the <c>catch (Exception)</c> in <c>TryCleanupFailedDispatch</c> (~L719).
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_CallerCancellationAndDeleteAlsoThrows_StillPropagatesOCE()
+    {
+        var jobClientMock = CreateJobClientMock();
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Override the default: DeleteJobAsync throws — exercises TryCleanupFailedDispatch's catch
+        jobClientMock.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("delete forbidden"));
+
+        await using var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            options: CreateOptions(connectTimeoutSeconds: 30));
+
+        using var cts = new CancellationTokenSource();
+        _ = Task.Run(async () => { await Task.Delay(300); cts.Cancel(); });
+
+        var act = async () => await dispatcher.DispatchChatPodAsync(TestSelector, null, null, cts.Token);
+
+        // Original OperationCanceledException must propagate even when DeleteJobAsync throws
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "DeleteJobAsync must be attempted even when it will throw");
+    }
+
+    // ─── New (b): DispatchChatPodAsync — empty AgentApiKeyValue guard ─────────────
+
+    /// <summary>
+    /// When <see cref="DispatchServiceOptions.AgentApiKeyValue"/> is empty, the guard in
+    /// <c>BuildAndSubmitChatJobAsync</c> (~L264) must throw <see cref="InvalidOperationException"/>
+    /// before <c>CreateJobAsync</c> is ever called.
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_EmptyAgentApiKeyValue_ThrowsInvalidOperationExceptionAndNoJobCreated()
+    {
+        var jobClientMock = CreateJobClientMock();
+
+        var options = new DispatchServiceOptions
+        {
+            Namespace = TestNamespace,
+            KiroPvcPool = ["pvc-0", "pvc-1"],
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "caa-secret",
+            AgentApiKeyValue = "",           // empty — triggers the ~L264 guard
+            AgentServiceAccountName = "caa-agent",
+            ChatPodConnectTimeoutSeconds = 5,
+            ChatJobMaxDurationSeconds = 7200,
+            ChatTerminationGracePeriodSeconds = 1
+        };
+
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, options: options);
+
+        var act = async () => await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*AGENT_API_KEY*");
+
+        jobClientMock.Verify(c => c.CreateJobAsync(
+            It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "CreateJobAsync must not be called when AgentApiKeyValue is empty");
+    }
+
+    // ─── New (c): Secret creation fails AND DeleteJobAsync also throws ────────────
+
+    /// <summary>
+    /// When <c>CreateSecretAsync</c> throws inside <c>CreateAgentKeySecretAsync</c> and the
+    /// subsequent cleanup <c>DeleteJobAsync</c> also throws, the nested catch at ~L345–348
+    /// must swallow the delete exception and re-throw the original Secret exception.
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_KeySecretFailsAndDeleteAlsoThrows_OriginalExceptionPropagates()
+    {
+        var jobClientMock = CreateJobClientMock();
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        jobClientMock.Setup(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("secrets are forbidden"));
+
+        // Override default: DeleteJobAsync also throws — exercises the nested catch (~L345-348)
+        jobClientMock.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("delete forbidden"));
+
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
+
+        var act = async () => await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // The original Secret exception must propagate, not the delete exception
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*secrets are forbidden*");
+    }
+
+    // ─── New (d): TerminateChatSessionAsync — watcher completes within grace (clean path) ─
+
+    /// <summary>
+    /// When the watcher task completes within the grace period, <c>TerminateChatSessionAsync</c>
+    /// must take the clean path (~L614), send <c>CancelChat</c>, and NOT call
+    /// <c>DeleteJobAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task TerminateChatSessionAsync_WatcherCompletesWithinGrace_CleanPath_NoForceDelete()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                capturedJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, capturedJobName!, dispatchId, "conn-clean-terminate");
+            })
+            .Returns(Task.CompletedTask);
+
+        // Track CancelChat calls
+        var mockClient = new Mock<IAgentHubClient>();
+        mockClient.Setup(c => c.CancelChat(It.IsAny<string>())).Returns(Task.CompletedTask);
+        var mockClients = new Mock<IHubClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client(It.IsAny<string>())).Returns(mockClient.Object);
+        var hubContextMock = new Mock<IHubContext<AgentHub, IAgentHubClient>>();
+        hubContextMock.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        // Watcher task controlled via TaskCompletionSource — will complete within grace period
+        var watcherTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watcherMock = new Mock<IChatSessionWatcher>();
+        watcherMock
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, _, _, _, _) => watcherTcs.Task);
+
+        await using var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            hubContextMock.Object,
+            CreateTemplateStore(),
+            registry,
+            CreateOptions(gracePeriod: 5),
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: watcherMock.Object);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Complete the watcher task within the grace period
+        _ = Task.Run(async () => { await Task.Delay(200); watcherTcs.SetResult(); });
+
+        var act = async () => await dispatcher.TerminateChatSessionAsync(capturedJobName!, CancellationToken.None);
+        await act.Should().NotThrowAsync("TerminateChatSessionAsync must not throw on the clean terminate path");
+
+        // CancelChat must have been sent before the grace-period wait
+        mockClient.Verify(c => c.CancelChat(It.IsAny<string>()), Times.Once,
+            "CancelChat must be sent on the clean terminate path");
+
+        // No force-delete — watcher completed within grace period
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == capturedJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Never,
+            "force-delete must not be called when watcher completes within the grace period");
+    }
+
+    // ─── New (e): TerminateChatSessionAsync — force-delete DeleteJobAsync throws ──
+
+    /// <summary>
+    /// When <c>DeleteJobAsync</c> throws inside <c>ForceDeleteAndCleanupAsync</c>, the
+    /// <c>catch</c> at ~L681–686 must swallow the exception so that
+    /// <c>TerminateChatSessionAsync</c> does not throw.
+    /// </summary>
+    [Fact]
+    public async Task TerminateChatSessionAsync_ForceDeleteThrows_DoesNotThrow()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-force-throw");
+            })
+            .Returns(Task.CompletedTask);
+
+        // Override default: DeleteJobAsync throws — exercises the catch at ~L681-686
+        jobClientMock.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("k8s unavailable"));
+
+        // Stalled watcher — blocks until WatcherCts fires, never calls cleanupCallback.
+        // Same pattern as test 23: ensures the force-delete path is taken deterministically.
+        var stalledWatcher = new Mock<IChatSessionWatcher>();
+        stalledWatcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, _, _, _, ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(
+                    _ => Task.CompletedTask, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnCanceled, TaskScheduler.Default).Unwrap());
+
+        await using var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registry,
+            CreateOptions(gracePeriod: 1),
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: stalledWatcher.Object);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var act = async () => await dispatcher.TerminateChatSessionAsync(createdJobName!, CancellationToken.None);
+
+        // Must not throw even when DeleteJobAsync throws in the force-delete path
+        await act.Should().NotThrowAsync(
+            "TerminateChatSessionAsync must swallow DeleteJobAsync exceptions in the force-delete path");
+
+        // DeleteJobAsync must have been attempted despite throwing
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == createdJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "DeleteJobAsync must be attempted in the force-delete path");
     }
 }

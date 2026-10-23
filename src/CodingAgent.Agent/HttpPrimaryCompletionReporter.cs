@@ -74,11 +74,24 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
             // be interrupted by agent shutdown, potentially delaying teardown. The resilience pipeline has
             // configured timeouts so the delay is bounded. Consider propagating `ct` here if tight shutdown
             // latency becomes a concern.
-            var branchAccepted = await _lifecycleClient.PostStatusAsync(_workItemId, branchUpdate, CancellationToken.None);
-            if (!branchAccepted)
-                _logger.Warning(
-                    "BranchName Running POST rejected for WorkItem {WorkItemId} — BranchName will not be persisted in DB",
+            try
+            {
+                var branchAccepted = await _lifecycleClient.PostStatusAsync(_workItemId, branchUpdate, CancellationToken.None);
+                if (!branchAccepted)
+                    _logger.Warning(
+                        "BranchName Running POST rejected for WorkItem {WorkItemId} — BranchName will not be persisted in DB",
+                        _workItemId);
+            }
+            catch (WorkItemStatusPostException ex) when (!ex.IsUnreachable)
+            {
+                // 5xx survived the resilience handler: non-fatal for the BranchName intermediate POST.
+                // Log a warning and continue — the terminal status POST must still run.
+                // IsUnreachable = true (connection refused, open circuit) is NOT caught here so that
+                // WorkItemAgentService.RetryWhileControlPlaneUnreachableAsync can retry the whole report.
+                _logger.Warning(ex,
+                    "BranchName Running POST failed (5xx) for WorkItem {WorkItemId} — BranchName will not be persisted in DB",
                     _workItemId);
+            }
         }
 
         // Primary channel: HTTP POST terminal status (durable)

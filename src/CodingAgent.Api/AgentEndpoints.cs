@@ -9,7 +9,6 @@ using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 
 namespace CodingAgent.Api;
 
@@ -53,10 +52,10 @@ public static class AgentEndpoints
     /// </summary>
     internal static async Task<Ok<CredentialPoolStatus>> GetCredentialPool(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        IConfiguration configuration,
+        DispatchServiceOptions options,
         CancellationToken ct)
     {
-        var pool = DispatchServiceOptionsFactory.Create(configuration).KiroPvcPool;
+        var pool = options.KiroPvcPool;
         if (pool.Count == 0)
             return TypedResults.Ok(new CredentialPoolStatus(0, 0, 0));   // pooling not configured
 

@@ -427,6 +427,54 @@ public class CiPollingCoordinatorTests
             "WaitForPostPrCiAsync must restore the prior InfrastructureRetryCount after post-PR CI completes");
     }
 
+    // ── Gap 4b: WaitForPostPrCiAsync — IsInfrastructureFailure propagation (issue #3843) ──
+
+    /// <summary>
+    /// Regression test for issue #3843: when <c>PollAndHandleInfraRetryAsync</c> returns a
+    /// <see cref="PipelineRunStatus"/> with <see cref="PipelineRunStatus.IsInfrastructureFailure"/>
+    /// set to <c>true</c>, <c>WaitForPostPrCiAsync</c> must propagate that flag onto the returned
+    /// <see cref="GateResult.IsInfrastructureFailure"/>. Without propagation, the CI-never-started
+    /// short-circuit in <c>RunRetryLoopAsync</c> never fires after post-PR CI, and the LLM fix agent
+    /// is invoked against an infrastructure problem it cannot resolve.
+    /// </summary>
+    [Fact]
+    public async Task WaitForPostPrCiAsync_WhenCiStatusIsInfrastructureFailure_GateHasIsInfrastructureFailureTrue()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var context = BuildContextForPostPrCi(run);
+
+        // GetRunStatusAsync returns Running so WaitForCiRunsToAppearAsync passes through immediately
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Running }]
+            });
+
+        // CI completes with a failure flagged as infrastructure failure
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Failed,
+                IsInfrastructureFailure = true,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "runner lost" }]
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore: null, CancellationToken.None);
+
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeFalse("infrastructure failure is still a failure");
+        report.ExternalCi!.IsInfrastructureFailure.Should().BeTrue(
+            "IsInfrastructureFailure must be propagated from PipelineRunStatus to the post-PR ExternalCi gate");
+    }
+
     // ── Gap 5: PollCiWithNotStartedRetryAsync — last-minute race guard ──
 
     /// <summary>

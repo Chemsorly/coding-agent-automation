@@ -53,6 +53,7 @@ public sealed class ConsolidationProgress
             result.TotalCost = Run.TotalCost;
             result.CacheReadTokens = Run.CacheReadTokens;
             result.CacheWriteTokens = Run.CacheWriteTokens;
+            result.PhaseBreakdown = LocalPipelineExecutor.BuildPhaseBreakdownPayload(Run.Metrics.PhaseBreakdown);
         }
     }
 

@@ -90,7 +90,8 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             FinalStep = result.Success ? PipelineStep.Completed : PipelineStep.Failed,
             FailureReason = result.ErrorMessage,
             FailureCategory = result.FailureCategory,
-            CompletedAt = DateTimeOffset.UtcNow
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = result.PhaseBreakdown
         };
     }
 }

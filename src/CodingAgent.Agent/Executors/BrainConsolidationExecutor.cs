@@ -140,8 +140,8 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             RecordUsage(diffSummaryTokenUsage, "brain_diff_summary");
             if (reviewResult is not null)
             {
-                RecordUsage(reviewResult.ReviewTokenUsage, "brain_review");
-                RecordUsage(reviewResult.RefinementTokenUsage, "brain_refinement");
+                RecordUsage(reviewResult.ReviewAgentResult, "brain_review");
+                RecordUsage(reviewResult.RefinementAgentResult, "brain_refinement");
             }
             var reviewTokenUsage = reviewResult?.ReviewTokenUsage;
             var refinementTokenUsage = reviewResult?.RefinementTokenUsage;

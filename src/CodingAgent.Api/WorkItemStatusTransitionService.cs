@@ -131,7 +131,19 @@ public sealed partial class WorkItemStatusTransitionService
         {
             var currentStatus = await _transitionService.GetCurrentStatusAsync(id, ct);
             if (currentStatus is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded or WorkItemStatus.Failed)
+            {
+                // A consolidation job reports to the hub first, which completes the work item; this HTTP completion
+                // then arrives with the job's usage. Record it here — the hub path records no usage.
+                if (ResolvePayloadAndFailureReason(request).Payload?.PhaseBreakdown is { Count: > 0 })
+                {
+                    var usageTask = EmitConsolidationUsageTelemetryAsync(id, request, _dbFactory, CancellationToken.None);
+                    if (awaitTelemetry)
+                        await usageTask;
+                    else
+                        _ = usageTask;
+                }
                 return StatusTransitionOutcome.AlreadyAtTarget;
+            }
             // null → item not found; fall through so TransitionDetailedAsync returns NotFound.
             // Any non-terminal current status → fall through for normal processing.
         }
@@ -274,7 +286,7 @@ public sealed partial class WorkItemStatusTransitionService
 
             // Record per-phase LLM usage metrics from the completion payload
             if (payload?.PhaseBreakdown is { Count: > 0 })
-                RecordRunUsageMetrics(runTypeTag, payload.PhaseBreakdown);
+                RecordRunUsageMetrics(runTypeTag, payload.PhaseBreakdown, providerTag, modelTag);
 
             if (payload?.RateLimits is { Count: > 0 })
                 RecordRateLimitMetrics(payload.RateLimits);
@@ -292,6 +304,38 @@ public sealed partial class WorkItemStatusTransitionService
     }
 
     /// <summary>
+    /// Records the usage counters of a consolidation run whose HTTP completion arrived after the hub
+    /// completed the work item. No-op for every other run type, whose usage the transitioning HTTP
+    /// completion already recorded.
+    /// </summary>
+    private static async Task EmitConsolidationUsageTelemetryAsync(
+        Guid id,
+        WorkItemStatusRequest request,
+        IDbContextFactory<PipelineDbContext>? dbFactory,
+        CancellationToken ct)
+    {
+        try
+        {
+            var (payload, _) = ResolvePayloadAndFailureReason(request);
+            if (payload?.PhaseBreakdown is not { Count: > 0 })
+                return;
+
+            var (_, runTypeTag, _, _, providerTag, modelTag) =
+                await RunOutcomeTelemetry.ResolveRunContextAsync(id, dbFactory, ct);
+
+            if (runTypeTag != PipelineRunType.Consolidation.ToString().ToLowerInvariant())
+                return;
+
+            RecordRunUsageMetrics(runTypeTag, payload.PhaseBreakdown, providerTag, modelTag);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.ForContext("SourceContext", nameof(WorkItemStatusTransitionService))
+                .Warning(ex, "Failed to emit consolidation usage telemetry for WorkItem {Id}", id);
+        }
+    }
+
+    /// <summary>
     /// Records <c>pipeline.run.tokens</c>, <c>pipeline.run.cost_usd</c>,
     /// <c>pipeline.run.agent_sessions</c>, and <c>pipeline.run.agent_time</c>
     /// for each phase in the per-phase breakdown, plus the phase-less detail counters
@@ -300,12 +344,17 @@ public sealed partial class WorkItemStatusTransitionService
     /// </summary>
     private static void RecordRunUsageMetrics(
         string runTypeTag,
-        IReadOnlyDictionary<string, PhaseUsagePayload> phaseBreakdown)
+        IReadOnlyDictionary<string, PhaseUsagePayload> phaseBreakdown,
+        string routeProviderTag,
+        string routeModelTag)
     {
         foreach (var (rawPhase, usage) in phaseBreakdown)
         {
             var phase = PipelineTelemetry.NormalizeRunPhase(rawPhase);
-            var provider = PipelineTelemetry.NormalizeRunProvider(usage.Provider);
+            var provider = string.IsNullOrEmpty(usage.Provider)
+                ? routeProviderTag
+                : PipelineTelemetry.NormalizeRunProvider(usage.Provider);
+            var model = string.IsNullOrEmpty(usage.Model) ? routeModelTag : usage.Model;
 
             RecordUsageDetailMetrics(runTypeTag, provider, usage);
 
@@ -314,7 +363,8 @@ public sealed partial class WorkItemStatusTransitionService
                 PipelineTelemetry.RunTokens.Add(usage.Tokens,
                     new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
-                    new KeyValuePair<string, object?>(ProviderTag, provider));
+                    new KeyValuePair<string, object?>(ProviderTag, provider),
+                    new KeyValuePair<string, object?>("model", model));
             }
 
             if (usage.Cost is { } cost && cost > 0)
@@ -322,7 +372,8 @@ public sealed partial class WorkItemStatusTransitionService
                 PipelineTelemetry.RunCostUsd.Add((double)cost,
                     new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
-                    new KeyValuePair<string, object?>(ProviderTag, provider));
+                    new KeyValuePair<string, object?>(ProviderTag, provider),
+                    new KeyValuePair<string, object?>("model", model));
             }
 
             if (usage.SessionCount > 0)
@@ -331,7 +382,7 @@ public sealed partial class WorkItemStatusTransitionService
                     new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
                     new KeyValuePair<string, object?>(ProviderTag, provider),
-                    new KeyValuePair<string, object?>("model", usage.Model ?? RunOutcomeTelemetry.UnknownTag));
+                    new KeyValuePair<string, object?>("model", model));
             }
 
             if (usage.AgentTimeSeconds > 0)
@@ -339,7 +390,8 @@ public sealed partial class WorkItemStatusTransitionService
                 PipelineTelemetry.RunAgentTime.Add(usage.AgentTimeSeconds,
                     new KeyValuePair<string, object?>(RunOutcomeTelemetry.RunTypeTag, runTypeTag),
                     new KeyValuePair<string, object?>(PhaseTag, phase),
-                    new KeyValuePair<string, object?>(ProviderTag, provider));
+                    new KeyValuePair<string, object?>(ProviderTag, provider),
+                    new KeyValuePair<string, object?>("model", model));
             }
         }
     }
