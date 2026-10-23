@@ -223,7 +223,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             // Select strategy based on run type and execute run-type-specific completion logic.
             // Neither strategy touches agent state — that is this method's responsibility.
-            IJobCompletionStrategy strategy = run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
+            IJobCompletionStrategy strategy = run.IsConsolidation()
                 ? _consolidationStrategy
                 : _regularStrategy;
 
@@ -250,7 +250,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // label swaps complete before the hub method returns. The agent is already Idle
         // in the registry, so the dispatcher can assign it work via the periodic drain sweep.
         // Consolidation runs skip bookkeeping — they have no associated issue labels or feedback comments.
-        if (run is not null && run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
+        if (run is not null && !run.IsConsolidation())
         {
             // Record brain update result once per non-consolidation run.
             // BrainUpdatesPushed is set by JobCompletionMapper.Apply inside strategy.ExecuteAsync above.

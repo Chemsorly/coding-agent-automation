@@ -15,9 +15,9 @@ public sealed partial class PipelineRun
     /// </para>
     /// <para>
     /// Consolidation routing note: completion-strategy selection in <c>AgentJobLifecycleService</c>
-    /// keys on <c>IssueProviderConfigId == ConsolidationConstants.ProviderConfigId</c>, not on
-    /// <c>RunType</c>. Callers that need the sentinel (e.g. <c>FromDistributionRequest</c>) must
-    /// set it before calling this method; this factory passes it through unchanged.
+    /// keys on <c>run.IsConsolidation()</c>, not on <c>RunType</c>. Callers that need the sentinel
+    /// (e.g. <c>FromDistributionRequest</c>) must set it before calling this method; this factory
+    /// passes it through unchanged.
     /// </para>
     /// </remarks>
     public static PipelineRun CreateForRunType(PipelineRunCreationParams p)

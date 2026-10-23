@@ -49,7 +49,7 @@
                         <select id="chat-model-select" @bind="_selectedModel" class="chat-select">
                             @foreach (var model in chosen.Models)
                             {
-                                <option value="@model">@(model == AgentToolCatalog.Auto ? "auto (the tool chooses)" : model)</option>
+                                <option @key="model" value="@model">@(model == AgentToolCatalog.Auto ? "auto (the tool chooses)" : model)</option>
                             }
                         </select>
                     </div>
@@ -58,7 +58,7 @@
                         <select id="chat-effort-select" @bind="_selectedEffort" class="chat-select">
                             @foreach (var effort in chosen.Efforts)
                             {
-                                <option value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
+                                <option @key="effort" value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
                             }
                         </select>
                     </div>
