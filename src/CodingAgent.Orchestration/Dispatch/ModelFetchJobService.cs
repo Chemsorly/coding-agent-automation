@@ -221,23 +221,9 @@ public sealed class ModelFetchJobService
     {
         try
         {
-            var runningJobs = await _kubeClient.ListJobsAsync(
-                _options.Namespace,
-                "app.kubernetes.io/component=agent-job",
-                ct);
+            var held = await AgentJobPvcs.ListHeldAsync(_kubeClient, _options.Namespace, ct);
 
-            var claimedPvcs = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var j in runningJobs.Items)
-            {
-                if (j.Status?.Active is null or 0) continue;
-                foreach (var vol in j.Spec?.Template?.Spec?.Volumes ?? [])
-                {
-                    if (vol.PersistentVolumeClaim?.ClaimName is { } pvcName)
-                        claimedPvcs.Add(pvcName);
-                }
-            }
-
-            var available = _options.KiroPvcPool.FirstOrDefault(pvc => !claimedPvcs.Contains(pvc));
+            var available = _options.KiroPvcPool.FirstOrDefault(pvc => !held.Contains(pvc));
             if (available is null)
                 Log.Warning("ModelFetchJobService: all {Count} PVCs are in use; " +
                             "using {Pvc} anyway — RWX volumes required for concurrent access",
@@ -245,7 +231,7 @@ public sealed class ModelFetchJobService
 
             return available;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Warning(ex, "ModelFetchJobService: failed to query running jobs for PVC selection; using KiroPvcPool[0]");
             return null;
