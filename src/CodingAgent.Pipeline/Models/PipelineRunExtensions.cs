@@ -5,6 +5,25 @@ namespace CodingAgent.Pipeline.Models;
 public static class PipelineRunExtensions
 {
     /// <summary>
+    /// Returns <see langword="true"/> when this run is a consolidation run.
+    /// </summary>
+    /// <remarks>
+    /// The sentinel <see cref="ConsolidationConstants.ProviderConfigId"/> on
+    /// <see cref="PipelineRun.IssueProviderConfigId"/> is authoritative —
+    /// NOT <see cref="PipelineRun.RunType"/>. A run may have
+    /// <c>RunType == Consolidation</c> yet lack the sentinel if it was created
+    /// outside the normal factory path. Use <see cref="IsConsolidation"/> at
+    /// all call sites instead of repeating the sentinel comparison.
+    /// </remarks>
+    // NOTE: The scope query `git grep -nE '[=!]= *ConsolidationConstants\.ProviderConfigId' -- src`
+    // intentionally matches this line — it is the single authoritative implementation of the sentinel
+    // comparison. All other call sites use IsConsolidation() instead of repeating the raw comparison.
+    // The only additional matches are AgentOrphanRecoveryService.cs and PostgresPipelineRunHistoryService.cs,
+    // which compare non-PipelineRun types and cannot use this extension method.
+    public static bool IsConsolidation(this PipelineRun run)
+        => run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId;
+
+    /// <summary>
     /// Infers the last pipeline step that was reached before a terminal state.
     /// Used by UI components to determine which step to mark as failed/cancelled.
     /// When the run was seeded from a persisted summary (not a live snapshot), the in-memory

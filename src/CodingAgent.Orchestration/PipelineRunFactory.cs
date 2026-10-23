@@ -25,7 +25,7 @@ public static class PipelineRunFactory
         // IMPORTANT: IssueProviderConfigId is hardcoded to ConsolidationConstants.ProviderConfigId
         // (the sentinel "consolidation") rather than passed through from request.IssueProviderConfigId.
         // AgentJobLifecycleService selects ConsolidationJobCompletionStrategy based on
-        // run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId — NOT on RunType.
+        // run.IsConsolidation() — NOT on RunType.
         // Using any other value would silently route completion through RegularJobCompletionStrategy.
         //
         // TODO: The || condition here means a request with RunType == Consolidation but TaskType != Consolidation
@@ -44,7 +44,7 @@ public static class PipelineRunFactory
                     : request.IssueDetail.Title,
                 // IssueProviderConfigId must be the sentinel so that AgentJobLifecycleService
                 // routes completion to ConsolidationJobCompletionStrategy (which checks
-                // run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId).
+                // run.IsConsolidation()).
                 IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 RunType = PipelineRunType.Consolidation,
@@ -86,7 +86,7 @@ public static class PipelineRunFactory
     {
         // Consolidation runs must use the sentinel IssueProviderConfigId so that
         // AgentJobLifecycleService routes completion to ConsolidationJobCompletionStrategy
-        // (which checks run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId).
+        // (run.IsConsolidation() guard — NOT RunType).
         // All other run types pass through the real provider ID from the request.
         var issueProviderConfigId = request.RunType == PipelineRunType.Consolidation
             ? ConsolidationConstants.ProviderConfigId
