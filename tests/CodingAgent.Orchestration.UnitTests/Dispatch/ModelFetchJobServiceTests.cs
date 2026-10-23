@@ -708,10 +708,11 @@ public sealed class ModelFetchJobServiceTests
     }
 
     [Fact]
-    public async Task FetchModelsAsync_InactiveJobsClaimPvcs_PvcsConsideredAvailable()
+    public async Task FetchModelsAsync_CompletedJobsDoNotHoldPvc_FirstPvcAvailable()
     {
-        // Jobs with Active=0 (completed/failed) do NOT block PVC availability.
-        // Only running/pending jobs with Active >= 1 matter.
+        // Jobs carrying a Complete=True or Failed=True condition (IsTerminal returns true)
+        // do NOT hold their PVC. A pending job (Active=0, no terminal condition) still holds it —
+        // see FetchModelsAsync_PendingJobHoldsPvc_SecondPvcSelected.
         SetupReceiverReturns(TwoModels, null);
         _fakeClient.ConfigureInactiveJobsWithPvcs(["caa-kiro-data-0"]);
         var service = CreateServiceWithFakeClient();
@@ -721,7 +722,42 @@ public sealed class ModelFetchJobServiceTests
         var job2 = _fakeClient.LastCreatedJob!;
         job2.Spec.Template.Spec.Volumes
             .Should().Contain(v => v.PersistentVolumeClaim != null && v.PersistentVolumeClaim.ClaimName == "caa-kiro-data-0",
-                "completed/failed jobs must not block PVC selection");
+                "completed jobs (with Complete=True condition) must not block PVC selection");
+    }
+
+    [Fact]
+    public async Task FetchModelsAsync_PendingJobHoldsPvc_SecondPvcSelected()
+    {
+        // A job with Active=0 and no Complete/Failed condition (pod pending scheduling)
+        // holds its PVC under the shared AgentJobPvcs IsTerminal rule.
+        // The first PVC is held, so the second must be selected.
+        SetupReceiverReturns(TwoModels, null);
+        _fakeClient.ConfigurePendingJobsWithPvcs(["caa-kiro-data-0"]);
+        var service = CreateServiceWithFakeClient();
+
+        await service.FetchModelsAsync("kiro", CancellationToken.None);
+
+        var job = _fakeClient.LastCreatedJob!;
+        job.Spec.Template.Spec.Volumes
+            .Should().Contain(v => v.PersistentVolumeClaim != null &&
+                                   v.PersistentVolumeClaim.ClaimName == "caa-kiro-data-1",
+                "a Job with Active=0 and no terminal condition holds its PVC; second PVC must be selected");
+    }
+
+    [Fact]
+    public async Task FetchModelsAsync_ListJobsThrowsOce_PropagatesAndNoJobCreated()
+    {
+        // When ListJobsAsync throws OperationCanceledException (e.g. request cancelled before
+        // PVC selection), the exception must propagate — no Job may be created.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        _fakeClient.FailListJobsCancelled = true;
+        var service = CreateServiceWithFakeClient();
+
+        var act = async () => await service.FetchModelsAsync("kiro", cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _fakeClient.CreatedJobCount.Should().Be(0, "no Job must be created when ListJobs is cancelled");
     }
 
     [Fact]
@@ -950,19 +986,25 @@ public sealed class ModelFetchJobServiceTests
         // Test configuration knobs
         public bool FailNextDelete { get; set; }
         public bool FailListJobs { get; set; }
+        public bool FailListJobsCancelled { get; set; }
         public Exception? FailNextCreate { get; set; }
         public bool FailNextCreateCancelled { get; set; }
 
         // Running jobs that claim PVCs (Active >= 1)
         private List<string> _runningJobPvcs = [];
-        // Inactive jobs that claim PVCs (Active = 0) — should NOT block selection
+        // Completed jobs (Active = 0, Complete=True condition) — terminal, do NOT block selection
         private List<string> _inactiveJobPvcs = [];
+        // Pending jobs (Active = 0, no terminal condition) — non-terminal, DO block selection
+        private List<string> _pendingJobPvcs = [];
 
         public void ConfigureRunningJobsWithPvcs(IEnumerable<string> pvcs) =>
             _runningJobPvcs = pvcs.ToList();
 
         public void ConfigureInactiveJobsWithPvcs(IEnumerable<string> pvcs) =>
             _inactiveJobPvcs = pvcs.ToList();
+
+        public void ConfigurePendingJobsWithPvcs(IEnumerable<string> pvcs) =>
+            _pendingJobPvcs = pvcs.ToList();
 
         public int CreatedJobCount => _createdJobs.Count;
         public int DeletedJobCount => _deletedCount;
@@ -997,6 +1039,7 @@ public sealed class ModelFetchJobServiceTests
 
         public Task<V1JobList> ListJobsAsync(string ns, string labelSelector, CancellationToken ct = default)
         {
+            if (FailListJobsCancelled) ct.ThrowIfCancellationRequested();
             if (FailListJobs) throw new InvalidOperationException("Simulated ListJobs failure");
 
             var jobs = new List<V1Job>();
@@ -1022,7 +1065,30 @@ public sealed class ModelFetchJobServiceTests
             {
                 jobs.Add(new V1Job
                 {
-                    Status = new V1JobStatus { Active = 0, Succeeded = 1 },
+                    Status = new V1JobStatus
+                    {
+                        Active = 0,
+                        Succeeded = 1,
+                        Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }]
+                    },
+                    Spec = new V1JobSpec
+                    {
+                        Template = new V1PodTemplateSpec
+                        {
+                            Spec = new V1PodSpec
+                            {
+                                Volumes = [new V1Volume { Name = "kiro-cli-data",
+                                    PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = pvc } }]
+                            }
+                        }
+                    }
+                });
+            }
+            foreach (var pvc in _pendingJobPvcs)
+            {
+                jobs.Add(new V1Job
+                {
+                    Status = new V1JobStatus { Active = 0 }, // no Conditions — IsTerminal returns false
                     Spec = new V1JobSpec
                     {
                         Template = new V1PodTemplateSpec
