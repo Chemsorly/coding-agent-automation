@@ -17,6 +17,9 @@ public static class UiPolicies
     public const string GlobalOperate = "Ui.GlobalOperate";
     public const string Admin = "Ui.Admin";
 
+    /// <summary>Global admin or a project admin (#3577); the handler checks admin on the project it acts on.</summary>
+    public const string AnyAdmin = "Ui.AnyAdmin";
+
     /// <summary>
     /// The UI hub (spec 051 D7): any role, with an HTTP token or the session-long hub token. Every other UI policy
     /// refuses the hub token, so a leaked one is no HTTP credential.
@@ -31,6 +34,7 @@ public static class UiPolicies
         [GlobalRead] = AccessPolicyKind.GlobalRead,
         [GlobalOperate] = AccessPolicyKind.GlobalOperate,
         [Admin] = AccessPolicyKind.Admin,
+        [AnyAdmin] = AccessPolicyKind.AnyAdmin,
         [Hub] = AccessPolicyKind.AnyAccess,
     };
 

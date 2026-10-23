@@ -39,6 +39,9 @@ public sealed record AccessGrant(
 
     public bool HasAnyOperator =>
         GlobalRole >= AccessRole.Operator || ProjectRoles.Values.Any(r => r >= AccessRole.Operator);
+
+    public bool HasAnyAdmin =>
+        GlobalRole == AccessRole.Admin || ProjectRoles.Values.Any(r => r == AccessRole.Admin);
 }
 
 /// <summary>

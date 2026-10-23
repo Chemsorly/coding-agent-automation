@@ -673,7 +673,7 @@ A refused subscription fails with a `HubException` that reads the same whether t
 
 ### Settings (admin)
 
-`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role. It covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both. Agent profiles are read only here: `/api/config/**` has no profile read, and its `GET /provider-configs?kind=Agent` is refused with `400`.
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role, except for four routes the project page and the repository page's Behaviour card use: `GET /pipeline`, `GET /projects/{id}`, `PUT /projects` and `PUT /projects/{projectId}/templates`. These need `admin` on the project. For a project admin, `PUT /projects` keeps the stored enabled flag, epic tracker and brain switches, and `PUT /projects/{projectId}/templates` takes only the Behaviour fields of a template already in that project; a new project or template, or another project's, is `404` (see [Projects](projects.md#project-page)). The settings API covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both. Agent profiles are read only here: `/api/config/**` has no profile read, and its `GET /provider-configs?kind=Agent` is refused with `400`.
 
 Agent profiles and routing:
 
@@ -685,7 +685,7 @@ Agent profiles and routing:
 | `GET /agent-routing` | `{ routing, profiles, jobTemplates }`: the global table as `{ default, byTaskType }`, each route `{ profileId, model, effort }`; the profiles a route can name as `{ id, name, tool, jobTemplateKey, enabled }`; and the job templates. Repository rows are on the templates (`agentRoutes`). |
 | `PUT /agent-routing` | Replaces the global table. Every row is checked: the default row is required once a profile exists, the profile must exist and be enabled on a job template with a tool, the model must be set (`auto` lets the tool choose) and the effort one the tool accepts. An invalid table is refused with `400` and one line per invalid row. A body that names a task type twice is refused with `400`. |
 
-A template save checks its `agentRoutes` the same way. A save without `agentRoutes` keeps the stored rows; an empty object removes them.
+A template save checks its `agentRoutes` the same way. A save without `agentRoutes` keeps the stored rows; an empty object removes them. A project admin's template save keeps the stored rows whatever it sends.
 
 Secrets never leave the API here, not even for an admin:
 - These values come back as `****`:
@@ -800,6 +800,6 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/loop/status` | User token | Pipeline loop status (template entries filtered for scoped users) |
 | POST | `/api/ui/loop/start`, `/stop`, `/resume` | User token, global operator | Ask the Scheduler leader to start, stop or resume the loop |
 | PUT | `/api/scheduler/loop-status` | OperatorApiKey | The Scheduler leader pushes the loop status |
-| GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin | Settings (secrets masked; export unredacted) |
+| GET/PUT/POST/DELETE | `/api/ui/settings/**` | User token, admin (four routes: admin on the project) | Settings (secrets masked; export unredacted) |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

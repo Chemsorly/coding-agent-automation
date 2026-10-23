@@ -4,8 +4,8 @@ namespace CodingAgent.Api.Ui;
 
 /// <summary>
 /// The signed-in user of a UI-surface request and the roles their token grants (spec 051 D3).
-/// Handlers call <see cref="DemandRead"/> or <see cref="DemandOperate"/> with the project of the
-/// stored object they act on; a client-sent project ID is only trusted when creating something.
+/// Handlers call <see cref="DemandRead"/>, <see cref="DemandOperate"/> or <see cref="DemandAdminister"/>
+/// with the project of the stored object they act on; a client-sent project ID is only trusted when creating something.
 /// </summary>
 public interface IUserAccess
 {
@@ -22,6 +22,9 @@ public interface IUserAccess
 
     bool CanOperate(string? projectId);
 
+    /// <summary>Global admin: every project, and the fields of projects and templates that only the operator sets.</summary>
+    bool IsGlobalAdmin { get; }
+
     /// <summary>Throws <see cref="UiAccessDeniedException"/> (404) unless the user can read the project.</summary>
     void DemandRead(string? projectId);
 
@@ -30,6 +33,12 @@ public interface IUserAccess
     /// 404 when they cannot even read it, 403 when they can read but not operate.
     /// </summary>
     void DemandOperate(string? projectId);
+
+    /// <summary>
+    /// #3577: throws <see cref="UiAccessDeniedException"/> unless the user is admin on the project (a project admin or
+    /// the global admin): 404 when they cannot even read it, 403 when they can read but not administer it.
+    /// </summary>
+    void DemandAdminister(string? projectId);
 
     /// <summary>
     /// D3 rule 3, for lists: without a project the user needs global read (403 otherwise, so a scoped
@@ -70,6 +79,8 @@ public sealed class UserAccess : IUserAccess
 
     public bool CanOperate(string? projectId) => Grant.RoleFor(projectId) >= AccessRole.Operator;
 
+    public bool IsGlobalAdmin => Grant.GlobalRole == AccessRole.Admin;
+
     public void DemandRead(string? projectId)
     {
         if (!CanRead(projectId))
@@ -80,6 +91,13 @@ public sealed class UserAccess : IUserAccess
     {
         DemandRead(projectId);
         if (!CanOperate(projectId))
+            throw new UiAccessDeniedException(StatusCodes.Status403Forbidden);
+    }
+
+    public void DemandAdminister(string? projectId)
+    {
+        DemandRead(projectId);
+        if (Grant.RoleFor(projectId) < AccessRole.Admin)
             throw new UiAccessDeniedException(StatusCodes.Status403Forbidden);
     }
 

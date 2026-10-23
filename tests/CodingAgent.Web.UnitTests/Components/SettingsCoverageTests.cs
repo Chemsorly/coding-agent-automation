@@ -6,6 +6,7 @@ using Bunit;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.UnitTests.Auth;
+using CodingAgent.Web.UnitTests.TestUtilities;
 using Microsoft.AspNetCore.Components;
 using Moq;
 
@@ -69,6 +70,7 @@ public class SettingsCoverageTests : BunitContext
         _configClient.Setup(c => c.GetProjectByIdAsync("p-1", It.IsAny<CancellationToken>())).ReturnsAsync(project);
         Services.AddSingleton(Mock.Of<IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
+        Services.AddSingleton(ProjectPageClients.UiConfig().Object);
         _configClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineJobTemplate>());
         _configClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineProject> { project });
         // Global admin needed so all settings fields (including BrainReadOnly, BrainConsolidationReviewEnabled)

@@ -52,13 +52,13 @@ GET /api/ui/settings/first-run -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/ui/settings/first-run/dismiss -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/ui/settings/import -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/models -> Ui: Ui.Admin, Ui.AnyAccess
-GET /api/ui/settings/pipeline -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/pipeline -> Ui: Ui.AnyAccess, Ui.AnyAdmin
 PUT /api/ui/settings/pipeline -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/projects -> Ui: Ui.Admin, Ui.AnyAccess
-PUT /api/ui/settings/projects -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/projects -> Ui: Ui.AnyAccess, Ui.AnyAdmin
 DELETE /api/ui/settings/projects/{id} -> Ui: Ui.Admin, Ui.AnyAccess
-GET /api/ui/settings/projects/{id} -> Ui: Ui.Admin, Ui.AnyAccess
-PUT /api/ui/settings/projects/{projectId}/templates -> Ui: Ui.Admin, Ui.AnyAccess
+GET /api/ui/settings/projects/{id} -> Ui: Ui.AnyAccess, Ui.AnyAdmin
+PUT /api/ui/settings/projects/{projectId}/templates -> Ui: Ui.AnyAccess, Ui.AnyAdmin
 DELETE /api/ui/settings/projects/{projectId}/templates/{templateId} -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/provider-configs -> Ui: Ui.Admin, Ui.AnyAccess
 PUT /api/ui/settings/provider-configs -> Ui: Ui.Admin, Ui.AnyAccess

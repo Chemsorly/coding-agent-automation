@@ -30,7 +30,6 @@ public sealed class IdorCoverageTests(ApiWebApplicationFactory factory)
         ["DELETE /api/ui/settings/provider-configs/{id}"] = GlobalAdminOnly,
         ["DELETE /api/ui/settings/quality-gate-configs/{id}"] = GlobalAdminOnly,
         ["DELETE /api/ui/settings/reviewer-configs/{id}"] = GlobalAdminOnly,
-        ["GET /api/ui/settings/projects/{id}"] = GlobalAdminOnly,
         ["GET /api/ui/settings/provider-configs/{id}/agent-labels"] = GlobalAdminOnly,
         ["POST /api/ui/settings/provider-configs/{id}/agent-labels"] = GlobalAdminOnly,
     };

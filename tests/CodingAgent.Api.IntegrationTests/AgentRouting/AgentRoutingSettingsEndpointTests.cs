@@ -378,11 +378,11 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
         var template = await StoredTemplateAsync();
         var rows = Rows(WorkItemTaskType.Review, AgentRoutingTestData.Route(ClaudeProfileId));
 
-        foreach (var client in new[] { Client(TestUserTokens.Global(AccessRole.Operator)), Client(TestUserTokens.Scoped(ProjectId, AccessRole.Admin)) })
-        {
-            (await client.PutAsJsonAsync(TemplatesUrl, template with { AgentRoutes = rows }, Json))
-                .StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        }
+        (await Client(TestUserTokens.Global(AccessRole.Operator)).PutAsJsonAsync(TemplatesUrl, template with { AgentRoutes = rows }, Json))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        // #3577: a project admin saves the Behaviour card; the rows of the body are not taken.
+        (await Client(TestUserTokens.Scoped(ProjectId, AccessRole.Admin)).PutAsJsonAsync(TemplatesUrl, template with { AgentRoutes = rows }, Json))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
         (await StoredTemplateAsync()).AgentRoutes.Should().BeNull();
     }
 

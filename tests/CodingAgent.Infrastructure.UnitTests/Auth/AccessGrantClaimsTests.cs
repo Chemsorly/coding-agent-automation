@@ -16,6 +16,7 @@ public class AccessGrantClaimsTests
         { "empty", AccessGrant.None },
         { "global only", new AccessGrant(AccessRole.Operator, new Dictionary<string, AccessRole>(), []) },
         { "scoped only", new AccessGrant(AccessRole.None, new Dictionary<string, AccessRole> { [ProjectA] = AccessRole.ReadOnly }, []) },
+        { "project admin", new AccessGrant(AccessRole.None, new Dictionary<string, AccessRole> { [ProjectA] = AccessRole.Admin }, []) },
         {
             "mixed",
             new AccessGrant(AccessRole.ReadOnly,
@@ -43,19 +44,14 @@ public class AccessGrantClaimsTests
     }
 
     [Fact]
-    public void ToClaims_DropsAProjectScopedAdmin()
+    public void AProjectScopedAdmin_CoversThatProjectOnly()
     {
-        var grant = new AccessGrant(AccessRole.None, new Dictionary<string, AccessRole> { [ProjectA] = AccessRole.Admin }, []);
-
-        AccessGrantClaims.ToClaims(grant).Should().BeEmpty("admin is a global role only");
-    }
-
-    [Fact]
-    public void FromClaims_RejectsAProjectScopedAdmin()
-    {
+        // #3577: the API checks a project admin on the project of the object it acts on.
         var grant = AccessGrantClaims.FromClaims([new Claim(UserTokenClaimTypes.ProjectRole, $"{ProjectA}:admin")]);
 
-        grant.HasAnyAccess.Should().BeFalse("a project admin claim must not grant anything");
+        grant.RoleFor(ProjectA).Should().Be(AccessRole.Admin);
+        grant.RoleFor(ProjectB).Should().Be(AccessRole.None);
+        grant.GlobalRole.Should().Be(AccessRole.None);
     }
 
     [Theory]

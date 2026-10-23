@@ -7,6 +7,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.UnitTests.Auth;
+using CodingAgent.Web.UnitTests.TestUtilities;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
@@ -31,6 +32,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
+        Services.AddSingleton(ProjectPageClients.UiConfig().Object);
         _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
         _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -448,6 +450,7 @@ public class ProjectDetailSectionSettingsValidationTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
+        Services.AddSingleton(ProjectPageClients.UiConfig().Object);
         _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
         _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -612,6 +615,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
+        Services.AddSingleton(ProjectPageClients.UiConfig().Object);
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1103,15 +1107,14 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         // Access audit: Guard.DemandAsync(AccessRole.Admin, null) in AddTemplate must refuse
         // a project-scoped admin (no global admin role). MoveTemplateAsync must not be called.
         var projectA = new PipelineProject { Id = "pA", Name = "Project A", TemplateIds = ["t1"] };
-        var projectB = new PipelineProject { Id = "pB", Name = "Project B", TemplateIds = ["t3"] };
         var templates = new List<PipelineJobTemplate>
         {
             new() { Id = "t1", Name = "Template One", IssueProviderId = "ip-1", RepoProviderId = "rp-1" },
             new() { Id = "t3", Name = "Template Three", IssueProviderId = "ip-2", RepoProviderId = "rp-2" }
         };
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>())).ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new[] { projectA, projectB });
-        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(templates);
+        // A project admin reads the templates from the Pipelines page, not the Settings lists.
+        Services.AddSingleton(ProjectPageClients.UiConfig(templates).Object);
 
         // Project admin — not global admin.
         Services.AddTestAccess(TestAccess.Scoped(("pA", AccessRole.Admin)));
@@ -1142,8 +1145,8 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
             new() { Id = "t1", Name = "Template One", IssueProviderId = "ip-1", RepoProviderId = "rp-1" }
         };
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>())).ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new[] { projectA });
-        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(templates);
+        // A project admin reads the templates from the Pipelines page, not the Settings lists.
+        Services.AddSingleton(ProjectPageClients.UiConfig(templates).Object);
 
         // Project admin — not global admin.
         Services.AddTestAccess(TestAccess.Scoped(("pA", AccessRole.Admin)));
@@ -1184,6 +1187,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration());
         Services.AddSingleton(Mock.Of<CodingAgent.Web.Ui.IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
+        Services.AddSingleton(ProjectPageClients.UiConfig().Object);
         _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
         _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
