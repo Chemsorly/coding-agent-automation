@@ -335,6 +335,11 @@ public sealed class ProjectManagementTests : E2ETestBase
         // Default project detail page has no "Project Review" tab
         var detailPage = new ProjectDetailPage(Page, BaseUrl);
         await detailPage.NavigateAsync(WellKnownIds.DefaultProjectId);
+        // The initial Blazor render uses _project = new() { Id = "" } before data loads, so
+        // IsDefaultProject is false and "Project Review" tab IS shown initially. Wait until
+        // the project data loads and the tab disappears (IsDefaultProject becomes true).
+        await Page.Locator(".tab-btn:text-is('Project Review')")
+            .WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
         Assert.Equal(0, await Page.Locator(".tab-btn:text-is('Project Review')").CountAsync());
     }
 

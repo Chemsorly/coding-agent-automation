@@ -48,20 +48,41 @@ public sealed class ProjectDetailPage
 
     // ── Overview tab actions ─────────────────────────────────────────────
 
-    /// <summary>Sets the Name field value.</summary>
-    public async Task FillNameAsync(string name) =>
+    /// <summary>
+    /// Sets the Name field value and explicitly dispatches the <c>change</c> event so that
+    /// Blazor Server's <c>@bind</c> handler updates <c>_name</c> before the save button
+    /// is clicked. Without this, the SignalR round-trip for the <c>onchange</c> binding may
+    /// not complete before <c>SaveOverviewAsync</c> runs on the server.
+    /// </summary>
+    public async Task FillNameAsync(string name)
+    {
         await _page.FillAsync("[data-testid='project-name-input']", name);
+        await _page.Locator("[data-testid='project-name-input']").DispatchEventAsync("change");
+    }
 
-    /// <summary>Sets the Description field value.</summary>
-    public async Task FillDescriptionAsync(string description) =>
+    /// <summary>
+    /// Sets the Description field value and explicitly dispatches the <c>change</c> event so
+    /// that Blazor Server's <c>@bind</c> handler updates <c>_description</c> before the save
+    /// button is clicked.
+    /// </summary>
+    public async Task FillDescriptionAsync(string description)
+    {
         await _page.FillAsync("[data-testid='project-description-input']", description);
+        await _page.Locator("[data-testid='project-description-input']").DispatchEventAsync("change");
+    }
 
     /// <summary>
     /// Selects the epic issue provider by its config ID (matches the <c>value</c> attribute
-    /// of the option, which is <c>provider.Id</c>).
+    /// of the option, which is <c>provider.Id</c>) and waits briefly for Blazor Server to
+    /// process the <c>@onchange</c> event via SignalR before <c>SaveOverviewAsync</c> is called.
+    /// Pattern from <c>ProjectSwitcher.SelectByValueAsync</c>.
     /// </summary>
-    public async Task SelectEpicIssueProviderAsync(string providerId) =>
+    public async Task SelectEpicIssueProviderAsync(string providerId)
+    {
         await _page.SelectOptionAsync("[data-testid='project-epic-provider-select']", providerId);
+        // Brief wait for Blazor to process the @onchange event and update _epicIssueProviderId.
+        await _page.WaitForTimeoutAsync(500);
+    }
 
     /// <summary>
     /// Clicks Save Overview and waits for the success inline-status message.
