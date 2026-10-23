@@ -506,7 +506,7 @@ When multiple work types are queued in the same poll cycle, the loop uses a fixe
 | 3 | Triage | `agent:triage` issues; no concurrency cap of its own |
 | 4 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (4th, after Review, Decomposition, and Implementation) by the Scheduler's `WorkItemDispatchLoop`. They do not participate in the closed-loop scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (5th, after Triage, Review, Decomposition, and Implementation) by the Scheduler's `WorkItemDispatchLoop`. They do not participate in the closed-loop scheduler.
 
 ### Dispatch Budget Sharing
 
