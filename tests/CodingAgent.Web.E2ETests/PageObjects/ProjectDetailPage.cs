@@ -49,26 +49,25 @@ public sealed class ProjectDetailPage
     // ── Overview tab actions ─────────────────────────────────────────────
 
     /// <summary>
-    /// Sets the Name field value and explicitly dispatches the <c>change</c> event so that
-    /// Blazor Server's <c>@bind</c> handler updates <c>_name</c> before the save button
-    /// is clicked. Without this, the SignalR round-trip for the <c>onchange</c> binding may
-    /// not complete before <c>SaveOverviewAsync</c> runs on the server.
+    /// Sets the Name field value and waits briefly for Blazor Server to process the
+    /// <c>@bind</c> event propagation via SignalR before the save button is clicked.
+    /// Pattern from <c>RepositoryPageObject.SetSteeringContentAsync</c>.
     /// </summary>
     public async Task FillNameAsync(string name)
     {
         await _page.FillAsync("[data-testid='project-name-input']", name);
-        await _page.Locator("[data-testid='project-name-input']").DispatchEventAsync("change");
+        await _page.WaitForTimeoutAsync(300); // allow Blazor event propagation
     }
 
     /// <summary>
-    /// Sets the Description field value and explicitly dispatches the <c>change</c> event so
-    /// that Blazor Server's <c>@bind</c> handler updates <c>_description</c> before the save
-    /// button is clicked.
+    /// Sets the Description field value and waits briefly for Blazor Server to process the
+    /// <c>@bind</c> event propagation via SignalR before the save button is clicked.
+    /// Pattern from <c>RepositoryPageObject.SetSteeringContentAsync</c>.
     /// </summary>
     public async Task FillDescriptionAsync(string description)
     {
         await _page.FillAsync("[data-testid='project-description-input']", description);
-        await _page.Locator("[data-testid='project-description-input']").DispatchEventAsync("change");
+        await _page.WaitForTimeoutAsync(300); // allow Blazor event propagation
     }
 
     /// <summary>
