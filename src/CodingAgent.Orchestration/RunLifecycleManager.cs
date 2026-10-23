@@ -107,7 +107,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 5. Compute the target label — skip for consolidation runs (they have no issue label),
         //    respect pipeline-determined FinalLabel, fall back to agent:error.
         string? errorLabel = null;
-        if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
+        if (!run.IsConsolidation())
         {
             // ResolveAgentLabel(Failed, _) always returns a non-null value (either FinalLabel or
             // AgentLabels.Error), so the ?? fallback is purely defensive.
@@ -207,7 +207,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         //    the hub method returning. AgentLabelOperations.SwapAsync is idempotent, so calling
         //    this here and in PostCompletionBookkeepingAsync in the happy path is safe.
         string? label = null;
-        if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
+        if (!run.IsConsolidation())
         {
             label = CompletionOutcomeResolver.ResolveAgentLabel(effectiveStatus, run.FinalLabel);
         }
@@ -269,7 +269,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         // 4. Shared terminal cleanup: history-persist → label-swap
         //    Skip the label swap for consolidation runs (they have no issue label to swap).
-        var cancelLabel = run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
+        var cancelLabel = run.IsConsolidation()
             ? null
             : CompletionOutcomeResolver.ResolveAgentLabel(effectiveStatus, finalLabel: null);
         await RunTerminalCleanupAsync(run, cancelLabel, ct);

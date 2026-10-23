@@ -126,7 +126,7 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
 
             // Skip consolidation ghost runs (should not exist with proper filtering,
             // but defensive against edge cases)
-            if (liveRun.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+            if (liveRun.IsConsolidation())
                 continue;
 
             summaries.Add(new ActiveRunSummary
