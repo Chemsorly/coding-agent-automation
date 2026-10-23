@@ -451,4 +451,71 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             Assert.True(fakeAgent.CancelChatReceived.Task.IsCompletedSuccessfully);
         }
     }
+
+    // ── Regression tests for issue #3852 — unkeyed option loops ──────────────
+
+    private const string ClaudeChatProfileId = "chat-profile-claude";
+    private const string ClaudeDefaultEffort  = "max";
+
+    /// <summary>
+    /// Seeds both a Kiro and a Claude Code profile, with the global default route pointing at
+    /// Claude Code with effort <c>max</c> so that <c>OnProfileSelected</c> sets
+    /// <c>_selectedEffort = "max"</c> when the Claude Code profile is chosen.
+    /// </summary>
+    private async Task SeedKiroAndClaudeChatProfilesAsync()
+    {
+        await Fixture.ConfigStore.SaveAgentProfileAsync(
+            E2ERouting.Converted(new AgentProfile
+            {
+                Id = ChatProfileId,
+                DisplayName = "Chat Kiro Profile",
+                JobTemplate = E2ERouting.Key("kiro", "dotnet"),
+                Enabled = true
+            }), CancellationToken.None);
+        await Fixture.ConfigStore.SaveAgentProfileAsync(
+            E2ERouting.Converted(new AgentProfile
+            {
+                Id = ClaudeChatProfileId,
+                DisplayName = "Chat Claude Profile",
+                JobTemplate = E2ERouting.Key("claude", "dotnet"),
+                Enabled = true
+            }), CancellationToken.None);
+        // Global default route → Claude Code / auto / max.
+        // OnProfileSelected reads UiChatProfile.DefaultEffort, which is the route's effort.
+        await Fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(ClaudeChatProfileId, "auto", ClaudeDefaultEffort));
+    }
+
+    /// <summary>
+    /// Regression for issue #3852: selecting a Kiro profile, picking effort <c>max</c>, then
+    /// switching to a Claude Code profile that the global default route preselects with <c>max</c>
+    /// must keep <c>max</c> visible in the effort select.
+    ///
+    /// Before the fix, Blazor's positional diffing rewrote option[4] (Kiro's <c>max</c>) to
+    /// Claude Code's <c>xhigh</c> and left it selected, even though the bound value was <c>max</c>.
+    ///
+    /// Uses <see cref="AgentChatPage.AssertEffortSelectValueAsync"/> (Playwright retry assertion)
+    /// to tolerate the Blazor Server SignalR round-trip between SelectProfileAsync returning and
+    /// the re-render reaching the browser. A point-in-time read before the re-render would observe
+    /// <c>max</c> from the still-mounted Kiro option list, producing a false positive.
+    /// </summary>
+    [Fact]
+    public async Task AgentChat_SwitchingKiroMaxToClaudeCodePreselectedMax_EffortSelectShowsMax()
+    {
+        await SeedKiroAndClaudeChatProfilesAsync();
+
+        var chatPage = new AgentChatPage(Page, BaseUrl);
+        await chatPage.NavigateAsync();
+
+        // Select Kiro profile and explicitly pick max effort (Kiro.Efforts = [low,medium,high,max]).
+        await chatPage.SelectProfileAsync(ChatProfileId);
+        await chatPage.SelectEffortAsync("max");
+
+        // Switch to Claude Code — OnProfileSelected sets _selectedEffort = "max" (global default route).
+        // Claude Code.Efforts = [low,medium,high,xhigh,max]; without @key, position 4 changes from
+        // 'max' (Kiro) to 'xhigh' (Claude Code) and the browser shows 'xhigh'.
+        await chatPage.SelectProfileAsync(ClaudeChatProfileId);
+
+        // Retry until the re-render has landed, then assert the DOM value is 'max'.
+        await chatPage.AssertEffortSelectValueAsync("max", timeoutMs: 5_000);
+    }
 }
