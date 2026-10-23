@@ -1,4 +1,5 @@
 using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline;
@@ -62,7 +63,7 @@ internal sealed class WorkItemStore(
             if (routed.IsRefused)
                 return (WorkItemCreateOutcome.Refused, workItemId, routed.RefusalText);
             request = routed.Request!;
-            var entity = WorkItemDispatchEndpoints.BuildWorkItemEntity(request, workItemId);
+            var entity = WorkItemEntityBuilder.BuildWorkItemEntity(request, workItemId);
 
             // 3. A live item for the same issue and provider (the partial unique index's predicate).
             var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
@@ -76,7 +77,7 @@ internal sealed class WorkItemStore(
             db.WorkItems.Add(entity);
             await db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) when (WorkItemDispatchEndpoints.IsUniqueViolation(ex))
+        catch (Exception ex) when (PostgresErrorClassifier.IsUniqueViolation(ex))
         {
             // The context is faulted after the exception; re-query on a fresh one. A row with this
             // ID means an idempotent PK retry; otherwise a different run is already live for the issue.
