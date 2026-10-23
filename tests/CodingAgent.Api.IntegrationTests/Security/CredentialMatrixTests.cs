@@ -81,6 +81,7 @@ public sealed class CredentialMatrixTests(AuthOnlyApiFactory factory)
             User("global admin", admin),
             User("readonly on A", TestUserTokens.Scoped(TestUserTokens.ProjectA, AccessRole.ReadOnly)),
             User("operator on A", TestUserTokens.Scoped(TestUserTokens.ProjectA, AccessRole.Operator)),
+            User("admin on A", TestUserTokens.Scoped(TestUserTokens.ProjectA, AccessRole.Admin)),
             new("local admin", Kind.User, TestUserTokens.LocalAdmin(), admin),
         ];
     }

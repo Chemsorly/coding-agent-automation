@@ -289,11 +289,11 @@ A [triage](triage.md) always has the project's scope: the run clones every enabl
 Projects are managed in two places depending on your role:
 
 - **Global admins** manage projects in the **Settings** page under the "Projects" group. The Settings page shows the project list, lets you create and delete projects, and allows project nodes in the navigation tree which link to the project's own page.
-- **Project admins and other users with project access** visit each project's own page at `/projects/{id}`. This page is also reachable from the "Project settings" link in the sidebar navigation (shown when a project is selected) and from the project nodes in the Settings tree.
+- **Project admins** visit their project's own page at `/projects/{id}`. This page is also reachable from the "Project settings" link in the sidebar navigation (shown when a project is selected and the user is `admin` on it) and from the project nodes in the Settings tree.
 
 ### Project Page
 
-The project page at `/projects/{id}` requires at least `readonly` on the project. It hosts the same six tabs as the Settings tree. Access to each tab's controls depends on the role:
+The project page at `/projects/{id}` requires `admin` on the project. It hosts the same six tabs as the Settings tree. Access to each tab's controls depends on the role:
 
 | Tab | Project admin (`admin` on the project) | Global admin only |
 |-----|---------------------------------------|-------------------|
@@ -304,9 +304,9 @@ The project page at `/projects/{id}` requires at least `readonly` on the project
 | **MCP Servers** | Add/edit/remove MCP servers — Save button | — |
 | **Project Review** | Edit reviewer instructions — Save button | — |
 
-Users with `operator` or `readonly` see all tabs read-only. Secret values are never shown to any user; only the key names are displayed. The Default project has no Project Review tab.
+Users with only `operator` or `readonly` on the project see "Project not found": the page shows the project's prompts, steering and MCP servers, which stay with its admins. Secret values are never shown to any user; only the key names are displayed. The Default project has no Project Review tab.
 
-Every save calls a server-side guard. When a user who is not a global admin saves, the server reloads the stored project right before writing and restores the `Enabled`, `EpicIssueProviderId`, `BrainReadOnly` and `BrainConsolidationReviewEnabled` fields from the stored copy, so browser-supplied values for those fields are ignored.
+The API checks every save, so a request sent around the page changes no more than the page allows. When a project admin saves their project, the API reloads the stored project and keeps its `Enabled`, `EpicIssueProviderId`, `BrainReadOnly` and `BrainConsolidationReviewEnabled`. When a project admin saves a repository's Behaviour card, the API takes only the card's fields and keeps every other field of the stored template, such as the connections, the Binding card, the triage switch and the repository routes. A project admin can't create a project or a repository, or save another project's (`404`).
 
 The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. The template name and the "Edit" link in each row navigate to the template's **repository page** (`/pipelines/{templateId}`). Projects with `EpicIssueProviderId` set show a 🧩 indicator.
 

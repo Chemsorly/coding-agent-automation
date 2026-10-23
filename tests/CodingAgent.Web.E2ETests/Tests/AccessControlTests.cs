@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.E2ETests.Infrastructure;
+using CodingAgent.Web.E2ETests.PageObjects;
 using System.Text.RegularExpressions;
 using Microsoft.Playwright;
 
@@ -115,6 +116,42 @@ public sealed partial class AccessControlTests : IAsyncLifetime
         await Assertions.Expect(_page.Locator("[data-testid=profile-bindings]"))
             .ToContainTextAsync($"Project E2E Team ({E2ETestSignIn.TeamProjectId})");
         await Assertions.Expect(_page.Locator("[data-testid=profile-projects-unavailable]")).ToHaveCountAsync(0);
+    }
+
+    [Fact]
+    public async Task ProjectAdmin_SavesTheProjectAndARepositorysBehaviour_ThroughTheApiAsThatUser()
+    {
+        // #3577: the web host signs the project admin role into the user token, and the real API takes
+        // the project page's and the Behaviour card's saves from it.
+        var templateId = Guid.NewGuid().ToString();
+        await _fixture.ConfigStore.SaveTemplateAsync(E2ETestSignIn.TeamProjectId, new PipelineJobTemplate
+        {
+            Id = templateId,
+            Name = "Team repo",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true,
+        }, CancellationToken.None);
+        await _page.GotoAsync(E2ETestSignIn.SignInUrl(BaseUrl, "dana", E2ETestSignIn.TeamAdminGroup));
+
+        await _page.GotoAsync($"{BaseUrl}/projects/{E2ETestSignIn.TeamProjectId}");
+        var description = _page.Locator(".settings-section textarea").First;
+        await description.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        await description.FillAsync("Owned by the team");
+        await _page.ClickAsync("button:has-text('Save Overview')");
+        await Assertions.Expect(_page.Locator(".inline-status")).ToContainTextAsync("Project overview saved.");
+
+        var repository = new RepositoryPageObject(_page, BaseUrl);
+        await repository.NavigateAsync(templateId);
+        await repository.SetSteeringContentAsync("Team steering");
+        await repository.SaveBehaviourAsync();
+        Assert.Contains("Behaviour saved", await repository.GetBehaviourSuccessMessageAsync());
+
+        var project = await _fixture.ConfigStore.GetProjectByIdAsync(E2ETestSignIn.TeamProjectId, CancellationToken.None);
+        Assert.Equal("Owned by the team", project!.Description);
+        var template = (await _fixture.ConfigStore.LoadTemplatesForProjectAsync(E2ETestSignIn.TeamProjectId, CancellationToken.None))
+            .Single(t => t.Id == templateId);
+        Assert.Equal("Team steering", template.SteeringContent);
     }
 
     [Fact]

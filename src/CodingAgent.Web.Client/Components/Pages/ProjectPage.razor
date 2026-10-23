@@ -15,7 +15,7 @@
         <div class="monitoring-empty">Loading…</div>
     </div>
 }
-else if (!Access.CanRead(ProjectId))
+else if (!Access.CanAdminister(ProjectId))
 {
     <div class="cockpit-page">
         <div class="monitoring-empty" data-testid="project-not-found">Project not found.</div>

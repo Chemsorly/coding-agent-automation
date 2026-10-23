@@ -20,6 +20,9 @@ public static class E2ETestSignIn
     /// <summary>Bound to <c>operator</c> on the seeded "E2E Team" project.</summary>
     public const string TeamGroup = "e2e-team";
 
+    /// <summary>Bound to <c>admin</c> on the seeded "E2E Team" project (#3577).</summary>
+    public const string TeamAdminGroup = "e2e-team-admin";
+
     /// <summary>The stable project ID the <see cref="TeamGroup"/> is bound to.
     /// Not the Default project (all-zeros GUID), which takes no project bindings.</summary>
     public const string TeamProjectId = "e2e00000-0000-0000-0000-000000000001";
@@ -31,6 +34,9 @@ public static class E2ETestSignIn
         ("Auth__Rbac__Bindings__1__Group", TeamGroup),
         ("Auth__Rbac__Bindings__1__Role", "operator"),
         ("Auth__Rbac__Bindings__1__ProjectId", TeamProjectId),
+        ("Auth__Rbac__Bindings__2__Group", TeamAdminGroup),
+        ("Auth__Rbac__Bindings__2__Role", "admin"),
+        ("Auth__Rbac__Bindings__2__ProjectId", TeamProjectId),
     ];
 
     public static void ApplyBindings()

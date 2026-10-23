@@ -3,6 +3,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Ui;
 using CodingAgent.Web.UnitTests.Auth;
+using CodingAgent.Web.UnitTests.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -30,6 +31,7 @@ public class ProjectPageTests : BunitContext
         Services.AddSingleton(_configClient.Object);
         Services.AddSingleton(Mock.Of<IUiProviderClient>(c =>
             c.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ProviderConfig>>(new List<ProviderConfig>())));
+        Services.AddSingleton(ProjectPageClients.UiConfig().Object);
     }
 
     [Fact]
@@ -44,6 +46,45 @@ public class ProjectPageTests : BunitContext
         var cut = Render<ProjectPage>(p => p.Add(x => x.ProjectId, TestProjectId));
 
         Assert.Contains("Project not found", cut.Markup);
+    }
+
+    [Theory]
+    [InlineData(AccessRole.ReadOnly)]
+    [InlineData(AccessRole.Operator)]
+    public void ProjectReaderOrOperator_ShowsNotFoundState(AccessRole role)
+    {
+        // #3577: the project page is for admins on the project; the API refuses its reads to anyone else.
+        _configClient.Setup(c => c.GetProjectByIdAsync(TestProjectId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject { Id = TestProjectId, Name = "Test" });
+        Services.AddTestAccess(TestAccess.Scoped((TestProjectId, role)));
+
+        var cut = Render<ProjectPage>(p => p.Add(x => x.ProjectId, TestProjectId));
+
+        Assert.Contains("Project not found", cut.Markup);
+        _configClient.Verify(c => c.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public void ProjectAdmin_LoadsTemplatesFromThePipelinesPage_NotTheSettingsLists()
+    {
+        // #3577: the Settings lists (all templates, all projects, provider configs) are global admin only.
+        _configClient.Setup(c => c.GetProjectByIdAsync(TestProjectId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject { Id = TestProjectId, Name = "Team Project", TemplateIds = ["t1"], EpicIssueProviderId = "epics" });
+        var providers = new Mock<IUiProviderClient>();
+        Services.AddSingleton(providers.Object);
+        Services.AddSingleton(ProjectPageClients.UiConfig(
+            templates: [new PipelineJobTemplate { Id = "t1", Name = "Team repo", IssueProviderId = "ip", RepoProviderId = "rp" }],
+            issueProviders: [new ProviderConfig { Id = "epics", DisplayName = "Team epics", Kind = ProviderKind.Issue, ProviderType = "github" }]).Object);
+        Services.AddTestAccess(TestAccess.Scoped((TestProjectId, AccessRole.Admin)));
+
+        var cut = Render<ProjectPage>(p => p.Add(x => x.ProjectId, TestProjectId));
+
+        Assert.Contains("Team epics", cut.Markup);
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
+        Assert.Contains("Team repo", cut.Find(".template-list").TextContent);
+        _configClient.Verify(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _configClient.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Never);
+        providers.Verify(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
