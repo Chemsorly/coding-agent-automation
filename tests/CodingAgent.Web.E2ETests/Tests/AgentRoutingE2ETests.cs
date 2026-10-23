@@ -241,8 +241,8 @@ public sealed class AgentRoutingE2ETests : E2ETestBase
     public async Task RoutingPage_LeavingDisabledProfile_ProfileSelectShowsChosenProfile()
     {
         const string DisabledId = "profile-repro-a-kiro";
-        const string ProfileB   = "profile-repro-b-kiro";
-        const string ProfileC   = "profile-repro-c-kiro";
+        const string ProfileB = "profile-repro-b-kiro";
+        const string ProfileC = "profile-repro-c-kiro";
 
         // Display names "Repro A (disabled)", "Repro B", "Repro C" sort alphabetically,
         // which matches the API's OrderBy(DisplayName) ordering → [A, B, C] in the select.

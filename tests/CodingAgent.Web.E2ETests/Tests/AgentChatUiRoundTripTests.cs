@@ -455,7 +455,7 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     // ── Regression tests for issue #3852 — unkeyed option loops ──────────────
 
     private const string ClaudeChatProfileId = "chat-profile-claude";
-    private const string ClaudeDefaultEffort  = "max";
+    private const string ClaudeDefaultEffort = "max";
 
     /// <summary>
     /// Seeds both a Kiro and a Claude Code profile, with the global default route pointing at
