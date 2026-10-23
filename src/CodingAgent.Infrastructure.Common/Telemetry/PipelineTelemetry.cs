@@ -82,17 +82,17 @@ public static class PipelineTelemetry
     // Phase is a closed set — see NormalizeRunPhase().
 
     /// <summary>
-    /// Counter: total tokens consumed per run, broken down by phase and provider.
+    /// Counter: total tokens consumed per run, broken down by phase, provider and model.
     /// Recorded once per run at terminal status time by the API.
-    /// Tags: run_type, phase, provider.
+    /// Tags: run_type, phase, provider, model.
     /// </summary>
     public static readonly Counter<long> RunTokens = Meter.CreateCounter<long>(
         "pipeline.run.tokens", "{token}", "LLM tokens consumed per pipeline run phase");
 
     /// <summary>
-    /// Counter: total LLM cost in USD per run, broken down by phase and provider.
+    /// Counter: total LLM cost in USD per run, broken down by phase, provider and model.
     /// Recorded once per run at terminal status time by the API.
-    /// Tags: run_type, phase, provider.
+    /// Tags: run_type, phase, provider, model.
     /// </summary>
     public static readonly Counter<double> RunCostUsd = Meter.CreateCounter<double>(
         "pipeline.run.cost_usd", "{usd}", "LLM cost in USD per pipeline run phase");
@@ -106,9 +106,9 @@ public static class PipelineTelemetry
         "pipeline.run.agent_sessions", "{session}", "Agent CLI sessions per pipeline run phase");
 
     /// <summary>
-    /// Counter: total agent execution time in seconds per run, broken down by phase and provider.
+    /// Counter: total agent execution time in seconds per run, broken down by phase, provider and model.
     /// Recorded once per run at terminal status time by the API.
-    /// Tags: run_type, phase, provider.
+    /// Tags: run_type, phase, provider, model.
     /// </summary>
     public static readonly Counter<double> RunAgentTime = Meter.CreateCounter<double>(
         "pipeline.run.agent_time", "s", "Agent execution time in seconds per pipeline run phase");

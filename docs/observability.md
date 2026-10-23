@@ -28,10 +28,10 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.run.step.duration` | Histogram | s | `run_type`, `step` | Duration of each step visit, recorded on every step transition |
 | `pipeline.run.sub_issues` | Counter | `{issue}` | `result` (`created`, `failed`) | Sub-issues per decomposition run, once per run |
 | `pipeline.run.brain_updates` | Counter | `{run}` | `result` (`pushed`, `none`) | Brain update result per non-consolidation run |
-| `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider` | LLM tokens per phase, at terminal time |
-| `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider` | LLM cost per phase, at terminal time |
+| `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider`, `model` | LLM tokens per phase, at terminal time |
+| `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider`, `model` | LLM cost per phase, at terminal time |
 | `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per phase |
-| `pipeline.run.agent_time` | Counter | s | `run_type`, `phase`, `provider` | Agent execution time per phase |
+| `pipeline.run.agent_time` | Counter | s | `run_type`, `phase`, `provider`, `model` | Agent execution time per phase |
 | `pipeline.run.token_usage` | Counter | `{token}` | `run_type`, `provider`, `token_type` | Tokens by type (`input`, `output`, `reasoning`, `cache_read`, `cache_write`); `output` excludes `reasoning`. No `phase` tag, to keep series bounded. Reported by OpenCode and Claude Code |
 | `pipeline.run.billing_cost_usd` | Counter | `{usd}` | `run_type`, `provider`, `billing` | Provider-reported cost by how it is paid: `api` is billed per token, `subscription` is the CLI's estimate under a flat Claude plan (not a bill), `unknown` otherwise |
 | `pipeline.run.agent_turns` | Counter | `{turn}` | `run_type`, `provider` | Model round trips per run (Claude Code) |
@@ -116,7 +116,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `step` | `PipelineStep` enum name | PascalCase, only on `pipeline.run.step.duration` |
 | `phase` | `analysis`, `analysis_review`, `codegen`, `review`, `quality_gate`, `acceptance_criteria`, `pr_description`, `reflection`, `decomposition`, `other` | One closed set for every `phase` tag and the `pipeline.phase` span attribute — see [Phase normalization](#phase-normalization) |
 | `provider` | `kiro`, `opencode`, `claude`, `unknown` | Agent provider; anything else is recorded as `unknown`. On `pipeline.run.outcomes` it is the tool of the pinned route |
-| `model` | model name, or `auto` | On `pipeline.run.agent_sessions` the model the agent reports (`unknown` when not reported); on `pipeline.run.outcomes` the pinned route's model (`unknown` for work created before agent routing) |
+| `model` | model name, or `auto` | On `pipeline.run.tokens`, `pipeline.run.cost_usd`, `pipeline.run.agent_time` and `pipeline.run.agent_sessions`: the phase's own model when set, otherwise the run's pinned route model (`unknown` for work created before agent routing); on `pipeline.run.outcomes` the pinned route's model (`unknown` for work created before agent routing) |
 | `task_type` | `Implementation`, `Review`, `Decomposition`, `Triage`, `Consolidation` | Only on `pipeline.routing.refusals` |
 | `reason` | `no_route`, `profile_unavailable`, `no_tool`, `template_missing`, `template_changed`, `config_collision` | On `pipeline.routing.refusals`. `workdistribution.dispatch.attempts` has its own `reason` set |
 | `token_type` | `input`, `output`, `reasoning`, `cache_read`, `cache_write` | Only on `pipeline.run.token_usage` |
@@ -207,6 +207,8 @@ Each `PipelineRun` accumulates token and cost data beyond the simple totals. Thi
 | `CacheWriteTokens` | Tokens written into the prompt cache across all agent invocations in this run |
 
 Cache token fields are populated for **OpenCode** and **Claude Code** agents. Kiro CLI does not report token or cost data at all (verified 2026-09-29: `KiroCliAgentProvider` returns `Usage = null` and `Cost = null`), so `pipeline.run.tokens` and `pipeline.run.cost_usd` stay at zero for Kiro runs while `agent_sessions` and `agent_time` (measured by the agent harness) are populated.
+
+A phase without its own provider or model (adversarial review and refinement calls, consolidation calls) is tagged with the run's route; consolidation usage is recorded from the agent's HTTP completion.
 
 **Claude Code usage:** the provider reads the `result` event of `claude -p --output-format stream-json` and reports, per call, input / output / reasoning / cache tokens, the CLI's cost estimate (`total_cost_usd`), turns, API time, web searches, a per-model breakdown and subscription rate-limit readings (`rate_limit_event`). A resumed session reports the whole conversation's totals, so the provider subtracts what it saw at the end of the previous call. The per-model breakdown and rate-limit readings are logged per call (`Claude Code model usage` / `Claude Code rate limit` log lines); the totals feed the counters above.
 
