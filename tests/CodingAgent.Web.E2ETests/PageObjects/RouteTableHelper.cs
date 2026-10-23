@@ -40,6 +40,26 @@ public sealed class RouteTableHelper
         await cell.WaitForAsync(new() { Timeout = 5_000 });
         return (await cell.TextContentAsync())?.Trim() ?? "";
     }
+
+    /// <summary>The current DOM value of a select in the route table (e.g. <c>route-effort-default</c>).</summary>
+    public async Task<string> GetSelectValueAsync(string testId)
+    {
+        var loc = Cell(testId);
+        await loc.WaitForAsync(new() { Timeout = 5_000 });
+        return await loc.InputValueAsync();
+    }
+
+    /// <summary>
+    /// Asserts that the DOM value of a select in the route table equals <paramref name="expected"/>,
+    /// retrying with Playwright's built-in polling until <paramref name="timeoutMs"/> expires.
+    /// Use this (not <see cref="GetSelectValueAsync"/>) whenever the assertion follows a profile or
+    /// tool switch: Blazor Server processes the <c>@bind</c> callback asynchronously over SignalR,
+    /// and a one-shot read can execute before the re-render has patched the option list — producing
+    /// a false positive on un-fixed code.
+    /// </summary>
+    public Task AssertSelectValueAsync(string testId, string expected, int timeoutMs = 5_000) =>
+        Assertions.Expect(Cell(testId))
+            .ToHaveValueAsync(expected, new() { Timeout = timeoutMs });
 }
 
 /// <summary>Page object for the Routing settings page (Settings → Agents → Routing).</summary>

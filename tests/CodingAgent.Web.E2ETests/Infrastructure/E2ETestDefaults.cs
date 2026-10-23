@@ -150,6 +150,11 @@ internal static class E2ETestDefaults
               imagePullPolicy: "Always"
               providerType: "opencode"
               maxConcurrent: 5
+            - labels: "claude,dotnet"
+              image: "chemsorly/coding-agent:claude-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "claude"
+              maxConcurrent: 5
             # ── Test-only selectors ─────────────────────────────────────────────────
             # Dispatching a Pending work item (POST /api/work-items/{id}/dispatch) needs a matching
             # JobTemplate, or the item is deferred with "no_template".
