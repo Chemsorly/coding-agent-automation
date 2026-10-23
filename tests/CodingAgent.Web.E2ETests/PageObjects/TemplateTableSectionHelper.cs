@@ -1,5 +1,6 @@
 using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
+using System.Text.RegularExpressions;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
 
@@ -119,4 +120,50 @@ public sealed class TemplateTableSectionHelper
     {
         await LabelPreviewButton(templateName).WaitForAsync(new() { Timeout = timeoutMs, State = WaitForSelectorState.Visible });
     }
+
+    // ── Project group helpers ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the locator for the project group container matching <paramref name="projectName"/>
+    /// exactly (so "Default" does not also match "E2E Default …").
+    /// </summary>
+    private ILocator ProjectGroup(string projectName) =>
+        _page.Locator(".project-group").Filter(new()
+        {
+            Has = _page.Locator(".project-group-header strong",
+                new() { HasTextRegex = new Regex($"^{Regex.Escape(projectName)}$") })
+        });
+
+    /// <summary>
+    /// Returns true when a template row containing <paramref name="templateName"/> exists
+    /// inside the project group for <paramref name="projectName"/>.
+    /// Returns false when the project has no templates (no group is rendered) or the template
+    /// is in a different group.
+    /// </summary>
+    public async Task<bool> IsTemplateInGroupAsync(string templateName, string projectName) =>
+        await ProjectGroup(projectName).Locator($"tr:has-text('{templateName}')").CountAsync() > 0;
+
+    /// <summary>
+    /// Clicks "Move to…" for <paramref name="templateName"/>, selects
+    /// <paramref name="targetProjectName"/> from the popup, and waits until the menu is hidden.
+    ///
+    /// <para>
+    /// The menu closes (and this method returns) before the server-side move is persisted.
+    /// Callers that assert on the new group membership must poll with
+    /// <see cref="IsTemplateInGroupAsync"/> after this call.
+    /// </para>
+    /// </summary>
+    public async Task MoveTemplateAsync(string templateName, string targetProjectName)
+    {
+        await _page.ClickAsync($"tr:has-text('{templateName}') button:has-text('Move to\u2026')");
+        await _page.ClickAsync($".move-to-option:has-text('{targetProjectName}')");
+        await _page.WaitForSelectorAsync(".move-to-menu", new() { State = WaitForSelectorState.Hidden, Timeout = 10_000 });
+    }
+
+    /// <summary>
+    /// Returns a locator for the epic-decomposition indicator span inside the project group
+    /// header for <paramref name="projectName"/>.
+    /// </summary>
+    public ILocator EpicIndicator(string projectName) =>
+        ProjectGroup(projectName).Locator(".project-group-header span[title='Cross-repo epic decomposition configured']");
 }
