@@ -239,7 +239,7 @@ Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-cod
 Editing an existing template happens on its **repository page** at `/pipelines/{templateId}`, reachable by clicking the template name or the "Edit" link in the Pipelines table. The repository page splits template configuration into two cards:
 
 - **Binding card** (global admins only): providers, brain, CI provider, stack labels, enabled, and the repository's agent routing rows (see [Agent Routing — Repository Rows](agent-routing.md#repository-rows)). These are the operator-level settings. Other readers see the resolved route per task type.
-- **Behaviour card** (global admins only): name, workflow switches, housekeeping, steering instructions, setup steps, secrets (write-only), and commit blacklist.
+- **Behaviour card** (editable by project admins and global admins): name, workflow switches, housekeeping, steering instructions, setup steps, secrets (write-only), and commit blacklist.
 
 Changes on the repository page apply from the next poll cycle. A template keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project. Templates can be added, edited, moved and removed while the loop runs.
 

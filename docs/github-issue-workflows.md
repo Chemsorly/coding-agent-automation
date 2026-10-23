@@ -120,7 +120,7 @@ To ask for another attempt from the tracker, post a comment and replace `agent:t
 
 ## Issue Dependencies
 
-An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) and GitLab URLs with nested subgroups are not recognized and do not block dispatch.
+An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) are not recognized and do not block dispatch.
 
 ## Closed-Loop Mode
 
