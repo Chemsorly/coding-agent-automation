@@ -153,6 +153,64 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         sp.GetRequiredService<IChatJobDispatcher>().Should().NotBeNull();
     }
 
+    /// <summary>
+    /// Characterization test that pins the five shared orchestration services that Epic #3847
+    /// will extract into a shared DI extension.  It asserts both the concrete implementation type
+    /// and singleton identity so that any future refactor that accidentally changes either will be
+    /// caught immediately.
+    /// </summary>
+    [Fact]
+    public void AddApiOrchestration_SharedOrchestrationServices_ResolveAsConcreteSingletons()
+    {
+        var sp = _provider!;
+
+        // IProviderFactory → ProviderFactory (CodingAgent.Infrastructure)
+        var providerFactory1 = sp.GetRequiredService<IProviderFactory>();
+        var providerFactory2 = sp.GetRequiredService<IProviderFactory>();
+        providerFactory1.Should().BeOfType<ProviderFactory>(
+            "IProviderFactory must be backed by the real ProviderFactory implementation");
+        providerFactory1.Should().BeSameAs(providerFactory2,
+            "IProviderFactory must be registered as a singleton");
+
+        // IConsolidationService → ConsolidationService (CodingAgent.Pipeline.Services)
+        var consolidation1 = sp.GetRequiredService<IConsolidationService>();
+        var consolidation2 = sp.GetRequiredService<IConsolidationService>();
+        consolidation1.Should().BeOfType<ConsolidationService>(
+            "IConsolidationService must be backed by ConsolidationService");
+        consolidation1.Should().BeSameAs(consolidation2,
+            "IConsolidationService must be registered as a singleton");
+
+        // IDependencyChecker → DependencyChecker (CodingAgent.Pipeline.Services)
+        var depChecker1 = sp.GetRequiredService<IDependencyChecker>();
+        var depChecker2 = sp.GetRequiredService<IDependencyChecker>();
+        depChecker1.Should().BeOfType<DependencyChecker>(
+            "IDependencyChecker must be backed by DependencyChecker");
+        depChecker1.Should().BeSameAs(depChecker2,
+            "IDependencyChecker must be registered as a singleton");
+
+        // IDispatchOrchestrationService → DispatchOrchestrationService (CodingAgent.Orchestration.Dispatch)
+        var dispatch1 = sp.GetRequiredService<IDispatchOrchestrationService>();
+        var dispatch2 = sp.GetRequiredService<IDispatchOrchestrationService>();
+        dispatch1.Should().BeOfType<DispatchOrchestrationService>(
+            "IDispatchOrchestrationService must be backed by DispatchOrchestrationService");
+        dispatch1.Should().BeSameAs(dispatch2,
+            "IDispatchOrchestrationService must be registered as a singleton");
+
+        // ConsolidationStalenessService resolves as itself (CodingAgent.Orchestration)
+        var staleness1 = sp.GetRequiredService<ConsolidationStalenessService>();
+        var staleness2 = sp.GetRequiredService<ConsolidationStalenessService>();
+        // TODO [WARNING]: BeOfType<ConsolidationStalenessService>() is near-tautological here
+        // because GetRequiredService<ConsolidationStalenessService>() already constrains the
+        // returned value to ConsolidationStalenessService or a subclass. The assertion only fails
+        // if a derived class is registered as the concrete type — a currently non-existent scenario.
+        // The meaningful characterisation assertion is BeSameAs (singleton identity) below.
+        // Kept per issue #3857 requirements; revisit if the class becomes sealed.
+        staleness1.Should().BeOfType<ConsolidationStalenessService>(
+            "ConsolidationStalenessService must resolve to its own concrete type");
+        staleness1.Should().BeSameAs(staleness2,
+            "ConsolidationStalenessService must be registered as a singleton");
+    }
+
     // ── CreateIsIssueDistributedDelegate tests ─────────────────────────────────
 
     [Fact]
