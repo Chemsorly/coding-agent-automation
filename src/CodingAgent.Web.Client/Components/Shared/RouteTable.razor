@@ -26,7 +26,7 @@
                                 <option value="">— Select agent profile —</option>
                                 @foreach (var profile in OfferedProfiles(row))
                                 {
-                                    <option value="@profile.Id">@ProfileLabel(profile)</option>
+                                    <option @key="profile.Id" value="@profile.Id">@ProfileLabel(profile)</option>
                                 }
                             </select>
                         </td>
@@ -51,7 +51,7 @@
                                 <select data-testid="route-effort-@key" aria-label="@($"Effort for {RowLabel(row)}")" @bind="row.Effort">
                                     @foreach (var effort in EffortsFor(tool))
                                     {
-                                        <option value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
+                                        <option @key="effort" value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
                                     }
                                 </select>
                             }

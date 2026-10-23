@@ -116,7 +116,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         // RunLifecycleManager.CompleteRunAsync/FailRunAsync will internally call RemoveRun (which is
         // a no-op if the ghost run is not in memory) and AddRunToHistoryAsync.
         // RunLifecycleManager already skips the label swap for consolidation runs via the
-        // IssueProviderConfigId == ConsolidationConstants.ProviderConfigId guard in CompleteRunAsync.
+        // run.IsConsolidation() guard in CompleteRunAsync.
         try
         {
             var runId = new RunId(result.JobId);
