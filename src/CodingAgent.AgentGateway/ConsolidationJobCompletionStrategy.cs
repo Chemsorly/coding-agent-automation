@@ -54,7 +54,7 @@ internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrateg
         // transitioned atomically. RunLifecycleManager.CompleteRunAsync calls _runService.RemoveRun
         // internally — do NOT call _facade.RemoveRun separately.
         // RunLifecycleManager already skips the label swap for consolidation runs
-        // (IssueProviderConfigId == ConsolidationConstants.ProviderConfigId guard in each terminal method).
+        // (run.IsConsolidation() guard in each terminal method).
         if (workItemStatus == WorkItemStatus.Succeeded)
         {
             try
