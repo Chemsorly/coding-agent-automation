@@ -452,6 +452,289 @@ public sealed class RunUsageMetricsTests
             "a reading without utilization records no histogram sample");
     }
 
+    [Fact]
+    public async Task PhaseBreakdown_TagsModel_OnTokensCostAndAgentTime()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedRunningItemAsync(opts);
+        var svc = CreateService(opts);
+
+        var (tokensListener, tokensBag) = SetupLongListener("pipeline.run.tokens");
+        var (costListener, costBag) = SetupDoubleListener("pipeline.run.cost_usd");
+        var (timeListener, timeBag) = SetupDoubleListener("pipeline.run.agent_time");
+        var (sessionsListener, sessionsBag) = SetupLongListener("pipeline.run.agent_sessions");
+        using var _ = tokensListener;
+        using var __ = costListener;
+        using var ___ = timeListener;
+        using var ____ = sessionsListener;
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new()
+                {
+                    Tokens = 1000,
+                    Cost = 0.12m,
+                    AgentTimeSeconds = 45.0,
+                    Provider = "kiro",
+                    Model = "claude-sonnet-4-5",
+                    SessionCount = 1
+                }
+            }
+        };
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        tokensBag.Should().ContainSingle(m => m.Value == 1000).Which
+            .Tags["model"].Should().Be("claude-sonnet-4-5", "RunTokens must include the model tag");
+        costBag.Should().ContainSingle(m => Math.Abs(m.Value - 0.12) < 1e-6).Which
+            .Tags["model"].Should().Be("claude-sonnet-4-5", "RunCostUsd must include the model tag");
+        timeBag.Should().ContainSingle(m => Math.Abs(m.Value - 45.0) < 1e-9).Which
+            .Tags["model"].Should().Be("claude-sonnet-4-5", "RunAgentTime must include the model tag");
+        sessionsBag.Should().ContainSingle(m => m.Value == 1).Which
+            .Tags["model"].Should().Be("claude-sonnet-4-5", "RunAgentSessions must include the model tag");
+    }
+
+    [Fact]
+    public async Task PhaseBreakdown_PhaseWithoutProviderOrModel_UsesTheRoute()
+    {
+        // Seed a work item with a pinned route (provider=kiro, model=claude-sonnet-4-5)
+        var opts = CreateDbOptions();
+        var route = new AgentRouteSnapshot("profile-1", "Test Profile", "kiro", "claude-sonnet-4-5", "high", AgentRouteSource.GlobalDefault);
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"route-test-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            TimeoutSeconds = 3600,
+            PayloadSchemaVersion = 1,
+            Route = route
+        };
+        var item = new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = request.IssueIdentifier.Value,
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            Status = WorkItemStatus.Running,
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            Payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default),
+        };
+        await using (var ctx = new LocalTestPipelineDbContext(opts))
+        {
+            ctx.Database.EnsureCreated();
+            ctx.WorkItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+        var svc = CreateService(opts);
+
+        var (tokensListener, tokensBag) = SetupLongListener("pipeline.run.tokens");
+        using var _ = tokensListener;
+
+        // Phase has no Provider or Model set — should fall back to route's values
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["analysis"] = new() { Tokens = 750, Provider = null, Model = null }
+            }
+        };
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        var measurement = tokensBag.Should().ContainSingle(m => m.Value == 750).Which;
+        measurement.Tags["provider"].Should().Be("kiro",
+            "null phase provider must fall back to the run's route provider");
+        measurement.Tags["model"].Should().Be("claude-sonnet-4-5",
+            "null phase model must fall back to the run's route model");
+    }
+
+    [Fact]
+    public async Task PhaseBreakdown_PhaseWithProvider_KeepsItsOwnProvider()
+    {
+        // Same route as above; the phase declares its own provider which must take precedence
+        var opts = CreateDbOptions();
+        var route = new AgentRouteSnapshot("profile-1", "Test Profile", "kiro", "claude-sonnet-4-5", "high", AgentRouteSource.GlobalDefault);
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"provider-override-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            TimeoutSeconds = 3600,
+            PayloadSchemaVersion = 1,
+            Route = route
+        };
+        var item = new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = request.IssueIdentifier.Value,
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            Status = WorkItemStatus.Running,
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            Payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default),
+        };
+        await using (var ctx = new LocalTestPipelineDbContext(opts))
+        {
+            ctx.Database.EnsureCreated();
+            ctx.WorkItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+        var svc = CreateService(opts);
+
+        var (tokensListener, tokensBag) = SetupLongListener("pipeline.run.tokens");
+        using var _ = tokensListener;
+
+        // Phase has its own provider ("claude") — must not be overwritten by route's "kiro"
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new() { Tokens = 400, Provider = "claude", Model = null }
+            }
+        };
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        var measurement = tokensBag.Should().ContainSingle(m => m.Value == 400).Which;
+        measurement.Tags["provider"].Should().Be("claude",
+            "phase's own provider must take precedence over the route provider");
+        measurement.Tags["model"].Should().Be("claude-sonnet-4-5",
+            "phase model is null so must fall back to the route model even when phase has its own provider");
+    }
+
+    [Fact]
+    public async Task ConsolidationCompletion_AlreadyTerminal_RecordsUsageOnce()
+    {
+        // A consolidation item that is already terminal (hub reported first) → the HTTP completion
+        // arrives at the terminal guard and EmitConsolidationUsageTelemetryAsync must fire once.
+        var opts = CreateDbOptions();
+        var itemId = Guid.NewGuid();
+        await using (var ctx = new LocalTestPipelineDbContext(opts))
+        {
+            ctx.Database.EnsureCreated();
+            ctx.WorkItems.Add(new WorkItemEntity
+            {
+                Id = itemId,
+                IssueIdentifier = $"consolidation-{itemId:N}",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Succeeded,       // already terminal
+                TaskType = WorkItemTaskType.Consolidation,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            });
+            ctx.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                WorkItemId = itemId,
+                IssueIdentifier = $"consolidation-{itemId:N}",
+                RunType = PipelineRunType.Consolidation,  // required for guard to pass
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            });
+            await ctx.SaveChangesAsync();
+        }
+        var svc = CreateService(opts);
+
+        var (tokensListener, tokensBag) = SetupLongListener("pipeline.run.tokens");
+        using var _ = tokensListener;
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["refactoring_structural"] = new() { Tokens = 800, Provider = "claude" }
+            }
+        };
+
+        await svc.TransitionAsync(itemId,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        tokensBag.Should().ContainSingle(m => m.Value == 800,
+            "a consolidation HTTP completion arriving after the hub must record usage exactly once");
+    }
+
+    [Fact]
+    public async Task ImplementationCompletion_AlreadyTerminal_RecordsNoUsage()
+    {
+        // An implementation item that is already terminal (e.g. duplicate POST) → the HTTP completion
+        // hits the terminal guard; EmitConsolidationUsageTelemetryAsync must return early (not consolidation).
+        var opts = CreateDbOptions();
+        var itemId = Guid.NewGuid();
+        await using (var ctx = new LocalTestPipelineDbContext(opts))
+        {
+            ctx.Database.EnsureCreated();
+            ctx.WorkItems.Add(new WorkItemEntity
+            {
+                Id = itemId,
+                IssueIdentifier = $"impl-{itemId:N}",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Succeeded,       // already terminal
+                TaskType = WorkItemTaskType.Implementation,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            });
+            ctx.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                WorkItemId = itemId,
+                IssueIdentifier = $"impl-{itemId:N}",
+                RunType = PipelineRunType.Implementation,
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            });
+            await ctx.SaveChangesAsync();
+        }
+        var svc = CreateService(opts);
+
+        var (tokensListener, tokensBag) = SetupLongListener("pipeline.run.tokens");
+        using var _ = tokensListener;
+
+        // Payload has PhaseBreakdown — but implementation run must NOT double-record
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new() { Tokens = 500, Provider = "kiro" }
+            }
+        };
+
+        await svc.TransitionAsync(itemId,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        tokensBag.Should().BeEmpty(
+            "an implementation run already terminal must NOT emit usage counters (only consolidation does)");
+    }
+
     // ── Test infrastructure ───────────────────────────────────────────────────
 
     private sealed class LocalTestPipelineDbContext : PipelineDbContext

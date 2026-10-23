@@ -381,7 +381,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     /// <see cref="PhaseUsagePayload"/> dictionary suitable for wire serialization.
     /// Returns null when the breakdown is empty.
     /// </summary>
-    private static IReadOnlyDictionary<string, PhaseUsagePayload>? BuildPhaseBreakdownPayload(
+    internal static IReadOnlyDictionary<string, PhaseUsagePayload>? BuildPhaseBreakdownPayload(
         System.Collections.Concurrent.ConcurrentDictionary<string, PhaseUsage> breakdown)
     {
         if (breakdown.IsEmpty)

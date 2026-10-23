@@ -204,6 +204,50 @@ public class WorkItemExecutorRouterTests
         act.Should().ThrowAsync<ArgumentNullException>();
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ConsolidationResult_PhaseBreakdownPropagatedToPayload()
+    {
+        // Arrange — mock consolidation executor returns a result with PhaseBreakdown set
+        var breakdown = new Dictionary<string, PhaseUsagePayload>
+        {
+            ["refactoring_structural"] = new() { Tokens = 500, Provider = "kiro", Cost = 0.05m }
+        };
+        var resultWithBreakdown = new ConsolidationJobResult
+        {
+            JobId = "test-job-breakdown",
+            Success = true,
+            PhaseBreakdown = breakdown
+        };
+
+        var consolidationExecutor = new Mock<IConsolidationExecutor>();
+        consolidationExecutor
+            .Setup(x => x.ExecuteAsync(
+                It.IsAny<ConsolidationJobMessage>(),
+                It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+                It.IsAny<OutputBatcher?>(),
+                It.IsAny<Action<PipelineStep?>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(resultWithBreakdown);
+
+        var router = new WorkItemExecutorRouter(
+            CreateMockPipelineExecutor(), consolidationExecutor.Object, Mock.Of<Serilog.ILogger>());
+        var assignment = CreateMinimalAssignment(WorkItemTaskType.Consolidation);
+
+        // Act
+        var payload = await router.ExecuteAsync(
+            assignment,
+            CreateDisconnectedConnection(),
+            new OutputBatcher(),
+            _ => { },
+            CancellationToken.None);
+
+        // Assert
+        payload.PhaseBreakdown.Should().NotBeNull(
+            "AdaptResult must copy PhaseBreakdown from ConsolidationJobResult into the JobCompletionPayload");
+        payload.PhaseBreakdown.Should().ContainKey("refactoring_structural");
+        payload.PhaseBreakdown!["refactoring_structural"].Tokens.Should().Be(500);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static WorkItemExecutorRouter CreateRouter()

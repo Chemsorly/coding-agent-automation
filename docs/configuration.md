@@ -213,6 +213,7 @@ The retry loop classifies agent failures into categories to distinguish provider
 | `ProviderRateLimit` | 429 | **No** | `RetryCount` is not incremented. The loop waits `TransientRetryDelay` (default: 30 seconds), then retries from the same position without spending a fix attempt. After 10 consecutive transient results the loop stops and the run ends with a draft PR; a normal fix attempt resets the count. |
 | `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — waits `TransientRetryDelay`, no budget consumed. |
 | `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends with a draft PR. |
+| `ProviderBillingLimit` | billing_error (Claude Code) | **No** | Loop aborts immediately — top up the API credit or switch the agent profile's Auth Mode. The run ends with a draft PR. |
 | `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
 
 > **Operator note:** A sustained 429/503 storm from the upstream LLM provider ends the retry loop after 10 consecutive transient results, and the run finishes with a draft PR. If the job's `agentTimeout` fires first, the timeout ends the run. If you see draft PRs with no code changes, check agent logs for repeated `ProviderRateLimit` or `ProviderOverload` classifications and investigate your LLM provider's rate limits or quota.

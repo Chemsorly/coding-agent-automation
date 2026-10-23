@@ -236,10 +236,9 @@ public class RefactoringExecutorTests : IDisposable
         // and Usage set on every agent response.
         //
         // With RefactoringFocus = All (default) and RefactoringReviewEnabled = false:
-        //   Phase 0 (refactoring_conventions), Phase 1 ×4 (structural/correctness/design get names,
-        //   test-gaps gets null), Phase 2 (refactoring_aggregation) → 6 agent calls total.
-        //   Only the 5 named-phase calls accumulate tokens; test-gaps passes usagePhase = null.
-        //   5 × 100 InputTokens = TotalTokens 500.
+        //   Phase 0 (refactoring_conventions), Phase 1 ×4 (structural/correctness/design/test-gaps
+        //   all get named phases), Phase 2 (refactoring_aggregation) → 6 agent calls total.
+        //   All 6 named-phase calls accumulate tokens: 6 × 100 InputTokens = TotalTokens 600.
         var job = CreateJob();
         job = new ConsolidationJobMessage
         {
@@ -297,9 +296,78 @@ public class RefactoringExecutorTests : IDisposable
 
         // Assert
         result.Success.Should().BeTrue();
-        progress.Run.TotalTokens.Should().Be(500,
-            "Phase 0 + 3 named Phase 1 (structural/correctness/design) + Phase 2 = 5 calls × 100 tokens; " +
-            "test-gaps Phase 1 agent passes usagePhase=null so its tokens are not accumulated");
+        progress.Run.TotalTokens.Should().Be(600,
+            "Phase 0 + 4 Phase 1 agents (structural/correctness/design/test-gaps) + Phase 2 = 6 calls × 100 tokens; " +
+            "all Phase 1 agents now have named usage phases (refactoring_test_gaps fixed in issue #3860)");
+    }
+
+    [Fact]
+    public async Task Phase1_RecordsUsageForEveryAgent()
+    {
+        // Verify that all four Phase 1 agents (structural, correctness, design, test-gaps)
+        // accumulate token usage after fix for issue #3860 (test-gaps previously had usagePhase=null).
+        var job = CreateJob();
+        job = new ConsolidationJobMessage
+        {
+            JobId = job.JobId,
+            Type = job.Type,
+            TemplateId = job.TemplateId,
+            TemplateName = job.TemplateName,
+            ProviderConfigs = job.ProviderConfigs,
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false
+            }
+        };
+
+        var run = ConsolidationProgress.CreateRun(job);
+        var progress = new ConsolidationProgress(run, _ => { });
+        var executor = new RefactoringExecutor(_mockLogger.Object, progress);
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Example proposal",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Example description.",
+                    "rationale": "Example rationale."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Analysis complete."],
+                Usage = new TokenUsage { InputTokens = 100 }
+            });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        // Act — focus=All runs all four Phase 1 agents
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — all four Phase 1 phases must appear in the breakdown
+        var phaseKeys = progress.Run.Metrics.PhaseBreakdown.Keys.ToHashSet();
+        phaseKeys.Should().Contain("refactoring_structural", "structural phase must record usage");
+        phaseKeys.Should().Contain("refactoring_correctness", "correctness phase must record usage");
+        phaseKeys.Should().Contain("refactoring_design", "design phase must record usage");
+        phaseKeys.Should().Contain("refactoring_test_gaps",
+            "test-gaps phase must record usage after fix for issue #3860");
     }
 
     [Fact]
