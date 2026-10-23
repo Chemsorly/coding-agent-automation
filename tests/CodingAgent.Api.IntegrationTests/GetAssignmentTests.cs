@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -19,7 +20,7 @@ namespace CodingAgent.Api.IntegrationTests;
 /// Unit tests for <see cref="WorkItemAgentEndpoints.GetAssignment"/>.
 /// Tests both the old-payload (full snapshot with ProviderConfigs != null)
 /// and the new minimal-payload + fresh-fetch path (ProviderConfigs == null).
-/// Also covers: <see cref="WorkItemDispatchEndpoints.BuildMinimalPayload"/> stripping mutable config.
+/// Also covers: <see cref="WorkItemEntityBuilder.BuildMinimalPayload"/> stripping mutable config.
 /// </summary>
 public sealed class GetAssignmentTests
 {
@@ -497,7 +498,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsProviderConfigs()
     {
         var full = MakeFullRequest("some-steering");
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
         minimal.ProviderConfigs.Should().BeNull("ProviderConfigs must be null in minimal payload");
     }
 
@@ -505,7 +506,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsRepoSteeringContent()
     {
         var full = MakeFullRequest("some-steering");
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
         minimal.RepoSteeringContent.Should().BeNull("RepoSteeringContent must be null in minimal payload");
     }
 
@@ -513,7 +514,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsQualityGateConfigs()
     {
         var full = MakeFullRequest();
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
         minimal.QualityGateConfigs.Should().BeNull("QualityGateConfigs must be null in minimal payload");
     }
 
@@ -521,7 +522,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsMcpServers()
     {
         var full = MakeFullRequest();
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
         minimal.McpServers.Should().BeNull("McpServers must be null in minimal payload");
     }
 
@@ -535,7 +536,7 @@ public sealed class GetAssignmentTests
                 new IssueComment { Body = "a comment", Author = "bob", CreatedAt = DateTime.UtcNow, Id = "c1" }
             ]
         };
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
         minimal.IssueComments.Should().BeNull("IssueComments must be null in minimal payload");
     }
 
@@ -552,7 +553,7 @@ public sealed class GetAssignmentTests
             ProjectName = "My Project",
             TraceContext = new Dictionary<string, string> { ["traceparent"] = "00-abc-def-01" }
         };
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
 
         minimal.IssueIdentifier.Value.Should().Be(full.IssueIdentifier.Value);
         minimal.IssueProviderConfigId.Should().Be(full.IssueProviderConfigId);
@@ -603,7 +604,7 @@ public sealed class GetAssignmentTests
             ReviewPrDescription = "Fix the bug",
             ReviewPrAuthor = "alice",
         };
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
 
         minimal.LinkedPullRequest.Should().NotBeNull();
         minimal.LinkedPullRequest!.Url.Should().Be("https://example.com/pr/99");
@@ -635,7 +636,7 @@ public sealed class GetAssignmentTests
         };
 
         // ACT
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
 
         // ASSERT: all four non-reconstructable consolidation identity fields survive stripping
         minimal.TaskType.Should().Be(WorkItemTaskType.Consolidation,
@@ -671,7 +672,7 @@ public sealed class GetAssignmentTests
             RefactoringFocus = RefactoringScanFocus.Correctness,
         };
 
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
 
         minimal.RefactoringFocus.Should().Be(RefactoringScanFocus.Correctness,
             "RefactoringFocus must be preserved in the minimal payload so it reaches the executor");
@@ -690,7 +691,7 @@ public sealed class GetAssignmentTests
                 Labels = ["bug", "priority:high"]
             }
         };
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
 
         // Title kept for display in GetPendingWorkItems
         minimal.IssueDetail.Should().NotBeNull();
@@ -708,7 +709,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_SetsPayloadSchemaVersion()
     {
         var full = MakeFullRequest("some-steering");
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
         minimal.PayloadSchemaVersion.Should().Be(1,
             "BuildMinimalPayload must set PayloadSchemaVersion = 1 so GetAssignment can detect new-schema rows");
         // TODO: [WARNING] This test does not assert that PayloadSchemaVersion round-trips through JSON
