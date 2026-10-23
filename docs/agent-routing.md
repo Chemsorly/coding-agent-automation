@@ -155,9 +155,11 @@ The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pi
 | `agent:epic` | Issue is an epic awaiting decomposition | No |
 | `agent:epic-review` | Decomposition plan is posted and awaiting human review | Yes |
 | `agent:epic-approved` | Human approved the decomposition plan (required before sub-issues are created) | No |
+| `agent:triage` | Problem report queued for a triage run (label triage) | No |
+| `agent:triage-review` | Root cause analysis posted; the issue drafts wait for review in the app | Yes |
 | `agent:generated` | Issue was created by the pipeline (a decomposition sub-issue or a refactoring issue from a consolidation run); not a status label, so label swaps keep it | No |
 
-**Terminal labels** (`agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, `agent:cancelled`, `agent:epic-review`) mark states that require human action to re-queue. Remove the terminal label and add `agent:next` to retry; for `agent:epic-review`, add `agent:epic-approved` to approve the plan or `agent:epic` to request a new one. `agent:needs-refinement` specifically indicates the issue body needs more detail — review the analysis confidence output before re-queuing.
+**Terminal labels** (`agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, `agent:cancelled`, `agent:epic-review`, `agent:triage-review`) mark states that require human action to re-queue. Remove the terminal label and add `agent:next` to retry; for `agent:epic-review`, add `agent:epic-approved` to approve the plan or `agent:epic` to request a new one; for `agent:triage-review`, re-run or dismiss from the Triage page, or replace the label with `agent:triage` for another attempt. `agent:needs-refinement` specifically indicates the issue body needs more detail — review the analysis confidence output before re-queuing.
 
 **`agent:epic-approved`** is a gated label: agents may not set it via `RequestLabelChange`. Only humans can approve decomposition.
 
