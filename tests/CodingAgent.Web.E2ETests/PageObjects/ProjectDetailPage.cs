@@ -22,13 +22,28 @@ public sealed class ProjectDetailPage
     // ── Navigation ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Navigates to <c>/projects/{projectId}</c> and waits for the Overview tab button.
+    /// Navigates to <c>/projects/{projectId}</c>, waits for the Overview tab button, and then
+    /// waits for Blazor's async <c>OnParametersSetAsync</c>/<c>LoadDataAsync</c> to complete.
+    /// <para>
+    /// A full-page navigation via <c>GotoCockpitPageAsync</c> renders <c>ProjectDetailSection</c>
+    /// with its initial state first (synchronously), then begins an async HTTP data load. Until
+    /// that load completes and re-renders, any DOM fill (e.g. FillDescriptionAsync) is overwritten
+    /// by the re-render. The extra wait ensures the component is stable before callers interact
+    /// with form fields.
+    /// </para>
     /// Does NOT wait for the <c>&lt;h2&gt;</c> text — a new, unsaved project has an empty name.
     /// </summary>
     public async Task NavigateAsync(string projectId)
     {
         await _page.GotoCockpitPageAsync($"{_baseUrl}/projects/{projectId}");
         await _page.WaitForSelectorAsync(".tab-btn:has-text('Overview')", new() { Timeout = 15_000 });
+        // Wait for the async data load (LoadDataAsync) to complete and the component to
+        // reach its stable, loaded state before callers fill form fields. Without this,
+        // the re-render triggered by LoadDataAsync will overwrite values that were filled
+        // immediately after navigation. 500ms is well above the observed in-process HTTP
+        // round-trip (typically < 50ms on a loopback connection).
+        await _page.WaitForInteractiveAsync("[data-testid='project-description-input']", 10_000);
+        await _page.WaitForTimeoutAsync(500);
     }
 
     // ── Tab navigation ───────────────────────────────────────────────────
