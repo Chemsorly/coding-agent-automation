@@ -213,7 +213,7 @@
                 <label>Name</label>
                 @if (Access.CanAdminister(ProjectId))
                 {
-                    <input type="text" @bind="_name" maxlength="128" />
+                    <input type="text" @bind="_name" maxlength="128" data-testid="project-name-input" />
                 }
                 else
                 {
@@ -224,7 +224,7 @@
                 <label>Description</label>
                 @if (Access.CanAdminister(ProjectId))
                 {
-                    <textarea @bind="_description" rows="3" maxlength="512"></textarea>
+                    <textarea @bind="_description" rows="3" maxlength="512" data-testid="project-description-input"></textarea>
                 }
                 else
                 {
@@ -251,7 +251,7 @@
                 </div>
                 @if (Access.IsAdmin)
                 {
-                    <select @bind="_epicIssueProviderId">
+                    <select @bind="_epicIssueProviderId" data-testid="project-epic-provider-select">
                         <option value="">— None —</option>
                         @foreach (var provider in _issueProviders)
                         {
@@ -267,7 +267,7 @@
             @if (Access.CanAdminister(ProjectId))
             {
                 <div class="pipeline-form-actions">
-                    <button class="btn-save" @onclick="SaveOverviewAsync">Save Overview</button>
+                    <button class="btn-save" @onclick="SaveOverviewAsync" data-testid="project-save-overview">Save Overview</button>
                 </div>
             }
         </div>

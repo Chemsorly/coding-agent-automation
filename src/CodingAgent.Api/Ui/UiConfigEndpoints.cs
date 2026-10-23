@@ -82,7 +82,7 @@ internal static class UiConfigEndpoints
             templates, await routing.LoadAsync(ct) ?? AgentRouting.Empty, allProfiles, jobTemplates.ToolsByKey());
         var admin = access.Grant.GlobalRole == AccessRole.Admin;
         return TypedResults.Ok(new UiPipelinesPage(
-            readable.Select(p => new PipelineProject { Id = p.Id, Name = p.Name, Enabled = p.Enabled, TemplateIds = p.TemplateIds }).ToList(),
+            readable.Select(p => new PipelineProject { Id = p.Id, Name = p.Name, Enabled = p.Enabled, TemplateIds = p.TemplateIds, EpicIssueProviderId = p.EpicIssueProviderId }).ToList(),
             templates,
             await ProvidersAsync(ProviderKind.Issue),
             await ProvidersAsync(ProviderKind.Repository),
