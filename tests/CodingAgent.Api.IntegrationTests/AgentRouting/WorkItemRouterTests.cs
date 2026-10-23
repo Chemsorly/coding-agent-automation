@@ -15,7 +15,7 @@ namespace CodingAgent.Api.IntegrationTests.AgentRouting;
 /// <summary>
 /// Spec 053 task 4.2: <see cref="WorkItemRouter"/> resolves a work item's route once, when the API creates it (req 4.1,
 /// 4.3), and <see cref="WorkItemStore.CreateAsync"/> routes after the idempotent-retry check. Also that the stored
-/// payload keeps the pinned route (<see cref="WorkItemDispatchEndpoints.BuildMinimalPayload"/>).
+/// payload keeps the pinned route (<see cref="WorkItemEntityBuilder.BuildMinimalPayload"/>).
 /// </summary>
 public sealed class WorkItemRouterTests
 {
@@ -262,7 +262,7 @@ public sealed class WorkItemRouterTests
             McpServers = [new McpServerConfig { Name = "mutable" }],
         };
 
-        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(request);
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(request);
 
         minimal.Route.Should().Be(route);
         minimal.ResolvedProfileId.Should().Be("claude");

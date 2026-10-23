@@ -67,7 +67,7 @@ public sealed class RolloutRouting(
 
             entity.AgentSelector = routed.Request!.AgentSelector;
             entity.Payload = JsonSerializer.Serialize(
-                WorkItemDispatchEndpoints.BuildMinimalPayload(routed.Request), PipelineJsonOptions.Default);
+                WorkItemEntityBuilder.BuildMinimalPayload(routed.Request), PipelineJsonOptions.Default);
             await db.SaveChangesAsync(ct);
             Log.Information(
                 "Rollout routing: work item {WorkItemId} stored without a selector now runs on job template {AgentSelector} ({RouteSource})",

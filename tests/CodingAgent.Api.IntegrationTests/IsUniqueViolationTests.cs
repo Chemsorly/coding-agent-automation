@@ -1,13 +1,13 @@
 using AwesomeAssertions;
+using CodingAgent.Infrastructure.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
-/// Smoke tests for <see cref="WorkItemDispatchEndpoints.IsUniqueViolation"/>, which delegates
-/// to <see cref="CodingAgent.Infrastructure.Persistence.Services.PostgresErrorClassifier.IsUniqueViolation"/>.
+/// Smoke tests for <see cref="PostgresErrorClassifier.IsUniqueViolation"/>.
 /// Primary coverage lives in <c>PostgresErrorClassifierTests</c> in CodingAgent.Infrastructure.UnitTests.
-/// These tests verify the delegation path and keep the existing contract from drifting.
+/// These tests keep the existing contract from drifting.
 /// </summary>
 // TODO: Add a smoke test that exercises the delegation path through the reflection-based
 // PostgresException.SqlState == "23505" branch (i.e., construct a DbUpdateException wrapping
@@ -27,7 +27,7 @@ public sealed class IsUniqueViolationTests
         var inner = new InvalidOperationException("ERROR: duplicate key value violates unique constraint");
         var ex = new DbUpdateException("save failed", inner);
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeTrue(
             "DbUpdateException whose inner message contains 'duplicate key' is a unique violation");
     }
 
@@ -37,7 +37,7 @@ public sealed class IsUniqueViolationTests
         var inner = new InvalidOperationException("ERROR: unique constraint violation");
         var ex = new DbUpdateException("save failed", inner);
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeTrue(
             "DbUpdateException whose inner message contains 'unique constraint' is a unique violation");
     }
 
@@ -47,7 +47,7 @@ public sealed class IsUniqueViolationTests
         var inner = new InvalidOperationException("connection refused");
         var ex = new DbUpdateException("save failed", inner);
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeFalse(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeFalse(
             "DbUpdateException with an unrelated inner message is not a unique violation");
     }
 
@@ -58,7 +58,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException("duplicate key value violates unique constraint");
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeTrue(
             "exception whose message contains 'duplicate key' is a unique violation");
     }
 
@@ -67,7 +67,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException("unique constraint failed: work_items.ix_unique");
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeTrue(
             "exception whose message contains 'unique constraint' is a unique violation");
     }
 
@@ -77,7 +77,7 @@ public sealed class IsUniqueViolationTests
         // EF Core InMemory throws ArgumentException with this exact phrase for PK duplicates.
         var ex = new ArgumentException("An item with the same key has already been added. Key: some-guid");
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeTrue(
             "EF InMemory PK-duplicate ArgumentException must be recognised as a unique violation");
     }
 
@@ -86,7 +86,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException("timeout expired");
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeFalse(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeFalse(
             "exceptions unrelated to uniqueness must not be recognised as a unique violation");
     }
 
@@ -98,7 +98,7 @@ public sealed class IsUniqueViolationTests
         // a custom subclass, since Exception(null) normalises to an empty string in .NET.
         var ex = new InvalidOperationException(string.Empty);
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeFalse(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeFalse(
             "exception with empty message must not be recognised as a unique violation");
     }
 
@@ -113,7 +113,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException(message);
 
-        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        PostgresErrorClassifier.IsUniqueViolation(ex).Should().BeTrue(
             "the check must be case-insensitive");
     }
 }
