@@ -400,7 +400,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             ("RefactoringDetection.Phase1.StructuralDebt", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt, RefactoringScanFocus.Structure, "[A] ", "refactoring_structural"),
             ("RefactoringDetection.Phase1.Correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt, RefactoringScanFocus.Correctness, "[B] ", "refactoring_correctness"),
             ("RefactoringDetection.Phase1.DesignConsistency", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt, RefactoringScanFocus.Design, "[C] ", "refactoring_design"),
-            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests, null, null),
+            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests, null, "refactoring_test_gaps"),
         };
 
         var selected = agents
@@ -582,8 +582,8 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                 ct);
         });
 
-        RecordUsage(reviewResult.ReviewTokenUsage, "refactoring_review");
-        RecordUsage(reviewResult.RefinementTokenUsage, "refactoring_refinement");
+        RecordUsage(reviewResult.ReviewAgentResult, "refactoring_review");
+        RecordUsage(reviewResult.RefinementAgentResult, "refactoring_refinement");
 
         if (reviewResult.RefinementTriggered)
         {

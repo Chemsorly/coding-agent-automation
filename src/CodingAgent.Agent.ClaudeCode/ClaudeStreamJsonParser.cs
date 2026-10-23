@@ -11,7 +11,7 @@ internal sealed record ClaudeModelTotals
 {
     public long InputTokens { get; init; }
 
-    /// <summary>Output tokens, thinking tokens included (as the CLI reports them).</summary>
+    /// <summary>Output tokens, excluding <see cref="ThinkingTokens"/>.</summary>
     public long OutputTokens { get; init; }
 
     public long ThinkingTokens { get; init; }
@@ -29,7 +29,7 @@ internal sealed record ClaudeUsageTotals
 {
     public long InputTokens { get; init; }
 
-    /// <summary>Output tokens, thinking tokens included.</summary>
+    /// <summary>Output tokens, excluding <see cref="ThinkingTokens"/>.</summary>
     public long OutputTokens { get; init; }
 
     public long ThinkingTokens { get; init; }
@@ -114,9 +114,12 @@ internal sealed class ClaudeStreamState
     /// <summary>Classifies a failed invocation as a provider-side error, from what the stream reported.</summary>
     public AgentErrorCategory ClassifyFailure()
     {
+        if (LastErrorCategory is "billing_error")
+            return AgentErrorCategory.ProviderBillingLimit;
+
         var status = ApiErrorStatus ?? LastErrorStatus;
 
-        if (LastErrorCategory is "authentication_failed" or "oauth_org_not_allowed" or "account_on_hold" or "billing_error"
+        if (LastErrorCategory is "authentication_failed" or "oauth_org_not_allowed" or "account_on_hold"
             || status is 401 or 403)
             return AgentErrorCategory.PermanentAuthFailure;
 
