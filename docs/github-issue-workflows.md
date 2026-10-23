@@ -120,7 +120,7 @@ To ask for another attempt from the tracker, post a comment and replace `agent:t
 
 ## Issue Dependencies
 
-An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) and GitLab URLs with nested subgroups are not recognized and do not block dispatch.
+An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) are not recognized and do not block dispatch.
 
 ## Closed-Loop Mode
 
@@ -132,4 +132,4 @@ When the pipeline loop is active, it polls for `agent:next` issues automatically
 - Configurable poll interval, max runs per cycle, and backoff on failures
 - When `DecompositionEnabled` is true on a template, the loop also polls for `agent:epic` and `agent:epic-approved` issues and dispatches them for decomposition
 - When a project has an `EpicIssueProviderId` configured, the loop also polls that provider for epics and queues them with the project's first decomposition-enabled template, oldest first, in the same round-robin (see [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics))
-- When `TriageEnabled` is true on a template, the loop also polls its tracker for `agent:triage` issues; a project's epic tracker is polled for them too, run by the project's first triage-enabled template. Triage is dispatched after decomposition and before implementation, with no concurrency cap of its own (see [Triage](triage.md))
+- When `TriageEnabled` is true on a template, the loop also polls its tracker for `agent:triage` issues; a project's epic tracker is polled for them too, run by the project's first triage-enabled template. Triage is dispatched before all other work types (highest dispatch priority: before Review, Decomposition, and Implementation), with no concurrency cap of its own (see [Triage](triage.md))

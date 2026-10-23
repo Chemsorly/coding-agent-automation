@@ -60,7 +60,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `workdistribution.timeout_execution_age_seconds` | Histogram | s | `agent_selector` | Job Controller | Execution age when a timeout is enforced. If p10 clusters near zero, the timeout anchor is wrong |
 | `workdistribution.timeout_canary_violations` | Counter | `{violation}` | `agent_selector` | Job Controller | Timeouts skipped by the canary invariant; any non-zero value is a timestamp bug |
 | `workdistribution.agent_timeouts` | Counter | `{job}` | `agent_selector` | Job Controller | Agent jobs killed by the session timeout |
-| `workdistribution.chat.*` | Histogram / UpDownCounter / Counter | — | `agent_selector`, `pool` | API | Chat pods: `dispatch_latency_seconds`, `sessions_active`, `session_duration_seconds`, `pod_connect_timeouts`, `pod_force_terminations`, `pvc_utilization` |
+| `workdistribution.chat.*` | Histogram / UpDownCounter / Counter | — | `agent_selector`, `pool` | API | Chat pods: `dispatch_latency_seconds`, `sessions_active`, `session_duration_seconds`, `pod_connect_timeouts`, `pod_force_terminations`, `pvc_utilization`. Note: `session_duration_seconds` carries `agent_selector` and `outcome` (values: `completed`, `shutdown`, `faulted`, `force_deleted`); `pvc_utilization` carries only `pool`. |
 | `pipeline.db_retention.pipeline_runs_deleted` / `.work_items_deleted` | Counter | `{row}` | — | API | Rows removed by the per-project retention sweep |
 
 ### Scheduler loop, housekeeping and GitHub
@@ -87,23 +87,17 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.pull_requests.closed` | Counter | `outcome` (`merged`, `closed_unmerged`) | Scheduler | Agent PRs merged or closed, once per PR per leader instance |
 | `pipeline.pull_requests.time_to_merge` | Histogram (s) | — | Scheduler | PR creation → merge (merge time approximated by the poll time) |
 | `label_swap_remove_exhausted_total` | Counter | `label`, `identifier` | API, Scheduler | Label swaps that could not remove the old `agent:*` label after 3 attempts (dual-label state) |
-| `github.api.requests` | Counter | `operation`, `outcome` | API, Scheduler, Web | GitHub API attempts, retries included. `outcome`: `success`, `not_found`, `rate_limited`, `error` |
-| `github.rate_limit.remaining` | ObservableGauge | `resource` (`core`, `graphql`) | API, Scheduler, Web | Remaining rate-limit quota; only emitted after the process made a GitHub call |
+| `github.api.requests` | Counter | `operation`, `outcome` | API, Scheduler, Job Controller | GitHub API attempts, retries included. `outcome`: `success`, `not_found`, `rate_limited`, `error` |
+| `github.rate_limit.remaining` | ObservableGauge | `resource` (`core`, `graphql`) | API, Scheduler, Job Controller | Remaining rate-limit quota; only emitted after the process made a GitHub call |
 
-### Agent connections (Scheduler leader)
-
-<!-- TODO [WARNING]: This heading attributes the whole table to the Scheduler leader, but only the two
-     gauge rows (`agent.jobs.active`, `agent.connections.total`) are emitted there. `agent.hub.auth_rejections`
-     and `token_vending.failures` are counters recorded by API-hosted code. An operator switching
-     `service_name` after the deploy could query the wrong service for those counters. Fix: use a neutral
-     heading (or split into two subsections) and name the Scheduler leader only on the two gauge rows. -->
+### Agent connections and hub metrics
 
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|
 | `agent.jobs.active` | ObservableGauge | — | Agent jobs currently executing, polled from the agent registry by the Scheduler leader |
 | `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
-| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`. A `DeregisterAgent` from a connection that is not registered is skipped, not rejected |
-| `token_vending.failures` | Counter | — | Token vending failures |
+| `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`. A `DeregisterAgent` from a connection that is not registered is skipped, not rejected. Emitted by API. |
+| `token_vending.failures` | Counter | — | Token vending failures. Emitted by API. |
 
 ### Tag Schema
 
@@ -501,10 +495,10 @@ All emitted by the agent pod.
 | `RefactoringDetection.Clone` | `pipeline.run_id` | Code repo clone for refactoring detection |
 | `RefactoringDetection.HotspotAnalysis` | `pipeline.run_id` | Git hotspot analysis |
 | `RefactoringDetection.Phase0.ContextExtraction` | `pipeline.run_id` | Project convention extraction |
-| `RefactoringDetection.Phase1.StructuralDebt` | `pipeline.run_id` | Structural debt detection agent (one of three parallel detection agents) |
-| `RefactoringDetection.Phase1.Correctness` | `pipeline.run_id` | Correctness detection agent (one of three parallel detection agents) |
-| `RefactoringDetection.Phase1.DesignConsistency` | `pipeline.run_id` | Design consistency detection agent (one of three parallel detection agents) |
-<!-- TODO: "one of three" is now stale (four Phase 1 agents since issue #3582). Update to "one of four parallel detection agents" in all three rows above. Also add a missing row: `RefactoringDetection.Phase1.TestGaps` | `pipeline.run_id` | Test gap detection agent (one of four parallel detection agents). Also update the span tree below (~line 602-604). See review finding #5. -->
+| `RefactoringDetection.Phase1.StructuralDebt` | `pipeline.run_id` | Structural debt detection agent (one of four parallel detection agents) |
+| `RefactoringDetection.Phase1.Correctness` | `pipeline.run_id` | Correctness detection agent (one of four parallel detection agents) |
+| `RefactoringDetection.Phase1.DesignConsistency` | `pipeline.run_id` | Design consistency detection agent (one of four parallel detection agents) |
+| `RefactoringDetection.Phase1.TestGaps` | `pipeline.run_id` | Test gap detection agent (one of four parallel detection agents) |
 | `RefactoringDetection.Phase2.Aggregation` | `pipeline.run_id` | Aggregation and prioritization of the detected proposals |
 | `RefactoringDetection.AdversarialReview` | `pipeline.run_id` | Adversarial review of refactoring proposals |
 | `RefactoringDetection.CreateIssues` | `pipeline.run_id`, `pipeline.proposal_count`, `pipeline.rejected_proposal_count` | Creating GitHub issues for proposals |
@@ -678,6 +672,7 @@ ExecuteConsolidation
 ├── RefactoringDetection.Phase1.StructuralDebt
 ├── RefactoringDetection.Phase1.Correctness
 ├── RefactoringDetection.Phase1.DesignConsistency
+├── RefactoringDetection.Phase1.TestGaps
 ├── RefactoringDetection.Phase2.Aggregation
 ├── RefactoringDetection.AdversarialReview
 └── RefactoringDetection.CreateIssues

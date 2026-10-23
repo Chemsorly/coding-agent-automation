@@ -5,12 +5,12 @@ Internal reference for the dependency tracking mechanism in the dispatch loop.
 ## Regex Pattern
 
 ```
-\b(?:blocked\s+by|depends\s+on|requires|after)\s+(?:(https://github\.com/[^/\s]+/[^/\s]+/issues/\d+)|(https://gitlab\.com/[^/\s]+/[^/\s]+/-/issues/\d+)|#(\d+)|([A-Za-z][\w-]*))
+\b(?:blocked\s+by|depends\s+on|requires|after)\s+(?:(https://github\.com/[^/\s]+/[^/\s]+/issues/\d+)|(https://gitlab\.com/[^/\s]+(?:/[^/\s]+)+/-/issues/\d+)|#(\d+)|([A-Za-z][\w-]*))
 ```
 
 Case-insensitive, word-boundary matched before the keyword. Supports four reference formats:
 - Group 1 — GitHub issue URL (`https://github.com/owner/repo/issues/N`)
-- Group 2 — GitLab issue URL (`https://gitlab.com/group/project/-/issues/N`, one namespace level)
+- Group 2 — GitLab issue URL (`https://gitlab.com/group/sub/project/-/issues/N`, one or more path segments; subgroups supported)
 - Group 3 — `#N`
 - Group 4 — alphanumeric identifier starting with a letter (e.g., `PROJ-123`)
 
@@ -53,4 +53,4 @@ No internal state persisted between cycles. No new labels introduced.
 | Code block matching | Patterns inside markdown code blocks still match |
 | Strikethrough matching | `~~Blocked by #123~~` still matches |
 | No circular dependency detection | A depends on B and B depends on A = both skipped indefinitely |
-| Cross-tracker by URL only | `#N` is resolved in the dependent issue's own tracker. Another tracker's issue needs its full `https://github.com` or `https://gitlab.com` issue URL; `owner/repo#N`, URLs on other hosts and GitLab URLs with nested subgroups are not recognized and do not block dispatch |
+| Cross-tracker by URL only | `#N` is resolved in the dependent issue's own tracker. Another tracker's issue needs its full `https://github.com` or `https://gitlab.com` issue URL; `owner/repo#N` shorthand and URLs on other hosts (GitHub Enterprise, self-hosted GitLab) are not recognized and do not block dispatch |

@@ -7,7 +7,7 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
 4. **Consolidation pipeline** — Brain consolidation, refactoring detection, and harness suggestion runs. Dispatched on-demand via the Consolidation page, not by the label-based loop. See [Feedback & Consolidation](feedback-and-consolidation.md) for details.
 
-The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are created as `WorkItem` rows by `ConsolidationService.TriggerAsync` and dispatched by the Scheduler's `WorkItemDispatchLoop` in the lowest-priority tier (after Review, Decomposition, and Implementation). Consolidation jobs do not go through the label loop.
+The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are created as `WorkItem` rows by `ConsolidationService.TriggerAsync` and dispatched by the Scheduler's `WorkItemDispatchLoop` in the lowest-priority tier (5th, after Triage, Review, Decomposition, and Implementation). Consolidation jobs do not go through the label loop.
 
 ## Dispatch Mode
 
@@ -122,7 +122,7 @@ stateDiagram-v2
 ```
 Created → CloningRepository → RunningEnvironmentSetup → SyncingBrainRepoPreRun → CreatingBranch
   → VerifyingBaseline → AnalyzingCode → ReviewingAnalysis → PostingAnalysis → [Confidence Gate]
-  → GeneratingCode → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
+  → GeneratingCode → CheckingDroppedIdentifiers → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
   → PreparingForPullRequest → [Final Quality Gate]
   → FinalizingPullRequest → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
 ```
@@ -143,6 +143,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **ReviewingAnalysis** | Adversarial review of the analysis — validates completeness, flags gaps (when `AnalysisReviewEnabled` is true) |
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |
+| **CheckingDroppedIdentifiers** | Post-codegen verification that identifiers present in force-resolved conflict files were re-applied during code generation. Non-blocking — always continues regardless of outcome. |
 | **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items. After all review iterations complete, an AI-generated review summary and verdict (approve/request-changes) is produced and included in the PR body |
 | **RunningQualityGates** | Build, tests, and external CI checks run |
 | **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time after cleanup |
@@ -450,7 +451,7 @@ Re-review is always explicitly triggered by the user (remove `agent:done`, re-ad
 
 ### Loop Mode Configuration
 
-Each `PipelineJobTemplate` has four independent toggles controlling which work types it processes:
+Each `PipelineJobTemplate` has five independent toggles controlling which work types it processes:
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -458,6 +459,7 @@ Each `PipelineJobTemplate` has four independent toggles controlling which work t
 | `ReviewEnabled` | `bool` | `true` | Template polls for PRs and dispatches review jobs |
 | `DecompositionEnabled` | `bool` | `false` | Template polls for epics and dispatches decomposition jobs |
 | `HousekeepingEnabled` | `bool` | `false` | Template evaluates `agent:done` PRs for branch updates, conflict rework, and stale branch cleanup |
+| `TriageEnabled` | `bool` | `false` | Template polls for `agent:triage` issues and dispatches triage jobs |
 
 The existing `Enabled` property acts as a master switch — when `false`, all work types (implementation, review, decomposition, and housekeeping) are disabled regardless of individual flags.
 
@@ -497,16 +499,16 @@ Settings are read at the start of each poll cycle, allowing runtime changes via 
 
 ### Poll-Cycle Scheduler Priority
 
-When multiple work types are queued in the same poll cycle, the loop uses a fixed priority order — not round-robin — to decide which queue to serve first. This is distinct from the [WorkItem queue priority](#dispatch-priority) used by the Scheduler's `WorkItemDispatchLoop`:
+When multiple work types are queued in the same poll cycle, the loop uses a fixed priority order — not round-robin — to decide which queue to serve first. The poll-cycle queue selection uses the same `PipelineConfiguration.DispatchOrder` setting as the Scheduler's `WorkItemDispatchLoop` (Settings → Global Defaults → Pipeline Loop); by default both order work as Triage > Review > Decomposition > Implementation > Consolidation:
 
 | Priority | Work Type | Notes |
 |----------|-----------|-------|
-| 1 (highest) | Pull Requests (Review) | Dispatched first each cycle |
-| 2 | Decomposition | Phase 1 and Phase 2 epics |
-| 3 | Triage | `agent:triage` issues; no concurrency cap of its own |
+| 1 (highest) | Triage | `agent:triage` issues; no concurrency cap of its own |
+| 2 | Pull Requests (Review) | Dispatched each cycle |
+| 3 | Decomposition | Phase 1 and Phase 2 epics |
 | 4 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (4th, after Review, Decomposition, and Implementation) by the Scheduler's `WorkItemDispatchLoop`. They do not participate in the closed-loop scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (5th, after Triage, Review, Decomposition, and Implementation) by the Scheduler's `WorkItemDispatchLoop`. They do not participate in the closed-loop scheduler.
 
 ### Dispatch Budget Sharing
 
