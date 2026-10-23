@@ -239,7 +239,7 @@ Two independent leases are used — one per relevant process (the Pipeline API a
 | `OrphanedLabelRecoveryService` | Sweeps for issues with stale `agent:in-progress` labels | Waits |
 | `HousekeepingService` | Manages `agent:done` PRs, branch updates, and stale branch cleanup | Waits |
 | `WorkItemCountsService` | Emits work-item count metrics to `CodingAgent.WorkDistribution` | Waits |
-| `WorkItemDispatchLoop` | Dispatches Pending work items through `POST /api/work-items/{id}/dispatch` (Review, then Decomposition, then Implementation, then Consolidation) | Waits |
+| `WorkItemDispatchLoop` | Dispatches Pending work items through `POST /api/work-items/{id}/dispatch` (Triage, then Review, then Decomposition, then Implementation, then Consolidation) | Waits |
 | `RetentionSweepSchedulerService` | Triggers the hourly retention sweep in the Pipeline API | Waits |
 
 #### Configuration
@@ -296,6 +296,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]                 # per-Job: pod log tail of failed agent pods, kept on the run summary
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "delete"]   # per-Job derived-key Secrets (GC'd via ownerReference)

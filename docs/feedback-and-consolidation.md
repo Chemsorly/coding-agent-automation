@@ -79,8 +79,7 @@ The finding categories are one list from detection to issue (`RefactoringCategor
 2. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days). Pipeline scratch space (`.agent/`, `.brain/`), Markdown files, lock files and deleted files are left out. Commits that implement the scan's own issues are left out too, so a scan does not rank the files it just refactored.
 3. Query the open issues (up to 100, any label or age) for deduplication context. The scan's own issues are recognized by the footer sentence every one of them carries, not by a label.
 4. Query closed refactoring issues (within `RefactoringOutcomeLookback`, default 90 days) for outcome feedback — categorizes past proposals as implemented (`agent:done`) or rejected (`agent:wont-do`/`agent:cancelled`). The query uses `agent:generated`; the footer keeps decomposition sub-issues, which carry the same label, out. `agent:done` only means an agent completed the issue, so implemented items are not re-proposed rather than encouraged. For each of these issues, the latest issue-quality feedback comment (`<!-- agent:issue-feedback -->`) that the implementing agent posted is added as "Implementer Feedback", e.g. "partial scope: the outer catch was missed". Both contexts are also written to `.agent/refactoring-issue-context.md` for the review step.
-5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells. Inline TODO comments are not known debt: Agent B checks each of them. Phase 0 also prepares the tool evidence: it checks its available MCP tools for additional data sources, runs the project's own build, lint and analysis commands once (saving the output in `.agent/refactoring-tool-output/`), runs the tests once with code coverage when the project has tests (stopped after 20 minutes), and lists both under `availableTools`. Consolidation runs get the MCP servers of their agent profile and project, like pipeline runs; no particular tool or service is required.
-<!-- TODO: "both" is now inaccurate — Phase 0 collects three evidence sources (MCP tools, analyzers, coverage), not two. Change "lists both under `availableTools`" to "lists all of them under `availableTools`". See review finding #1 from issue #3582. -->
+5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells. Inline TODO comments are not known debt: Agent B checks each of them. Phase 0 also prepares the tool evidence: it checks its available MCP tools for additional data sources, runs the project's own build, lint and analysis commands once (saving the output in `.agent/refactoring-tool-output/`), runs the tests once with code coverage when the project has tests (stopped after 20 minutes), and lists all of them under `availableTools`. Consolidation runs get the MCP servers of their agent profile and project, like pipeline runs; no particular tool or service is required.
 6. **Phase 1: Parallel Focused Detection** — Four sub-agents run concurrently. They use the tool output and MCP tools Phase 0 found, and do not run builds themselves, since they share the workspace. Each writes its `findings` and the areas it did not check (`notChecked`). A focused scan runs only the agent of its focus.
    - **Agent A (Structural Debt)** — Duplicated logic, structural drift, complexity, over-engineering
    - **Agent B (Correctness & Hygiene)** — TODOs/FIXMEs, dead code, obvious bugs, stale documentation
@@ -97,7 +96,7 @@ Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversa
 
 ### Consolidation Dispatch
 
-Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. The Scheduler's `WorkItemDispatchLoop` dispatches consolidation `WorkItem` rows in the lowest-priority tier (4th, after Review, Decomposition, and Implementation). Like every work item, a consolidation Job is named `caa-{8 hex chars}`.
+Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. The Scheduler's `WorkItemDispatchLoop` dispatches consolidation `WorkItem` rows in the lowest-priority tier (5th, after Triage, Review, Decomposition, and Implementation). Like every work item, a consolidation Job is named `caa-{8 hex chars}`.
 
 - **Agent:** Both consolidation types run on the Consolidation route of the template that triggered the run (its repository's Consolidation row, else the global Consolidation row, else the default route); automatic brain consolidation uses the first template of the brain group. A trigger without a template uses the global rows only. When no route resolves or the route cannot run, the trigger is refused with the reason (for example `No agent route: set the default route in Settings → Agents → Routing`) and no run is created. See [Agent Routing](agent-routing.md).
 - **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
@@ -140,7 +139,7 @@ Consolidation runs report their steps and stream their agent output the same way
 **Brain consolidation steps** (in order):
 
 1. `CloningRepository` — brain repo cloned into the run workspace
-2. `ConsolidatingKnowledge` — agent executes the 4-phase consolidation prompt
+2. `ConsolidatingKnowledge` — agent executes the six-phase consolidation prompt (Orient, Gather Signal, Research & Verify, Consolidate, Prune, Generate Project SKILL.md)
 3. `ReviewingBrainChanges` — diff summary generated; adversarial review executed (if enabled)
 4. `PushingBrainChanges` — changes committed and pushed to the brain repo
 
@@ -155,7 +154,7 @@ Consolidation runs report their steps and stream their agent output the same way
 7. `ReviewingProposals` — adversarial review validates proposals (if enabled and proposals non-empty)
 8. `CreatingRefactoringIssues` — validated proposals are created as GitHub issues
 
-The three Phase 1 detection agents (structural debt, correctness, design consistency) produce output prefixed `[A] `, `[B] ` and `[C] ` respectively. The test-gaps agent (when focus is `All` or `Tests`) produces output without a prefix. When a run has no proposals after Phase 2, steps 7 and 8 are skipped.
+The four Phase 1 detection agents produce prefixed output: `[A] ` (Structural Debt), `[B] ` (Correctness & Hygiene), `[C] ` (Design Consistency). The test-gaps agent (Agent D, focus `All` or `Tests`) produces output without a letter prefix. When a run has no proposals after Phase 2, steps 7 and 8 are skipped.
 
 ### Retention
 

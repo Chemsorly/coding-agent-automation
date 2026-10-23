@@ -216,7 +216,7 @@ it creates a WorkItem it skips issues in the cycle's `ActiveIssueIdentifiers` sn
 `GET /api/work-items/active-identifiers` (non-terminal WorkItems in Postgres).
 `IsIssueBeingProcessed()` is also called, but in the Scheduler it always returns false
 (`SchedulerRunQueryService`); in the API process, `DistributedRunService.IsIssueBeingProcessed()`
-queries Postgres for a non-terminal WorkItem. The snapshot can be up to one cycle old, so a
+queries Postgres for an active WorkItem or a recently-completed one within the dedup cooldown (to close the TOCTOU window between a run completing and the next dispatch cycle). The snapshot can be up to one cycle old, so a
 second replica or cycle can still pass the check; Defense 1 is the backstop.
 
 ### Defense 3 — `IsIssueDistributedAsync` from orphan-recovery
