@@ -37,6 +37,10 @@ public interface IKiroCliOrchestrator : IDisposable
         IReadOnlyDictionary<string, string>? environmentVariables = null);
 
     void Kill();
+
+    bool LastRunStartedFreshSession { get; }
+    bool LastRunRejectedConfiguration { get; }
+    IReadOnlyDictionary<string, KiroToolCallCount> LastRunToolCalls { get; }
 }
 ```
 
@@ -49,6 +53,9 @@ public interface IKiroCliOrchestrator : IDisposable
 | `IsExecuting` | Whether a prompt execution is currently in progress |
 | `ActiveProcessId` | OS process ID of the running agent (for external monitoring) |
 | `LastOutputTime` | Timestamp of the last output line (for stall detection) |
+| `LastRunStartedFreshSession` | True when the last `ExecutePromptAsync` could not load its `resumeSessionId` and ran the prompt in a fresh session instead |
+| `LastRunRejectedConfiguration` | True when the last `ExecutePromptAsync` failed because kiro-cli rejected its own configuration (e.g. an unknown `--agent` value) |
+| `LastRunToolCalls` | MCP and web tool calls of the last `ExecutePromptAsync`, keyed `server/tool` (`web/search` for web search); empty before the first run |
 | `IDisposable` | Implements `IDisposable` for cleanup of managed resources |
 
 ### Configuration
@@ -61,6 +68,18 @@ public class Configuration
     public string WorkspaceDirectory { get; init; } = "./workspace";
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(30);
     public LogEventLevel LogLevel { get; init; } = LogEventLevel.Information;
+
+    /// <summary>Passed as --model on every chat run unless blank or 'auto'.</summary>
+    public string? Model { get; init; }
+
+    /// <summary>Passed as --agent on every chat run unless blank.</summary>
+    public string? AgentName { get; init; }
+
+    /// <summary>
+    /// Passed as --effort on every chat run unless blank.
+    /// kiro-cli 2.29 accepts low, medium, high, max.
+    /// </summary>
+    public string? Effort { get; init; }
 }
 ```
 
@@ -147,6 +166,7 @@ KiroCliLib/
 │   ├── IOutputParser.cs        — Output parser interface
 │   ├── OutputParser.cs         — Parses CLI output for state/test detection
 │   ├── AnsiStripper.cs         — Strips ANSI escape codes from output
+│   ├── KiroToolLineCounter.cs  — Counts MCP and web tool calls from kiro-cli stderr output
 │   ├── GracefulShutdownHelper.cs — Async shutdown with timeout + logging
 │   └── ExitCodes.cs            — Well-known exit code constants (shared with pipeline)
 └── Models/
