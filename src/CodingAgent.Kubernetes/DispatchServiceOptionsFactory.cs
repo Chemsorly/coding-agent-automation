@@ -11,11 +11,19 @@ namespace CodingAgent.Kubernetes;
 public static class DispatchServiceOptionsFactory
 {
     /// <summary>
-    /// Creates a fully-populated <see cref="DispatchServiceOptions"/> from the given configuration.
-    /// Reads 7 config keys with appropriate fallback logic.
+    /// Creates a fully-populated <see cref="DispatchServiceOptions"/> from the given configuration,
+    /// with all numeric values clamped to their safe minimums via
+    /// <see cref="DispatchServiceOptions.ValidateAndClamp"/>.
     /// </summary>
-    public static DispatchServiceOptions Create(IConfiguration configuration)
+    /// <param name="configuration">The configuration root to bind from.</param>
+    /// <param name="logger">
+    /// Optional Serilog logger. When provided, <see cref="DispatchServiceOptions.ValidateAndClamp"/>
+    /// emits a warning for each value that was raised to its minimum. Pass <c>null</c> to clamp
+    /// silently (e.g. in pre-container startup checks where the logger is not yet available).
+    /// </param>
+    public static DispatchServiceOptions Create(IConfiguration configuration, Serilog.ILogger? logger = null)
     {
+        ArgumentNullException.ThrowIfNull(configuration);
         var options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(options);
 
@@ -38,6 +46,12 @@ public static class DispatchServiceOptionsFactory
         options.AgentApiKeyValue = configuration.GetValue<string>("AGENT_API_KEY") ?? "";
         // Empty means no agent key can be issued: every Job dispatcher then fails the dispatch (and
         // logs an error) instead of starting a pod that could not authenticate.
+
+        // Clamp all numeric options to their safe minimums. Every consumer — including the
+        // JobController's ReconciliationLoop — receives values that will not cause immediate
+        // false timeouts or negative durations. The logger parameter allows the warning to be
+        // surfaced at startup when one is available, and silenced in pre-container checks.
+        options.ValidateAndClamp(logger);
 
         return options;
     }

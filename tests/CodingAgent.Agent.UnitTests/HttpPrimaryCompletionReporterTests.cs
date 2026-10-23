@@ -430,6 +430,126 @@ public class HttpPrimaryCompletionReporterTests
             "a warning must be logged when the intermediate Running POST is rejected");
     }
 
+    /// <summary>
+    /// When the intermediate Running+BranchName POST throws a non-WorkItemStatusPostException
+    /// (e.g. HttpRequestException), the exception must propagate out of ReportCompletionAsync.
+    /// The catch block is typed to WorkItemStatusPostException; other exception types must not
+    /// be swallowed, regardless of whether BranchName is set.
+    /// </summary>
+    [Fact]
+    public async Task ReportCompletionAsync_BranchNamePostThrowsNonStatusPostException_Propagates()
+    {
+        // Arrange: Running POST throws HttpRequestException (not WorkItemStatusPostException)
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId,
+                It.Is<WorkItemStatusUpdate>(u => u.Status == "Running"),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Network error on BranchName POST"));
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BranchName = "feature/my-branch"
+        };
+
+        // Act: must throw — the catch only handles WorkItemStatusPostException
+        var act = async () => await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "non-WorkItemStatusPostException exceptions from the BranchName POST must not be swallowed");
+    }
+
+    /// <summary>
+    /// When the intermediate Running+BranchName POST throws WorkItemStatusPostException without an
+    /// inner exception (IsUnreachable = false, e.g. a 5xx that survived the resilience handler),
+    /// ReportCompletionAsync must NOT throw and must still send the terminal status POST.
+    /// This is the regression test for issue #3844.
+    /// </summary>
+    [Fact]
+    public async Task ReportCompletionAsync_BranchNamePostThrowsNonReachable_DoesNotThrowAndTerminalIsSent()
+    {
+        // Arrange: Running POST throws a non-unreachable WorkItemStatusPostException (no inner exception)
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId,
+                It.Is<WorkItemStatusUpdate>(u => u.Status == "Running"),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemStatusPostException("Server error 503 from POST status=Running for work item wi-001 (retries exhausted)"));
+
+        // Terminal POST succeeds normally
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId,
+                It.Is<WorkItemStatusUpdate>(u => u.Status != "Running"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _connectionManager
+            .Setup(m => m.InvokeAsync(It.IsAny<Func<Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BranchName = "feature/my-branch"
+        };
+
+        // Act: must not throw — a 5xx on the non-fatal BranchName POST must be swallowed
+        var act = async () => await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "a non-unreachable 5xx on the intermediate Running+BranchName POST is non-fatal and must not abort the completion sequence");
+
+        // Assert: terminal Succeeded POST was still sent
+        _lifecycleClient.Verify(
+            c => c.PostStatusAsync(WorkItemId,
+                It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "the terminal Succeeded POST must still be sent even when the intermediate Running POST fails with a 5xx");
+
+        // Assert: warning was logged (for observability)
+        _logger.Verify(
+            l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Once,
+            "a Warning with the exception must be logged when the intermediate Running POST throws");
+    }
+
+    /// <summary>
+    /// When the intermediate Running+BranchName POST throws WorkItemStatusPostException with an inner
+    /// exception (IsUnreachable = true, e.g. connection refused, open circuit), the exception must
+    /// still propagate out of ReportCompletionAsync so WorkItemAgentService can retry the whole report.
+    /// </summary>
+    [Fact]
+    public async Task ReportCompletionAsync_BranchNamePostThrowsUnreachable_Propagates()
+    {
+        // Arrange: Running POST throws an unreachable WorkItemStatusPostException (with inner exception)
+        var innerEx = new Exception("Connection refused");
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId,
+                It.Is<WorkItemStatusUpdate>(u => u.Status == "Running"),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemStatusPostException(
+                "All retries exhausted for POST status=Running for work item wi-001: Connection refused",
+                innerEx));
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BranchName = "feature/my-branch"
+        };
+
+        // Act: must throw — unreachable failures must propagate so WorkItemAgentService can retry
+        var act = async () => await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<WorkItemStatusPostException>(
+            "an IsUnreachable=true WorkItemStatusPostException on the BranchName POST must propagate");
+
+        ex.Which.IsUnreachable.Should().BeTrue(
+            "the propagated exception must have IsUnreachable=true so WorkItemAgentService retries");
+    }
+
     // ── Serialize result ─────────────────────────────────────────────────
 
     [Fact]
