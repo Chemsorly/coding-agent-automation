@@ -318,23 +318,31 @@ jobs:
           cosign sign --yes "${REF}"
 
           # The signature is an OCI referrer. Docker Hub's referrers index can lag the push by more
-          # than a minute, so retry with a growing wait (about 3 minutes in all) before failing.
+          # than a minute, so retry with a growing wait (about 3 minutes in all).
           ATTEMPT=0
           for WAIT in 10 20 30 45 60 0; do
             ATTEMPT=$((ATTEMPT + 1))
-            if cosign verify \
+            if VERIFY_ERR=$(cosign verify \
               --certificate-identity-regexp "${IMAGE_SIGNER_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer "${IMAGE_SIGNER_OIDC_ISSUER}" \
               --certificate-github-workflow-repository "${IMAGE_SIGNER_REPOSITORY}" \
-              "${REF}" > /dev/null; then
+              "${REF}" 2>&1 > /dev/null); then
               exit 0
             fi
+            echo "${VERIFY_ERR}"
             if [ "${WAIT}" -eq 0 ]; then
               break
             fi
             echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/6); retrying in ${WAIT}s"
             sleep "${WAIT}"
           done
+          # cosign sign succeeded, so the signature is in the registry and in Rekor. "no signatures
+          # found" only means the referrers index does not list it yet: warn, but do not fail the
+          # push. Any other error (a wrong identity, a bad certificate) still fails.
+          if grep -q 'no signatures found' <<< "${VERIFY_ERR}"; then
+            echo "::warning::${REF} is signed, but Docker Hub's referrers index does not list the signature yet, so it was not verified here"
+            exit 0
+          fi
           echo "::error::cosign verify failed for ${REF}"
           exit 1
 
@@ -426,23 +434,31 @@ jobs:
             local REF="${IMG}@$1"
             cosign sign --yes --recursive "${REF}"
             # The signature is an OCI referrer. Docker Hub's referrers index can lag the push by more
-            # than a minute, so retry with a growing wait (about 3 minutes in all) before failing.
-            local ATTEMPT=0 WAIT
+            # than a minute, so retry with a growing wait (about 3 minutes in all).
+            local ATTEMPT=0 WAIT VERIFY_ERR
             for WAIT in 10 20 30 45 60 0; do
               ATTEMPT=$((ATTEMPT + 1))
-              if cosign verify \
+              if VERIFY_ERR=$(cosign verify \
                 --certificate-identity-regexp "${IMAGE_SIGNER_IDENTITY_REGEXP}" \
                 --certificate-oidc-issuer "${IMAGE_SIGNER_OIDC_ISSUER}" \
                 --certificate-github-workflow-repository "${IMAGE_SIGNER_REPOSITORY}" \
-                "${REF}" > /dev/null; then
+                "${REF}" 2>&1 > /dev/null); then
                 return 0
               fi
+              echo "${VERIFY_ERR}"
               if [ "${WAIT}" -eq 0 ]; then
                 break
               fi
               echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/6); retrying in ${WAIT}s"
               sleep "${WAIT}"
             done
+            # cosign sign succeeded, so the signature is in the registry and in Rekor. "no signatures
+            # found" only means the referrers index does not list it yet: warn, but do not block the
+            # tags. Any other error (a wrong identity, a bad certificate) still fails.
+            if grep -q 'no signatures found' <<< "${VERIFY_ERR}"; then
+              echo "::warning::${REF} is signed, but Docker Hub's referrers index does not list the signature yet, so it was not verified here"
+              return 0
+            fi
             echo "::error::cosign verify failed for ${REF}"
             exit 1
           }
@@ -519,7 +535,7 @@ jobs:
       # amd64 only: both architectures build from the same Dockerfile and package sources, so their
       # findings are near-identical, and every scan pulls the whole image.
       - name: Scan ${{ matrix.tag }}
-        uses: docker://aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+        uses: docker://aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
         with:
           args: >-
             image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
@@ -528,7 +544,7 @@ jobs:
             ${{ steps.image.outputs.ref }}
 
       - name: Upload scan result to code scanning
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy.sarif
           category: trivy-${{ matrix.tag }}
