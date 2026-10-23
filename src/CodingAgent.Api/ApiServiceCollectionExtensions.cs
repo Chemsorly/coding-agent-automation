@@ -356,9 +356,14 @@ public static class ApiServiceCollectionExtensions
     /// </summary>
     private static void AddOrchestrationCore(IServiceCollection services, IConfiguration config)
     {
-        // ── IProviderFactory (not registered by Infrastructure — must be explicit) ──
-        services.AddSingleton<IProviderFactory>(sp =>
-            new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
+        // ── Five services shared with the Scheduler host ──────────────────────
+        // IProviderFactory, IConsolidationService, IDependencyChecker,
+        // IDispatchOrchestrationService, ConsolidationStalenessService.
+        // Spec 051 2.3b, 2.3c, 2.4, 2.4b; issue #3592.
+        // Prerequisite call: DispatchInfrastructure is registered later in AddDispatch →
+        // AddDispatchResolutionServices, which runs before AddDispatch resolves these factories
+        // (DI lambdas are lazy — registration order does not constrain resolution order).
+        services.AddSharedOrchestrationServices();
 
         // Spec 051 2.1c: the Settings provider checks run here, with the stored credentials.
         services.AddTransient(sp => new CodingAgent.Infrastructure.GitHub.GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
@@ -434,20 +439,6 @@ public static class ApiServiceCollectionExtensions
             sp.GetService<IAgentCancellationSender>()));
         services.AddSingleton<IChangeNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
         services.AddSingleton<IChatNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
-
-        // ── IConsolidationService ────────────────────────────────────────────
-        // Spec 051 2.4: the API triggers consolidation for the Consolidation page. Before 2.4a it only
-        // saved harness suggestions for the hub and had no IWorkDistributor, so it registered a form
-        // that could not trigger. A trigger enqueues through ApiWorkDistributor (AddDispatch) and reads
-        // the saved settings from IPipelineConfigStore; the empty configuration is only the fallback for
-        // a host without that store.
-        services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
-            new ConsolidationServiceDependencies(
-                Log.Logger,
-                new PipelineConfiguration(),
-                sp.GetRequiredService<IProjectStore>(),
-                WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
-                PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
 
         // ── IAgentCommunication → SignalRAgentCommunication ──────────────────
         // Registered before ModelFetchService which depends on it.
@@ -637,30 +628,19 @@ public static class ApiServiceCollectionExtensions
 
         // ── Browse (spec 051 2.3b) ─────────────────────────────────────────────
         // The pages' provider browsing runs here with the stored credentials.
-        services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
         services.AddSingleton<CodingAgent.Api.Browse.BacklogService>();
         services.AddSingleton<CodingAgent.Api.Browse.TemplateBrowseService>();
 
         // ── Manual dispatch (spec 051 2.3c) ────────────────────────────────────
         // The drawers' dispatch, moved from the web host: the orchestration enqueues through
         // ApiWorkDistributor, so a dispatched item waits in the Pending queue for the Scheduler.
-        services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
-            new DispatchOrchestrationServiceDependencies(
-                sp.GetRequiredService<DispatchInfrastructure>(),
-                sp.GetRequiredService<IWorkDistributor>(),
-                sp.GetRequiredService<IProviderConfigStore>()),
-            Log.Logger));
         services.AddSingleton<CodingAgent.Api.Dispatch.ManualDispatchService>();
 
         // ── Consolidation page (spec 051 2.4b) ───────────────────────────────
         // Reads the cards and triggers through IConsolidationService (AddLifecycleAndConsolidation).
         // ConsolidationStalenessService powers the auto-start counters shown on the page (issue #3592).
-        services.AddSingleton<CodingAgent.Orchestration.ConsolidationStalenessService>(sp =>
-            new CodingAgent.Orchestration.ConsolidationStalenessService(
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<IProviderConfigStore>(),
-                sp.GetRequiredService<IProviderFactory>(),
-                Log.Logger));
+        // (IDependencyChecker, IDispatchOrchestrationService, and ConsolidationStalenessService are
+        // registered by AddSharedOrchestrationServices in AddOrchestrationCore.)
         services.AddSingleton<CodingAgent.Api.Consolidation.ConsolidationPageService>();
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
