@@ -69,6 +69,13 @@ public sealed class ConsolidationJobResult
     /// <summary>For a brain consolidation that pushed its changes: what it changed and pushed. Null otherwise.</summary>
     [Key(15)]
     public BrainConsolidationOutcome? BrainOutcome { get; set; }
+
+    /// <summary>
+    /// The agent-side per-phase usage. In-process only: <c>WorkItemExecutorRouter</c> copies it into the HTTP
+    /// completion's <see cref="JobCompletionPayload.PhaseBreakdown"/>; it is not part of the hub message.
+    /// </summary>
+    [IgnoreMember]
+    public IReadOnlyDictionary<string, PhaseUsagePayload>? PhaseBreakdown { get; set; }
 }
 
 /// <summary>
