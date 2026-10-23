@@ -240,4 +240,34 @@ public sealed class DispatchServiceOptionsFactoryTests
             Environment.SetEnvironmentVariable("POD_NAMESPACE", previousValue);
         }
     }
+
+    [Fact]
+    public void Create_ClampsNullDispatchedAtGraceWindowSeconds_Zero_To60()
+    {
+        var config = BuildConfig(new()
+        {
+            ["WorkDistribution:Dispatch:NullDispatchedAtGraceWindowSeconds"] = "0"
+        });
+
+        var opts = DispatchServiceOptionsFactory.Create(config);
+
+        opts.NullDispatchedAtGraceWindowSeconds.Should().Be(60,
+            "Create must clamp NullDispatchedAtGraceWindowSeconds to the 60s minimum so the " +
+            "JobController's ReconciliationLoop never reads a raw value below the canary guard threshold");
+    }
+
+    [Fact]
+    public void Create_ClampsChatPodConnectTimeoutSeconds_Zero_To5()
+    {
+        var config = BuildConfig(new()
+        {
+            ["WorkDistribution:Dispatch:ChatPodConnectTimeoutSeconds"] = "0"
+        });
+
+        var opts = DispatchServiceOptionsFactory.Create(config);
+
+        opts.ChatPodConnectTimeoutSeconds.Should().Be(5,
+            "Create must clamp ChatPodConnectTimeoutSeconds to the 5s minimum so the " +
+            "JobController's EnforceDispatchedTimeoutAsync never fails freshly dispatched items immediately");
+    }
 }

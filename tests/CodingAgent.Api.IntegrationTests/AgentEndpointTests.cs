@@ -316,6 +316,29 @@ public sealed class AgentEndpointTests
         status.Available.Should().BeLessThanOrEqualTo(status.Total);
     }
 
+    /// <summary>
+    /// Issue #3846: the handler receives <see cref="CodingAgent.Kubernetes.DispatchServiceOptions"/>
+    /// from DI rather than building its own copy from <c>IConfiguration</c>. The reported
+    /// <c>Total</c> must equal the <c>KiroPvcPool.Count</c> of the singleton registered in the
+    /// container — a regression that re-introduces a separate <c>Create(IConfiguration)</c> call
+    /// in the handler would produce a different (unclamped) instance and break this assertion when
+    /// the two instances diverge.
+    /// </summary>
+    [Fact]
+    public async Task GetCredentialPool_TotalMatchesDiRegisteredSingletonKiroPvcPool()
+    {
+        var singleton = _factory.Services.GetRequiredService<CodingAgent.Kubernetes.DispatchServiceOptions>();
+
+        var response = await _client.GetAsync("/api/agents/credential-pool");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var status = await response.Content.ReadFromJsonAsync<CredentialPoolStatus>(PipelineJsonOptions.Default);
+        status.Should().NotBeNull();
+        status!.Total.Should().Be(singleton.KiroPvcPool.Count,
+            "GetCredentialPool must report the KiroPvcPool of the DI-registered singleton, " +
+            "not a separately constructed copy from IConfiguration");
+    }
+
     [Fact]
     public async Task GetCredentialPool_RejectsAgentKey()
     {
