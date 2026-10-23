@@ -140,7 +140,7 @@ Consolidation runs report their steps and stream their agent output the same way
 **Brain consolidation steps** (in order):
 
 1. `CloningRepository` — brain repo cloned into the run workspace
-2. `ConsolidatingKnowledge` — agent executes the 4-phase consolidation prompt
+2. `ConsolidatingKnowledge` — agent executes the six-phase consolidation prompt (Orient, Gather Signal, Research & Verify, Consolidate, Prune, Generate Project SKILL.md)
 3. `ReviewingBrainChanges` — diff summary generated; adversarial review executed (if enabled)
 4. `PushingBrainChanges` — changes committed and pushed to the brain repo
 
