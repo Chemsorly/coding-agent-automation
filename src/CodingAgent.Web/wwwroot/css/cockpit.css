@@ -550,6 +550,24 @@
 .cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
 .cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
 
+/* Routing editor (RouteTable on Settings → Routing and the repository Binding card): each select was as wide
+   as its longest option and the model field had no input style (only .form-group inputs get one), so the
+   table scrolled sideways and hid its buttons. Fixed columns; the fields fill them at the select height. */
+.cockpit .route-table { table-layout: fixed; }
+.cockpit .route-table th:nth-child(1) { width: 15%; }
+.cockpit .route-table th:nth-child(2) { width: 34%; }
+.cockpit .route-table th:nth-child(3) { width: 20%; }
+.cockpit .route-table th:nth-child(4) { width: 14%; }
+.cockpit .route-table th:nth-child(5) { width: 17%; }
+.cockpit .route-table :is(select, input[type="text"]) { width: 100%; height: 38px; box-sizing: border-box; }
+.cockpit .route-table input[type="text"] {
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: var(--text); font-size: 0.85rem; outline: none;
+}
+.cockpit .route-table input[type="text"]:focus { border-color: var(--accent); }
+.cockpit .route-table td.route-actions { white-space: normal; text-align: right; }
+.cockpit .route-table .route-actions button { white-space: nowrap; margin: 2px 0 2px 6px; }
+
 /* A table's first column lines up with its card title and its rows run edge to edge, in either card type:
    in a .cockpit-card the outer cells take the header's 18px (the 10px cell padding left the text 8px left of
    the title); in a padded .settings-section the table bleeds through the 20px card padding and the outer
