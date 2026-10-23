@@ -265,6 +265,10 @@ public sealed class ConsolidationService : IConsolidationService
         {
             result = await workDistributor.DistributeAsync(request, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.Error(ex,

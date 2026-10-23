@@ -341,6 +341,61 @@ internal sealed class CiPollingCoordinator
     }
 
     /// <summary>
+    /// Applies the conflict-restart run mutations and returns a corresponding <see cref="GateResult"/>.
+    /// Sets <see cref="PipelineRun.FinalLabel"/> = <c>agent:next</c>,
+    /// <see cref="PipelineRun.FailureReason"/>, <see cref="PipelineRun.CurrentStep"/> =
+    /// <see cref="PipelineStep.ConflictRestart"/>, emits a UI output line, transitions the
+    /// pipeline step, and calls <see cref="PipelineRun.MarkCompleted"/>.
+    /// Used by both the pre-PR path (<c>QualityGateExecutor.BuildConflictRestartReport</c>) and
+    /// the post-PR path (<see cref="PollPostPrCiWithTelemetryAsync"/>).
+    /// </summary>
+    internal static GateResult ApplyConflictRestartToRun(PipelineRun run, IPipelineCallbacks callbacks)
+    {
+        run.FinalLabel = AgentLabels.Next;
+        run.FailureReason = "PR conflicted with main — restarting pipeline";
+        run.CurrentStep = PipelineStep.ConflictRestart;
+        callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
+        callbacks.TransitionTo(PipelineStep.ConflictRestart);
+        run.MarkCompleted();
+        return new GateResult
+        {
+            GateName = "External CI",
+            Passed = false,
+            Details = "Conflict restart — PR conflicted with main; re-dispatched as agent:next"
+        };
+    }
+
+    /// <summary>
+    /// Builds a <see cref="GateResult"/> for the post-PR CI poll result, propagating
+    /// <see cref="PipelineRunStatus.IsInfrastructureFailure"/> when set so that
+    /// <c>RunRetryLoopAsync</c> can short-circuit LLM invocation on infrastructure failures.
+    /// Mirrors the identical propagation block in
+    /// <c>QualityGateExecutor.AppendExternalCiIfNeededAsync</c> for the pre-PR path.
+    /// </summary>
+    private static GateResult BuildCiGateResultWithInfraFlag(
+        bool ciPassed,
+        PipelineRunStatus ciStatus,
+        IReadOnlyDictionary<long, string>? ciLogPaths,
+        IPipelineCallbacks callbacks)
+    {
+        var gate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, PostPrCiPrefix, PostPrCiPrefix, callbacks);
+        if (!ciStatus.IsInfrastructureFailure)
+            return gate;
+
+        // GateResult is a sealed class — copy all fields and set the flag.
+        return new GateResult
+        {
+            GateName = gate.GateName,
+            Passed = gate.Passed,
+            Details = gate.Details,
+            TestsFailed = gate.TestsFailed,
+            TestsPassed = gate.TestsPassed,
+            TestsSkipped = gate.TestsSkipped,
+            IsInfrastructureFailure = true
+        };
+    }
+
+    /// <summary>
     /// Builds a <see cref="GateResult"/> for an external CI timeout.
     /// </summary>
     internal static GateResult BuildCiTimeoutGateResult(TimeSpan timeout, string prefix) =>
@@ -629,7 +684,9 @@ internal sealed class CiPollingCoordinator
                 Result = ciPassed ? "pass" : "fail"
             });
 
-            ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, PostPrCiPrefix, PostPrCiPrefix, callbacks);
+            ciGate = ciStatus.State == PipelineRunState.ConflictRestart
+                ? ApplyConflictRestartToRun(run, callbacks)
+                : BuildCiGateResultWithInfraFlag(ciPassed, ciStatus, ciLogPaths, callbacks);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

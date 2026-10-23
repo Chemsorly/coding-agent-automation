@@ -172,20 +172,14 @@ public partial class QualityGateExecutor
     /// Handles the conflict-restart outcome from CI polling: marks the run for re-queue as
     /// agent:next and returns the appropriate conflict-restart report.
     /// Extracted from <see cref="AppendExternalCiIfNeededAsync"/> to keep that method under 60 lines.
+    /// Delegates run mutations to <see cref="CiPollingCoordinator.ApplyConflictRestartToRun"/> so
+    /// the post-PR path can reuse the same logic without duplication.
     /// </summary>
     private static QualityGateReport BuildConflictRestartReport(
         PipelineRun run, QualityGateReport report, IPipelineCallbacks callbacks)
     {
-        // Conflict restart: PR is conflicted with main — re-queue as agent:next without creating a draft PR.
-        // run.CurrentStep and run.FinalLabel are set here so PostCompletionBookkeepingAsync picks them up.
-        run.FinalLabel = AgentLabels.Next;
-        run.FailureReason = "PR conflicted with main — restarting pipeline";
-        run.CurrentStep = PipelineStep.ConflictRestart;
-        callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
-        callbacks.TransitionTo(PipelineStep.ConflictRestart);
-        run.MarkCompleted();
-        return WithExternalCiOutcome(report, passed: false,
-            details: "Conflict restart — PR conflicted with main; re-dispatched as agent:next");
+        var gate = CiPollingCoordinator.ApplyConflictRestartToRun(run, callbacks);
+        return WithExternalCiOutcome(report, gate.Passed, gate.Details!);
     }
 
     /// <summary>
