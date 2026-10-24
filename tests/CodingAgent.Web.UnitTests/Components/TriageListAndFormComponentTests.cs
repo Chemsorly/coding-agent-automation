@@ -94,6 +94,8 @@ public class TriageListAndFormComponentTests : BunitContext
         rows[0].TextContent.Should().Contain("RCA ready").And.Contain("Cause found · high").And.Contain("0 of 3").And.Contain("Operator · anna");
         rows[1].QuerySelector("a[target='_blank']")!.GetAttribute("href").Should().Be("https://github.com/acme/web/issues/431");
         rows[0].QuerySelector("a.triage-row-title")!.GetAttribute("href").Should().StartWith("triage/");
+        // Cost/token column shows the latest usage for the first row (188.0K tokens).
+        rows[0].QuerySelector("[data-testid='usage-cost']")!.TextContent.Should().Be("188.0K tokens");
     }
 
     [Fact]

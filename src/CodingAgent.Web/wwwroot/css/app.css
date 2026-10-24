@@ -513,6 +513,8 @@ select option { background: var(--surface); color: var(--text); }
 
 .btn-cancel-small { padding: 3px 10px; font-size: 0.75rem; border: 1px solid var(--error); color: var(--error); }
 .btn-cancel-small:hover { background: var(--error); color: white; }
+.usage-cost-estimate { color: var(--text-muted); }
+.usage-cost[title]:not([title=""]) { cursor: help; }
 
 /* Priority column number input */
 .priority-input {
