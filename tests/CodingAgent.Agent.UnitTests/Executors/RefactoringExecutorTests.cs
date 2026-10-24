@@ -736,33 +736,33 @@ public class RefactoringExecutorTests : IDisposable
         var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
         var gitOutput = "COMMIT_DATE:2026-07-19 14:00:00 +0000\nsrc/File1.cs\nsrc/File2.cs\nCOMMIT_DATE:2026-07-18 10:00:00 +0000\nsrc/File1.cs\nsrc/File1.cs\nsrc/File2.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
-        result.Should().NotBeNull();
-        result.Should().Contain("src/File1.cs");
-        result.Should().Contain("3 changes");
-        result.Should().Contain("src/File2.cs");
-        result.Should().Contain("2 changes");
-        result.Should().Contain("last 90 days");
-        result.Should().Contain("time-decay weighted");
-        result.Should().Contain("avg");
-        result.Should().Contain("days ago");
+        result.Summary.Should().NotBeNull();
+        result.Summary.Should().Contain("src/File1.cs");
+        result.Summary.Should().Contain("3 changes");
+        result.Summary.Should().Contain("src/File2.cs");
+        result.Summary.Should().Contain("2 changes");
+        result.Summary.Should().Contain("last 90 days");
+        result.Summary.Should().Contain("time-decay weighted");
+        result.Summary.Should().Contain("avg");
+        result.Summary.Should().Contain("days ago");
     }
 
     [Fact]
     public void ParseHotspotOutput_WithEmptyOutput_ReturnsNull()
     {
-        var result = RefactoringExecutor.ParseHotspotOutput("", TimeSpan.FromDays(90));
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput("", TimeSpan.FromDays(90));
 
-        result.Should().BeNull();
+        result.Summary.Should().BeNull();
     }
 
     [Fact]
     public void ParseHotspotOutput_WithOnlyWhitespace_ReturnsNull()
     {
-        var result = RefactoringExecutor.ParseHotspotOutput("\n\n  \n", TimeSpan.FromDays(90));
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput("\n\n  \n", TimeSpan.FromDays(90));
 
-        result.Should().BeNull();
+        result.Summary.Should().BeNull();
     }
 
     [Fact]
@@ -774,11 +774,11 @@ public class RefactoringExecutorTests : IDisposable
         for (int i = 0; i < 50; i++)
             sb.AppendLine($"src/File{i:D2}.cs");
 
-        var result = RefactoringExecutor.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90), referenceTime);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90), referenceTime);
 
-        result.Should().NotBeNull();
+        result.Summary.Should().NotBeNull();
         // Each file appears once, so 30 lines with score data
-        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        var lines = result.Summary!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(l => l.Contains("changes,")).ToList();
         lines.Should().HaveCount(30);
     }
@@ -790,10 +790,10 @@ public class RefactoringExecutorTests : IDisposable
         var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
         var gitOutput = "COMMIT_DATE:2026-07-19 10:00:00 +0000\nsrc/Rare.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Medium.cs\nsrc/Medium.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
-        result.Should().NotBeNull();
-        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        result.Summary.Should().NotBeNull();
+        var lines = result.Summary!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(l => l.Contains("changes,")).ToList();
         lines[0].Should().Contain("src/Common.cs");
         lines[1].Should().Contain("src/Medium.cs");
@@ -809,10 +809,10 @@ public class RefactoringExecutorTests : IDisposable
             "COMMIT_DATE:2026-07-19 12:00:00 +0000\nsrc/RecentFile.cs\nsrc/RecentFile.cs\nsrc/RecentFile.cs\n" +
             "COMMIT_DATE:2026-05-01 12:00:00 +0000\nsrc/OldFile.cs\nsrc/OldFile.cs\nsrc/OldFile.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
-        result.Should().NotBeNull();
-        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        result.Summary.Should().NotBeNull();
+        var lines = result.Summary!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(l => l.Contains("changes,")).ToList();
         // RecentFile should rank first (higher score due to recency)
         lines[0].Should().Contain("src/RecentFile.cs");
@@ -834,10 +834,10 @@ public class RefactoringExecutorTests : IDisposable
         for (int i = 0; i < 10; i++)
             sb.AppendLine("src/StaleFile.cs");
 
-        var result = RefactoringExecutor.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90), referenceTime);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90), referenceTime);
 
-        result.Should().NotBeNull();
-        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        result.Summary.Should().NotBeNull();
+        var lines = result.Summary!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(l => l.Contains("changes,")).ToList();
         // ActiveFile should rank first despite fewer changes
         lines[0].Should().Contain("src/ActiveFile.cs");
@@ -852,13 +852,13 @@ public class RefactoringExecutorTests : IDisposable
             "COMMIT_DATE:not-a-date\nsrc/File1.cs\nsrc/File2.cs\n" +
             "COMMIT_DATE:2026-07-19 12:00:00 +0000\nsrc/File3.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
         // Should not throw and should produce output
-        result.Should().NotBeNull();
-        result.Should().Contain("src/File1.cs");
-        result.Should().Contain("src/File2.cs");
-        result.Should().Contain("src/File3.cs");
+        result.Summary.Should().NotBeNull();
+        result.Summary.Should().Contain("src/File1.cs");
+        result.Summary.Should().Contain("src/File2.cs");
+        result.Summary.Should().Contain("src/File3.cs");
     }
 
     [Fact]
@@ -1857,10 +1857,10 @@ public class RefactoringExecutorTests : IDisposable
         var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
         var gitOutput = $"COMMIT_DATE:2026-07-19 12:00:00 +0000\n{excluded}\n{excluded}\nsrc/Kept.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
-        result.Should().Contain("src/Kept.cs");
-        result.Should().NotContain(excluded);
+        result.Summary.Should().Contain("src/Kept.cs");
+        result.Summary.Should().NotContain(excluded);
     }
 
     [Fact]
@@ -1869,11 +1869,11 @@ public class RefactoringExecutorTests : IDisposable
         var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
         var gitOutput = "COMMIT_DATE:2026-07-19 12:00:00 +0000\nsrc/Deleted.cs\nsrc/Deleted.cs\nsrc/Kept.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(
             gitOutput, TimeSpan.FromDays(90), referenceTime, fileExists: f => f != "src/Deleted.cs");
 
-        result.Should().Contain("src/Kept.cs");
-        result.Should().NotContain("src/Deleted.cs");
+        result.Summary.Should().Contain("src/Kept.cs");
+        result.Summary.Should().NotContain("src/Deleted.cs");
     }
 
     [Fact]
@@ -1894,18 +1894,16 @@ public class RefactoringExecutorTests : IDisposable
 
         Func<string, bool> isExcluded = subject => subject.Contains("(#5)", StringComparison.Ordinal);
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime, isExcludedCommit: isExcluded);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime, isExcludedCommit: isExcluded);
 
-        result.Should().NotBeNull();
-        result.Should().Contain("src/A.cs");
-        result.Should().Contain("1 changes");
+        result.Summary.Should().NotBeNull();
+        result.Summary.Should().Contain("src/A.cs");
+        result.Summary.Should().Contain("1 changes");
         // The excluded commit's contribution must not be counted
-        result.Should().NotContain("2 changes");
-        // TODO [WARNING]: This test does not verify that the excluded commit's recency weight does not
-        // leak into the score. ParseHotspotOutput uses time-decay weighting and the score line (e.g.
-        // "0.9 — src/A.cs (1 changes, avg 2 days ago)") could include both commits' weights even when
-        // the change count is 1. Add an assertion that the score corresponds to a single-commit
-        // contribution (i.e., not the sum of both commits' recency factors) to guard against that bug.
+        result.Summary.Should().NotContain("2 changes");
+        // The score should reflect only the included commit's recency weight (≈0.9 at F1 precision),
+        // not the sum of both commits' weights (which would be ≈1.9 at F1 precision).
+        result.Summary.Should().NotContain("1.9");
     }
 
     [Fact]
@@ -1921,34 +1919,31 @@ public class RefactoringExecutorTests : IDisposable
 
         // With predicate (nothing excluded)
         Func<string, bool> isExcluded = subject => subject.Contains("(#99)", StringComparison.Ordinal);
-        var resultWithPredicate = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime, isExcludedCommit: isExcluded);
+        var resultWithPredicate = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime, isExcludedCommit: isExcluded);
 
-        resultWithPredicate.Should().NotBeNull();
-        resultWithPredicate.Should().Contain("src/B.cs");
-        resultWithPredicate.Should().Contain("1 changes");
-        // No line should start with "COMMIT_SUBJECT:"
-        // TODO [WARNING]: This assertion checks that no line *starts with* "COMMIT_SUBJECT:", but a bug
-        // where "COMMIT_SUBJECT:feat:..." was parsed as a file path would produce a line like
-        // "0.9 — COMMIT_SUBJECT:feat: some change (#7) (1 changes...)" which would not start with
-        // "COMMIT_SUBJECT:" and would not be caught. Change the assertion to check that no line
-        // *contains* "COMMIT_SUBJECT:" to be effective against that class of bug.
-        foreach (var line in resultWithPredicate!.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            line.Should().NotStartWith("COMMIT_SUBJECT:");
+        resultWithPredicate.Summary.Should().NotBeNull();
+        resultWithPredicate.Summary.Should().Contain("src/B.cs");
+        resultWithPredicate.Summary.Should().Contain("1 changes");
+        // No output line should contain "COMMIT_SUBJECT:" — a parser bug treating a subject line as a
+        // file path would produce a score-prefixed line like "0.9 — COMMIT_SUBJECT:feat:..." which
+        // would not start with "COMMIT_SUBJECT:" but would still contain it.
+        foreach (var line in resultWithPredicate.Summary!.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            line.Should().NotContain("COMMIT_SUBJECT:");
 
         // Without predicate (null)
-        var resultWithoutPredicate = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+        var resultWithoutPredicate = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
-        resultWithoutPredicate.Should().NotBeNull();
-        resultWithoutPredicate.Should().Contain("src/B.cs");
-        resultWithoutPredicate.Should().Contain("1 changes");
-        foreach (var line in resultWithoutPredicate!.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            line.Should().NotStartWith("COMMIT_SUBJECT:");
+        resultWithoutPredicate.Summary.Should().NotBeNull();
+        resultWithoutPredicate.Summary.Should().Contain("src/B.cs");
+        resultWithoutPredicate.Summary.Should().Contain("1 changes");
+        foreach (var line in resultWithoutPredicate.Summary!.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            line.Should().NotContain("COMMIT_SUBJECT:");
     }
 
     // ── CountExcludedCommits tests ───────────────────────────────────────────────────────────
 
     [Fact]
-    public void CountExcludedCommits_CountsOnlyMatchingSubjects()
+    public void ParseHotspotOutput_OneMatchingExcludedCommit_ExcludedCountIsOne()
     {
         // Two commits: one whose subject matches the predicate and one that does not.
         // Only the matching one should be counted.
@@ -1962,13 +1957,13 @@ public class RefactoringExecutorTests : IDisposable
 
         Func<string, bool> isExcluded = subject => subject.Contains("(#5)", StringComparison.Ordinal);
 
-        var count = RefactoringExecutor.CountExcludedCommits(gitLog, isExcluded);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitLog, TimeSpan.FromDays(90), isExcludedCommit: isExcluded);
 
-        count.Should().Be(1);
+        result.ExcludedCommitCount.Should().Be(1);
     }
 
     [Fact]
-    public void CountExcludedCommits_NoMatchingSubjects_ReturnsZero()
+    public void ParseHotspotOutput_NoMatchingExcludedCommits_ExcludedCountIsZero()
     {
         // No commit subject matches — count should be zero.
         var gitLog =
@@ -1978,9 +1973,33 @@ public class RefactoringExecutorTests : IDisposable
 
         Func<string, bool> isExcluded = subject => subject.Contains("(#99)", StringComparison.Ordinal);
 
-        var count = RefactoringExecutor.CountExcludedCommits(gitLog, isExcluded);
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitLog, TimeSpan.FromDays(90), isExcludedCommit: isExcluded);
 
-        count.Should().Be(0);
+        result.ExcludedCommitCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_TwoExcludedCommitsOneNot_ExcludedCountIsTwo()
+    {
+        // Three commits: two whose subjects match the exclusion predicate, one that does not.
+        // ExcludedCommitCount must be exactly 2.
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitLog =
+            "COMMIT_DATE:2026-07-19 14:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: implement scan issue (#42)\n" +
+            "src/A.cs\n" +
+            "COMMIT_DATE:2026-07-18 10:00:00 +0000\n" +
+            "COMMIT_SUBJECT:feat: another scan commit (#42)\n" +
+            "src/B.cs\n" +
+            "COMMIT_DATE:2026-07-17 08:00:00 +0000\n" +
+            "COMMIT_SUBJECT:fix: unrelated bug\n" +
+            "src/C.cs\n";
+
+        Func<string, bool> isExcluded = subject => subject.Contains("(#42)", StringComparison.Ordinal);
+
+        var result = RefactoringHotspotAnalyzer.ParseHotspotOutput(gitLog, TimeSpan.FromDays(90), referenceTime, isExcludedCommit: isExcluded);
+
+        result.ExcludedCommitCount.Should().Be(2);
     }
 
     // ── CollectScanIssueReferencesAsync tests ────────────────────────────────────────────────
