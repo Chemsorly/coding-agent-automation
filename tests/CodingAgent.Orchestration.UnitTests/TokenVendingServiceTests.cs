@@ -775,12 +775,11 @@ public class TokenVendingServiceTests
 
     /// <summary>
     /// Verifies that TrimExpiredCacheEntries removes an expired token entry
-    /// and disposes (removes) its corresponding semaphore entry.
-    /// Both CacheCount and SemaphoreCount must reach 0 to satisfy the two
-    /// acceptance criteria independently.
+    /// and removes its corresponding semaphore entry from the dictionary.
+    /// Both CacheCount and SemaphoreCount must reach 0 after the sweep.
     /// </summary>
     [Fact]
-    public async Task TrimExpiredCacheEntries_RemovesExpiredEntry_AndDisposesMatchingSemaphore()
+    public async Task TrimExpiredCacheEntries_RemovesExpiredEntry_AndRemovesMatchingSemaphore()
     {
         var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
         var config = CreateRepoConfigWithValidKey(privateKeyBase64);
@@ -822,12 +821,7 @@ public class TokenVendingServiceTests
         service.TrimExpiredCacheEntries();
 
         service.CacheCount.Should().Be(0, "expired token entry must be removed from _tokenCache");
-        // TODO [WARNING]: SemaphoreCount == 0 proves the entry was removed from the dictionary,
-        // but does not verify that Dispose() was actually called on the removed SemaphoreSlim.
-        // To assert disposal explicitly, expose the removed instance (e.g., via an internal
-        // TrimExpiredCacheEntries overload that returns removed semaphores) and assert
-        // removedSem.IsDisposed via reflection, or use a mock/subclass that tracks Dispose calls.
-        service.SemaphoreCount.Should().Be(0, "semaphore entry must be removed and disposed when its token expires");
+        service.SemaphoreCount.Should().Be(0, "semaphore entry must be removed from _mintSemaphores when its token expires");
     }
 
     /// <summary>
@@ -1005,6 +999,271 @@ public class TokenVendingServiceTests
 
         service.CacheCount.Should().Be(0, "TokenCacheHousekeepingService must evict expired entries on each tick");
         service.SemaphoreCount.Should().Be(0, "TokenCacheHousekeepingService must remove expired semaphore entries on each tick");
+    }
+
+    /// <summary>
+    /// AC#1: Verifies that a trim that runs during an in-flight mint does not cause
+    /// GenerateAgentTokenAsync to throw ObjectDisposedException.
+    ///
+    /// Sequence: seed cache → advance clock past expiry → start Caller A (blocks in HTTP handler)
+    /// → trim (removes the semaphore) → complete mint → assert Caller A returns the token.
+    ///
+    /// Before the fix, TrimExpiredCacheEntries called Dispose() on the removed semaphore, so
+    /// sem.Release() in the holder's finally block threw ObjectDisposedException.
+    /// After the fix, the semaphore is only removed from the dictionary; Release() succeeds.
+    /// </summary>
+    [Fact]
+    public async Task TrimExpiredCacheEntries_DuringInFlightMint_DoesNotThrowObjectDisposedException()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var callCount = 0;
+        var handlerEntered = new ManualResetEventSlim(false);
+        var mintBlocker = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    // Seed call: return T1 immediately
+                    var expiresAt1 = clock.GetUtcNow().AddHours(1).ToString("O");
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                    {
+                        Content = new StringContent(
+                            JsonSerializer.Serialize(new { token = "ghs_seed", expires_at = expiresAt1 }),
+                            System.Text.Encoding.UTF8, "application/json")
+                    });
+                }
+                // Caller A's mint: signal that the handler has been entered, then block until mintBlocker completes
+                handlerEntered.Set();
+                return mintBlocker.Task;
+            });
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient(mockHandler.Object), clock);
+
+        // Seed the cache: first call mints T1 (expires startTime + 1h)
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        service.CacheCount.Should().Be(1);
+
+        // Advance clock past T1's expiry
+        clock.Advance(TimeSpan.FromHours(1).Add(TimeSpan.FromSeconds(1)));
+
+        // Start Caller A: misses fast path (T1 expired), acquires semaphore, blocks in MintTokenFromGitHubAsync
+        var mintTask = service.GenerateAgentTokenAsync(config, CancellationToken.None);
+
+        // Wait until Caller A is inside the HTTP handler (confirms it holds the semaphore)
+        handlerEntered.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue("Caller A should enter the handler within 10 s");
+
+        // Trim: sees T1 as expired (Caller A has not yet written T2), removes T1 and the semaphore.
+        // Before the fix, this calls removedSem.Dispose(), causing sem.Release() in the finally block to throw.
+        service.TrimExpiredCacheEntries();
+        service.CacheCount.Should().Be(0, "expired T1 must be removed by the trim");
+
+        // Complete the mint: Caller A finishes MintTokenFromGitHubAsync and calls sem.Release() in finally
+        var mintedExpiresAt = clock.GetUtcNow().AddHours(1).ToString("O");
+        mintBlocker.SetResult(new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new { token = "ghs_minted", expires_at = mintedExpiresAt }),
+                System.Text.Encoding.UTF8, "application/json")
+        });
+
+        // Must return the minted token — NOT throw ObjectDisposedException.
+        // WaitAsync(10s) surfaces a TimeoutException instead of hanging indefinitely if a
+        // regression causes the task to deadlock rather than throw.
+        var (token, _) = await mintTask.WaitAsync(TimeSpan.FromSeconds(10));
+        token.Should().Be("ghs_minted");
+        service.CacheCount.Should().Be(1, "T2 must be stored in the cache after the successful mint");
+    }
+
+    /// <summary>
+    /// AC#2: Verifies that a caller already waiting on the same key's semaphore during a trim
+    /// completes normally after the first mint finishes, rather than hanging indefinitely.
+    ///
+    /// Before the fix, sem.Release() threw ObjectDisposedException (the semaphore was disposed by
+    /// the trim), so Release() was never called and Caller B's WaitAsync never returned.
+    /// After the fix, Release() succeeds and Caller B is unblocked.
+    /// </summary>
+    [Fact]
+    public async Task TrimExpiredCacheEntries_WaiterOnTrimmedSemaphore_CompletesAfterMintFinishes()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var callCount = 0;
+        var handlerEntered = new ManualResetEventSlim(false);
+        var mintBlocker = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    // Seed call: return T1 immediately
+                    var expiresAt1 = clock.GetUtcNow().AddHours(1).ToString("O");
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                    {
+                        Content = new StringContent(
+                            JsonSerializer.Serialize(new { token = "ghs_seed", expires_at = expiresAt1 }),
+                            System.Text.Encoding.UTF8, "application/json")
+                    });
+                }
+                // Caller A's mint: signal entry, then block until mintBlocker is completed
+                handlerEntered.Set();
+                return mintBlocker.Task;
+            });
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient(mockHandler.Object), clock);
+
+        // Seed the cache
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        clock.Advance(TimeSpan.FromHours(1).Add(TimeSpan.FromSeconds(1)));
+
+        // Caller A: misses fast path (T1 expired), acquires semaphore, blocks in MintTokenFromGitHubAsync
+        var taskA = service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        handlerEntered.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue("Caller A should be in the handler within 10 s");
+
+        // Caller B: retrieves the same semaphore instance via GetOrAdd, then blocks on WaitAsync
+        // (the semaphore is currently held by Caller A)
+        var taskB = service.GenerateAgentTokenAsync(config, CancellationToken.None);
+
+        // Allow Caller B's async continuation to be scheduled and reach sem.WaitAsync.
+        // NOTE: GenerateTokenAsync has no async suspension point before sem.WaitAsync — all code
+        // between the method entry and `await sem.WaitAsync(ct)` is synchronous (validation, TryGetValue,
+        // GetOrAdd). This means when `var taskB = ...` returns, Caller B is already registered as a
+        // waiter on S1. The Task.Delay is therefore purely defensive — it guards against future refactors
+        // that introduce an early await before the semaphore acquisition.
+        await Task.Delay(50);
+
+        // Trim: removes the semaphore from the dictionary.
+        // Before the fix: calls Dispose() on the semaphore; Caller A's finally throws ObjectDisposedException
+        // and never calls sem.Release(), so Caller B hangs indefinitely on WaitAsync.
+        service.TrimExpiredCacheEntries();
+
+        // Complete the mint: Caller A writes T2, then calls sem.Release() in finally
+        var mintedExpiresAt = clock.GetUtcNow().AddHours(1).ToString("O");
+        mintBlocker.SetResult(new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new { token = "ghs_minted", expires_at = mintedExpiresAt }),
+                System.Text.Encoding.UTF8, "application/json")
+        });
+
+        // Both callers must complete without exception.
+        // Caller B acquires the semaphore after Caller A releases it, hits the double-check cache
+        // hit (T2 is now in _tokenCache), and returns T2 without making a further HTTP call.
+        // WaitAsync(10s) surfaces a TimeoutException instead of stalling the runner if a regression
+        // causes sem.Release() to throw (so Caller B's WaitAsync never returns).
+        await Task.WhenAll(taskA, taskB).WaitAsync(TimeSpan.FromSeconds(10));
+        var (tokenA, _) = await taskA;
+        var (tokenB, _) = await taskB;
+
+        tokenA.Should().Be("ghs_minted",
+            "Caller A must return the minted token, not throw ObjectDisposedException");
+        tokenB.Should().Be("ghs_minted",
+            "Caller B must receive the token via double-check cache hit after Caller A releases the semaphore");
+        callCount.Should().Be(2,
+            "only one HTTP mint must occur — Caller B must have queued on Caller A's semaphore and " +
+            "hit the double-check cache hit, not acquired a fresh semaphore and triggered a third HTTP call");
+    }
+
+    /// <summary>
+    /// AC#4: Verifies that a fresh cache entry stored for the same key between the trim's expiry
+    /// check and its TryRemove call is NOT deleted. This tests the value-aware
+    /// TryRemove(KeyValuePair&lt;K,V&gt;) fix for the TOCTOU race.
+    ///
+    /// Sequence: seed cache (T1) → advance clock past expiry → set hook to store T2 synchronously
+    /// between the expiry check and TryRemove → call TrimExpiredCacheEntries → assert T2 survives
+    /// and is returned as a cache hit on the next call without a new mint.
+    ///
+    /// Before the fix (key-only TryRemove): TryRemove(key, out _) deletes T2, CacheCount drops to 0,
+    /// and the subsequent GenerateAgentTokenAsync triggers a third HTTP mint (httpCallCount = 3).
+    /// After the fix (value-aware TryRemove): TryRemove(new KVP(key, T1)) returns false because
+    /// the dictionary now holds T2 (not T1), so T2 is preserved and the subsequent call is a
+    /// cache hit (httpCallCount stays at 2).
+    /// </summary>
+    [Fact]
+    public async Task TrimExpiredCacheEntries_FreshEntryStoredBetweenCheckAndRemoval_IsNotDeleted()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var httpCallCount = 0;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                httpCallCount++;
+                var expiresAt = clock.GetUtcNow().AddHours(1).ToString("O");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = $"ghs_token_{httpCallCount}", expires_at = expiresAt }),
+                        System.Text.Encoding.UTF8, "application/json")
+                });
+            });
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient(mockHandler.Object), clock);
+
+        // Step 1: Seed — mint T1 (expires startTime + 1h)
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        httpCallCount.Should().Be(1);
+        service.CacheCount.Should().Be(1);
+
+        // Step 2: Advance clock past T1's expiry
+        clock.Advance(TimeSpan.FromHours(1).Add(TimeSpan.FromSeconds(1)));
+
+        // Step 3: Set the hook to fire between the expiry check and TryRemove inside the trim.
+        // The hook stores T2 by calling GenerateAgentTokenAsync synchronously.
+        // (The mock handler returns Task.FromResult, so the entire call chain completes synchronously,
+        // and .GetAwaiter().GetResult() returns immediately without blocking.)
+        // The hook clears itself so it fires only once.
+        service.OnBeforeCacheRemove = () =>
+        {
+            service.OnBeforeCacheRemove = null; // self-clear; run once
+            service.GenerateAgentTokenAsync(config, CancellationToken.None).GetAwaiter().GetResult();
+        };
+
+        // Step 4: Trim
+        //   - TryGetValue sees T1 (expired) → expiry check passes
+        //   - Hook fires → stores T2 in _tokenCache (httpCallCount = 2)
+        //   - TryRemove(new KVP(key, T1)):
+        //       OLD code: TryRemove(key, out _) → removes T2! (TOCTOU bug)
+        //       NEW code: value doesn't match T2 → returns false → T2 preserved!
+        service.TrimExpiredCacheEntries();
+
+        service.CacheCount.Should().Be(1, "the fresh T2 entry must survive; value-aware TryRemove must not delete it");
+        service.SemaphoreCount.Should().Be(1, "the semaphore for T2 must not be removed");
+        httpCallCount.Should().Be(2, "the hook must have triggered exactly one re-mint");
+
+        // Step 5: Subsequent call must be a cache hit — T2 is still valid
+        var (cachedToken, _) = await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        httpCallCount.Should().Be(2, "T2 is still valid; no new HTTP call must occur");
+        cachedToken.Should().Be("ghs_token_2", "cached T2 must be returned directly");
     }
 
     #endregion

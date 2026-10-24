@@ -481,16 +481,15 @@ public class PipelineSidebarComponentTests : BunitContext
         var allText = cut.Find(".phase-breakdown tbody").TextContent;
         Assert.Contains("Analysis", allText);
         Assert.Contains("Codegen", allText);
-        // TODO [WARNING]: These token/cost string assertions are locale-sensitive. `CostFormatter.FormatTokens(5000)`
-        // producing "5.0K" and `CostFormatter.FormatCost(0.03m)` producing "$0.03" assumes en-US locale formatting.
-        // If run in a non-en-US CI environment the decimal separator or currency symbol may differ, causing a failure
-        // that has nothing to do with the component logic. Fix: either pin the test thread culture to
-        // CultureInfo.InvariantCulture / "en-US" in the test setup, or call `CostFormatter.FormatTokens(5000)` /
-        // `CostFormatter.FormatCost(0.03m)` directly and assert equality with the actual formatter output.
-        Assert.Contains("5.0K", allText);
-        Assert.Contains("10.0K", allText);
+        // Cost values are still visible as text in the span.
         Assert.Contains("$0.03", allText);
         Assert.Contains("$0.08", allText);
+        // Token counts now appear in the title attribute of [data-testid=usage-cost] spans.
+        var usageCostSpans = cut.FindAll(".phase-breakdown tbody [data-testid='usage-cost']");
+        Assert.Equal(2, usageCostSpans.Count);
+        // Sorted descending by cost: codegen ($0.08) first, analysis ($0.03) second.
+        Assert.Contains("New tokens 10.0K", usageCostSpans[0].GetAttribute("title") ?? "");
+        Assert.Contains("New tokens 5.0K", usageCostSpans[1].GetAttribute("title") ?? "");
     }
 
     [Fact]
@@ -515,7 +514,7 @@ public class PipelineSidebarComponentTests : BunitContext
     }
 
     [Fact]
-    public void CostBreakdown_WhenCostIsNull_SortsByTokensDescendingAndDisplaysDash()
+    public void CostBreakdown_WhenCostIsNull_SortsByTokensDescendingAndShowsTokens()
     {
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         run.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(2000, null));
@@ -534,15 +533,11 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.Contains("Analysis", rows[1].TextContent);
         Assert.Contains("Reflection", rows[2].TextContent);
 
-        // All cost cells should display "—" for null costs
+        // No dollar signs (all costs are null)
         var allText = cut.Find(".phase-breakdown tbody").TextContent;
         Assert.DoesNotContain("$", allText);
-        // TODO [WARNING]: This assertion hard-codes the em-dash character (U+2014) as the expected output of
-        // `CostFormatter.FormatCost(null)`. If FormatCost returns a different character (e.g. en-dash U+2013,
-        // hyphen-minus U+002D, or the literal string "N/A") this assertion will silently pass on wrong output or
-        // fail unexpectedly. Fix: call `CostFormatter.FormatCost(null)` directly and assert
-        // `Assert.Contains(CostFormatter.FormatCost(null), allText)` to decouple from the assumed output character.
-        Assert.Contains("—", allText);
+        // Top row (codegen, 8000 tokens) renders as "8.0K tokens"
+        Assert.Contains("8.0K tokens", allText);
     }
 
     [Fact]

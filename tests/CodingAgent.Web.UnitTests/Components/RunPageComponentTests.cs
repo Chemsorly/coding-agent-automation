@@ -1564,6 +1564,54 @@ public class RunPageComponentTests : BunitContext
         tbody.TextContent.Should().Contain("sonarqube 20");
         tbody.TextContent.Should().Contain("web 2");
     }
+
+    // ── Issue #3856: cost figure with token breakdown ─────────────────────────
+
+    /// <summary>
+    /// A run with cost, tokens and cache tokens must render one "run-usage" detail item
+    /// showing the cost figure, a breakdown line containing "Cache read", and no items
+    /// labelled "Tokens" or "Cache tokens".
+    /// </summary>
+    [Fact]
+    public void RunPage_WithCostAndCacheTokens_ShowsOneCostItemWithBreakdown()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3856",
+            IssueTitle = "Cost breakdown test",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            TotalCost = 17.36m,
+            TotalTokens = 229_452,
+            CacheReadTokens = 32_180_429,
+            PhaseBreakdown = new Dictionary<string, PhaseUsage>
+            {
+                ["analysis"] = new PhaseUsage(229_452, 17.36m) { BillingMode = AgentBillingModes.Api },
+            },
+            InitiatedBy = "manual",
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Exactly one run-usage item.
+        var usageItems = cut.FindAll("[data-testid='run-usage']");
+        usageItems.Should().ContainSingle();
+
+        // The value cell starts with "$" (cost figure).
+        usageItems[0].QuerySelector(".v")!.TextContent.Trim().Should().StartWith("$");
+
+        // The breakdown line is visible and contains "Cache read".
+        var breakdownLine = cut.Find("[data-testid='run-usage-breakdown']");
+        breakdownLine.TextContent.Should().Contain("Cache read");
+
+        // No detail item labelled "Tokens" or "Cache tokens".
+        var detailLabels = cut.FindAll(".cockpit-detail-item .k").Select(e => e.TextContent.Trim()).ToList();
+        detailLabels.Should().NotContain("Tokens");
+        detailLabels.Should().NotContain("Cache tokens");
+    }
 }
 
 /// <summary>
