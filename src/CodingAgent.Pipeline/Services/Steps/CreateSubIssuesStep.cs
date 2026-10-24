@@ -108,6 +108,21 @@ public sealed class CreateSubIssuesStep : IPipelineStep
 
         foreach (var proposal in cappedProposals)
         {
+            // CHECK A: ct fired between iterations (user cancelled or agent shutting down).
+            // Commit what has been gathered so far and surface the cancellation to the caller.
+            // TODO: CHECK A is the detection point when ct is cancelled after results.Add
+            // completes and before the next iteration's dependency-registration block begins —
+            // a narrow window that the current test suite does not exercise directly. The
+            // primary cancellation scenarios (ct fires during a provider call) are covered by
+            // CHECK B / the catch block below. A dedicated test would require coordinating an
+            // external cancellation signal between the dependency-resolver registration and the
+            // top of the next iteration, which is difficult to do deterministically.
+            if (ct.IsCancellationRequested)
+            {
+                CommitSubIssueResults(context, results, results.Count);
+                ct.ThrowIfCancellationRequested();
+            }
+
             // 11. On timeout: mark remaining as failed
             if (timeoutCts.IsCancellationRequested)
             {
@@ -124,8 +139,48 @@ public sealed class CreateSubIssuesStep : IPipelineStep
                 continue;
             }
 
-            var result = await CreateSingleIssueAsync(proposal, resolver, context, _retryDelayOverride, creationCt);
+            SubIssueCreationResult result;
+            try
+            {
+                result = await CreateSingleIssueAsync(proposal, resolver, context, _retryDelayOverride, creationCt);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // OCE propagated directly (e.g. from Task.Delay during a transient-error retry
+                // wait). The outer ct is cancelled — commit partial results and surface it.
+                // TODO: This branch is not exercised by the current test suite. Triggering it
+                // requires a transient provider error (HTTP 5xx/429/timeout) on attempt 1,
+                // followed by ct being cancelled during the subsequent Task.Delay retry wait
+                // (1s on attempt 2, 3s on attempt 3). Tests suppress real delays via
+                // retryDelayOverride: TimeSpan.Zero, which means Task.Delay completes
+                // synchronously and cannot observe cancellation. A test would need a non-zero
+                // delay override and coordinated CancellationTokenSource.CancelAfter timing.
+                CommitSubIssueResults(context, results, results.Count);
+                throw;
+            }
+
+            // CHECK B (part 1): TryCreateIssueOnceAsync caught the OCE and returned a
+            // misattributed "creation timeout exceeded" result (Success = false). Discard it
+            // — the real cause is ct, not the 5-minute timeout.
+            // If the call succeeded despite ct firing (a race where the provider completed
+            // before observing the cancellation), fall through to results.Add so the already-
+            // created sub-issue is recorded in the run rather than being lost.
+            if (ct.IsCancellationRequested && !result.Success)
+            {
+                CommitSubIssueResults(context, results, results.Count);
+                ct.ThrowIfCancellationRequested();
+            }
+
             results.Add(result);
+
+            // CHECK B (part 2): ct was cancelled during a call that returned a success. The
+            // sub-issue now exists in the issue tracker; record it before stopping so the run
+            // record stays consistent with the tracker state.
+            if (ct.IsCancellationRequested)
+            {
+                CommitSubIssueResults(context, results, results.Count);
+                ct.ThrowIfCancellationRequested();
+            }
 
             // Register successful creations for dependency resolution.
             // The resolved provider ID (either the targetProviderId from cross-repo routing or the
@@ -175,10 +230,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         }
 
         // 12. Store results on context for summary step
-        context.Run.SubIssueResults = results;
-        // Attempted and Created only count proposals that were actually attempted (not skipped by cap)
-        context.Run.DecompositionSubIssuesAttempted = cappedProposals.Count;
-        context.Run.DecompositionSubIssuesCreated = results.Count(r => r.Success);
+        CommitSubIssueResults(context, results, cappedProposals.Count);
 
         context.Logger.Information(
             "Sub-issue creation complete: {Created}/{Attempted} succeeded",
@@ -186,6 +238,26 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             context.Run.DecompositionSubIssuesAttempted);
 
         return StepResult.Continue;
+    }
+
+    /// <summary>
+    /// Writes the collected sub-issue results to the run. Called from both the normal completion
+    /// path and the early-exit cancellation path so the two cannot drift apart.
+    /// </summary>
+    /// <param name="attempted">
+    /// Number of proposals that were actually attempted. On the normal path this equals
+    /// <c>cappedProposals.Count</c>; on the cancellation path it equals the number of proposals
+    /// that completed before the cancellation (i.e. <c>results.Count</c> at the point of exit).
+    /// </param>
+    private static void CommitSubIssueResults(
+        PipelineStepContext context,
+        List<SubIssueCreationResult> results,
+        int attempted)
+    {
+        context.Run.SubIssueResults = results;
+        // Attempted and Created only count proposals that were actually attempted (not skipped by cap)
+        context.Run.DecompositionSubIssuesAttempted = attempted;
+        context.Run.DecompositionSubIssuesCreated = results.Count(r => r.Success);
     }
 
     private static async Task<SubIssueCreationResult> CreateSingleIssueAsync(
