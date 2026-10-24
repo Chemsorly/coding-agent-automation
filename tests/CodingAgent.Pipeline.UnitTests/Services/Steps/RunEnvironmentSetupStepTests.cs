@@ -50,6 +50,7 @@ public class RunEnvironmentSetupStepTests : IDisposable
         // Register an ActivityListener so PipelineTelemetry.ActivitySource.StartActivity(...)
         // returns a real Activity and sets Activity.Current. This makes Activity.Current?.SetStatus(...)
         // inside the step's failure branches observable via the _activities bag.
+        // The listener is process-wide: pipelines in parallel test classes (TestPipelineRunner) emit RunEnvironmentSetup spans too, so each test picks its own span by pipeline.run_id.
         _listener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
@@ -175,7 +176,8 @@ public class RunEnvironmentSetupStepTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         // Assert — exception path: RecordMaskedError sets ActivityStatusCode.Error
-        var setupActivity = _activities.FirstOrDefault(a => a.DisplayName == "RunEnvironmentSetup");
+        var setupActivity = _activities.FirstOrDefault(a =>
+            a.DisplayName == "RunEnvironmentSetup" && Equals(a.GetTagItem("pipeline.run_id"), context.Run.RunId));
         setupActivity.Should().NotBeNull("the ActivityListener must capture the RunEnvironmentSetup span");
         setupActivity!.Status.Should().Be(ActivityStatusCode.Error,
             "RecordMaskedError calls activity.SetStatus(Error) when result.Exception is non-null");
@@ -238,7 +240,8 @@ public class RunEnvironmentSetupStepTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         // Assert — activity must record Error status via Activity.Current?.SetStatus(...)
-        var setupActivity = _activities.FirstOrDefault(a => a.DisplayName == "RunEnvironmentSetup");
+        var setupActivity = _activities.FirstOrDefault(a =>
+            a.DisplayName == "RunEnvironmentSetup" && Equals(a.GetTagItem("pipeline.run_id"), context.Run.RunId));
         setupActivity.Should().NotBeNull(
             "the ActivityListener must capture the RunEnvironmentSetup span");
         setupActivity!.Status.Should().Be(ActivityStatusCode.Error,
