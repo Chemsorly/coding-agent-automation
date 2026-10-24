@@ -125,6 +125,7 @@ internal static class TriageTestData
             IssueUrl = issueUrl,
         },
         LatestTokens = 188_000,
+        LatestUsage = new RunUsage { Tokens = 188_000 },
         CreatedAt = DateTimeOffset.UtcNow.AddHours(-2),
         UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
     };

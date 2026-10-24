@@ -188,7 +188,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     }
 
     [Fact]
-    public void Runs_HidesTokensColumn_WhenNoRunHasTokens()
+    public void Runs_HidesCostColumn_WhenNoRunHasUsage()
     {
         var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
@@ -198,12 +198,12 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var cut = Render<Runs>();
 
         var headers = cut.FindAll(".monitoring-table thead th").Select(e => e.TextContent.Trim()).ToList();
-        headers.Should().NotContain("Tokens",
-            "the Tokens column header must be absent when no run has tokens");
+        headers.Should().NotContain("Cost",
+            "the Cost column header must be absent when no run has usage");
     }
 
     [Fact]
-    public void Runs_ShowsTokensColumn_WhenSomeRunsHaveTokens()
+    public void Runs_ShowsCostColumn_WhenSomeRunsHaveUsage()
     {
         var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
         mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
@@ -213,7 +213,23 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var cut = Render<Runs>();
 
         var headers = cut.FindAll(".monitoring-table thead th").Select(e => e.TextContent.Trim()).ToList();
-        headers.Should().Contain("Tokens",
-            "the Tokens column header must be visible when some runs have tokens");
+        headers.Should().Contain("Cost",
+            "the Cost column header must be visible when some runs have usage");
+    }
+
+    [Fact]
+    public void Runs_ShowsCostColumn_WhenSomeRunsHaveOnlyCost()
+    {
+        // Exercises the TotalCost > 0 branch of _anyRunHasUsage separately from TotalTokens > 0.
+        var mock = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PagedHistory(MakeRun("r1", cost: 5m), MakeRun("r2")));
+        RegisterRunsServices(mock);
+
+        var cut = Render<Runs>();
+
+        var headers = cut.FindAll(".monitoring-table thead th").Select(e => e.TextContent.Trim()).ToList();
+        headers.Should().Contain("Cost",
+            "the Cost column header must be visible when some runs have cost but no tokens");
     }
 }
