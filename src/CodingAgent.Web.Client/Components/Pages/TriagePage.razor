@@ -314,9 +314,9 @@
                                     {
                                         <text> · @TriageDisplay.Duration(attempt.StartedAt, done)</text>
                                     }
-                                    @if (runInfo?.TotalTokens is > 0)
+                                    @if (runInfo?.Usage is { } _attemptUsage && (_attemptUsage.Cost > 0m || _attemptUsage.Tokens > 0))
                                     {
-                                        <text> · @CostFormatter.FormatTokens(runInfo.TotalTokens.Value) tokens</text>
+                                        <text> · </text><UsageCost Usage="_attemptUsage" />
                                     }
                                 </span>
                                 @if (attempt.Result is { } summaryResult && attempt != resultAttempt)

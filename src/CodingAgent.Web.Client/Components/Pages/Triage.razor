@@ -83,7 +83,7 @@
                             <th>Source</th>
                             <th>Verdict</th>
                             <th>Issues</th>
-                            <th>Tokens</th>
+                            <th>Cost</th>
                             <th>Updated</th>
                         </tr>
                     </thead>
@@ -117,7 +117,7 @@
                                     }
                                 </td>
                                 <td style="white-space: nowrap;">@(t.Facts.DraftCount > 0 ? $"{t.Facts.CreatedIssueCount} of {t.Facts.DraftCount}" : "—")</td>
-                                <td class="triage-mono">@(t.LatestTokens is > 0 ? CostFormatter.FormatTokens(t.LatestTokens.Value) : "—")</td>
+                                <td class="triage-mono"><UsageCost Usage="t.LatestUsage" /></td>
                                 <td style="white-space: nowrap;" title="@t.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")">@TriageDisplay.Ago(t.UpdatedAt, DateTimeOffset.UtcNow)</td>
                             </tr>
                         }

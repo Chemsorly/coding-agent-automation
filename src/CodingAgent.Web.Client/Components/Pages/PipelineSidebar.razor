@@ -109,7 +109,7 @@
             </Header>
             <ChildContent>
                 <table class="monitoring-table" style="margin-top: 6px;">
-                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                    <thead><tr><th>Phase</th><th>Cost</th></tr></thead>
                     <tbody>
                     @foreach (var phase in Run.PhaseBreakdown
                         .OrderByDescending(p => p.Value.Cost ?? 0m)
@@ -117,8 +117,7 @@
                     {
                         <tr>
                             <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
-                            <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
-                            <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                            <td><UsageCost Usage="RunUsage.From(phase.Value)" /></td>
                         </tr>
                     }
                     </tbody>

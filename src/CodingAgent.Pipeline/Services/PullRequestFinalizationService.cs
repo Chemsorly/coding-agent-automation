@@ -274,9 +274,39 @@ public sealed class PullRequestFinalizationService
                 var body = GateConfigGuard.AppendWarningSection(run.PullRequestBody ?? "", gateFiles);
                 await repoProvider.UpdatePullRequestAsync(prNum, body, false, ct);
                 run.PullRequestBody = body;
-                emitOutputLine($"⚠️ PR #{run.PullRequestNumber} changes quality-gate configuration ({string.Join(", ", gateFiles)}) — left as draft for review");
-                _logger.Warning("Pipeline {RunId} left PR {PrNumber} as draft: it changes quality-gate configuration {Files}",
-                    run.RunId, run.PullRequestNumber, gateFiles);
+                // Read back the PR to verify the draft conversion actually took effect.
+                // The GitHub provider swallows conversion failures and returns normally (non-fatal design),
+                // so the only way to confirm the PR is actually a draft is to re-fetch its current state.
+                // Three outcomes are all handled non-fatally:
+                //   (a) IsDraft == true  → conversion confirmed
+                //   (b) IsDraft == false → conversion silently failed; PR is still ready for review
+                //   (c) null             → PR closed or not found; cannot confirm draft state
+                // The catch also handles NotSupportedException from the default IPullRequestProvider
+                // implementation and any other non-OCE provider failure.
+                PullRequestSummary? updatedPr = null;
+                var readBackFailed = false;
+                try
+                {
+                    updatedPr = await repoProvider.GetOpenPullRequestAsync(prNum, ct);
+                }
+                catch (Exception readEx) when (readEx is not OperationCanceledException)
+                {
+                    readBackFailed = true;
+                    _logger.Warning(readEx, "Pipeline {RunId} could not read back PR {PrNumber} to confirm draft state", run.RunId, run.PullRequestNumber);
+                }
+
+                if (!readBackFailed && updatedPr?.IsDraft == true)
+                {
+                    emitOutputLine($"⚠️ PR #{run.PullRequestNumber} changes quality-gate configuration ({string.Join(", ", gateFiles)}) — left as draft for review");
+                    _logger.Warning("Pipeline {RunId} left PR {PrNumber} as draft: it changes quality-gate configuration {Files}",
+                        run.RunId, run.PullRequestNumber, gateFiles);
+                }
+                else
+                {
+                    emitOutputLine($"⚠️ PR #{run.PullRequestNumber} changes quality-gate configuration ({string.Join(", ", gateFiles)}) — draft conversion could not be confirmed; the PR must be reviewed before merging");
+                    _logger.Warning("Pipeline {RunId} PR {PrNumber} draft state unconfirmed: changes quality-gate configuration {Files} but draft conversion result could not be verified",
+                        run.RunId, run.PullRequestNumber, gateFiles);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
