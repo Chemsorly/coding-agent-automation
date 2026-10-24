@@ -2,6 +2,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.JobController;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Telemetry;
 using Serilog;
@@ -47,8 +48,8 @@ if (!string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
 // check" from "process crashed before logging". Move this block above the fast-fail section
 // (i.e. immediately after Log.Logger = HostBootstrap.CreateBootstrapLogger()) to make
 // JobController consistent with its siblings. (review-findings #2865)
-var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
-var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-jobcontroller";
+var version = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion) ?? "local";
+var serviceName = Environment.GetEnvironmentVariable(AgentDefaults.EnvOtelServiceName) ?? "coding-agent-jobcontroller";
 HostBootstrap.LogStartupIdentity("Job Controller", serviceName, version);
 
 // ── Pipeline API client ───────────────────────────────────────────────────────
@@ -63,7 +64,7 @@ builder.Services.AddJobControllerServices(builder.Configuration);
 
 // ── Serilog ───────────────────────────────────────────────────────────────────
 var logLevel = LogLevelParser.Parse(
-    Environment.GetEnvironmentVariable("LOG_LEVEL"),
+    Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel),
     LogEventLevel.Information);
 
 builder.Host.UseSerilog((ctx, lc) => lc

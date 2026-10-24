@@ -18,8 +18,8 @@ Log.Logger = HostBootstrap.CreateBootstrapLogger();
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Startup identity log ─────────────────────────────────────────────────────
-var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
-var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-api";
+var version = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion) ?? "local";
+var serviceName = Environment.GetEnvironmentVariable(AgentDefaults.EnvOtelServiceName) ?? "coding-agent-api";
 HostBootstrap.LogStartupIdentity("Pipeline API", serviceName, version);
 
 // ── Fast-fail: PostgreSQL required ──────────────────────────────────────────

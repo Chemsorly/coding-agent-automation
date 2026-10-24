@@ -52,7 +52,7 @@ internal static class AgentSerilogConfiguration
             // structured properties as top-level fields. Exceptions are serialized inline (no
             // multi-line output), which also fixes the multi-line log collection problem.
             .WriteTo.Console(new CompactJsonFormatter())
-            .WriteToOtlpIfConfigured(Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker")
+            .WriteToOtlpIfConfigured(Environment.GetEnvironmentVariable(AgentDefaults.EnvOtelServiceName) ?? "coding-agent-worker")
             .CreateLogger();
     }
 }
