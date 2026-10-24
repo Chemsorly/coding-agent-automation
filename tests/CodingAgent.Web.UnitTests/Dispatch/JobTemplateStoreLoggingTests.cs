@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgent.Orchestration.Dispatch;
+using Microsoft.Extensions.Configuration;
 using Serilog;
 using Serilog.Events;
 
@@ -107,5 +107,71 @@ public class JobTemplateStoreLoggingTests
             .WithMessage("*empty Image*");
 
         capture.Events.Should().Contain(e => e.Level == LogEventLevel.Error);
+    }
+
+    // ── LoadFromConfiguration ────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(LogEventLevel.Warning)]
+    [InlineData(LogEventLevel.Error)]
+    public void LoadFromConfiguration_MissingFile_ReturnsEmptyStoreAndLogsAtRequestedLevel(LogEventLevel level)
+    {
+        using var capture = new LogCapture();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+                { { "WorkDistribution:JobTemplatesPath", "/nonexistent/path/job-templates.yaml" } })
+            .Build();
+        const string msg = "Job templates file not found at {Path}; test message";
+
+        var store = JobTemplateStore.LoadFromConfiguration(config, level, msg);
+
+        store.GetAllTemplates().Should().BeEmpty();
+        capture.Events.Should().ContainSingle(e => e.Level == level);
+        var ev = capture.Events.Single();
+        ev.Properties.Should().ContainKey("Path");
+        ev.Properties["Path"].ToString().Should().Contain("job-templates.yaml");
+    }
+
+    [Fact]
+    public void LoadFromConfiguration_FileExists_LoadsTemplates()
+    {
+        var path = Path.ChangeExtension(Path.GetTempFileName(), ".yaml");
+        try
+        {
+            File.WriteAllText(path, "- labels: dotnet,kiro\n  image: test:latest\n  providerType: kiro\n");
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                    { { "WorkDistribution:JobTemplatesPath", path } })
+                .Build();
+
+            var store = JobTemplateStore.LoadFromConfiguration(config, LogEventLevel.Warning, "unused {Path}");
+
+            store.GetAllTemplates().Should().HaveCount(1);
+            store.Resolve("dotnet,kiro").Should().NotBeNull();
+        }
+        finally
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void LoadFromConfiguration_AbsentConfigKey_UsesDefaultPath()
+    {
+        using var capture = new LogCapture();
+        // Build config with no WorkDistribution:JobTemplatesPath key — loader must fall back to default
+        var config = new ConfigurationBuilder().Build();
+        const string msg = "Job templates file not found at {Path}";
+
+        // The default path /app/config/job-templates.yaml does not exist in the test environment,
+        // so the loader returns an empty store and logs the missing-file message with the default path.
+        var store = JobTemplateStore.LoadFromConfiguration(config, LogEventLevel.Warning, msg);
+
+        store.GetAllTemplates().Should().BeEmpty();
+        capture.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Warning);
+        var ev = capture.Events.Single();
+        ev.Properties.Should().ContainKey("Path");
+        ev.Properties["Path"].ToString().Should().Contain("job-templates.yaml");
     }
 }
