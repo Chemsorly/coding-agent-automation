@@ -24,7 +24,7 @@ public class JobTemplateStoreLoggingTests
         /// <summary>Returns a thread-safe snapshot of captured events.</summary>
         public List<LogEvent> Events
         {
-            get { lock (_events) return [.._events]; }
+            get { lock (_events) return [.. _events]; }
         }
 
         public LogCapture()
