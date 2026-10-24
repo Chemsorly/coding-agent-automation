@@ -416,41 +416,110 @@ public class CreateSubIssuesStepTests : IDisposable
         capturedLabels.Should().Contain("feature");
     }
 
+    /// <summary>
+    /// When ct is cancelled inside the first provider call (which also returns a success),
+    /// CHECK B (part 1) does not discard the success (result.Success is true), so it falls
+    /// through to results.Add. CHECK B (part 2) then detects ct and commits the one success
+    /// before rethrowing. The second proposal is never attempted.
+    ///
+    /// This preserves consistency between the issue tracker (where the sub-issue was created)
+    /// and the run record (SubIssueResults).
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_CancellationRequested_MarksRemainingAsFailed()
+    public async Task ExecuteAsync_UserCancellationDuringFirstCall_ThrowsOceAndPreservesSuccess()
     {
         WriteSubIssueFile("01-first.json", "First issue", "Body 1");
         WriteSubIssueFile("02-second.json", "Second issue", "Body 2");
 
         using var cts = new CancellationTokenSource();
 
-        var callCount = 0;
+        // The mock cancels ct then returns success — simulating a race where the provider
+        // completed but the outer cancellation was already signalled inside the call.
         _issueOps.Setup(x => x.CreateIssueAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .Returns<string, string, IReadOnlyList<string>, CancellationToken>((_, _, _, _) =>
             {
-                callCount++;
-                if (callCount == 1)
-                {
-                    // First call succeeds, then cancel
-                    cts.Cancel();
-                    return Task.FromResult(new CreatedIssueResult { Identifier = "500", Url = "https://github.com/test/500" });
-                }
-                throw new OperationCanceledException();
+                cts.Cancel();
+                return Task.FromResult(new CreatedIssueResult { Identifier = "500", Url = "https://github.com/test/500" });
             });
 
         var run = CreateRun();
         var context = BuildContext(run);
         var step = new CreateSubIssuesStep();
 
-        var result = await step.ExecuteAsync(context, cts.Token);
+        Func<Task> act = () => step.ExecuteAsync(context, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
 
-        result.Should().Be(StepResult.Continue);
-        // First should succeed, second should fail due to cancellation/timeout
-        run.SubIssueResults.Should().HaveCount(2);
+        // CHECK B fires after call 1 returns; call 2 is never started.
+        _issueOps.Verify(
+            x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        // The successful creation is preserved so the run record stays consistent with the
+        // issue tracker.
+        run.SubIssueResults.Should().HaveCount(1);
         run.SubIssueResults[0].Success.Should().BeTrue();
-        run.SubIssueResults[1].Success.Should().BeFalse();
-        run.SubIssueResults[1].FailureReason.Should().Contain("timeout");
+        run.SubIssueResults[0].Identifier.Should().Be("500");
+        run.DecompositionSubIssuesAttempted.Should().Be(1);
+        run.DecompositionSubIssuesCreated.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Issue #3876: when ct is cancelled while the second of three proposals is being created,
+    /// ExecuteAsync must throw OperationCanceledException, the third proposal must not be
+    /// attempted, SubIssueResults must hold exactly one entry (the successful first creation),
+    /// and no entry with FailureReason "creation timeout exceeded" must appear.
+    ///
+    /// This test fails before the fix (ExecuteAsync returns StepResult.Continue, three calls
+    /// are made, SubIssueResults has 2 entries with the second attributed as a timeout) and
+    /// passes after it.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_UserCancellationDuringSecondCreation_ThrowsOceAndPreservesFirstResult()
+    {
+        WriteSubIssueFile("01-first.json", "First issue", "Body 1");
+        WriteSubIssueFile("02-second.json", "Second issue", "Body 2");
+        WriteSubIssueFile("03-third.json", "Third issue", "Body 3");
+
+        using var cts = new CancellationTokenSource();
+        var callCount = 0;
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string, IReadOnlyList<string>, CancellationToken>((_, _, _, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    return Task.FromResult(new CreatedIssueResult { Identifier = "101", Url = "https://example.com/101" });
+                // Second call: cancel ct and throw to simulate provider observing the cancellation
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            });
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        Func<Task> act = () => step.ExecuteAsync(context, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // Third proposal must never be attempted; create must be called exactly twice.
+        _issueOps.Verify(
+            x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+
+        // Only the first success is preserved; no "creation timeout exceeded" misattribution.
+        run.SubIssueResults.Should().HaveCount(1);
+        run.SubIssueResults[0].Success.Should().BeTrue();
+        run.SubIssueResults[0].Identifier.Should().Be("101");
+        run.SubIssueResults.Should().NotContain(r => r.FailureReason == "creation timeout exceeded");
+
+        run.DecompositionSubIssuesCreated.Should().Be(1);
+        run.DecompositionSubIssuesAttempted.Should().Be(1);
     }
 
     [Fact]
