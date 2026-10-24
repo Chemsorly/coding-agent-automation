@@ -220,7 +220,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
                 .ConfigureAwait(false);
             return (job, false);
         }
-        catch (Exception ex) when (ChatJobDispatcher.IsNotFound(ex))
+        catch (Exception ex) when (KubernetesJobDeleteHelper.IsNotFound(ex))
         {
             _logger.Information(ex,
                 "ChatSessionWatcher: job {JobName} no longer exists in K8s — treating as terminal",

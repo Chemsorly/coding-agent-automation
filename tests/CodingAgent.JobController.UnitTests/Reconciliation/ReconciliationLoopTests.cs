@@ -4193,6 +4193,125 @@ public sealed class ReconciliationLoopErrorTests
             "No K8s Job deletion when ResolveJobNameAsync catches a label-query exception and returns null");
     }
 
+    // ─── FailTimedOutItemAsync: cancellation propagates; error is logged ──────
+
+    /// <summary>
+    /// Issue #3881: When the cancellation token is cancelled while <c>FailTimedOutItemAsync</c>
+    /// attempts to delete the K8s Job, the <see cref="OperationCanceledException"/> must
+    /// propagate out of <see cref="ReconciliationLoop.EnforceTimeoutsAsync"/> rather than
+    /// being caught and logged at Error.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenDeleteJobCancelled_PropagatesOceAndNoErrorLogged()
+    {
+        const int itemTimeoutSeconds = 1800;
+        var itemId = Guid.NewGuid();
+        var jobName = $"caa-agent-{itemId:N}"[..21];
+
+        var timedOutItem = new ActiveWorkItemDto
+        {
+            Id = itemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 5)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = jobName
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([timedOutItem]);
+
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                itemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        using var cts = new CancellationTokenSource();
+
+        // DeleteJobAsync cancels the token and throws the resulting OCE
+        _k8sClient
+            .Setup(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string _, CancellationToken _) =>
+            {
+                await cts.CancelAsync();
+                throw new OperationCanceledException(cts.Token);
+            });
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        mockLogger.Setup(l => l.ForContext<ReconciliationLoop>()).Returns(mockLogger.Object);
+
+        var loop = CreateLoop(mockLogger.Object);
+
+        // OCE must propagate — not be swallowed as an Error
+        var act = async () => await loop.EnforceTimeoutsAsync(cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "OCE with a cancelled token must propagate out of FailTimedOutItemAsync");
+
+        // No Error must be logged for the 'Failed to process timeout' path
+        // Serilog resolves Error(ex, "...{Id}", guid) to Error<Guid>
+        mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("Failed to process timeout")),
+                It.IsAny<Guid>()),
+            Times.Never,
+            "FailTimedOutItemAsync must not log Error when cancellation triggers the OCE");
+    }
+
+    /// <summary>
+    /// Paired positive test: a non-cancellation failure in <c>FailTimedOutItemAsync</c>'s
+    /// Job delete must still be logged at Error.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenDeleteJobFailsNonCancellation_ErrorIsLogged()
+    {
+        const int itemTimeoutSeconds = 1800;
+        var itemId = Guid.NewGuid();
+        var jobName = $"caa-agent-{itemId:N}"[..21];
+
+        var timedOutItem = new ActiveWorkItemDto
+        {
+            Id = itemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 5)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = jobName
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([timedOutItem]);
+
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                itemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // KubernetesJobDeleteHelper swallows non-404 errors with Warning; the outer catch in
+        // FailTimedOutItemAsync only fires if PostStatusAsync or ResolveJobNameAsync throw.
+        // Arrange PostStatusAsync to throw a non-cancellation exception so FailTimedOutItemAsync's
+        // catch fires with a non-OCE exception — verifying the Error log path.
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                itemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB transient failure"));
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        mockLogger.Setup(l => l.ForContext<ReconciliationLoop>()).Returns(mockLogger.Object);
+
+        var loop = CreateLoop(mockLogger.Object);
+
+        // Must NOT throw — exception is swallowed by FailTimedOutItemAsync's catch
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Error must be logged for the non-cancellation failure
+        // Serilog resolves Error(ex, "...{Id}", guid) to Error<Guid>
+        mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("Failed to process timeout")),
+                It.IsAny<Guid>()),
+            Times.Once,
+            "FailTimedOutItemAsync must log Error for non-cancellation failures");
+    }
+
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────

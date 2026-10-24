@@ -1,6 +1,5 @@
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Models;
-using k8s.Autorest;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Orchestration.Dispatch;
@@ -40,30 +39,24 @@ public sealed class KubernetesJobCleanup : IJobCleanupStrategy
         if (!Guid.TryParse(runId.Value, out var workItemId))
             return;
 
+        string? jobName;
         try
         {
-            var jobName = await _jobNameLookup.GetK8sJobNameAsync(workItemId, ct);
-
-            if (string.IsNullOrEmpty(jobName))
-                return;
-
-            await _jobClient.DeleteJobAsync(jobName, _k8sNamespace, ct);
-            _logger.Information(
-                "KubernetesJobCleanup: deleted K8s Job {JobName} for cancelled run {RunId}",
-                jobName, runId);
-        }
-        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            // Job already deleted (e.g., by ReconciliationService race) — expected, not a warning
-            _logger.Debug( // NOSONAR S6667 — expected 404; the message says so
-                "KubernetesJobCleanup: K8s Job for run {RunId} already deleted (404)",
-                runId);
+            jobName = await _jobNameLookup.GetK8sJobNameAsync(workItemId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex,
-                "KubernetesJobCleanup: failed to delete K8s Job for run {RunId} (non-fatal, Job will expire via TTL)",
+                "KubernetesJobCleanup: failed to look up K8s Job name for run {RunId} (non-fatal)",
                 runId);
+            return;
         }
+
+        if (string.IsNullOrEmpty(jobName))
+            return;
+
+        await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+            _jobClient, jobName, _k8sNamespace, _logger,
+            $"KubernetesJobCleanup: cancelled run {runId}", ct);
     }
 }
