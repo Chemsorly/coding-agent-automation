@@ -1,0 +1,13 @@
+@using CodingAgent.Pipeline.Models
+
+<span class="@_cssClass" data-testid="usage-cost" title="@UsageText.Tooltip(Usage)">@UsageText.Headline(Usage)</span>
+
+@code {
+    [Parameter] public RunUsage? Usage { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+
+    private string _cssClass =>
+        "usage-cost" +
+        (Usage?.BillingMode == AgentBillingModes.Subscription && Usage?.Cost > 0m ? " usage-cost-estimate" : "") +
+        (string.IsNullOrEmpty(CssClass) ? "" : " " + CssClass);
+}

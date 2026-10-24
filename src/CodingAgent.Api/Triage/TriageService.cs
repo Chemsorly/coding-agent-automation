@@ -79,7 +79,7 @@ public sealed class TriageService
         return page with
         {
             Items = page.Items
-                .Select(i => i.Facts.LastWorkItemId is { } w && tokens.TryGetValue(w, out var t) ? i with { LatestTokens = t.TotalTokens } : i)
+                .Select(i => i.Facts.LastWorkItemId is { } w && tokens.TryGetValue(w, out var t) ? i with { LatestTokens = t.TotalTokens, LatestUsage = t.Usage } : i)
                 .ToList()
         };
     }
@@ -475,6 +475,7 @@ public sealed class TriageService
             result[row.RunId.ToString()] = new TriageAttemptRunInfo
             {
                 TotalTokens = summary?.TotalTokens,
+                Usage = summary is null ? null : RunUsage.From(summary),
                 FinalStep = row.FinalStep,
                 FailureReason = summary?.FailureReason,
                 StartedAt = row.StartedAt,
