@@ -153,7 +153,7 @@
                     <div class="cockpit-run-row" @onclick="() => OpenRun(run.RunId)">
                         <div style="min-width: 0;">
                             <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@run.IssueIdentifier @run.IssueTitle</div>
-                            <div class="mono" style="font-size: 11px; color: var(--text-muted);">@(run.AgentId ?? "—")@(run.TotalTokens > 0 ? " · " + CostFormatter.FormatTokens(run.TotalTokens) : "")</div>
+                            <div class="mono" style="font-size: 11px; color: var(--text-muted);">@(run.AgentId ?? "—")@if (run.TotalTokens > 0 || run.TotalCost is > 0m) { <text> · </text><UsageCost Usage="RunUsage.From(run)" /> }</div>
                         </div>
                         <span class="step-badge @cls" style="flex-shrink: 0;">@label</span>
                     </div>

@@ -66,6 +66,12 @@ public sealed partial class TokenVendingService : ITokenVendingService
     internal int CacheCount => _tokenCache.Count;
     internal int SemaphoreCount => _mintSemaphores.Count;
 
+    // Test hook: if non-null, invoked between the expiry check and TryRemove inside
+    // TrimExpiredCacheEntries. Allows unit tests to simulate the TOCTOU race
+    // (fresh entry stored between check and removal) deterministically without concurrency.
+    // Always null in production; only set by unit tests.
+    internal Action? OnBeforeCacheRemove;
+
     // ────────────────────────────────────────────────────────────────────
 
     public TokenVendingService(ILogger logger, IHttpClientFactory httpClientFactory)
@@ -168,7 +174,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         // but GetOrAdd returns the winner's instance, so only one semaphore per key is used.
         // The discarded loser instance is never waited on and never acquires a kernel WaitHandle,
         // so the IDisposable leak is negligible in practice.
-        // SemaphoreSlim entries are removed and disposed periodically by TokenCacheHousekeepingService.
+        // SemaphoreSlim entries are removed (without disposal) periodically by TokenCacheHousekeepingService.
         var sem = _mintSemaphores.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
         // TODO [WARNING]: The `await sem.WaitAsync(ct)` call below is placed immediately before the
         // `try` block so that if WaitAsync is cancelled, the OCE propagates *before* entering the try,
@@ -208,40 +214,55 @@ public sealed partial class TokenVendingService : ITokenVendingService
     }
 
     /// <summary>
-    /// Removes expired entries from the token cache and removes and disposes the corresponding
-    /// semaphore entries from the dictionary. Called periodically by <see cref="TokenCacheHousekeepingService"/>.
+    /// Removes expired entries from the token cache and removes the corresponding semaphore
+    /// entries from the dictionary. Called periodically by <see cref="TokenCacheHousekeepingService"/>.
     ///
     /// Thread-safety: <see cref="ConcurrentDictionary{TKey,TValue}.TryRemove"/> is safe to
     /// call concurrently with the GetOrAdd and assignment operations in
     /// <see cref="GenerateAgentTokenAsync"/>. A semaphore removed here is no longer reachable
     /// via the dictionary; new callers will receive a fresh instance via GetOrAdd.
     ///
-    /// Disposal race: A concurrent caller may have retrieved the old semaphore instance via
-    /// GetOrAdd before the removal, then call WaitAsync after Dispose() — which throws
-    /// ObjectDisposedException. This window is extremely narrow (between GetOrAdd and the
-    /// following WaitAsync call) and bounded by the housekeeping interval (5 minutes by default).
-    /// The consequence of hitting this race is a single failed token-vend attempt (the caller
-    /// would need to retry), not a stale token being served. This is acceptable given that
-    /// SemaphoreSlim.Dispose() is required to meet the acceptance criterion.
+    /// Why we do NOT call Dispose() on the removed semaphore:
+    /// The disposal race window extends through the entire duration of MintTokenFromGitHubAsync
+    /// (an HTTP call), not just until WaitAsync. A concurrent caller may hold the semaphore (past
+    /// GetOrAdd and WaitAsync) while the HTTP call is in progress. If we dispose the semaphore here,
+    /// the holder's <c>finally { sem.Release(); }</c> throws ObjectDisposedException — propagating
+    /// an exception to the caller even though the token was minted successfully, AND permanently
+    /// blocking any waiters queued on that instance (Release() is never called for them).
+    /// <see cref="SemaphoreSlim"/> whose <see cref="SemaphoreSlim.AvailableWaitHandle"/> has never
+    /// been read owns no unmanaged OS handle, so dropping the dictionary reference is sufficient
+    /// for GC; no explicit disposal is required. A holder or waiter on the removed instance
+    /// completes normally — it simply uses a semaphore instance that is no longer referenced by
+    /// the dictionary. A new caller for the same key will get a fresh semaphore via GetOrAdd and
+    /// may mint concurrently; both resulting tokens are valid and the last write wins.
+    ///
+    /// Why we use the value-aware TryRemove overload:
+    /// <see cref="ConcurrentDictionary{TKey,TValue}.TryRemove(KeyValuePair{TKey,TValue})"/> only
+    /// removes the entry if the current value matches the snapshot taken by TryGetValue. This
+    /// prevents the TOCTOU scenario where a concurrent re-mint stores a fresh entry between our
+    /// TryGetValue and TryRemove calls — without value-awareness, the fresh entry would be
+    /// incorrectly deleted.
     /// </summary>
     internal void TrimExpiredCacheEntries()
     {
         var now = _timeProvider.GetUtcNow();
         foreach (var key in _tokenCache.Keys.ToList())
         {
-            // TODO [WARNING]: TOCTOU — TryGetValue observes an expired entry, but by the time
-            // TryRemove executes, another thread may have re-minted and stored a fresh entry for
-            // the same key. TryRemove(key, out _) (no value comparison) would then delete the
-            // fresh entry. Prefer the value-aware overload
-            // _tokenCache.TryRemove(new KeyValuePair<TokenCacheKey, TokenCacheEntry>(key, entry))
-            // so removal only fires if the expired snapshot is still current.
-            // Once the expired entry is removed, also remove and dispose the semaphore so the
-            // dictionary does not grow monotonically and the IDisposable resource is properly released.
-            if (_tokenCache.TryGetValue(key, out var entry) && entry.ExpiresAt <= now
-                && _tokenCache.TryRemove(key, out _)
-                && _mintSemaphores.TryRemove(key, out var removedSem))
+            if (!(_tokenCache.TryGetValue(key, out var entry) && entry.ExpiresAt <= now))
+                continue;
+
+            // Test hook: gives unit tests a seam to inject a concurrent re-mint between the
+            // expiry check above and the TryRemove below, simulating the TOCTOU race deterministically.
+            // Always null in production.
+            OnBeforeCacheRemove?.Invoke();
+
+            if (_tokenCache.TryRemove(new KeyValuePair<TokenCacheKey, TokenCacheEntry>(key, entry)))
             {
-                removedSem.Dispose();
+                // Remove the semaphore entry so the dictionary does not grow monotonically.
+                // Intentionally not disposing: a caller may still hold this semaphore instance.
+                // SemaphoreSlim with no AvailableWaitHandle read has no unmanaged resource; dropping
+                // the reference is sufficient. Any holder or waiter completes normally.
+                _mintSemaphores.TryRemove(key, out _);
             }
         }
     }
