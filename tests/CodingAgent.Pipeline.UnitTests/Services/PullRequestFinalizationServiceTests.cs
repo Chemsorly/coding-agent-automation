@@ -295,6 +295,8 @@ public class PullRequestFinalizationServiceTests
         run.PullRequestNumber = "42";
         run.PullRequestBody = "Original body";
         var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeDraftPr(42));
         var emitted = new List<string>();
 
         await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
@@ -307,6 +309,103 @@ public class PullRequestFinalizationServiceTests
         run.PullRequestBody.Should().Contain("## ⚠️ Quality-gate configuration changed");
         emitted.Should().Contain(l => l.Contains("left as draft for review") && l.Contains("SonarQube.Analysis.xml"));
     }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_GateConfigChanged_GetOpenPrReturnsFalse_EmitsUnconfirmedWarning()
+    {
+        // Acceptance criteria: UpdatePullRequestAsync(false) succeeds normally but GetOpenPullRequestAsync
+        // returns IsDraft=false (conversion silently failed). The run output must NOT contain
+        // "left as draft for review" and MUST contain an unconfirmed-state warning.
+        // This test fails before the fix (current code emits "left as draft" unconditionally)
+        // and passes after (code branches on IsDraft).
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "Original body";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeReadyPr(42));
+        var emitted = new List<string>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
+
+        emitted.Should().NotContain(l => l.Contains("left as draft for review"));
+        emitted.Should().Contain(l => l.Contains("could not be confirmed") && l.Contains("SonarQube.Analysis.xml"));
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_GateConfigChanged_GetOpenPrReturnsNull_EmitsUnconfirmedWarning()
+    {
+        // GetOpenPullRequestAsync returns null (PR closed or not found).
+        // The run must still complete without throwing and emit an unconfirmed-state warning.
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "Original body";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PullRequestSummary?)null);
+        var emitted = new List<string>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
+
+        emitted.Should().Contain(l => l.Contains("could not be confirmed") && l.Contains("SonarQube.Analysis.xml"));
+        emitted.Should().NotContain(l => l.Contains("left as draft for review"));
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42,
+            It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_GateConfigChanged_GetOpenPrThrowsNotSupported_EmitsUnconfirmedWarning()
+    {
+        // GetOpenPullRequestAsync throws NotSupportedException (the default IPullRequestProvider
+        // implementation). The outer guard must remain non-fatal; the unconfirmed-state line must
+        // still be emitted and RunPostPrSequenceAsync must complete without throwing.
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "Original body";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotSupportedException("provider does not support GetOpenPullRequestAsync"));
+        var emitted = new List<string>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
+
+        emitted.Should().Contain(l => l.Contains("could not be confirmed") && l.Contains("SonarQube.Analysis.xml"));
+        emitted.Should().NotContain(l => l.Contains("left as draft for review"));
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42,
+            It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private static PullRequestSummary MakeDraftPr(int number) => new()
+    {
+        Number = number,
+        Identifier = number.ToString(),
+        Title = "test PR",
+        Description = "",
+        Labels = [],
+        BranchName = "agent/issue-1",
+        TargetBranch = "main",
+        Url = $"https://github.com/org/repo/pull/{number}",
+        IsDraft = true
+    };
+
+    private static PullRequestSummary MakeReadyPr(int number) => new()
+    {
+        Number = number,
+        Identifier = number.ToString(),
+        Title = "test PR",
+        Description = "",
+        Labels = [],
+        BranchName = "agent/issue-1",
+        TargetBranch = "main",
+        Url = $"https://github.com/org/repo/pull/{number}",
+        IsDraft = false
+    };
 
     [Fact]
     public async Task RunPostPrSequenceAsync_NoGateConfigChanged_MarksReady()
