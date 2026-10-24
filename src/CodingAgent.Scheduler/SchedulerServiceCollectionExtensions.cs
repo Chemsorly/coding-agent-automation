@@ -1,6 +1,5 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Api.Client.Stores;
-using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
@@ -116,9 +115,13 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
-        // ── Provider factory ──────────────────────────────────────────────────
-        services.AddSingleton<IProviderFactory>(sp =>
-            new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
+        // ── Shared orchestration services (IProviderFactory, IConsolidationService,
+        //    IDependencyChecker, IDispatchOrchestrationService, ConsolidationStalenessService) ──
+        // Spec 051 2.3b, 2.3c, 2.4, 2.4b; issue #3592.
+        // NOTE: IDispatchOrchestrationService is wired via IProviderConfigStore (not IConfigurationStore).
+        // The Scheduler's IConfigurationStore registration (ApiConfigurationStore) is kept below for
+        // other consumers — it is not the source for the third arg of DispatchOrchestrationServiceDependencies.
+        services.AddSharedOrchestrationServices();
 
         // ── Token vending + label services ────────────────────────────────────
         services.AddTokenVendingCore();
@@ -130,19 +133,6 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
-
-        // ── Consolidation services ────────────────────────────────────────────
-        // The API routes consolidation runs when it creates them (spec 053); the Scheduler reads no profiles.
-        services.AddSingleton<IConsolidationService>(sp =>
-            new ConsolidationService(BuildConsolidationServiceDeps(sp)));
-
-        // ── Dispatch orchestration service ────────────────────────────────────
-        services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
-            new DispatchOrchestrationServiceDependencies(
-                sp.GetRequiredService<DispatchInfrastructure>(),
-                sp.GetRequiredService<IWorkDistributor>(),
-                sp.GetRequiredService<IConfigurationStore>()),
-            Log.Logger));
 
         // ── Run lifecycle (HTTP-backed; no DB needed) ─────────────────────────
         services.AddSingleton<IPipelineRunHistoryService>(sp =>
@@ -174,9 +164,6 @@ public static class SchedulerServiceCollectionExtensions
 
         services.AddSingleton<IDispatchRunCreator>(sp => new DispatchRunCreationService(
             sp.GetRequiredService<PipelineRunLifecycleService>()));
-
-        // ── Dependency checker ────────────────────────────────────────────────
-        services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
 
         // ── Housekeeping ──────────────────────────────────────────────────────
         services.AddSingleton<IStaleBranchCleaner>(_ => new StaleBranchCleaner(Log.Logger));
@@ -301,12 +288,6 @@ public static class SchedulerServiceCollectionExtensions
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<RetentionSweepSchedulerService>());
 
-        services.AddSingleton<ConsolidationStalenessService>(sp =>
-            new ConsolidationStalenessService(
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<IProviderConfigStore>(),
-                sp.GetRequiredService<IProviderFactory>(),
-                Log.Logger));
         services.AddSingleton<AutoConsolidationService>(sp =>
             new AutoConsolidationService(
                 sp.GetRequiredService<IConsolidationService>(),
@@ -384,20 +365,6 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
     }
-
-    /// <summary>
-    /// Builds a <see cref="ConsolidationServiceDependencies"/> record from the service container.
-    /// Extracted to a helper so the <see cref="IConsolidationService"/> factory stays short and
-    /// does not create a Sonar CPD clone block against the equivalent inline construction in the
-    /// API host (<c>ApiServiceCollectionExtensions.AddLifecycleAndConsolidation</c>).
-    /// </summary>
-    private static ConsolidationServiceDependencies BuildConsolidationServiceDeps(IServiceProvider sp) =>
-        new(
-            Log.Logger,
-            new PipelineConfiguration(),
-            sp.GetRequiredService<IProjectStore>(),
-            WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
-            PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>());
 
     private static IKubernetes? CreateKubernetesClient() =>
         KubernetesClientRegistration.TryCreate("Scheduler");
