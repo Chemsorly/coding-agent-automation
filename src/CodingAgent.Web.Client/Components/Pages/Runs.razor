@@ -75,7 +75,7 @@
                         <col style="width: 100px;" />  @* Initiated by *@
                         <col style="width: 300px;" />  @* Run *@
                         <col style="width: 100px;" />  @* Duration *@
-                        @if (_anyRunHasTokens)
+                        @if (_anyRunHasUsage)
                         {
                             <col style="width: 90px;" />   @* Tokens *@
                         }
@@ -133,9 +133,9 @@
                                     Duration @SortIndicatorForDuration
                                 </button>
                             </th>
-                            @if (_anyRunHasTokens)
+                            @if (_anyRunHasUsage)
                             {
-                                <th>Tokens</th>
+                                <th>Cost</th>
                             }
                             @* ── When column: sortable ───────────────────────────────────────────── *@
                             <th class="@(ActiveSortClass(SortColumn.When))">
@@ -206,9 +206,9 @@
                                     }
                                 </td>
                                 <td>@Dur(run.StartedAtOffset, run.CompletedAtOffset)</td>
-                                @if (_anyRunHasTokens)
+                                @if (_anyRunHasUsage)
                                 {
-                                    <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
+                                    <td><UsageCost Usage="RunUsage.From(run)" CssClass="token-badge" /></td>
                                 }
                                 <td title="@run.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(run.StartedAtOffset)</td>
                                 <td class="runs-links-cell" @onclick:stopPropagation="true">
@@ -285,7 +285,7 @@
     private bool _feedbackOnly;
     private bool _loading = true;
     private string? _error;
-    private bool _anyRunHasTokens;
+    private bool _anyRunHasUsage;
 
     // ── Column sort state ────────────────────────────────────────────────────
 
@@ -365,21 +365,21 @@
     {
         _loading = true;
         _error = null;
-        // TODO: [WARNING] Resetting _anyRunHasTokens = false here causes a transient render where the Tokens
+        // TODO: [WARNING] Resetting _anyRunHasUsage = false here causes a transient render where the Cost
         // column header and <col> are absent while _filteredRuns still holds the previous page's rows.
         // During async data fetch (network delay), this produces a one-frame column misalignment: cells that
         // were in the token column appear shifted until the new data arrives. Previously the column was always
         // rendered, so no shift occurred. Fix: either delay the reset until after the new result is assigned,
         // or suppress intermediate renders by setting _loading = true before the reset and re-rendering only
-        // after both _result and _anyRunHasTokens are updated.
-        _anyRunHasTokens = false;
+        // after both _result and _anyRunHasUsage are updated.
+        _anyRunHasUsage = false;
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
                 new RunHistoryQuery(Page: _page, PageSize: PageSize, FeedbackOnly: _feedbackOnly, IncludeActive: true,
                     FinalStep: FinalStepFilter, ProjectId: State.SelectedProjectId),
                 _cts.Token);
-            _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
+            _anyRunHasUsage = _result?.Items.Any(r => r.TotalTokens > 0 || r.TotalCost is > 0m) ?? false;
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
@@ -408,7 +408,7 @@
                 new RunHistoryQuery(Page: _page, PageSize: PageSize, FeedbackOnly: _feedbackOnly, IncludeActive: true,
                     FinalStep: FinalStepFilter, ProjectId: State.SelectedProjectId),
                 _cts.Token);
-            _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
+            _anyRunHasUsage = _result?.Items.Any(r => r.TotalTokens > 0 || r.TotalCost is > 0m) ?? false;
             _error = null;
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }

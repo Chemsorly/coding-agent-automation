@@ -155,17 +155,19 @@
                 <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
                 <div class="cockpit-detail-item" data-testid="run-agent"><div class="k">Agent</div><div class="v mono">@AgentText(run)</div></div>
                 <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</div></div>
-                @if (run.TotalTokens > 0)
-                {
-                    <div class="cockpit-detail-item"><div class="k">Tokens</div><div class="v">@CostFormatter.FormatTokens(run.TotalTokens)</div></div>
+                @{
+                    var _runUsage = RunUsage.From(run);
                 }
-                @if (run.TotalCost is > 0m)
+                @if (run.TotalCost is > 0m || run.TotalTokens > 0 || run.CacheReadTokens > 0 || run.CacheWriteTokens > 0)
                 {
-                    <div class="cockpit-detail-item"><div class="k">Cost</div><div class="v">@CostFormatter.FormatCost(run.TotalCost)</div></div>
-                }
-                @if (run.CacheReadTokens > 0 || run.CacheWriteTokens > 0)
-                {
-                    <div class="cockpit-detail-item"><div class="k">Cache tokens</div><div class="v">@CostFormatter.FormatTokens(run.CacheReadTokens) r / @CostFormatter.FormatTokens(run.CacheWriteTokens) w</div></div>
+                    <div class="cockpit-detail-item" data-testid="run-usage">
+                        <div class="k">Cost</div>
+                        <div class="v"><UsageCost Usage="_runUsage" /></div>
+                        @if (UsageText.BreakdownLine(_runUsage) is { Length: > 0 } _breakdownLine)
+                        {
+                            <div class="monitoring-muted" data-testid="run-usage-breakdown" style="font-size: 12px;">@_breakdownLine</div>
+                        }
+                    </div>
                 }
                 @if (run.RetryCount > 0)
                 {
@@ -340,14 +342,13 @@
                         <ChildContent>
                             <div class="monitoring-table-wrap">
                                 <table class="monitoring-table" style="margin-top: 6px;">
-                                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th><th>Tools</th></tr></thead>
+                                    <thead><tr><th>Phase</th><th>Cost</th><th>Tools</th></tr></thead>
                                     <tbody>
                                         @foreach (var phase in phases.OrderByDescending(p => p.Value.Cost ?? 0m).ThenByDescending(p => p.Value.Tokens))
                                         {
                                             <tr>
                                                 <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
-                                                <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
-                                                <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                                <td><UsageCost Usage="RunUsage.From(phase.Value)" /></td>
                                                 <td>@(ToolUsageDisplay.PhaseSummary(phase.Value) is { Length: > 0 } t ? t : "—")</td>
                                             </tr>
                                         }

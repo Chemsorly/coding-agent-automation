@@ -54,6 +54,9 @@ public sealed record TriageListItem
     /// <summary>Tokens of the latest attempt's run, when its run record still exists.</summary>
     public long? LatestTokens { get; init; }
 
+    /// <summary>Usage of the latest attempt's run, when its run record still exists.</summary>
+    public RunUsage? LatestUsage { get; init; }
+
     public required DateTimeOffset CreatedAt { get; init; }
     public required DateTimeOffset UpdatedAt { get; init; }
 }
@@ -142,6 +145,10 @@ public sealed record TriageDetail
 public sealed record TriageAttemptRunInfo
 {
     public long? TotalTokens { get; init; }
+
+    /// <summary>Cost and token breakdown of the attempt's run.</summary>
+    public RunUsage? Usage { get; init; }
+
     public PipelineStep? FinalStep { get; init; }
     public string? FailureReason { get; init; }
     public DateTimeOffset? StartedAt { get; init; }
