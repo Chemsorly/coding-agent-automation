@@ -63,6 +63,11 @@ nunit-*.xml
 .agent/
 .env
 
+# Local agent steering for this workspace (kept out of the repo: pipeline agents working on it would load it)
+/CLAUDE.md
+/.claude/skills/
+/.claude/scripts/
+
 # Test fixture build artifacts
 tests/**/Fixtures/**/bin/
 tests/**/Fixtures/**/obj/
