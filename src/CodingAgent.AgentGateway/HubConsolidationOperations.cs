@@ -13,8 +13,8 @@ namespace CodingAgent.AgentGateway;
 ///
 /// Extracts the consolidation cluster from <see cref="AgentHub"/> so that
 /// <see cref="AgentHubDependencies"/> shrinks from 13 to 10 members and the
-/// three consolidation-only services (<see cref="ModelFetchService"/>,
-/// <see cref="IConsolidationService"/>, <see cref="ConsolidationBadgeService"/>)
+/// two consolidation-only services (<see cref="ModelFetchService"/>,
+/// <see cref="ConsolidationBadgeService"/>)
 /// are no longer injected directly into the hub.
 ///
 /// T10 (arch-audit 2026-08-22).
@@ -47,7 +47,6 @@ public interface IHubConsolidationOperations
 internal sealed class HubConsolidationOperations : IHubConsolidationOperations
 {
     private readonly ModelFetchService _modelFetchService;
-    private readonly IConsolidationService _consolidationService;
     private readonly ConsolidationBadgeService _badgeService;
     private readonly IChangeNotifier _changeNotifier;
     private readonly IRunLifecycleManager _lifecycleManager;
@@ -56,7 +55,6 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
 
     public HubConsolidationOperations(
         ModelFetchService modelFetchService,
-        IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
         IChangeNotifier changeNotifier,
         IRunLifecycleManager lifecycleManager,
@@ -64,7 +62,6 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(modelFetchService);
-        ArgumentNullException.ThrowIfNull(consolidationService);
         ArgumentNullException.ThrowIfNull(badgeService);
         ArgumentNullException.ThrowIfNull(changeNotifier);
         ArgumentNullException.ThrowIfNull(lifecycleManager);
@@ -72,7 +69,6 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         ArgumentNullException.ThrowIfNull(logger);
 
         _modelFetchService = modelFetchService;
-        _consolidationService = consolidationService;
         _badgeService = badgeService;
         _changeNotifier = changeNotifier;
         _lifecycleManager = lifecycleManager;
