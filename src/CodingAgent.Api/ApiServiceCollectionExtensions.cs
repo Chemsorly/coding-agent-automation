@@ -24,6 +24,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using Polly.Registry;
 using Serilog;
+using Serilog.Events;
 
 namespace CodingAgent.Api;
 
@@ -573,17 +574,10 @@ public static class ApiServiceCollectionExtensions
         // Required by ModelFetchJobService and ChatJobDispatcher.
         // Path matches WorkDistribution__JobTemplatesPath env var set in api-deployment.yaml.
         services.AddSingleton(sp =>
-        {
-            var cfg = sp.GetRequiredService<IConfiguration>();
-            var templatesPath = cfg.GetValue<string>("WorkDistribution:JobTemplatesPath")
-                ?? "/app/config/job-templates.yaml";
-            if (!System.IO.File.Exists(templatesPath))
-            {
-                Serilog.Log.Warning("Job templates file not found at {Path}; starting with empty template store", templatesPath);
-                return JobTemplateStore.CreateEmpty();
-            }
-            return JobTemplateStore.LoadFromFile(templatesPath);
-        });
+            JobTemplateStore.LoadFromConfiguration(
+                sp.GetRequiredService<IConfiguration>(),
+                LogEventLevel.Warning,
+                "Job templates file not found at {Path}; starting with empty template store"));
 
         // ── DatabaseMaintenanceService ────────────────────────────────────────────────────────
         // The only retention sweep in the system — orphaning it causes Postgres to grow

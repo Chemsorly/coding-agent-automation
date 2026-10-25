@@ -1,6 +1,8 @@
 using System.Text.Json;
 using CodingAgent.Pipeline.Models;
+using Microsoft.Extensions.Configuration;
 using Serilog;
+using Serilog.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -38,6 +40,35 @@ public sealed class JobTemplateStore
     /// JobTemplateStore must be registered in DI but is never used for dispatch.
     /// </summary>
     public static JobTemplateStore CreateEmpty() => new(new Dictionary<string, JobTemplate>());
+
+    /// <summary>Configuration key for the job templates file path.</summary>
+    internal const string JobTemplatesPathConfigKey = "WorkDistribution:JobTemplatesPath";
+
+    /// <summary>Default ConfigMap mount path for the job templates file.</summary>
+    internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
+
+    /// <summary>
+    /// Loads a <see cref="JobTemplateStore"/> from configuration. Reads
+    /// <c>WorkDistribution:JobTemplatesPath</c> (default <c>/app/config/job-templates.yaml</c>).
+    /// When the file is absent, writes one log line at <paramref name="missingFileLevel"/> using
+    /// <paramref name="missingFileMessageTemplate"/> (which must include a <c>{Path}</c> placeholder)
+    /// and returns <see cref="CreateEmpty"/>. Otherwise delegates to <see cref="LoadFromFile"/>.
+    /// </summary>
+    public static JobTemplateStore LoadFromConfiguration(
+        IConfiguration configuration,
+        LogEventLevel missingFileLevel,
+        string missingFileMessageTemplate)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(missingFileMessageTemplate);
+        var templatesPath = configuration.GetValue<string>(JobTemplatesPathConfigKey) ?? DefaultJobTemplatesPath;
+        if (!File.Exists(templatesPath))
+        {
+            Log.Write(missingFileLevel, missingFileMessageTemplate, templatesPath);
+            return CreateEmpty();
+        }
+        return LoadFromFile(templatesPath);
+    }
 
     /// <summary>
     /// Loads templates from a YAML string. Normalizes labels for lookup.

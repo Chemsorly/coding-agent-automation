@@ -3,6 +3,7 @@ using CodingAgent.JobController.Reconciliation;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.LeaderElection;
 using Microsoft.Extensions.Configuration;
+using Serilog.Events;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -31,23 +32,18 @@ public static class JobControllerServiceCollectionExtensions
         services.AddSingleton<IKubernetesJobClient, KubernetesJobClient>();
 
         // ── Job template store ────────────────────────────────────────────────
-        var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath")
-            ?? "/app/config/job-templates.yaml";
-        services.AddSingleton(_ =>
+        services.AddSingleton(sp =>
         {
             // Fatal misconfiguration: if the templates file is missing in production, the controller
             // will start but dispatch nothing — every work item will be silently skipped. Log at
             // Error so monitoring alerts fire. Use Log.Warning only in intentional test environments
             // (e.g., integration tests) where the empty store is deliberate.
-            if (!File.Exists(templatesPath))
-            {
-                Serilog.Log.Error(
-                    "Job templates file not found at {Path}. The Job Controller will start but " +
-                    "dispatch NO work items until this is resolved. Check WorkDistribution:JobTemplatesPath " +
-                    "and the ConfigMap mount.", templatesPath);
-                return JobTemplateStore.CreateEmpty();
-            }
-            return JobTemplateStore.LoadFromFile(templatesPath);
+            return JobTemplateStore.LoadFromConfiguration(
+                sp.GetRequiredService<IConfiguration>(),
+                LogEventLevel.Error,
+                "Job templates file not found at {Path}. The Job Controller will start but " +
+                "dispatch NO work items until this is resolved. Check WorkDistribution:JobTemplatesPath " +
+                "and the ConfigMap mount.");
         });
 
         // ── Leader election ───────────────────────────────────────────────────
