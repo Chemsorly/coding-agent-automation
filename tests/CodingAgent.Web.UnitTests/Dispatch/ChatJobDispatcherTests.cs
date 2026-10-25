@@ -6,6 +6,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
+using k8s.Autorest;
 using k8s.Models;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
@@ -1204,23 +1205,6 @@ public class ChatJobDispatcherTests
         ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
     }
 
-    // ─── IsNotFound ───────────────────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("Operation returned an invalid status code 'NotFound'")]
-    [InlineData("jobs.batch \"caa-chat-abc\" not found")]
-    [InlineData("404 Not Found")]
-    [InlineData("HTTP 404")]
-    public void IsNotFound_KnownNotFoundMessages_ReturnsTrue(string message)
-        => ChatJobDispatcher.IsNotFound(new Exception(message)).Should().BeTrue();
-
-    [Theory]
-    [InlineData("Connection refused")]
-    [InlineData("Timeout")]
-    [InlineData("500 Internal Server Error")]
-    public void IsNotFound_TransientOrOtherErrors_ReturnsFalse(string message)
-        => ChatJobDispatcher.IsNotFound(new Exception(message)).Should().BeFalse();
-
     // ─── 24. ForceDeleteAndCleanupAsync — calls Deregister before CleanupSession (issue #2109) ─
 
     /// <summary>
@@ -1355,7 +1339,11 @@ public class ChatJobDispatcherTests
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
 
-        var notFoundEx = new Exception("Operation returned an invalid status code 'NotFound'");
+        var notFoundEx = new HttpOperationException("Job not found")
+        {
+            Response = new HttpResponseMessageWrapper(
+                new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound), "")
+        };
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ThrowsAsync(notFoundEx);
 

@@ -338,14 +338,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             // The exception is rethrown below and logged where it is handled (the request pipeline for the
             // chat dispatch endpoint); this only records which Job is being rolled back.
             _logger.Error("ChatJobDispatcher: failed to create the agent key Secret for chat Job {JobName} — deleting the Job", jobName);
-            try
-            {
-                await _jobClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-            }
-            catch (Exception deleteEx)
-            {
-                _logger.Warning(deleteEx, "ChatJobDispatcher: failed to delete chat Job {JobName} after its agent key Secret could not be created", jobName);
-            }
+            await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _jobClient, jobName, _options.Namespace, _logger,
+                "ChatJobDispatcher: rollback after agent key Secret failure", CancellationToken.None);
             throw;
         }
     }
@@ -398,7 +393,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         catch (OperationCanceledException)
         {
             activity?.SetStatus(ActivityStatusCode.Error, "Cancelled");
-            await TryCleanupFailedDispatch(jobName, CancellationToken.None);
+            await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _jobClient, jobName, _options.Namespace, _logger,
+                "ChatJobDispatcher: connect-timeout cleanup", CancellationToken.None);
             throw;
         }
 
@@ -432,7 +429,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         activity?.SetStatus(ActivityStatusCode.Error, "Connect timeout");
 
-        await TryCleanupFailedDispatch(jobName, cancellationToken);
+        await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+            _jobClient, jobName, _options.Namespace, _logger,
+            "ChatJobDispatcher: connect-timeout cleanup", cancellationToken);
         throw new ChatPodTimeoutException(_options.ChatPodConnectTimeoutSeconds);
     }
 
@@ -593,7 +592,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             _logger.Information(
                 "ChatJobDispatcher: TerminateChatSessionAsync — no watcher for {AgentId}, attempting direct job delete",
                 agentId);
-            await TryCleanupFailedDispatch(agentId.Value, cancellationToken);
+            await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _jobClient, agentId.Value, _options.Namespace, _logger,
+                "ChatJobDispatcher: terminate direct delete", cancellationToken);
             activity?.SetTag(TagOutcome, "not_found_direct_delete");
             return;
         }
@@ -674,16 +675,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             return;
         }
 
-        try
-        {
-            await _jobClient.DeleteJobAsync(entry.JobName, _options.Namespace, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex,
-                "ChatJobDispatcher: force delete failed for {JobName}: {ErrorMessage}",
-                entry.JobName, ex.Message);
-        }
+        await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+            _jobClient, entry.JobName, _options.Namespace, _logger,
+            "ChatJobDispatcher: force delete", CancellationToken.None);
 
         // Record force-delete telemetry (incremented once per force-delete, not per cleanup path).
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
@@ -712,23 +706,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
-
-    private async Task TryCleanupFailedDispatch(string jobName, CancellationToken ct)
-    {
-        try { await _jobClient.DeleteJobAsync(jobName, _options.Namespace, ct); }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "ChatJobDispatcher: cleanup delete failed for {JobName}", jobName);
-        }
-    }
-
-    /// <summary>
-    /// Returns true when the exception indicates the K8s job was not found (HTTP 404).
-    /// </summary>
-    internal static bool IsNotFound(Exception ex)
-        => ex.Message.Contains("NotFound", StringComparison.OrdinalIgnoreCase)
-           || ex.Message.Contains("404", StringComparison.Ordinal)
-           || ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase);
 
     internal static bool IsTerminal(V1Job job) => KubernetesJobConditions.IsTerminal(job);
 
