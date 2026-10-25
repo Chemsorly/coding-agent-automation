@@ -43,6 +43,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // Node-local: connectionId → agentId. Only valid on the replica that owns the connection.
     private readonly ConcurrentDictionary<string, string> _connectionIndex = new();
 
+    // Node-local: agentId.Value → most-recent connectionId. Used as a fallback in DeregisterAsync
+    // when both _localSnapshot and GetAgentRaw return null (cross-replica TTL expiry race), so the
+    // stale _connectionIndex entry can still be located and removed. Also used in Register to clean
+    // up stale _connectionIndex entries when existing == null (hash expired, normal cleanup path
+    // skipped because existing.ConnectionId is unreachable).
+    private readonly ConcurrentDictionary<string, string> _agentToConnectionId = new();
+
     // Node-local: agentId → AgentEntry snapshot. Used to recreate the Redis hash if TTL expires
     // while the SignalR connection is still live. Populated in Register, cleared in DeregisterAsync.
     // Same retention semantics as _connectionIndex: entry persists until explicit Deregister is called.
@@ -69,6 +76,34 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // await them instead of using Thread.Sleep. Not used in production code paths.
     internal Task LastHeartbeatTask { get; private set; } = Task.CompletedTask;
     internal Task LastDeregisterTask { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Test hook: removes <paramref name="agentId"/> from <see cref="_localSnapshot"/> without
+    /// touching <see cref="_connectionIndex"/> or <see cref="_agentToConnectionId"/>. Simulates
+    /// the cross-replica scenario where the replica that originally registered an agent calls
+    /// <see cref="DeregisterAsync"/> but its <c>_localSnapshot</c> has been cleared, while
+    /// <c>_connectionIndex</c> and <c>_agentToConnectionId</c> still hold the stale entries.
+    /// NOT used in any production code path.
+    /// </summary>
+    [ExcludeFromCodeCoverage(Justification =
+        "Test-only hook for simulating cross-replica absent-snapshot state: cannot be reached " +
+        "through the public API because Register always populates _localSnapshot alongside " +
+        "_connectionIndex. Correctness verified by the AC1 test in DistributedAgentRegistryServiceTests.")]
+    internal void InternalClearLocalSnapshotForTesting(string agentId)
+        => _localSnapshot.TryRemove(agentId, out _);
+
+    /// <summary>
+    /// Test hook: returns <c>true</c> if the node-local <c>_connectionIndex</c> contains
+    /// an entry for the specified connection ID. Used to assert that
+    /// <see cref="DeregisterAsync"/>'s <c>_agentToConnectionId</c> fallback path removed
+    /// the stale entry before any subsequent <see cref="Register"/> call could do so.
+    /// NOT used in any production code path.
+    /// </summary>
+    [ExcludeFromCodeCoverage(Justification =
+        "Test-only observability hook for _connectionIndex state: exposes private dictionary " +
+        "state to tests that need to distinguish which code path cleaned the entry.")]
+    internal bool InternalConnectionIndexContainsForTesting(string connectionId)
+        => _connectionIndex.ContainsKey(connectionId);
 
     public DistributedAgentRegistryService(IRedisStore store, ILogger logger)
     {
@@ -199,6 +234,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 "WriteRegistrationAsync failed for agent {AgentId}", agentId),
                 TaskContinuationOptions.OnlyOnFaulted);
 
+        // Reverse-index cleanup: if a previous connectionId is recorded for this agentId, remove it
+        // from _connectionIndex. This handles the case where existing == null (hash expired) so the
+        // existing TryRemove(existing.ConnectionId) path above was skipped, leaving a stale entry.
+        if (!preserveExistingConnectionId &&
+            _agentToConnectionId.TryGetValue(agentId, out var prevConnectionId))
+            _connectionIndex.TryRemove(prevConnectionId, out _);
+        // Always update to the latest connectionId so DeregisterAsync's fallback is current.
+        _agentToConnectionId[agentId] = connectionId;
         _connectionIndex[connectionId] = agentId;
 
         // Keep a local snapshot so UpdateHeartbeatAsync can recreate the Redis hash if it
@@ -308,19 +351,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private async Task DeregisterAsync(AgentId agentId)
     {
         var key = AgentKey(agentId.Value);
-        // Use _localSnapshot to retrieve the ConnectionId for cleanup — avoids a Redis HGETALL
-        // on the deregister path. If the snapshot is absent (e.g. agent on another replica),
-        // fall back to GetAgentRaw. The TODO below still applies for the cross-replica scenario.
-        // TODO (WARNING): If the Redis hash has already TTL-expired when Deregister is called,
-        // GetAgentRaw returns null and _connectionIndex is not cleaned up — the stale
-        // connectionId → agentId mapping persists indefinitely. A subsequent GetByConnectionId
-        // call using the old connection ID would hit the stale _connectionIndex entry, call
-        // GetAgentRaw (which returns null — hash gone), and return null. However, if
-        // UpdateHeartbeatAsync later re-registers from _localSnapshot using the same agentId,
-        // the stale _connectionIndex entry for the old connectionId would still map to the
-        // (now re-registered) agentId, potentially causing GetByConnectionId to surface the
-        // re-registered entry under the stale connection ID. Fix: check _localSnapshot as
-        // fallback for ConnectionId when GetAgentRaw returns null.
+        // Retrieve the ConnectionId for _connectionIndex cleanup. Priority:
+        //   1. _localSnapshot (avoids a Redis HGETALL on the deregister path).
+        //   2. GetAgentRaw (Redis HGETALL — handles cross-replica case where hash is still live).
+        //   3. _agentToConnectionId reverse lookup — fallback for the cross-replica TTL expiry
+        //      race: both _localSnapshot (absent on this replica) and GetAgentRaw (hash expired)
+        //      return null; the reverse index records the last connectionId written by Register
+        //      on this replica, allowing _connectionIndex to be cleaned up correctly (issue #3895).
         string? connectionId = null;
         if (_localSnapshot.TryGetValue(agentId.Value, out var snap))
             connectionId = snap.ConnectionId;
@@ -331,7 +368,20 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         }
 
         if (connectionId is not null)
+        {
             _connectionIndex.TryRemove(connectionId, out _);
+            // Conditionally remove from the reverse index only if it still maps to this connectionId.
+            // A concurrent Register may have already updated _agentToConnectionId[agentId] to a newer
+            // connectionId; unconditional removal would delete that newer entry and leave
+            // _connectionIndex[newConnectionId] without reverse-index tracking, reproducing the
+            // original orphan bug in a narrow concurrent window (review finding #1, issue #3895).
+            _agentToConnectionId.TryRemove(
+                new KeyValuePair<string, string>(agentId.Value, connectionId));
+        }
+        else if (_agentToConnectionId.TryRemove(agentId.Value, out var fallbackConnectionId))
+        {
+            _connectionIndex.TryRemove(fallbackConnectionId, out _);
+        }
 
         // Unconditionally clear the local snapshot so that a subsequent heartbeat does NOT
         // recreate the entry for an intentionally deregistered agent (issue #2110 AC4).
