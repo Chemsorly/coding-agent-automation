@@ -61,7 +61,6 @@ public static class AgentHubServiceCollectionExtensions
         // ── IHubConsolidationOperations (T10: extracted from AgentHub) ──────────────
         services.AddSingleton<IHubConsolidationOperations>(sp => new HubConsolidationOperations(
             sp.GetRequiredService<ModelFetchService>(),
-            sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<ConsolidationBadgeService>(),
             sp.GetRequiredService<IChangeNotifier>(),
             sp.GetRequiredService<IRunLifecycleManager>(),

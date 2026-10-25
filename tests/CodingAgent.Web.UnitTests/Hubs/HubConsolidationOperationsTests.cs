@@ -23,7 +23,6 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// </summary>
 public sealed class HubConsolidationOperationsTests
 {
-    private readonly Mock<IConsolidationService> _mockConsolidation = new();
     private readonly Mock<IChangeNotifier> _mockChangeNotifier = new();
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
@@ -43,7 +42,6 @@ public sealed class HubConsolidationOperationsTests
 
     private HubConsolidationOperations CreateSut(ModelFetchService? modelFetch = null) => new(
         modelFetch ?? CreateModelFetchService(),
-        _mockConsolidation.Object,
         _badgeService,
         _mockChangeNotifier.Object,
         _mockLifecycleManager.Object,
@@ -75,7 +73,6 @@ public sealed class HubConsolidationOperationsTests
     {
         var act = () => new HubConsolidationOperations(
             null!,
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -86,26 +83,10 @@ public sealed class HubConsolidationOperationsTests
     }
 
     [Fact]
-    public void Constructor_NullConsolidationService_Throws()
-    {
-        var act = () => new HubConsolidationOperations(
-            CreateModelFetchService(),
-            null!,
-            _badgeService,
-            _mockChangeNotifier.Object,
-            _mockLifecycleManager.Object,
-            _mockRunService.Object,
-            _mockLogger.Object);
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("consolidationService");
-    }
-
-    [Fact]
     public void Constructor_NullBadgeService_Throws()
     {
         var act = () => new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             null!,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -120,7 +101,6 @@ public sealed class HubConsolidationOperationsTests
     {
         var act = () => new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             null!,
             _mockLifecycleManager.Object,
@@ -135,7 +115,6 @@ public sealed class HubConsolidationOperationsTests
     {
         var act = () => new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             null!,
@@ -150,7 +129,6 @@ public sealed class HubConsolidationOperationsTests
     {
         var act = () => new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -165,7 +143,6 @@ public sealed class HubConsolidationOperationsTests
     {
         var act = () => new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -253,34 +230,6 @@ public sealed class HubConsolidationOperationsTests
         await sut.HandleConsolidationCompleteAsync(result, agent);
 
         _mockChangeNotifier.Verify(c => c.NotifyChange(), Times.Once);
-    }
-
-    // ── HandleConsolidationCompleteAsync — UpdateRunAsync (stopped in #3028) ──────
-
-    /// <summary>
-    /// Issue #3028: UpdateRunAsync must NOT be called from HandleConsolidationCompleteAsync.
-    /// ConsolidationRuns writes have been stopped; the PipelineRun is the authoritative record.
-    /// </summary>
-    [Fact]
-    public async Task HandleConsolidationComplete_DoesNotCallUpdateRunAsync()
-    {
-        // Use a strict mock so any unexpected call would throw
-        var strictConsolidation = new Mock<IConsolidationService>(MockBehavior.Strict);
-
-        var sut = new HubConsolidationOperations(
-            CreateModelFetchService(),
-            strictConsolidation.Object,
-            _badgeService,
-            _mockChangeNotifier.Object,
-            _mockLifecycleManager.Object,
-            _mockRunService.Object,
-            _mockLogger.Object);
-
-        var result = new ConsolidationJobResult { JobId = "crun-success", Success = true, Summary = "Brain updated" };
-
-        // The strict mock will throw if UpdateRunAsync is called (method removed in #3030)
-        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
-        await act.Should().NotThrowAsync("UpdateRunAsync must not be called — removed in #3030");
     }
 
     // TODO [WARNING]: HandleConsolidationComplete_Success_CallsUpdateRunWithSucceeded,
@@ -731,7 +680,6 @@ public sealed class HubConsolidationOperationsTests
         // _mockRunService is not involved — no Setup calls needed for it in this test.
         var sut = new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -795,7 +743,6 @@ public sealed class HubConsolidationOperationsTests
 
         var sut = new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -859,7 +806,6 @@ public sealed class HubConsolidationOperationsTests
 
         var sut = new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -920,7 +866,6 @@ public sealed class HubConsolidationOperationsTests
 
         var sut = new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
@@ -994,7 +939,6 @@ public sealed class HubConsolidationOperationsTests
 
         var sut = new HubConsolidationOperations(
             CreateModelFetchService(),
-            _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,

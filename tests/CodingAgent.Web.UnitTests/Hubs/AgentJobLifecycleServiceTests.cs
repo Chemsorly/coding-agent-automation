@@ -911,13 +911,14 @@ public sealed class AgentJobLifecycleServiceTests
         await _sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
 
         // Assert: a Warning is logged with the job ID and agent ID.
-        // The log call is: _logger.Warning("{template}", jobId.Value /*string*/, run.AgentId /*string*/)
-        // Compiler selects Warning<T0, T1>(string, T0, T1) — use typed matchers per brain entry dotnet.md#moq-serilog.
+        // The log call is: _logger.Warning("{template}", callerContext /*string*/, jobId.Value /*string*/, run.AgentId /*string*/)
+        // Compiler selects Warning<T0, T1, T2>(string, T0, T1, T2) — use typed matchers per brain entry dotnet.md#moq-serilog.
         _logger.Verify(
             l => l.Warning(
                 It.Is<string>(s => s.Contains("agent lookup returned null") && s.Contains("{JobId}") && s.Contains("{AgentId}")),
-                It.IsAny<string>(),
-                It.IsAny<string>()),
+                It.IsAny<string>(),   // T0 = callerContext
+                It.IsAny<string>(),   // T1 = jobId.Value
+                It.IsAny<string>()),  // T2 = run.AgentId
             Times.Once);
     }
 

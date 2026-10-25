@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline;
 using CodingAgent.Infrastructure.Common;
+using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -134,17 +135,10 @@ public sealed class ModelFetchJobService
         var (models, fetchError) = await WaitForAgentModelsAsync(jobName, pollTimeoutSeconds, progress, ct);
 
         // ── 6. Cleanup (best-effort) ─────────────────────────────────────
-        try
-        {
-            await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+        if (await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _kubeClient, jobName, _options.Namespace, Log,
+                "ModelFetchJobService: cleanup", CancellationToken.None))
             Log.Debug("ModelFetchJobService: deleted job {JobName}", jobName);
-        }
-        catch (Exception ex)
-        {
-            // Don't propagate — a cleanup failure must not hide a successful result.
-            Log.Warning(ex, "ModelFetchJobService: cleanup failed for job {JobName} — will be GC'd by TTL",
-                jobName);
-        }
 
         if (fetchError is not null)
             Log.Warning("ModelFetchJobService: fetch failed — {Error}", LogSanitizer.SanitizeForLog(fetchError));
@@ -172,14 +166,9 @@ public sealed class ModelFetchJobService
         catch (Exception ex)
         {
             Log.Error(ex, "ModelFetchJobService: failed to create the agent key Secret for job {JobName} — deleting the job", jobName);
-            try
-            {
-                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-            }
-            catch (Exception deleteEx)
-            {
-                Log.Warning(deleteEx, "ModelFetchJobService: failed to delete job {JobName} after its agent key Secret could not be created", jobName);
-            }
+            await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _kubeClient, jobName, _options.Namespace, Log,
+                "ModelFetchJobService: rollback after agent key Secret failure", CancellationToken.None);
             return ct.IsCancellationRequested
                 ? "Fetch models was cancelled before the job's agent key could be created."
                 : $"Failed to create the fetch-models job's agent key: {ex.Message}";

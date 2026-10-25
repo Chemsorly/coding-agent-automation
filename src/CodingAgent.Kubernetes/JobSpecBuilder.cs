@@ -255,7 +255,7 @@ public static class JobSpecBuilder
         // value. Same risk applies to K8S_NAMESPACE_NAME, K8S_POD_NAME, and OTEL_RESOURCE_ATTRIBUTES.
         // Consider guarding with: if (!envVars.Any(e => e.Name == "OTEL_SERVICE_NAME")) ...
         // See review finding (issue #2969).
-        envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = "coding-agent-worker" });
+        envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvOtelServiceName, Value = "coding-agent-worker" });
 
         // Downward API: expose namespace and pod name so OTEL_RESOURCE_ATTRIBUTES can reference them
         // via $(K8S_NAMESPACE_NAME) / $(K8S_POD_NAME) Kubernetes env-var substitution.

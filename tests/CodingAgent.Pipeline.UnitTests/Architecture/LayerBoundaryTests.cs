@@ -525,7 +525,7 @@ public partial class LayerBoundaryTests
     // Scope: all *.cs files under src/ (excluding obj/ build artefacts).
     //
     // Exempt bare writes (known-safe off-lock; documented per-line below):
-    //   AgentJobLifecycleService.cs  — job-rejection path: `agent.ActiveJobId = null`
+    //   AgentIdleTransitioner.cs     — job-completion and job-rejection paths: `agent.ActiveJobId = null`
     //     These are off-lock by design: job-completion/rejection semantics require clearing
     //     the field quickly before the status transition, and the calling context holds no
     //     other lock that could create a nesting hazard.  They are NOT authorized SyncRoot
@@ -647,9 +647,7 @@ public partial class LayerBoundaryTests
 
             // ── Category (b): intentional off-lock null-clears in job-completion paths ──
 
-            // job-rejection path in AgentJobLifecycleService (ResetAgentToIdle — stays here after extraction)
-            ["AgentJobLifecycleService.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
-            // job-completion path extracted to AgentIdleTransitioner (TransitionToIdle — issue #2895)
+            // job-completion and job-rejection paths in AgentIdleTransitioner (TransitionToIdle)
             ["AgentIdleTransitioner.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
             // consolidation-complete path in AgentHub.Consolidation
             ["AgentHub.Consolidation.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null; // local snapshot update" },

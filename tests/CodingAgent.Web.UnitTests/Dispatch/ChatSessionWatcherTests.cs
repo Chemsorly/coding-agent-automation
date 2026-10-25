@@ -44,7 +44,11 @@ public class ChatSessionWatcherTests
 
         if (throwNotFound)
             mock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new Exception("Operation returned an invalid status code 'NotFound'"));
+                .ThrowsAsync(new k8s.Autorest.HttpOperationException("Job not found")
+                {
+                    Response = new k8s.Autorest.HttpResponseMessageWrapper(
+                        new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound), "")
+                });
         else
             mock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(readResult ?? new V1Job { Status = new V1JobStatus { Conditions = [] } });
