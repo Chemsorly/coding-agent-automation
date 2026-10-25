@@ -150,8 +150,37 @@ public sealed class ConsolidationServiceTests
         // This verifies the guard is in place (no silent no-op).
         var act = () => sutWithoutLabels.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>(
-            "TriggerAsync requires IWorkDistributor — no WorkDistributor was injected");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*IWorkDistributor*",
+                "the exception must name IWorkDistributor so a developer can diagnose the missing dependency");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WithoutWorkDistributor_GlobalScope_Throws()
+    {
+        // Exercises site A: scope.TemplateIdValue ?? GlobalScopeName in the null guard logging.
+        // Passes (TemplateId?)null so scope.TemplateIdValue is null, forcing the right side of ??
+        // and verifying the guard works for global (non-template-scoped) consolidation runs too.
+        // Uses a CapturingSink to also assert the rendered log contains "Global" — confirming the
+        // fallback value is correct and not just that the ?? branch was taken.
+        var sink = new CapturingSink();
+        var capturingLogger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            capturingLogger,
+            _config,
+            _mockProjectStore.Object));  // WorkDistributor omitted (defaults to null)
+
+        var act = () => sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, (TemplateId?)null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*IWorkDistributor*",
+                "the guard must throw for global runs (null templateId) as well as template-scoped runs");
+
+        sink.Events.Should().Contain(e =>
+            e.Level == LogEventLevel.Error &&
+            e.RenderMessage().Contains("Global"),
+            "the error log must display 'Global' as the scope when templateId is null");
     }
 
     [Fact]
@@ -228,6 +257,11 @@ public sealed class ConsolidationServiceTests
         // Validates: Requirement 3.7 — after _runningRuns removal (issue #3027), dedup is
         // API-layer. The second trigger calls DistributeAsync and receives AlreadyExists=true
         // (simulating KubernetesWorkDistributor mapping 409 → Success=true, WorkItemId=null, AlreadyExists=true).
+        // TODO: This test always uses "tmpl-1" (non-null templateId), so the right-hand side of
+        // `scope.TemplateIdValue ?? GlobalScopeName` in the AlreadyExists warning-log path
+        // (ConsolidationService.cs ~L103) is never exercised. Add a companion test that calls
+        // TriggerAsync with (TemplateId?)null and a distributor returning AlreadyExists=true to cover
+        // that branch. Tracked as a follow-up to issue #3899.
         _mockWorkDistributor
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-dup-first", ErrorMessage: null, Queued: true))
