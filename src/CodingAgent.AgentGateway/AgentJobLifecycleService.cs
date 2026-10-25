@@ -119,14 +119,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
     private void ResetAgentToIdle(AgentEntry? agent)
     {
-        if (agent is null) return;
-
-        var now = DateTimeOffset.UtcNow;
-        agent.ActiveJobId = null;
-        agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-        _facade.UpdateAgentFieldFireAndForget(agent.AgentId, AgentFieldNames.ActiveJobId, null, _logger, "ResetAgentToIdle");
-        _facade.UpdateAgentFieldFireAndForget(agent.AgentId, AgentFieldNames.LastJobCompletedAt, now.ToString("O"), _logger, "ResetAgentToIdle");
-        _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+        _idleTransitioner.TransitionToIdle(agent, run: null, jobIdValue: "", callerContext: "ResetAgentToIdle");
     }
 
     private async Task HandleRejectedRunCleanupAsync(JobId jobId, PipelineRun run, string reason, CancellationToken ct)
@@ -241,7 +234,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // the safe Signal path. Signaling here caused a race condition where the drain
         // service dispatched to the agent before it cleared its local slot, resulting in
         // immediate rejection and permanent work item loss.
-        _idleTransitioner.TransitionToIdle(agent, run, jobId.Value);
+        _idleTransitioner.TransitionToIdle(agent, run, jobId.Value, "HandleJobCompletedAsync");
 
         // Non-fatal post-completion bookkeeping: label swap and feedback comment.
         // These may involve external API calls and can be slow — executed after agent
