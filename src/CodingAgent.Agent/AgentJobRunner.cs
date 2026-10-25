@@ -1,4 +1,5 @@
 using CodingAgent.Infrastructure;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR.Client;
 
@@ -57,7 +58,7 @@ public static class AgentJobRunner
                 // RunMode.Retry (draft-only) is not detectable here; assignment carries no draft-PR marker.
                 RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New,
                 FinalLabel = req.CancelledLabel,
-                HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
+                HarnessVersion = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion)
             };
         }
         catch (Exception ex)
@@ -69,7 +70,7 @@ public static class AgentJobRunner
                 CompletedAt = DateTimeOffset.UtcNow,
                 // RunMode: same reasoning as OperationCanceledException path above.
                 RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New,
-                HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
+                HarnessVersion = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion)
             };
         }
     }

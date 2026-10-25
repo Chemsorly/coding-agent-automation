@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline;
 using Serilog;
 using Serilog.Sinks.OpenTelemetry;
 
@@ -35,7 +36,7 @@ public static class SerilogOtlpExtensions
 
         // OTEL_SERVICE_NAME env var takes precedence; fallbackServiceName is used when it is absent.
         // Every host's tracer and meter provider reads the same variable, so logs and traces agree.
-        var resolvedServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? fallbackServiceName;
+        var resolvedServiceName = Environment.GetEnvironmentVariable(AgentDefaults.EnvOtelServiceName) ?? fallbackServiceName;
         var resolvedEnvironment = ResolveDeploymentEnvironment(environmentName);
 
         // ignoreEnvironment: true because we read OTEL env vars ourselves with URL-decoding and validation
@@ -46,7 +47,7 @@ public static class SerilogOtlpExtensions
             options.ResourceAttributes = new Dictionary<string, object>
             {
                 ["service.name"] = resolvedServiceName,
-                ["service.version"] = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local",
+                ["service.version"] = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion) ?? "local",
                 ["deployment.environment"] = resolvedEnvironment
             };
 

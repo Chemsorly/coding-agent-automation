@@ -1,4 +1,5 @@
 using CodingAgent.Infrastructure.Telemetry;
+using CodingAgent.Pipeline;
 using Serilog;
 using Serilog.Events;
 
@@ -16,7 +17,7 @@ internal static class SerilogRegistration
     public static IHostBuilder ConfigureSerilog(this IHostBuilder hostBuilder)
     {
         var orchestratorLogLevel = LogLevelParser.Parse(
-            Environment.GetEnvironmentVariable("LOG_LEVEL"),
+            Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel),
             LogEventLevel.Information);
 
         hostBuilder.UseSerilog((ctx, lc) => lc

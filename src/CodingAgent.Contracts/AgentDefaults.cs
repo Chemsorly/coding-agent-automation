@@ -62,6 +62,12 @@ public static class AgentDefaults
     /// <summary>Serilog log level override.</summary>
     public const string EnvLogLevel = "LOG_LEVEL";
 
+    /// <summary>Deployed service version, used to populate the OTEL <c>service.version</c> resource attribute.</summary>
+    public const string EnvServiceVersion = "SERVICE_VERSION";
+
+    /// <summary>OpenTelemetry service name; overrides the fallback passed to telemetry helpers.</summary>
+    public const string EnvOtelServiceName = "OTEL_SERVICE_NAME";
+
     /// <summary>Agent provider type of a chat pod: the job template's providerType ("kiro", "opencode", "claude").</summary>
     public const string EnvAgentProviderType = "AGENT_PROVIDER_TYPE";
 
