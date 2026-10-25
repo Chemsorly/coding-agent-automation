@@ -6,6 +6,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -561,6 +562,96 @@ public sealed class PipelineRunStepAndRunMetricsTests
         {
             listener.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Regression guard for issue #3897: on the concurrent-completion race path (CompleteRunAsync
+    /// returns null AND the fallback TransitionWorkItemAsync also returns false — runWasAlive=false),
+    /// the brain counter must still emit result="pushed" when the payload carries BrainUpdatesPushed=true.
+    ///
+    /// The ReplaceRun callback resets run.BrainUpdatesPushed to false AFTER JobCompletionMapper.Apply
+    /// has set it to true. This simulates the Redis scenario where the in-memory run object at the
+    /// metric recording site does not reflect Apply's write, forcing the test to distinguish between:
+    ///   - payload.BrainUpdatesPushed (true at metric site) → result=pushed ← correct, post-fix
+    ///   - run.BrainUpdatesPushed (false at metric site after callback) → result=none ← wrong, pre-fix
+    /// Reverting AgentJobLifecycleService.cs line ~262 back to run.BrainUpdatesPushed causes this test
+    /// to fail, confirming it is a genuine regression guard.
+    /// </summary>
+    [Fact]
+    public async Task HandleJobCompletedAsync_WithBrainPushed_RunWasAliveFalse_RecordsPushedResult()
+    {
+        // Arrange: run starts with BrainUpdatesPushed=false; Apply inside strategy.ExecuteAsync
+        // will set it to true via payload, but the ReplaceRun callback then resets it to false,
+        // creating the distinguishable state where run.BrainUpdatesPushed != payload.BrainUpdatesPushed.
+        var run = MakeRun();
+        run.BrainUpdatesPushed = false; // initial state — will be set by JobCompletionMapper.Apply
+        var jobId = new JobId(run.RunId);
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        // Callback resets BrainUpdatesPushed to false after Apply sets it to true.
+        // Sequence inside RegularJobCompletionStrategy.ExecuteAsync:
+        //   1. Apply(run, payload)        → run.BrainUpdatesPushed = true
+        //   2. _facade.ReplaceRun(run)    → callback: run.BrainUpdatesPushed = false  ← KEY
+        // At the metric recording site (HandleJobCompletedAsync after strategy returns):
+        //   run.BrainUpdatesPushed = false, payload.BrainUpdatesPushed = true
+        // Pre-fix (run source): records result=none  → test fails  ← detects regression
+        // Post-fix (payload source): records result=pushed → test passes ← correct
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()))
+            .Callback<PipelineRun>(r => r.BrainUpdatesPushed = false);
+
+        // CompleteRunAsync returns null → another path terminated the run first (race path).
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        // Fallback TransitionWorkItemAsync also returns false → runWasAlive=false.
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(false);
+
+        var sut = new AgentJobLifecycleService(
+            new AgentJobLifecycleServiceDependencies(
+                _facade.Object,
+                lifecycleManager.Object,
+                _labelService.Object,
+                _issueOps.Object,
+                _changeNotifier.Object,
+                _appLifetime.Object,
+                _outbox.Object,
+                _logger.Object));
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BrainUpdatesPushed = true
+        };
+
+        using var collector = new MetricCollector<long>(PipelineTelemetry.RunBrainUpdates);
+
+        // Guard: collector must start empty (no pre-existing measurements from previous tests)
+        collector.GetMeasurementSnapshot().Should().BeEmpty("collector must start fresh");
+        // Guard: payload.BrainUpdatesPushed must be true throughout the call
+        payload.BrainUpdatesPushed.Should().BeTrue("payload.BrainUpdatesPushed was set to true at construction");
+
+        await sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
+
+        // Guard: init property cannot be mutated — still true after the call
+        payload.BrainUpdatesPushed.Should().BeTrue("payload.BrainUpdatesPushed is init; it cannot be changed after construction");
+
+        // Guard: the callback-triggering ReplaceRun call must have been made; if it is ever removed
+        // from RegularJobCompletionStrategy, run.BrainUpdatesPushed would remain true (set by Apply)
+        // and a revert to run.BrainUpdatesPushed at the metric site would still emit "pushed",
+        // silently turning this test into a false negative.
+        _facade.Verify(f => f.ReplaceRun(run), Times.Once(),
+            "ReplaceRun must be called by RegularJobCompletionStrategy (triggers the callback that resets run.BrainUpdatesPushed=false, making this test sensitive to the fix)");
+
+        var measurements = collector.GetMeasurementSnapshot();
+        measurements.Should().HaveCount(1,
+            "exactly one brain metric should fire per non-consolidation run completion");
+        measurements[0].Value.Should().Be(1L);
+        measurements[0].Tags.Should().ContainKey("result").WhoseValue.Should().Be("pushed",
+            "brain counter must record 'pushed' when payload.BrainUpdatesPushed=true, even on the runWasAlive=false race path");
     }
 
     [Fact]
