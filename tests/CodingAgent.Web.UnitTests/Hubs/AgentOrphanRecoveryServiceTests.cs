@@ -643,7 +643,10 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         restored.Should().BeEquivalentTo(new
         {
-            AgentProfileId = "profile-kiro", AgentProfileName = "Kiro", AgentEffort = "high", ModelName = expectedModel,
+            AgentProfileId = "profile-kiro",
+            AgentProfileName = "Kiro",
+            AgentEffort = "high",
+            ModelName = expectedModel,
         });
     }
 
