@@ -1581,6 +1581,100 @@ public sealed class DistributedAgentRegistryServiceTests
         _sut.GetByAgentId(new AgentId("agent-1")).Should().NotBeNull(
             "GetByAgentId must still resolve the agent — the Redis hash was not deleted");
     }
+
+    // ── Issue #3895 — stale _connectionIndex on cross-replica TTL expiry ───────
+
+    /// <summary>
+    /// AC1: When DeregisterAsync is called on the replica that originally registered an agent
+    /// but both _localSnapshot and GetAgentRaw return null (cross-replica TTL expiry race),
+    /// the _agentToConnectionId reverse-index fallback must clean the stale _connectionIndex
+    /// entry so a subsequent re-registration does not mis-route SignalR messages.
+    /// </summary>
+    [Fact]
+    public async Task Deregister_WhenLocalSnapshotAndHashAbsent_DeregisterFallbackPreventsStaleIndexFromMisRoutingAfterReRegister()
+    {
+        // 1. Register: populates _connectionIndex["conn-old"], _localSnapshot["agent-1"],
+        //    and _agentToConnectionId["agent-1"] = "conn-old".
+        _sut.Register(Msg("agent-1"), "conn-old");
+
+        // 2. Force-expire: GetAgentRaw returns null (Redis hash gone).
+        _store.ForceExpire("agent:agent-1");
+
+        // 3. Simulate cross-replica absent-snapshot state: clear _localSnapshot so neither
+        //    _localSnapshot.TryGetValue nor GetAgentRaw can supply the connectionId to Deregister.
+        _sut.InternalClearLocalSnapshotForTesting("agent-1");
+
+        // 4. Deregister: both _localSnapshot and GetAgentRaw return null.
+        //    Before fix: connectionId = null; _connectionIndex["conn-old"] is not cleaned.
+        //    After fix:  _agentToConnectionId fallback finds "conn-old";
+        //                _connectionIndex.TryRemove("conn-old") fires.
+        _sut.Deregister(new AgentId("agent-1"));
+        await _sut.LastDeregisterTask;
+
+        // 4b. Assert _connectionIndex state BEFORE re-registration so the assertion isolates
+        //     the DeregisterAsync fallback path rather than Register's reverse-index cleanup.
+        //     GetByConnectionId("conn-old") returns null in BOTH pre- and post-fix code at this
+        //     point (snapshot and Redis are both empty), so we must inspect _connectionIndex
+        //     directly via the test hook to distinguish the two cases.
+        //     Before fix: _connectionIndex["conn-old"] still present (fallback did not fire).
+        //     After fix:  _connectionIndex["conn-old"] removed by the fallback.
+        _sut.InternalConnectionIndexContainsForTesting("conn-old").Should().BeFalse(
+            "DeregisterAsync's _agentToConnectionId fallback must remove conn-old from " +
+            "_connectionIndex before any subsequent Register call can do so (AC1 — isolates " +
+            "the fallback path, not Register's reverse-index cleanup, issue #3895)");
+
+        // 5. Re-register with conn-new. This makes the stale conn-old entry observable via the
+        //    public API (if step 4b were absent), proving the end-to-end mis-routing is also fixed.
+        //    Before fix: Register sees existing=null (hash expired), skips old-connection cleanup.
+        //                _localSnapshot["agent-1"] is updated to {ConnectionId="conn-new"}.
+        //                GetByConnectionId("conn-old") → stale index entry → live snapshot → returns entry.
+        //    After fix:  DeregisterAsync already cleaned _connectionIndex["conn-old"] in step 4.
+        //                GetByConnectionId("conn-old") → not found in index → returns null.
+        _sut.Register(Msg("agent-1"), "conn-new");
+
+        // 6. Assert: conn-old must be gone (cleaned by DeregisterAsync's fallback, not by Register).
+        _sut.GetByConnectionId("conn-old").Should().BeNull(
+            "DeregisterAsync must clean the stale _connectionIndex entry via _agentToConnectionId " +
+            "fallback when both _localSnapshot and GetAgentRaw return null (cross-replica TTL expiry, issue #3895)");
+
+        // 7. Sanity: conn-new is reachable.
+        _sut.GetByConnectionId("conn-new").Should().NotBeNull(
+            "newly re-registered connection must be reachable");
+    }
+
+    /// <summary>
+    /// AC2: When Register is called with a new connectionId for an agent whose Redis hash has
+    /// expired (so existing == null and the normal TryRemove(existing.ConnectionId) path is
+    /// skipped), the _agentToConnectionId reverse lookup must clean the stale _connectionIndex
+    /// entry for the old connectionId so GetByConnectionId(oldConnectionId) returns null.
+    /// </summary>
+    [Fact]
+    public void Register_WithNewConnectionId_AfterHashExpired_RemovesOldConnectionIdFromIndex()
+    {
+        // 1. Register fully: _connectionIndex["conn-old"], _localSnapshot, _agentToConnectionId populated.
+        _sut.Register(Msg("agent-1"), "conn-old");
+
+        // 2. Simulate TTL expiry: GetAgentRaw returns null on the next Register call,
+        //    causing existing=null and skipping the normal TryRemove(existing.ConnectionId) path.
+        _store.ForceExpire("agent:agent-1");
+
+        // 3. Re-register with conn-new (agent reconnects to same replica after cross-replica
+        //    orphan recovery cleared Redis but not this replica's _connectionIndex).
+        //    Before fix: existing=null → TryRemove(existing.ConnectionId) skipped →
+        //                _connectionIndex still has "conn-old" → GetByConnectionId("conn-old")
+        //                resolves through stale index to live _localSnapshot → returns live entry.
+        //    After fix:  _agentToConnectionId["agent-1"]="conn-old" → TryRemove("conn-old") → clean.
+        _sut.Register(Msg("agent-1"), "conn-new");
+
+        // 4. Assert: stale conn-old must be gone.
+        _sut.GetByConnectionId("conn-old").Should().BeNull(
+            "stale connectionId from the expired hash must be cleaned from _connectionIndex " +
+            "during re-registration via _agentToConnectionId reverse lookup (issue #3895)");
+
+        // 5. Assert: new connection is reachable.
+        _sut.GetByConnectionId("conn-new").Should().NotBeNull(
+            "newly registered connection must be reachable after re-registration");
+    }
 }
 
 /// <summary>
