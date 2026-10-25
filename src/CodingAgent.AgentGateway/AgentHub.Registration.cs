@@ -1,5 +1,6 @@
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
 
@@ -23,7 +24,7 @@ public sealed partial class AgentHub
 
         _facade.Register(message, Context.ConnectionId, preserveExistingConnectionId);
 
-        var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "unknown";
+        var serviceName = Environment.GetEnvironmentVariable(AgentDefaults.EnvOtelServiceName) ?? "unknown";
         _logger.Information(
             "Agent registered: AgentId={AgentId} ServiceName={ServiceName} ConnectionId={ConnectionId}",
             message.AgentId, serviceName, Context.ConnectionId);
