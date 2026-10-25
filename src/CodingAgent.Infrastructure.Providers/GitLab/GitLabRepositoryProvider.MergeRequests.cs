@@ -219,10 +219,8 @@ public partial class GitLabRepositoryProvider
     }
 
     /// <inheritdoc />
-    public async Task UpdatePullRequestAsync(int prNumber, string body, bool? markReady, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int prNumber, string? body, bool? markReady, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(body);
-
         try
         {
             // Get current MR to check title for Draft prefix
@@ -234,10 +232,9 @@ public partial class GitLabRepositoryProvider
                 },
                 "UpdateMergeRequest.Get", ct);
 
-            var update = new MergeRequestUpdate
-            {
-                Description = body
-            };
+            var update = new MergeRequestUpdate();
+            if (body != null)
+                update.Description = body;
 
             // Remove "Draft: " prefix from title when marking ready
             if (markReady == true && mr.Title.StartsWith("Draft: ", StringComparison.Ordinal))

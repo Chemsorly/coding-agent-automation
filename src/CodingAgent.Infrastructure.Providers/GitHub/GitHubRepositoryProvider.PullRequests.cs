@@ -253,16 +253,17 @@ public partial class GitHubRepositoryProvider
         return results.ToList();
     }
 
-    public async Task UpdatePullRequestAsync(int prNumber, string body, bool? markReady, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int prNumber, string? body, bool? markReady, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(body);
-
         try
         {
-            await ExecuteWithResilienceAsync(
-                client => client.PullRequest.Update(Owner, Repo, prNumber,
-                    new PullRequestUpdate { Body = body }),
-                "UpdatePullRequest", ct);
+            if (body != null)
+            {
+                await ExecuteWithResilienceAsync(
+                    client => client.PullRequest.Update(Owner, Repo, prNumber,
+                        new PullRequestUpdate { Body = body }),
+                    "UpdatePullRequest", ct);
+            }
 
             // Change draft status only when markReady has an explicit value.
             // null = body-only update; leave draft state untouched.
