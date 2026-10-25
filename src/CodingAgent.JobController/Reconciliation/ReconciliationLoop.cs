@@ -435,9 +435,11 @@ public sealed class ReconciliationLoop
                 new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
 
             if (jobName is not null)
-                await SafeDeleteJobAsync(jobName, ct);
+                await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                    _k8sClient, jobName, _options.Namespace, _log,
+                    "ReconciliationLoop: timeout cleanup", ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Error(ex, "Failed to process timeout for WorkItem {Id}", item.Id);
         }
@@ -485,7 +487,9 @@ public sealed class ReconciliationLoop
         orphanActivity?.SetTag("orphan_reason", orphanReason);
         if (workItemId.HasValue)
             orphanActivity?.SetTag(WorkItemIdTag, workItemId.Value);
-        await SafeDeleteJobAsync(jobName, ct);
+        await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+            _k8sClient, jobName, _options.Namespace, _log,
+            "ReconciliationLoop: orphan cleanup", ct);
     }
 
     /// <summary>
@@ -910,18 +914,6 @@ public sealed class ReconciliationLoop
         }
 
         return succeeded;
-    }
-
-    private async Task SafeDeleteJobAsync(string jobName, CancellationToken ct)
-    {
-        try
-        {
-            await _k8sClient.DeleteJobAsync(jobName, _options.Namespace, ct);
-        }
-        catch (Exception ex)
-        {
-            _log.Warning(ex, "Failed to delete K8s Job {JobName}", jobName);
-        }
     }
 
     private static Guid? ParseWorkItemId(V1Job job)

@@ -1,6 +1,7 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Scheduler;
 using Serilog;
@@ -12,8 +13,8 @@ Log.Logger = HostBootstrap.CreateBootstrapLogger();
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Startup identity log ──────────────────────────────────────────────────
-var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
-var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";
+var version = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion) ?? "local";
+var serviceName = Environment.GetEnvironmentVariable(AgentDefaults.EnvOtelServiceName) ?? "coding-agent-scheduler";
 HostBootstrap.LogStartupIdentity("Scheduler", serviceName, version);
 
 // ── Fast-fail: Pipeline API URL required ─────────────────────────────────
@@ -60,7 +61,7 @@ builder.Services.AddSchedulerServices(pipelineApiBaseUrl, agentApiKey, builder.C
 
 // ── Serilog ───────────────────────────────────────────────────────────────
 var schedulerLogLevel = LogLevelParser.Parse(
-    Environment.GetEnvironmentVariable("LOG_LEVEL"),
+    Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel),
     LogEventLevel.Information);
 
 builder.Host.UseSerilog((ctx, lc) => lc

@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
@@ -76,8 +77,8 @@ public static class HostTelemetry
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(fallbackServiceName);
 
-        var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? fallbackServiceName;
-        var serviceVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
+        var serviceName = Environment.GetEnvironmentVariable(AgentDefaults.EnvOtelServiceName) ?? fallbackServiceName;
+        var serviceVersion = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion) ?? "local";
 
         services.AddOpenTelemetry()
             .ConfigureResource(r => r.AddService(

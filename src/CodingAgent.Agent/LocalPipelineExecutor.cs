@@ -370,7 +370,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         TotalTokens = run.TotalTokens,
         TotalCost = run.TotalCost,
         FinalLabel = run.FinalLabel,
-        HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION"),
+        HarnessVersion = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion),
         PhaseBreakdown = BuildPhaseBreakdownPayload(run.Metrics.PhaseBreakdown),
         RateLimits = run.Metrics.RateLimits.IsEmpty ? null : run.Metrics.RateLimits.Values.ToList(),
         McpServers = run.McpServers

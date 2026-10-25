@@ -432,7 +432,9 @@ internal sealed class DispatchLifecycleService : IDisposable
         {
             // Cancelled between the Job and its key Secret: the Job's pod could never authenticate,
             // so remove it (not with ct, which is already cancelled) and let the cancellation propagate.
-            await TryDeleteJobAsync(ctx.JobName);
+            await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _kubeClient, ctx.JobName, _options.Namespace, _log,
+                "DispatchLifecycleService: agent key Secret failure rollback", CancellationToken.None);
             throw;
         }
         catch (Exception ex)
@@ -441,7 +443,9 @@ internal sealed class DispatchLifecycleService : IDisposable
             // without ct being cancelled.
             _log.Error(ex, "DispatchLifecycleService: failed to create the agent key Secret for Job {JobName} ({LogPrefix}WorkItem {WorkItemId}) — deleting the Job",
                 ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
-            await TryDeleteJobAsync(ctx.JobName);
+            await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _kubeClient, ctx.JobName, _options.Namespace, _log,
+                "DispatchLifecycleService: agent key Secret failure rollback", CancellationToken.None);
             await HandleJobCreationFailureAsync(db, ctx, $"Agent key Secret creation failed: {ex.Message}", ct);
             return (false, null);
         }
@@ -474,20 +478,6 @@ internal sealed class DispatchLifecycleService : IDisposable
         }
         if (ctx.OnFailure is not null)
             await ctx.OnFailure(ctx.Item.Id, reason);
-    }
-
-    /// <summary>Best-effort deletion of a Job whose agent key Secret could not be created.</summary>
-    private async Task TryDeleteJobAsync(string jobName)
-    {
-        try
-        {
-            await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _log.Warning(ex, "DispatchLifecycleService: failed to delete K8s Job {JobName} after its agent key Secret could not be created — the orphan sweep will remove it",
-                jobName);
-        }
     }
 
     /// <summary>
@@ -546,15 +536,11 @@ internal sealed class DispatchLifecycleService : IDisposable
             if (claimedPvc is not null)
                 availablePvcs.Add(claimedPvc);
 
-            try
-            {
-                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+            var deleted = await KubernetesJobDeleteHelper.TryDeleteJobAsync(
+                _kubeClient, jobName, _options.Namespace, _log,
+                $"DispatchLifecycleService: orphaned job race ({logPrefix}WorkItem {workItemId})", CancellationToken.None);
+            if (deleted)
                 _log.Information("DispatchLifecycleService: deleted orphaned K8s Job {JobName} — {LogPrefix}WorkItem {WorkItemId} no longer in expected status {ExpectedStatus}", jobName, logPrefix, workItemId, expectedStatus);
-            }
-            catch (Exception ex)
-            {
-                _log.Warning(ex, "DispatchLifecycleService: failed to delete orphaned K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, workItemId);
-            }
 
             return (false, null);
         }
