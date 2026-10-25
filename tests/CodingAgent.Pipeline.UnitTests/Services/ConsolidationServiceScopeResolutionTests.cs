@@ -4,6 +4,8 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using Moq;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
@@ -54,7 +56,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
             .ReturnsAsync(() => new DistributionResult(Success: true, WorkItemId: Guid.NewGuid().ToString(), ErrorMessage: null));
     }
 
-    private ConsolidationService CreateSut(PipelineConfiguration? config = null)
+    private ConsolidationService CreateSut(PipelineConfiguration? config = null, ILogger? logger = null)
     {
         var cfg = config ?? new PipelineConfiguration
         {
@@ -63,7 +65,7 @@ public sealed class ConsolidationServiceScopeResolutionTests
         };
 
         return new ConsolidationService(new ConsolidationServiceDependencies(
-            new LoggerConfiguration().CreateLogger(),
+            logger ?? new LoggerConfiguration().CreateLogger(),
             cfg,
             _projectStore.Object,
             WorkDistributor: _distributor.Object));
@@ -245,5 +247,95 @@ public sealed class ConsolidationServiceScopeResolutionTests
         _requests.Should().ContainSingle()
             .Which.ProjectId.Should().Be(guid,
                 "ProjectId must be the parsed Guid when project.Id is a valid GUID string");
+    }
+
+    // ── 4. GlobalScopeName fallback in TryDistributeAsync error paths ─────────
+    // These tests exercise the right-hand side of each '?? GlobalScopeName' expression in
+    // TryDistributeAsync (sites B, C, D). Each passes (TemplateId?)null so templateIdValue
+    // is null, forcing the fallback to "Global" in the rendered log message.
+
+    [Fact]
+    public async Task TriggerAsync_GlobalScope_DistributorThrows_LogsGlobalScopeName()
+    {
+        // Site B: exercises 'templateIdValue ?? GlobalScopeName' in the catch block of TryDistributeAsync.
+        // When templateId is null (global run) and DistributeAsync throws, the error log must
+        // render "Global" in the {TemplateId} position, not null or empty.
+        _distributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("network error"));
+
+        var sink = new CapturingSink();
+        var sut = CreateSut(logger: new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger());
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, (TemplateId?)null, CancellationToken.None);
+
+        run.Should().BeNull("an unexpected distributor exception for a global run must return null");
+        sink.Events.Should().Contain(e =>
+            e.Level == LogEventLevel.Error &&
+            e.RenderMessage().Contains("Global"),
+            "the error log must display 'Global' as the scope when templateId is null");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_GlobalScope_PermanentFailure_Throws_LogsGlobalScopeName()
+    {
+        // Site C: exercises 'templateIdValue ?? GlobalScopeName' in the permanent-failure branch.
+        // The permanent-failure path throws WorkItemRefusedException — it does not return null.
+        // The error log must render "Global" in the {TemplateId} position when templateId is null.
+        _distributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(
+                Success: false,
+                WorkItemId: null,
+                ErrorMessage: "no agent route configured",
+                IsPermanentFailure: true));
+
+        var sink = new CapturingSink();
+        var sut = CreateSut(logger: new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger());
+
+        var act = () => sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, (TemplateId?)null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<WorkItemRefusedException>(
+            "permanent dispatch failure for a global run must throw WorkItemRefusedException");
+        sink.Events.Should().Contain(e =>
+            e.Level == LogEventLevel.Error &&
+            e.RenderMessage().Contains("Global"),
+            "the error log must display 'Global' as the scope when templateId is null");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_GlobalScope_TransientFailure_LogsGlobalScopeName()
+    {
+        // Site D: exercises 'templateIdValue ?? GlobalScopeName' in the transient-failure branch.
+        // When templateId is null (global run) and DistributeAsync returns a transient failure,
+        // the warning log must render "Global" in the {TemplateId} position.
+        _distributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(
+                Success: false,
+                WorkItemId: null,
+                ErrorMessage: "PVC unavailable"));
+
+        var sink = new CapturingSink();
+        var sut = CreateSut(logger: new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger());
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, (TemplateId?)null, CancellationToken.None);
+
+        run.Should().BeNull("a transient dispatch failure for a global run must return null");
+        sink.Events.Should().Contain(e =>
+            e.Level == LogEventLevel.Warning &&
+            e.RenderMessage().Contains("Global"),
+            "the warning log must display 'Global' as the scope when templateId is null");
+    }
+
+    /// <summary>Serilog sink that captures log events for assertion.</summary>
+    private sealed class CapturingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+        public IReadOnlyList<LogEvent> Events => _events;
+        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
     }
 }
