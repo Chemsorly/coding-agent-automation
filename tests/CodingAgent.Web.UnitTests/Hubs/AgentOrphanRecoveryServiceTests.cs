@@ -3834,4 +3834,93 @@ public sealed class AgentOrphanRecoveryServiceTests
                 "OrphanRestoredAt must NOT be set when guard prevented assignment");
         }
     }
+
+    // ── VerifiedClaim: DecompositionAnalysis→Decomposition run-type promotion (issue #3903) ──
+
+    /// <summary>
+    /// When the DB records a Decomposition task type (mapping to DecompositionAnalysis via
+    /// ToDefaultRunType) but the agent reports it is already in Phase 2 (RunType=Decomposition),
+    /// RunIdentity.FromWorkItem must promote the run type to Decomposition so the restored run
+    /// correctly reflects the phase in flight.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_DecompositionWorkItem_AgentReportsPhase2_PromotesRunTypeToDecomposition()
+    {
+        const string agentId = "caa-decomp-promo";
+        const string runId = "run-decomp-promo";
+        var entry = CreateEntry(agentId);
+        // OwnedRecord with WorkItemTaskType.Decomposition → ToDefaultRunType() returns DecompositionAnalysis.
+        // The promotion branch (L319-L320) checks whether the agent's ActiveJobState.RunType is Decomposition
+        // and, if so, overrides runType from DecompositionAnalysis to Decomposition.
+        WithWorkItemStore(runId, OwnedRecord(agentId, WorkItemTaskType.Decomposition));
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(entry); // required: TransitionStatus is only called when entry is non-null
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+        PipelineRun? restored = null;
+        _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
+
+        // Agent reports it is in Phase 2 (Decomposition), not Phase 1 (DecompositionAnalysis).
+        var activeJob = CreateActiveJob(runId) with { RunType = PipelineRunType.Decomposition };
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob), agentId);
+
+        restored.Should().NotBeNull();
+        restored!.RunType.Should().Be(PipelineRunType.Decomposition,
+            "when the DB task type is Decomposition and the agent reports Phase 2, the promotion branch must set RunType=Decomposition");
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        entry.ActiveJobId.Should().Be(runId);
+    }
+
+    // ── HandleCrashRecovery: TryReconstructRunFromDbAsync swallows non-OCE DB failures (issue #3903) ──
+
+    /// <summary>
+    /// When the Redis hash has expired and GetWorkItemRunRecordAsync throws a non-OCE exception
+    /// (e.g. DB unavailable), TryReconstructRunFromDbAsync must catch it, log a warning, and
+    /// return null — it must not propagate the exception and abort crash recovery.
+    /// </summary>
+    [Fact]
+    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_NonOceDbException_ReturnsNullWithoutPropagating()
+    {
+        const string agentId = "agent-crash-db-fault";
+        // Must be a valid GUID: TryReconstructRunFromDbAsync calls Guid.TryParse and returns null
+        // early for non-GUID inputs, before ever reaching GetWorkItemRunRecordAsync.
+        const string existingJobId = "00000000-0000-0000-0000-000000000008";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        // GetByAgentIdAsync MUST return the entry: without it the production code exits at the
+        // null-entry guard before HandleCrashRecoveryAsync is reached, giving a false positive.
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(entry);
+        // GetRun returns null — simulates the Redis hash having expired.
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId)))
+            .Returns((PipelineRun?)null);
+        // GetWorkItemRunRecordAsync throws a non-OCE — simulates a DB outage during reconstruction.
+        _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync(
+                It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        var message = CreateMessage(agentId, activeJob: null);
+        var act = () => _service.RecoverOrphanedStateAsync(message, agentId);
+
+        await act.Should().NotThrowAsync(
+            "non-OCE from GetWorkItemRunRecordAsync must be swallowed by TryReconstructRunFromDbAsync, not propagated");
+        // Confirms GetWorkItemRunRecordAsync was actually called, so the exception was thrown and
+        // caught by the catch block — not bypassed by an early-return guard (e.g. Guid.TryParse,
+        // null-record, or a hypothetical future CanVerifyWorkItems check).
+        _mockFacade.Verify(
+            f => f.GetWorkItemRunRecordAsync(
+                It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "GetWorkItemRunRecordAsync must be called so the InvalidOperationException is thrown and swallowed by the catch block");
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "DB exception must cause TryReconstructRunFromDbAsync to return null, so AddRun must not be called");
+        // Guards against false positives: if GetByAgentIdAsync returned null and HandleCrashRecoveryAsync
+        // was never entered, OrphanRestoredAt would still be null here.
+        entry.OrphanRestoredAt.Should().NotBeNull(
+            "the OrphanRestoredAt assignment must complete before TryReconstructRunFromDbAsync is called, confirming HandleCrashRecoveryAsync ran");
+    }
 }
