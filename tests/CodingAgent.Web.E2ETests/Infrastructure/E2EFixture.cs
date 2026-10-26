@@ -416,14 +416,15 @@ public sealed class E2EFixture : IAsyncLifetime
         return _signedInStorageState;
     }
 
-    /// <summary>Signs <paramref name="page"/> in through the login form and waits until it left /login.</summary>
+    /// <summary>Signs <paramref name="page"/> in through the login form and waits until the browser has committed a page outside /login (not for that page to finish loading).</summary>
     public static async Task SignInAsync(IPage page, string serverAddress, string password = E2EWebApplicationFactory.TestAdminPassword)
     {
         await page.GotoAsync($"{serverAddress}/login");
         await page.FillAsync("[data-testid=login-password]", password);
+        var leftLogin = page.WaitForURLAsync(url => !url.Contains("/login", StringComparison.OrdinalIgnoreCase),
+            new PageWaitForURLOptions { WaitUntil = WaitUntilState.Commit, Timeout = 30_000 });
         await page.ClickAsync("[data-testid=login-submit]");
-        await page.WaitForURLAsync(url => !url.Contains("/login", StringComparison.OrdinalIgnoreCase),
-            new PageWaitForURLOptions { Timeout = 30_000 });
+        await leftLogin;
     }
 
     public async Task DisposeAsync()
