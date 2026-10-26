@@ -965,33 +965,35 @@ public class CiPollingCoordinatorTests
             "the retry-fix agent must never be invoked for a CI-never-started infrastructure failure");
     }
 
-    // ── Issue #3114: notBefore filter for post-PR CI ──────────────────────────
+    // ── Issue #3912: exact-SHA queries accept pre-mark-ready runs ─────────────
 
     /// <summary>
-    /// Regression test for issue #3114: when a CI run for SHA-F from the push event already
-    /// completed (Passed) before <c>notBefore</c> was captured, <c>WaitForCiRunsToAppearAsync</c>
-    /// must NOT accept that run as satisfying the post-PR CI check. It must continue polling
-    /// until a run that started after <c>notBefore</c> appears.
+    /// Regression test for issue #3912: when a CI run for the exact head SHA already completed
+    /// (Passed) before <c>notBefore</c> was captured, <c>WaitForCiRunsToAppearAsync</c> must
+    /// accept it immediately — the SHA identity already guarantees we are looking at the correct
+    /// commit, so <c>notBefore</c> is not applied to exact-SHA queries.
+    ///
+    /// Before the fix (issue #3114's guard was too broad): pre-mark-ready runs on the exact head
+    /// SHA were filtered, causing a 15-minute timeout followed by a redundant re-trigger commit.
     ///
     /// Scenario:
     ///   - First GetRunStatusAsync call: Passed, StartedAt = one minute ago (before notBefore)
-    ///   - Second GetRunStatusAsync call: Running, StartedAt = one second ago (after notBefore)
     ///   - WaitForCompletionAsync: Passed
-    /// Expected: CI gate passes via the second (post-mark-ready) run.
+    /// Expected: CI gate passes immediately using the pre-mark-ready run on the exact head SHA;
+    /// the second mock response (Running) is never reached.
     /// </summary>
     [Fact]
-    public async Task WhenNotBefore_SetAndExistingRunStartedBefore_WaitForCiRunsToAppearIgnoresIt()
+    public async Task PostPrCi_HeadShaHasCompletedRunFromBeforeMarkReady_AcceptsAndPasses()
     {
         var notBefore = DateTime.UtcNow;
         var run = CreateRun();
         run.PullRequestNumber = null;
 
-        // Use a long CiNotStartedTimeout so WaitForCiRunsToAppearAsync polls more than once: the
-        // first call returns a pre-notBefore run (filtered), a later call a post-notBefore run
-        // (accepted). ExternalCiPollInterval is kept small (50ms). The accepted run ends the wait
-        // at once, so the timeout only bounds a failing run; a short one (it was 500ms) ran out on
-        // a loaded CI runner before the second poll, failing the test in ~1s.
-        var context = BuildContextForPostPrCi(run, ciNotStartedTimeout: TimeSpan.FromSeconds(10));
+        // externalCiPollInterval: TimeSpan.Zero so the grace delay in WaitForPostPrCiAsync
+        // does not add test latency. ciNotStartedTimeout long enough for at least one poll.
+        var context = BuildContextForPostPrCi(run,
+            ciNotStartedTimeout: TimeSpan.FromSeconds(10),
+            externalCiPollInterval: TimeSpan.Zero);
 
         var callCount = 0;
         _mockPipelineProvider
@@ -1000,7 +1002,8 @@ public class CiPollingCoordinatorTests
             .ReturnsAsync(() =>
             {
                 var call = Interlocked.Increment(ref callCount);
-                // First call: push-event CI already done, started BEFORE notBefore → must be filtered
+                // First call: push-event CI already done, started BEFORE notBefore.
+                // After the fix: accepted immediately (exact-SHA query, notBefore not applied).
                 if (call == 1)
                     return new PipelineRunStatus
                     {
@@ -1008,7 +1011,7 @@ public class CiPollingCoordinatorTests
                         Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
                         StartedAt = notBefore.AddMinutes(-1)
                     };
-                // Subsequent calls: pull_request-event CI appeared, started AFTER notBefore
+                // Subsequent calls would only be reached if the first were incorrectly filtered.
                 return new PipelineRunStatus
                 {
                     State = PipelineRunState.Running,
@@ -1034,15 +1037,200 @@ public class CiPollingCoordinatorTests
 
         report.ExternalCi.Should().NotBeNull();
         report.ExternalCi!.Passed.Should().BeTrue(
-            "CI passes once the post-mark-ready run (started after notBefore) is observed");
+            "pre-mark-ready run on the exact head SHA must be accepted (issue #3912 fix)");
 
-        // The first call (pre-notBefore Passed run) must not have satisfied the check;
-        // WaitForCompletionAsync must have been called (meaning a second run appeared).
+        // WaitForCompletionAsync must have been called exactly once (for the pre-mark-ready run
+        // that was accepted immediately — not after waiting for a second run to appear).
         _mockPipelineProvider.Verify(
             p => p.WaitForCompletionAsync(
                 It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Once,
-            "WaitForCompletionAsync must be called once the post-mark-ready run appears");
+            "WaitForCompletionAsync must be called once the pre-mark-ready run is accepted (issue #3912 fix)");
+
+        // Discriminator for regression detection: with the fix, the pre-mark-ready Passed run is
+        // accepted on the FIRST GetRunStatusAsync call (exact-SHA, notBefore not applied), so the
+        // polling loop exits after one poll. If the fix were reverted, the first call would be
+        // filtered and the loop would continue, making a second GetRunStatusAsync call. Times.Once
+        // fails in the regressed case (where the second, post-mark-ready Running status is needed).
+        _mockPipelineProvider.Verify(
+            p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "GetRunStatusAsync must be called exactly once — the pre-mark-ready run must be accepted on the first poll");
+    }
+
+    /// <summary>
+    /// Issue #3912 acceptance criterion 1: when the exact head SHA has a completed Passed CI run
+    /// that started before mark-ready, the post-PR CI gate must pass immediately without pushing
+    /// any re-trigger commit. The push-event CI result on the exact head SHA is authoritative.
+    /// </summary>
+    [Fact]
+    public async Task PostPrCi_HeadShaHasCompletedRunFromBeforeMarkReady_UsesItWithoutReTrigger()
+    {
+        var notBefore = DateTime.UtcNow;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var context = BuildContextForPostPrCi(run, externalCiPollInterval: TimeSpan.Zero);
+
+        // Exact-SHA query returns Passed with StartedAt before mark-ready.
+        // After the fix: accepted immediately (notBefore not applied to exact-SHA queries).
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                StartedAt = notBefore.AddMinutes(-10)
+            });
+
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                StartedAt = notBefore.AddMinutes(-10)
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore, CancellationToken.None);
+
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeTrue(
+            "pre-mark-ready passed run on exact head SHA must satisfy the post-PR CI gate");
+
+        // No re-trigger commit must be pushed.
+        _mockRepoProvider.Verify(
+            r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(msg => msg.StartsWith("chore: re-trigger CI")),
+                It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()),
+            Times.Never,
+            "must not push a re-trigger commit when head SHA has a completed CI run");
+    }
+
+    /// <summary>
+    /// Issue #3912 acceptance criterion 2: when the exact head SHA has a completed Failed CI run
+    /// that started before mark-ready, the post-PR CI gate must fail without pushing any
+    /// re-trigger commit. A failed result on the exact head SHA must still be surfaced.
+    /// </summary>
+    [Fact]
+    public async Task PostPrCi_HeadShaHasCompletedFailedRunFromBeforeMarkReady_GateFails()
+    {
+        var notBefore = DateTime.UtcNow;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var context = BuildContextForPostPrCi(run, externalCiPollInterval: TimeSpan.Zero);
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Failed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "Test regression" }],
+                StartedAt = notBefore.AddMinutes(-10)
+            });
+
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Failed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "Test regression" }],
+                StartedAt = notBefore.AddMinutes(-10)
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore, CancellationToken.None);
+
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeFalse(
+            "pre-mark-ready failed run on exact head SHA must surface as a CI gate failure");
+
+        // No re-trigger commit must be pushed.
+        _mockRepoProvider.Verify(
+            r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(msg => msg.StartsWith("chore: re-trigger CI")),
+                It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()),
+            Times.Never,
+            "must not push a re-trigger commit when head SHA has a completed (failed) CI run");
+    }
+
+    /// <summary>
+    /// Issue #3912 acceptance criterion 3: when the exact head SHA has no runs (Pending, zero jobs)
+    /// but the branch-wide query returns a Passed run that started BEFORE mark-ready, the
+    /// branch-wide guard must still reject that stale result and push a re-trigger commit.
+    /// This verifies the branch-wide <c>notBefore</c> filter is unchanged by the fix.
+    /// </summary>
+    [Fact]
+    public async Task PostPrCi_HeadShaHasNoRuns_PriorShaPassedBeforeMarkReady_StillReTriggers()
+    {
+        var notBefore = DateTime.UtcNow;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        // ciNotStartedMaxRetries: 1 so the loop reaches TryDetectAlreadyRunningCiAsync on attempt 0
+        // (with maxRetries=0 the loop exits immediately without ever pushing a re-trigger commit).
+        var context = BuildContextForPostPrCi(run,
+            ciNotStartedMaxRetries: 1,
+            externalCiPollInterval: TimeSpan.Zero);
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsNotNull<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Pending,
+                Jobs = [],
+                StartedAt = null
+            });
+
+        // Branch-wide query (null SHA): Passed but started BEFORE notBefore — must be rejected.
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                StartedAt = notBefore.AddMinutes(-5)
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore, CancellationToken.None);
+
+        // Branch-wide guard rejected the stale result → re-trigger commit pushed.
+        _mockRepoProvider.Verify(
+            r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(msg => msg.StartsWith("chore: re-trigger CI")),
+                It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()),
+            Times.AtLeastOnce,
+            "branch-wide pre-mark-ready Passed result must not prevent a re-trigger commit");
+
+        // The stale branch-wide Passed run must not have been accepted as the CI result.
+        // WaitForCompletionAsync with null SHA would mean we waited on the prior SHA's run.
+        _mockPipelineProvider.Verify(
+            p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "must not wait for completion of a pre-notBefore branch-wide (prior SHA) run");
     }
 
     /// <summary>
@@ -1255,7 +1443,8 @@ public class CiPollingCoordinatorTests
     private QualityGateContext BuildContextForPostPrCi(
         PipelineRun run,
         int ciNotStartedMaxRetries = 0,
-        TimeSpan? ciNotStartedTimeout = null) => new()
+        TimeSpan? ciNotStartedTimeout = null,
+        TimeSpan? externalCiPollInterval = null) => new()
         {
             Run = run,
             Config = new PipelineConfiguration
@@ -1266,7 +1455,7 @@ public class CiPollingCoordinatorTests
                 ExternalCiTimeout = TimeSpan.FromMinutes(5),
                 CiNotStartedTimeout = ciNotStartedTimeout ?? TimeSpan.FromMilliseconds(50),
                 CiNotStartedMaxRetries = ciNotStartedMaxRetries,
-                ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+                ExternalCiPollInterval = externalCiPollInterval ?? TimeSpan.FromMilliseconds(50),
                 StallPollInterval = TimeSpan.FromMilliseconds(50),
                 StallWarningInterval = TimeSpan.FromHours(1)
             },
