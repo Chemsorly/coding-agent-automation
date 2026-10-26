@@ -560,6 +560,26 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
             .Should().Be("PR_node_42", "the node ID must be bound as a GraphQL variable");
     }
 
+    [Fact]
+    public async Task UpdatePullRequestAsync_NullBody_DoesNotSendPatchAndDoesNotThrow()
+    {
+        // Null body means "state-change only — do not modify the PR body".
+        // The provider must not send a PATCH request to the pull request endpoint and must not throw.
+        // No PATCH stub is registered — any accidental PATCH would return 404 and surface as an exception.
+        await using var provider = CreateProvider();
+        var act = () => provider.UpdatePullRequestAsync(42, null, null, CancellationToken.None);
+
+        await act.Should().NotThrowAsync("null body is a valid input meaning state-change only");
+
+#pragma warning disable CS8602 // WireMock ILogEntry.RequestMessage is always populated in test stubs
+        var patchCalls = Server.LogEntries
+            .Where(e => e.RequestMessage?.Method == "PATCH"
+                     && (e.RequestMessage.Path ?? "").Contains($"/repos/{Owner}/{Repo}/pulls/42"))
+            .ToList();
+#pragma warning restore CS8602
+        patchCalls.Should().BeEmpty("null body must not trigger a PATCH to the pull request endpoint");
+    }
+
     #endregion
 
     #region Helpers

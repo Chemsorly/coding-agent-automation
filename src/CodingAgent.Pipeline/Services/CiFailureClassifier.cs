@@ -43,7 +43,11 @@ public static class CiFailureClassifier
         // Container registry 5xx while pulling a base image (buildah and BuildKit wording)
         "received unexpected HTTP status: 5",
         "503 Service Unavailable",
-        "502 Bad Gateway"
+        "502 Bad Gateway",
+        // Package mirror and DNS failures inside jobs (apt, JVM tools)
+        "E: Unable to fetch some archives",
+        "Temporary failure in name resolution",
+        "java.net.UnknownHostException"
     };
 
     private static readonly string[] CodeFailurePatterns =

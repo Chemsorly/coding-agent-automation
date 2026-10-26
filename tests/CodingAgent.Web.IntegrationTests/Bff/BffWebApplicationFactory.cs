@@ -14,12 +14,18 @@ public sealed record BffClient(HttpClient Http, CookieContainer Cookies) : IDisp
 /// Spec 052 Req 9.1: the web host on a real Kestrel port (YARP proxies WebSockets only through a
 /// real server), forwarding to <see cref="StubPipelineApi"/>, with the role bindings and test sign-in
 /// of <see cref="RbacWebApplicationFactory"/> ("reader" is global read-only, group "team-a" operates
-/// one project, anyone else has no access). The forwarder's activity timeout is cut to 1 s so the
-/// timeout test needs no real wait (m6).
+/// one project, anyone else has no access). Only <see cref="ShortTimeoutBffWebApplicationFactory"/>
+/// overrides the forwarder's activity timeout to 1 s (m6).
 /// </summary>
-public sealed class BffWebApplicationFactory : RbacWebApplicationFactory
+public class BffWebApplicationFactory : RbacWebApplicationFactory
 {
     public BffWebApplicationFactory() => UseKestrel(0);
+
+    /// <summary>
+    /// Override to set the <c>Bff__ActivityTimeout</c> environment variable. <see langword="null"/>
+    /// clears the variable so the production default (5 min) applies.
+    /// </summary>
+    protected virtual string? ActivityTimeout => null;
 
     public StubPipelineApi Api { get; } = new();
 
@@ -46,7 +52,7 @@ public sealed class BffWebApplicationFactory : RbacWebApplicationFactory
     {
         base.ConfigureWebHost(builder);
         Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", Api.BaseUrl);
-        Environment.SetEnvironmentVariable("Bff__ActivityTimeout", "00:00:01");
+        Environment.SetEnvironmentVariable("Bff__ActivityTimeout", ActivityTimeout);
     }
 
     /// <summary>A client without a session.</summary>
@@ -82,4 +88,13 @@ public sealed class BffWebApplicationFactory : RbacWebApplicationFactory
         }
         base.Dispose(disposing);
     }
+}
+
+/// <summary>
+/// A <see cref="BffWebApplicationFactory"/> that cuts the forwarder's activity timeout to 1 s, so
+/// the timeout test (<c>ApiTimeout_Is504_WithTheShortTestTimeout</c>) does not need a real wait.
+/// </summary>
+public sealed class ShortTimeoutBffWebApplicationFactory : BffWebApplicationFactory
+{
+    protected override string? ActivityTimeout => "00:00:01";
 }
