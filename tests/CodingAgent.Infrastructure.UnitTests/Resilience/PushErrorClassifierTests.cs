@@ -88,4 +88,27 @@ public class PushErrorClassifierTests
         var act = () => PushErrorClassifier.Classify(null!);
         act.Should().Throw<ArgumentNullException>();
     }
+
+    [Theory]
+    [InlineData("refusing to allow a GitHub App to create or update workflow '.github/workflows/ci.yml' without 'workflows' permission")]
+    [InlineData("REFUSING TO ALLOW A GITHUB APP TO CREATE OR UPDATE WORKFLOW files")]
+    public void Classify_WorkflowPermissionMessage_ReturnsWorkflowPermission(string message)
+    {
+        PushErrorClassifier.Classify(message).Should().Be(PushErrorClassifier.PushFailureCategory.WorkflowPermission);
+    }
+
+    [Fact]
+    public void GetActionableMessage_WorkflowPermission_ReturnsWorkflowFilesMessage()
+    {
+        var msg = PushErrorClassifier.GetActionableMessage(PushErrorClassifier.PushFailureCategory.WorkflowPermission);
+        msg.Should().Be("Push failed: the GitHub App may not create or update workflow files (.github/workflows).");
+    }
+
+    [Fact]
+    public void Classify_WorkflowPermissionMessage_TakesPriorityOverAuth()
+    {
+        // The workflow permission message may contain "403" — workflow check must fire first
+        const string message = "403 refusing to allow a GitHub App to create or update workflow";
+        PushErrorClassifier.Classify(message).Should().Be(PushErrorClassifier.PushFailureCategory.WorkflowPermission);
+    }
 }

@@ -80,6 +80,14 @@ public class ResiliencePipelineFactoryTests
     }
 
     [Fact]
+    public void IsTransientGitException_WorkflowPermissionError_ReturnsFalse()
+    {
+        const string message = "refusing to allow a GitHub App to create or update workflow '.github/workflows/ci.yml' without 'workflows' permission";
+        var ex = new LibGit2SharpException(message);
+        ResiliencePipelineFactory.IsTransientGitException(ex).Should().BeFalse();
+    }
+
+    [Fact]
     public void CreateGitHubApiPipeline_ReturnsNonNullPipeline()
     {
         var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
