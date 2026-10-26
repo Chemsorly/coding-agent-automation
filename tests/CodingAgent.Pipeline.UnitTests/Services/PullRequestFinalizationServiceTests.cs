@@ -2118,6 +2118,57 @@ public class PullRequestFinalizationServiceTests
         repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenDescriptionFileAbsent_MarkReadyCallPassesNullBody()
+    {
+        // Regression test for issue #3896: when GeneratePrDescriptionAsync takes the file-absent
+        // skip path, run.PullRequestBody is NOT updated. The subsequent mark-ready PATCH must send
+        // null as the body (state-change only) rather than the stale pre-description body.
+        using var tmpDir = new TempDirectory();
+        // Create .agent/ but deliberately omit pr-description.md — triggers the file-absent skip path.
+        Directory.CreateDirectory(Path.Combine(tmpDir.Path, ".agent"));
+
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "stale pre-description body";
+        run.WorkspacePath = tmpDir.Path;
+
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = config,
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+        // The mark-ready PATCH must send null body (state-change only), NOT the stale body.
+        // This guards against the regression where run.PullRequestBody ?? "" was forwarded.
+        repoProvider.Verify(
+            r => r.UpdatePullRequestAsync(42, (string?)null, true, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     // ── AppendDroppedIdentifiersSection: non-draft path via GeneratePrDescriptionAsync ─
 
     [Fact]

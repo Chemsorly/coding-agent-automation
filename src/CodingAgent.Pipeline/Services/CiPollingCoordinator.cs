@@ -671,22 +671,77 @@ internal sealed class CiPollingCoordinator
             // then produces the "Post-PR CI timed out after X" gate result.
             using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-            var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(
-                context, commitSha, config, callbacks, notBefore, linkedCts.Token);
 
-            // Report CI wait duration server-side (issue #2979): replaces the agent-side
-            // _metrics.PostPrCiDuration recording so the histogram is recorded in the API.
-            context.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
+            // Re-poll loop: when PollAndHandleInfraRetryAsync throws a transient exception (e.g.
+            // provider API 5xx), retry up to MaxInfrastructureRetries times before returning an
+            // infra-failure gate. OperationCanceledException propagates unconditionally so the
+            // ExternalCiTimeout and pipeline cancellation are not swallowed.
+            (bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)? pollResult = null;
+            var localRetry = 0;
+            Exception? lastEx = null;
+            while (true)
             {
-                Kind = PipelineRunEventKind.CiWait,
-                DurationSeconds = ciPollStopwatch.Elapsed.TotalSeconds,
-                Stage = PipelineTelemetry.CiWaitStages.PostPr,
-                Result = ciPassed ? "pass" : "fail"
-            });
+                try
+                {
+                    pollResult = await PollAndHandleInfraRetryAsync(
+                        context, commitSha, config, callbacks, notBefore, linkedCts.Token);
+                    break;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    lastEx = ex;
+                    if (localRetry >= config.MaxInfrastructureRetries)
+                        break; // exhausted — produce infra-failure gate below
+                    localRetry++;
+                    run.InfrastructureRetryCount++;
+                    _logger.Warning(ex,
+                        "Pipeline {RunId} could not read the CI status ({Error}), polling again ({Attempt}/{Max})",
+                        run.RunId, ex.Message, localRetry, config.MaxInfrastructureRetries);
+                    callbacks.EmitOutputLine(
+                        $"⚠️ Could not read the CI status — polling again ({localRetry}/{config.MaxInfrastructureRetries})...");
+                    await Task.Delay(config.ExternalCiPollInterval, linkedCts.Token);
+                }
+            }
 
-            ciGate = ciStatus.State == PipelineRunState.ConflictRestart
-                ? ApplyConflictRestartToRun(run, callbacks)
-                : BuildCiGateResultWithInfraFlag(ciPassed, ciStatus, ciLogPaths, callbacks);
+            if (pollResult is null && localRetry > 0)
+            {
+                // Re-poll attempts exhausted: classify as infrastructure failure so the
+                // retry loop short-circuit in RunRetryLoopAsync skips the LLM invocation.
+                var errorGate = BuildCiErrorGateResult(
+                    PostPrCiPrefix, "CI status unavailable — " + lastEx!.Message);
+                ciGate = new GateResult
+                {
+                    GateName = errorGate.GateName,
+                    Passed = errorGate.Passed,
+                    Details = errorGate.Details,
+                    IsInfrastructureFailure = true
+                };
+            }
+            else if (pollResult is null)
+            {
+                // MaxInfrastructureRetries = 0: no retries configured — re-throw so the outer
+                // catch (Exception ex) handles this with the original pre-fix behaviour.
+                throw lastEx!;
+            }
+            else
+            {
+                var (ciPassed, ciStatus, ciLogPaths) = pollResult.Value;
+
+                // Report CI wait duration server-side (issue #2979): replaces the agent-side
+                // _metrics.PostPrCiDuration recording so the histogram is recorded in the API.
+                context.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
+                {
+                    Kind = PipelineRunEventKind.CiWait,
+                    DurationSeconds = ciPollStopwatch.Elapsed.TotalSeconds,
+                    Stage = PipelineTelemetry.CiWaitStages.PostPr,
+                    Result = ciPassed ? "pass" : "fail"
+                });
+
+                ciGate = ciStatus.State == PipelineRunState.ConflictRestart
+                    ? ApplyConflictRestartToRun(run, callbacks)
+                    : BuildCiGateResultWithInfraFlag(ciPassed, ciStatus, ciLogPaths, callbacks);
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
