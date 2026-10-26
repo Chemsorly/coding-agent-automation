@@ -173,14 +173,23 @@ public class GitLabRepositoryProviderMergeRequestTests
     }
 
     [Fact]
-    public async Task UpdatePullRequestAsync_NullBody_ThrowsArgumentNullException()
+    public async Task UpdatePullRequestAsync_NullBody_DoesNotUpdateDescriptionAndDoesNotThrow()
     {
-        var (client, projectId) = CreateServerWithProject();
+        // Null body is now a valid input meaning "state-change only — do not modify the PR body".
+        // The provider must not throw and must not overwrite the existing description.
+        var (client, projectId) = CreateServerWithMergeRequest(
+            "Test MR", "original description", "branch", "main");
         var provider = new GitLabRepositoryProvider(client, projectId, "main");
 
-        var act = () => provider.UpdatePullRequestAsync(1, null!, markReady: false, CancellationToken.None);
+        var mrClient = client.GetMergeRequest(projectId);
+        var mr = mrClient.Get(new MergeRequestQuery { State = MergeRequestState.opened }).First();
 
-        await act.Should().ThrowAsync<ArgumentNullException>();
+        var act = () => provider.UpdatePullRequestAsync((int)mr.Iid, null, markReady: false, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+
+        var updated = mrClient[(int)mr.Iid];
+        updated.Description.Should().Be("original description", "null body must not overwrite the existing description");
     }
 
     #endregion

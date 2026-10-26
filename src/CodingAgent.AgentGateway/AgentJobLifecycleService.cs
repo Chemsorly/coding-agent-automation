@@ -258,16 +258,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // the issue text), so this is a deliberate design choice. If the original "brain provider
             // only" constraint is authoritative, gate on brain-provider presence (e.g. a run flag) before
             // recording. See review findings [WARNING] Correctness L271.
-            // TODO: [WARNING] Under Redis, _facade.GetRun deserializes a fresh copy of the run,
-            // and JobCompletionMapper.Apply is called on a *different* in-memory object (the one
-            // inside strategy.ExecuteAsync). On the race path (runWasAlive=false), the `run`
-            // object read here may not have BrainUpdatesPushed set by Apply, so the metric will
-            // always record result=none on that path under Redis. This only affects metric accuracy,
-            // not system correctness. Fix would require Apply to persist BrainUpdatesPushed to the
-            // store before this point, or for the metric to be recorded inside strategy.ExecuteAsync
-            // where the Apply result is available. See review findings [WARNING] Correctness L265.
             PipelineTelemetry.RunBrainUpdates.Add(1,
-                new KeyValuePair<string, object?>("result", run.BrainUpdatesPushed ? "pushed" : "none"));
+                new KeyValuePair<string, object?>("result", payload.BrainUpdatesPushed ? "pushed" : "none"));
 
             // skipLabelSwap=true when another path (HTTP Failed POST) terminated the run first and the
             // work item kept that path's status. That path set the label (e.g. agent:needs-refinement,

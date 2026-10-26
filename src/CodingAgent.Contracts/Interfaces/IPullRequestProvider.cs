@@ -14,16 +14,23 @@ public interface IPullRequestProvider : IAsyncDisposable
     /// <summary>
     /// Updates the body of an existing pull request and optionally changes its draft state.
     /// <para>
+    /// <paramref name="body"/> semantics:
+    /// <list type="bullet">
+    ///   <item><description>non-null — replace the PR body with this value</description></item>
+    ///   <item><description><c>null</c>  — state-change only; do not modify the PR body</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
     /// <paramref name="markReady"/> semantics:
     /// <list type="bullet">
     ///   <item><description><c>true</c>  — promote to ready-for-review (un-draft)</description></item>
     ///   <item><description><c>false</c> — convert to draft</description></item>
-    ///   <item><description><c>null</c>  — body-only update; draft state is left unchanged</description></item>
+    ///   <item><description><c>null</c>  — draft state is left unchanged</description></item>
     /// </list>
     /// </para>
     /// Default throws <see cref="NotSupportedException"/>.
     /// </summary>
-    Task UpdatePullRequestAsync(int prNumber, string body, bool? markReady, CancellationToken ct)
+    Task UpdatePullRequestAsync(int prNumber, string? body, bool? markReady, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support UpdatePullRequestAsync.");
 

@@ -317,6 +317,15 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         result.Should().BeNull("without a registered IConnectionMultiplexer the fallback path returns null");
     }
 
+    [Fact]
+    public void ResolveRedisStoreOrNull_WhenNullServiceProvider_ThrowsArgumentNullException()
+    {
+        var act = () => ApiServiceCollectionExtensions.ResolveRedisStoreOrNull(null!);
+
+        act.Should().Throw<ArgumentNullException>()
+            .WithParameterName("sp");
+    }
+
     // ── Redis / no-Redis branch selection ────────────────────────────────────────
 
     [Fact]
