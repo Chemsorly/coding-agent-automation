@@ -273,6 +273,7 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 - **Agent timeout** — fail with exit code 124
 - **Blacklisted files** — excluded from commits with a warning logged
 - **External CI timeout** — treated as gate failure, enters retry loop
+- **Push refused for workflow files** — the agent is told to rebase onto the base branch (or revert its own `.github/workflows` change); a second refusal in a row ends the retries as an infrastructure failure.
 - **Cancellation** — `OperationCanceledException` caught at top level, label set to `agent:cancelled`
 
 When Kubernetes marks an agent Job failed because its pods crashed or ran out of memory, the agent cannot report its outcome. The Job Controller then records the failure category and the last 100 lines of the last failed pod's log on the run, and the run page shows them under "Agent pod log". The log is capped and secrets that look like `token=…` are masked. The Job Controller needs `get` on `pods/log` for this; the Helm chart grants it.

@@ -416,6 +416,100 @@ public class QualityGateExecutorCiPollingTests
             "pipeline CT cancellation originating from TryReadHeadShaAsync must propagate out of AppendExternalCiIfNeededAsync");
     }
 
+    /// <summary>
+    /// Regression guard (issue #3910 review): when the push-refused entry is NOT the most recent
+    /// RetryErrors entry (e.g. the agent successfully pushed on the prior retry but CI failed),
+    /// the infrastructure-failure flag must NOT be set — the agent deserves another attempt.
+    /// With .Any() this test would fail (the older push-refused entry triggers IsInfrastructureFailure);
+    /// with .LastOrDefault() it passes correctly.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_PushRefusedAfterUnrelatedFailure_IsNotInfrastructureFailure()
+    {
+        var run = CreateRun();
+        // Retry 1: push was refused (push-refused entry)
+        run.RetryErrors.Enqueue(
+            "Push refused: the pipeline's GitHub App may not create or update files under .github/workflows, and this branch's workflow files differ from origin/main.");
+        // Retry 2: agent rebased successfully, but CI failed for an unrelated reason
+        run.RetryErrors.Enqueue("External CI: Build failed — unit tests failed");
+
+        _mockRepoProvider.Setup(r => r.BaseBranch).Returns("main");
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException(
+                "Push failed: the GitHub App may not create or update workflow files (.github/workflows)."));
+
+        var context = BuildContext(run);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.IsInfrastructureFailure.Should().NotBe(true,
+            "the previous entry was an unrelated CI failure, not a push refusal — the agent must not be denied another retry");
+    }
+
+
+
+    /// <summary>
+    /// Acceptance criterion (issue #3910): when PushBranchAsync throws an InvalidOperationException
+    /// whose message contains "may not create or update workflow files", the gate must fail with a
+    /// message that includes the rebase command, and IsInfrastructureFailure must NOT be set on
+    /// the first occurrence so the agent gets a chance to fix it.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_PushRefusedForWorkflowFiles_GateExplainsRebase()
+    {
+        var run = CreateRun();
+
+        _mockRepoProvider.Setup(r => r.BaseBranch).Returns("main");
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException(
+                "Push failed: the GitHub App may not create or update workflow files (.github/workflows)."));
+
+        var context = BuildContext(run);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse("push was refused — gate must fail");
+        result.ExternalCi.Details.Should().Contain("git rebase origin/main",
+            "the gate message must tell the agent to rebase onto the base branch");
+        result.ExternalCi.IsInfrastructureFailure.Should().NotBe(true,
+            "first occurrence must not be infrastructure failure — the agent should retry");
+    }
+
+    /// <summary>
+    /// Acceptance criterion (issue #3910): when the same workflow-permission push refusal happens
+    /// a second time (RetryErrors already contains a prior push-refused entry), the gate sets
+    /// IsInfrastructureFailure = true so the retry loop stops instead of burning more LLM retries.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_PushRefusedForWorkflowFilesTwice_IsInfrastructureFailure()
+    {
+        var run = CreateRun();
+        // Simulate a prior retry that already recorded the push-refused gate failure
+        run.RetryErrors.Enqueue(
+            "Push refused: the pipeline's GitHub App may not create or update files under .github/workflows, and this branch's workflow files differ from origin/main.");
+
+        _mockRepoProvider.Setup(r => r.BaseBranch).Returns("main");
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException(
+                "Push failed: the GitHub App may not create or update workflow files (.github/workflows)."));
+
+        var context = BuildContext(run);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.IsInfrastructureFailure.Should().BeTrue(
+            "second push refusal in a row must set IsInfrastructureFailure so the retry loop stops");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()

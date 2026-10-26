@@ -395,7 +395,8 @@ public static class ResiliencePipelineFactory
             message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("non-fastforwardable", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("contains commits that are not present locally", StringComparison.OrdinalIgnoreCase))
+            message.Contains("contains commits that are not present locally", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("refusing to allow a GitHub App to create or update workflow", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
