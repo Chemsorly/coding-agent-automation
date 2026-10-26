@@ -60,6 +60,26 @@ public class RefactoringExecutorTests : IDisposable
         };
     }
 
+    private const string AggregationPromptMarker = "Produce the final proposals at";
+
+    private ConsolidationJobMessage CreateJobWithoutReview()
+    {
+        var job = CreateJob();
+        return new ConsolidationJobMessage
+        {
+            JobId = job.JobId,
+            Type = job.Type,
+            TemplateId = job.TemplateId,
+            TemplateName = job.TemplateName,
+            ProviderConfigs = job.ProviderConfigs,
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false
+            }
+        };
+    }
+
     [Fact]
     public async Task ExecuteAsync_AgentFindsNothing_CreatesNoIssues()
     {
@@ -121,6 +141,176 @@ public class RefactoringExecutorTests : IDisposable
         _mockIssueProvider.Verify(
             x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AggregationWritesNoProposalsFileOnce_RetriesAndCreatesIssues()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutReview();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);   // do NOT write the proposals file here: that would skip the retry
+        _mockAgentProvider                  // general setup first: Phase 0 and Phase 1 calls
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract shared validation logic",
+                    "affectedFiles": ["src/Service.cs", "src/Handler.cs"],
+                    "description": "Both files duplicate input validation.",
+                    "rationale": "DRY principle violation."
+                }
+            ]
+            """;
+
+        var aggregationCalls = 0;
+        _mockAgentProvider                  // aggregation setup second: Moq uses the last matching setup
+            .Setup(x => x.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains(AggregationPromptMarker)), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                aggregationCalls++;
+                if (aggregationCalls == 2) RefactoringTestWorkspace.WriteProposals(req.WorkspacePath!, proposalsJson);
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Aggregation done."] });
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "42", Url = "https://github.com/test/repo/issues/42" });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        aggregationCalls.Should().Be(2);
+        _mockIssueProvider.Verify(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AggregationWritesNoProposalsFileTwice_FailsAfterOneRetry()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutReview();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);   // do NOT write the proposals file here: that would skip the retry
+        _mockAgentProvider                  // general setup first: Phase 0 and Phase 1 calls
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        var aggregationCalls = 0;
+        _mockAgentProvider                  // aggregation setup second: Moq uses the last matching setup
+            .Setup(x => x.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains(AggregationPromptMarker)), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                aggregationCalls++;
+                // write nothing: simulates the agent breaking off both times
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Aggregation done."] });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Be("The aggregation step wrote no refactoring-proposals.json");
+        aggregationCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AggregationExitsNonZero_DoesNotRetry()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutReview();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);   // do NOT write the proposals file here: that would skip the retry
+        _mockAgentProvider                  // general setup first: Phase 0 and Phase 1 calls
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        var aggregationCalls = 0;
+        _mockAgentProvider                  // aggregation setup second: Moq uses the last matching setup
+            .Setup(x => x.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains(AggregationPromptMarker)), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                aggregationCalls++;
+                // write nothing and exit non-zero: no retry should happen
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = ["error"] });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Be("Agent exited with code 1");
+        aggregationCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AggregationWritesEmptyArray_DoesNotRetry()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutReview();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);   // do NOT write the proposals file here: that would skip the retry
+        _mockAgentProvider                  // general setup first: Phase 0 and Phase 1 calls
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        var aggregationCalls = 0;
+        _mockAgentProvider                  // aggregation setup second: Moq uses the last matching setup
+            .Setup(x => x.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains(AggregationPromptMarker)), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                aggregationCalls++;
+                RefactoringTestWorkspace.WriteProposals(req.WorkspacePath!, "[]");
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Aggregation done."] });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Summary.Should().Contain("No refactoring opportunities identified");
+        aggregationCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AggregationFirstCallExits0ThenRetryExitsNonZero_FailsWithExitCodeMessage()
+    {
+        // Covers the guard at src/CodingAgent.Agent/Executors/RefactoringExecutor.cs line 499:
+        // if (failure is not null) return (failure, detectors) — inside the retry block.
+        // First aggregation exits 0 but writes nothing → retry fires.
+        // Retry exits non-zero → the executor returns the exit-code failure, not MissingProposalsFileMessage.
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutReview();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);   // do NOT write the proposals file here: that triggers the retry
+        _mockAgentProvider                  // general setup first: Phase 0 and Phase 1 calls
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        var aggregationCalls = 0;
+        _mockAgentProvider                  // aggregation setup second: Moq uses the last matching setup
+            .Setup(x => x.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains(AggregationPromptMarker)), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                aggregationCalls++;
+                if (aggregationCalls == 1)
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = ["Aggregation done."] });
+                return Task.FromResult(new AgentResult { ExitCode = 1, OutputLines = ["error"] });
+            });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Be("Agent exited with code 1");
+        aggregationCalls.Should().Be(2);
     }
 
     [Fact]
@@ -2654,6 +2844,7 @@ public class RefactoringExecutorTests : IDisposable
 
         _mockRepoProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
             .Returns(Task.CompletedTask);
 
         // Brain clone throws — executor must log a Warning and continue
@@ -2706,6 +2897,7 @@ public class RefactoringExecutorTests : IDisposable
 
         _mockRepoProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
             .Returns(Task.CompletedTask);
 
         // Phase 0 (call 1) + Phase 1 × 4 (calls 2–5, one fails) + Phase 2 (call 6).
