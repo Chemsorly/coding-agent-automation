@@ -153,6 +153,30 @@ public partial class QualityGateExecutor
             ciGate = CiPollingCoordinator.BuildCiTimeoutGateResult(context.Config.ExternalCiTimeout, ExternalCiName);
         }
         catch (OperationCanceledException) { throw; }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("may not create or update workflow files"))
+        {
+            var baseBranch = context.RepoProvider.BaseBranch;
+            var message =
+                $"Push refused: the pipeline's GitHub App may not create or update files under " +
+                $".github/workflows, and this branch's workflow files differ from origin/{baseBranch}. " +
+                $"If your change edits .github/workflows, revert that part (the pipeline cannot push it). " +
+                $"Otherwise main changed them after this run started: run git fetch origin {baseBranch} " +
+                $"&& git rebase origin/{baseBranch}, resolve any conflicts, and keep your changes.";
+            var errorGate = CiPollingCoordinator.BuildCiErrorGateResult(ExternalCiName, message);
+            // Check only the most-recent (previous) RetryErrors entry, not all entries:
+            // if the agent partially fixed something and then hit this again later, the interim
+            // entry would not contain the sentinel and we should give it another retry.
+            var previousError = context.Run.RetryErrors.LastOrDefault();
+            var isSecondOccurrence = previousError is not null &&
+                previousError.Contains("Push refused: the pipeline's GitHub App");
+            ciGate = new GateResult
+            {
+                GateName = errorGate.GateName,
+                Passed = errorGate.Passed,
+                Details = errorGate.Details,
+                IsInfrastructureFailure = isSecondOccurrence
+            };
+        }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", context.Run.RunId);

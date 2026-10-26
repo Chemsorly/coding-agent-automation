@@ -8,6 +8,8 @@ public static class PushErrorClassifier
     /// <summary>Push failure categories.</summary>
     public enum PushFailureCategory
     {
+        /// <summary>The GitHub App may not create or update workflow files.</summary>
+        WorkflowPermission,
         /// <summary>Authentication or credentials error.</summary>
         Auth,
         /// <summary>Branch protection rules prevent push.</summary>
@@ -26,6 +28,12 @@ public static class PushErrorClassifier
     public static PushFailureCategory Classify(string errorMessage)
     {
         ArgumentNullException.ThrowIfNull(errorMessage);
+
+        if (errorMessage.Contains("refusing to allow a GitHub App to create or update workflow",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return PushFailureCategory.WorkflowPermission;
+        }
 
         if (errorMessage.Contains("401", StringComparison.OrdinalIgnoreCase) ||
             errorMessage.Contains("403", StringComparison.OrdinalIgnoreCase) ||
@@ -69,6 +77,7 @@ public static class PushErrorClassifier
     {
         return category switch
         {
+            PushFailureCategory.WorkflowPermission => "Push failed: the GitHub App may not create or update workflow files (.github/workflows).",
             PushFailureCategory.Auth => "Push failed: authentication error. Token may have expired.",
             PushFailureCategory.BranchProtection => $"Push failed: branch '{branchName ?? "unknown"}' is protected.",
             PushFailureCategory.Network => "Push failed: network error after retries exhausted.",

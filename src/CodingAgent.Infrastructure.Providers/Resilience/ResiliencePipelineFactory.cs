@@ -393,7 +393,12 @@ public static class ResiliencePipelineFactory
         if (message.Contains("protected branch", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("required status check", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("rejected", StringComparison.OrdinalIgnoreCase))
+            message.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||
+            // Defence-in-depth: PushWithTokenFactory already converts this to InvalidOperationException
+            // via PushErrorClassifier, so this branch fires only if the exception reaches the
+            // resilience pipeline without going through PushWithTokenFactory's inner catch.
+            message.Contains("refusing to allow a GitHub App to create or update workflow",
+                StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }

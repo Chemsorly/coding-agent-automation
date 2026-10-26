@@ -86,4 +86,22 @@ public class PushErrorClassifierTests
         var act = () => PushErrorClassifier.Classify(null!);
         act.Should().Throw<ArgumentNullException>();
     }
+
+    [Fact]
+    public void Classify_WorkflowPermission_ReturnsWorkflowPermission()
+    {
+        const string message =
+            "refusing to allow a GitHub App to create or update workflow '.github/workflows/ci.yml' without 'workflows' permission";
+        PushErrorClassifier.Classify(message)
+            .Should().Be(PushErrorClassifier.PushFailureCategory.WorkflowPermission);
+    }
+
+    [Fact]
+    public void GetActionableMessage_WorkflowPermission_ReturnsExactString()
+    {
+        var msg = PushErrorClassifier.GetActionableMessage(
+            PushErrorClassifier.PushFailureCategory.WorkflowPermission);
+        msg.Should().Be(
+            "Push failed: the GitHub App may not create or update workflow files (.github/workflows).");
+    }
 }

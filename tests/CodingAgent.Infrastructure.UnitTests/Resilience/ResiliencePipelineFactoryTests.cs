@@ -62,6 +62,20 @@ public class ResiliencePipelineFactoryTests
         ResiliencePipelineFactory.IsTransientGitException(ex).Should().BeFalse();
     }
 
+    [Fact]
+    public void IsTransientGitException_WorkflowPermissionRefusal_ReturnsFalse()
+    {
+        // Defence-in-depth: PushWithTokenFactory's inner catch normally converts this
+        // LibGit2SharpException to InvalidOperationException before Polly's ShouldHandle
+        // is evaluated, so Polly would not retry it regardless. This test verifies that if
+        // the exception ever reaches IsTransientGitException directly (e.g. via a future
+        // code path that bypasses PushWithTokenFactory), it is still treated as non-retryable.
+        const string message =
+            "refusing to allow a GitHub App to create or update workflow '.github/workflows/ci.yml' without 'workflows' permission";
+        var ex = new LibGit2SharpException(message);
+        ResiliencePipelineFactory.IsTransientGitException(ex).Should().BeFalse();
+    }
+
     // Auth errors (401/403/authentication/credentials) are now retryable at the Polly level
     // because PushWithTokenFactory re-fetches a fresh token on each attempt. The permanent
     // non-retryable throw path (InvalidOperationException) is handled inside PushWithTokenFactory
