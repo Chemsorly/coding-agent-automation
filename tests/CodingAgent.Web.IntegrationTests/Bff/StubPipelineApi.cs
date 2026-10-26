@@ -17,7 +17,7 @@ public sealed record RecordedRequest(string Method, string PathAndQuery, IReadOn
 /// <list type="bullet">
 /// <item><c>/api/ui/status/{code}</c>: that status with the JSON string body <c>"reason-{code}"</c>,
 /// plus a <c>Set-Cookie</c> the BFF must drop;</item>
-/// <item><c>/api/ui/slow</c>: 200 after 3 s (longer than the tests' forwarder timeout);</item>
+/// <item><c>/api/ui/slow</c>: 200 after 3 s (longer than <see cref="ShortTimeoutBffWebApplicationFactory"/>'s 1 s timeout);</item>
 /// <item><c>/api/ui/abort</c>: drops the connection;</item>
 /// <item><c>/hubs/ui</c>: accepts a WebSocket, sends <c>hello</c> and closes;</item>
 /// <item>anything else: 200 with <c>{"ok":true}</c>.</item>

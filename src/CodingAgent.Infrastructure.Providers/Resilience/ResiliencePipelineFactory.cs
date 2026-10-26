@@ -393,7 +393,9 @@ public static class ResiliencePipelineFactory
         if (message.Contains("protected branch", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("required status check", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("rejected", StringComparison.OrdinalIgnoreCase))
+            message.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("non-fastforwardable", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("contains commits that are not present locally", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }

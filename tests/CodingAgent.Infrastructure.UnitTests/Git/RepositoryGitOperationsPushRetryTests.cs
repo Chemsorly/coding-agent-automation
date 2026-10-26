@@ -184,4 +184,37 @@ public class RepositoryGitOperationsPushRetryTests
 
         pushCallCount.Should().Be(1);
     }
+
+    /// <summary>
+    /// Non-fast-forward rejections from libgit2 ('non-fastforwardable') are never retried —
+    /// they are permanent (another run pushed first) and must surface as InvalidOperationException
+    /// so that BrainUpdateService.PushWithRetryRebaseAsync can catch them and run the rebase loop.
+    /// </summary>
+    [Fact]
+    public async Task Push_WithTokenFactory_DoesNotRetryNonFastForwardableRejection()
+    {
+        var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(
+            Log.Logger,
+            timeout: TimeSpan.FromSeconds(10),
+            outerTimeout: TimeSpan.FromSeconds(30));
+
+        var pushCallCount = 0;
+        var fakePushAction = new Func<string, Task>(token =>
+        {
+            pushCallCount++;
+            throw new LibGit2SharpException("cannot push non-fastforwardable reference");
+        });
+
+        Func<Task> act = () => RepositoryGitOperations.PushWithTokenFactory(
+            tokenFactory: _ => Task.FromResult("token"),
+            tokenUsername: "x-access-token",
+            pushAction: fakePushAction,
+            pipeline: pipeline,
+            ct: CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*non-fast-forward*");
+
+        pushCallCount.Should().Be(1);
+    }
 }

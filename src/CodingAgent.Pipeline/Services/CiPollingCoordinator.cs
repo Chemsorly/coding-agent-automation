@@ -258,6 +258,19 @@ internal sealed class CiPollingCoordinator
         GateResult ciGate;
         try
         {
+            // Grace period: give ready_for_review-triggered workflows time to register before the
+            // first poll. Without this delay, WaitForCiRunsToAppearAsync would immediately find and
+            // accept the already-completed push-event CI (now accepted because exact-SHA queries no
+            // longer apply notBefore), and return before any newly triggered run appears. After the
+            // delay, WaitForCompletionAsync aggregates all runs on the SHA so it waits for both.
+            if (commitSha is not null && notBefore is not null)
+            {
+                _logger.Information(
+                    "Pipeline {RunId} post-PR CI: polling head {CommitSha} including runs that started before mark-ready",
+                    run.RunId, commitSha);
+                await Task.Delay(config.ExternalCiPollInterval, ct);
+            }
+
             ciGate = await PollPostPrCiWithTelemetryAsync(
                 context, commitSha, config, callbacks, priorInfraRetryCount, notBefore, ct);
             // Set final status tags after successful poll (infra count before restoration).
@@ -434,7 +447,7 @@ internal sealed class CiPollingCoordinator
     {
         var appeared = await WaitForCiRunsToAppearAsync(
             pipelineProvider, run.BranchName!, pollSha,
-            config.CiNotStartedTimeout, config.ExternalCiPollInterval, notBefore, ct);
+            config.CiNotStartedTimeout, config.ExternalCiPollInterval, pollSha is null ? notBefore : null, ct);
 
         if (!appeared)
             return null;
@@ -458,14 +471,14 @@ internal sealed class CiPollingCoordinator
         CancellationToken ct)
     {
         // Final SHA-specific check before re-pushing — avoid racing with GitHub's delayed trigger.
-        // TODO [WARNING] (Correctness/DotNetSpecialist #3114): On the post-PR CI path (notBefore set),
-        // if the push-event CI for the exact head SHA is still Running or already Passed (started before
-        // notBefore) when this code fires, WaitForCiRunsToAppearAsync correctly filtered it out and timed
-        // out, but this last-check query hits the same SHA and finds the same stale run. The
-        // SatisfiesNotBefore guard below prevents returning a pre-mark-ready result on this path.
+        // On the post-PR CI path (notBefore set, pollSha non-null), the exact-SHA query guarantees
+        // we are looking at the right commit, so notBefore is not needed here. A push-event CI run
+        // that started before mark-ready on this exact SHA is a valid run to accept — the fix for
+        // issue #3912. Branch-wide queries (pollSha null) still apply notBefore to prevent accepting
+        // a prior SHA's result.
         var lastCheck = await pipelineProvider.GetRunStatusAsync(run.BranchName!, pollSha, ct);
         if ((lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
-            && SatisfiesNotBefore(lastCheck.StartedAt, notBefore))
+            && SatisfiesNotBefore(lastCheck.StartedAt, pollSha is null ? notBefore : null))
         {
             _logger.Information("Pipeline {RunId} CI appeared just before re-push (race avoided), proceeding to full wait", run.RunId);
             return await pipelineProvider.WaitForCompletionAsync(
@@ -671,22 +684,77 @@ internal sealed class CiPollingCoordinator
             // then produces the "Post-PR CI timed out after X" gate result.
             using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-            var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(
-                context, commitSha, config, callbacks, notBefore, linkedCts.Token);
 
-            // Report CI wait duration server-side (issue #2979): replaces the agent-side
-            // _metrics.PostPrCiDuration recording so the histogram is recorded in the API.
-            context.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
+            // Re-poll loop: when PollAndHandleInfraRetryAsync throws a transient exception (e.g.
+            // provider API 5xx), retry up to MaxInfrastructureRetries times before returning an
+            // infra-failure gate. OperationCanceledException propagates unconditionally so the
+            // ExternalCiTimeout and pipeline cancellation are not swallowed.
+            (bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)? pollResult = null;
+            var localRetry = 0;
+            Exception? lastEx = null;
+            while (true)
             {
-                Kind = PipelineRunEventKind.CiWait,
-                DurationSeconds = ciPollStopwatch.Elapsed.TotalSeconds,
-                Stage = PipelineTelemetry.CiWaitStages.PostPr,
-                Result = ciPassed ? "pass" : "fail"
-            });
+                try
+                {
+                    pollResult = await PollAndHandleInfraRetryAsync(
+                        context, commitSha, config, callbacks, notBefore, linkedCts.Token);
+                    break;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    lastEx = ex;
+                    if (localRetry >= config.MaxInfrastructureRetries)
+                        break; // exhausted — produce infra-failure gate below
+                    localRetry++;
+                    run.InfrastructureRetryCount++;
+                    _logger.Warning(ex,
+                        "Pipeline {RunId} could not read the CI status ({Error}), polling again ({Attempt}/{Max})",
+                        run.RunId, ex.Message, localRetry, config.MaxInfrastructureRetries);
+                    callbacks.EmitOutputLine(
+                        $"⚠️ Could not read the CI status — polling again ({localRetry}/{config.MaxInfrastructureRetries})...");
+                    await Task.Delay(config.ExternalCiPollInterval, linkedCts.Token);
+                }
+            }
 
-            ciGate = ciStatus.State == PipelineRunState.ConflictRestart
-                ? ApplyConflictRestartToRun(run, callbacks)
-                : BuildCiGateResultWithInfraFlag(ciPassed, ciStatus, ciLogPaths, callbacks);
+            if (pollResult is null && localRetry > 0)
+            {
+                // Re-poll attempts exhausted: classify as infrastructure failure so the
+                // retry loop short-circuit in RunRetryLoopAsync skips the LLM invocation.
+                var errorGate = BuildCiErrorGateResult(
+                    PostPrCiPrefix, "CI status unavailable — " + lastEx!.Message);
+                ciGate = new GateResult
+                {
+                    GateName = errorGate.GateName,
+                    Passed = errorGate.Passed,
+                    Details = errorGate.Details,
+                    IsInfrastructureFailure = true
+                };
+            }
+            else if (pollResult is null)
+            {
+                // MaxInfrastructureRetries = 0: no retries configured — re-throw so the outer
+                // catch (Exception ex) handles this with the original pre-fix behaviour.
+                throw lastEx!;
+            }
+            else
+            {
+                var (ciPassed, ciStatus, ciLogPaths) = pollResult.Value;
+
+                // Report CI wait duration server-side (issue #2979): replaces the agent-side
+                // _metrics.PostPrCiDuration recording so the histogram is recorded in the API.
+                context.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
+                {
+                    Kind = PipelineRunEventKind.CiWait,
+                    DurationSeconds = ciPollStopwatch.Elapsed.TotalSeconds,
+                    Stage = PipelineTelemetry.CiWaitStages.PostPr,
+                    Result = ciPassed ? "pass" : "fail"
+                });
+
+                ciGate = ciStatus.State == PipelineRunState.ConflictRestart
+                    ? ApplyConflictRestartToRun(run, callbacks)
+                    : BuildCiGateResultWithInfraFlag(ciPassed, ciStatus, ciLogPaths, callbacks);
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

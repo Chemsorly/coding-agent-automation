@@ -27,6 +27,10 @@ public class CiFailureClassifierTests
     [InlineData("Error: creating build container: copying system image from manifest list: reading blob sha256:32bc87: fetching blob: received unexpected HTTP status: 503 Service Unavailable")]
     [InlineData("failed to copy: httpReadSeeker: failed open: unexpected status code https://mcr.microsoft.com/v2/dotnet/sdk/blobs/sha256:32bc87: 503 Service Unavailable")]
     [InlineData("reading manifest 10.0.401 in mcr.microsoft.com/dotnet/sdk: received unexpected HTTP status: 502 Bad Gateway")]
+    // apt mirror 404s and DNS failures inside jobs (issue #3911)
+    [InlineData("E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?")]
+    [InlineData("java.net.UnknownHostException: sonarcloud.io: Temporary failure in name resolution")]
+    [InlineData("curl: (6) Could not resolve host: sonarcloud.io: Temporary failure in name resolution")]
     public void Classify_InfrastructurePattern_ReturnsInfrastructure(string logContent)
     {
         var status = CreateStatus(logContent);
@@ -59,6 +63,15 @@ public class CiFailureClassifierTests
     {
         // Code failure indicators take priority over infrastructure patterns
         var logContent = "Connection timed out\nerror CS1002: ; expected\nBuild FAILED.";
+        var status = CreateStatus(logContent);
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.CodeFailure);
+    }
+
+    [Fact]
+    public void Classify_AptFetchFailureWithCompileError_ReturnsCodeFailure()
+    {
+        // apt mirror 404 + compile error: code failure takes priority over infrastructure
+        var logContent = "E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?\nerror CS1002: ; expected";
         var status = CreateStatus(logContent);
         CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.CodeFailure);
     }
