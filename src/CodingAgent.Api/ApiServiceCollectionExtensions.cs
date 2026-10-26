@@ -260,14 +260,10 @@ public static class ApiServiceCollectionExtensions
     // is no compiler/analyser guard against misuse. Consider making it `private` and testing
     // the behaviour indirectly via the observable DI wiring (IOrchestratorRunService concrete
     // type) instead. See review finding [WARNING] ApiServiceCollectionExtensions.cs:244.
-    // TODO [WARNING]: No ArgumentNullException.ThrowIfNull(sp) guard. If called with a null
-    // IServiceProvider, sp.GetService<...>() will throw NullReferenceException with no
-    // actionable message. All current callers are DI factory lambdas (non-null), but the
-    // asymmetry with CreateAgentRegistryService (which documents this concern) is worth
-    // closing. See review finding [WARNING] ApiServiceCollectionExtensions.cs:257.
     internal static CodingAgent.Orchestration.Redis.IRedisStore? ResolveRedisStoreOrNull(
         IServiceProvider sp)
     {
+        ArgumentNullException.ThrowIfNull(sp);
         var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
         return mux is not null
             ? new CodingAgent.Orchestration.Redis.RedisStore(mux.GetDatabase())
