@@ -374,7 +374,7 @@ public class RefactoringExecutorTests : IDisposable
     public void FormatRefactoringSummary_NoIssues_ReturnsNoOpportunities()
     {
         // Act
-        var summary = RefactoringExecutor.FormatRefactoringSummary([]);
+        var summary = RefactoringIssueBodyFormatter.FormatRefactoringSummary([]);
 
         // Assert
         summary.Should().Contain("No refactoring opportunities identified");
@@ -391,7 +391,7 @@ public class RefactoringExecutorTests : IDisposable
         };
 
         // Act
-        var summary = RefactoringExecutor.FormatRefactoringSummary(issues);
+        var summary = RefactoringIssueBodyFormatter.FormatRefactoringSummary(issues);
 
         // Assert
         summary.Should().Contain("2");
@@ -413,7 +413,7 @@ public class RefactoringExecutorTests : IDisposable
                 new IssueSummary
                 {
                     Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow.AddDays(-5),
-                    Description = $"## Problem\n...\n*{RefactoringExecutor.GeneratedIssueFooter}.*"
+                    Description = $"## Problem\n...\n*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
                 },
                 new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }
             ],
@@ -547,7 +547,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var scanFooter = $"*{RefactoringExecutor.GeneratedIssueFooter}.*";
+        var scanFooter = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*";
         var closedIssues = new PagedResult<IssueSummary>
         {
             Items = new[]
@@ -604,7 +604,7 @@ public class RefactoringExecutorTests : IDisposable
                 new IssueSummary
                 {
                     Identifier = "3236", Title = "Stop swallowing cancellation", Labels = ["agent:generated", "agent:done"],
-                    Description = $"*{RefactoringExecutor.GeneratedIssueFooter}.*"
+                    Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
                 }
             ],
             Page = 1,
@@ -659,7 +659,7 @@ public class RefactoringExecutorTests : IDisposable
                     new IssueSummary
                     {
                         Identifier = "7", Title = "Remove dead helper", Labels = ["agent:generated", "agent:done"],
-                        Description = $"*{RefactoringExecutor.GeneratedIssueFooter}.*"
+                        Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
                     }
                 ],
                 Page = 1,
@@ -698,7 +698,7 @@ public class RefactoringExecutorTests : IDisposable
             Technique = "Extract Method"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("**Effort:** medium");
         body.Should().Contain("**Risk:** low");
@@ -718,7 +718,7 @@ public class RefactoringExecutorTests : IDisposable
             Rationale = "Convention violation"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().NotContain("**Effort:**");
         body.Should().NotContain("**Risk:**");
@@ -873,7 +873,7 @@ public class RefactoringExecutorTests : IDisposable
             Prerequisites = ["valid prerequisite", null!, "another valid one"]
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("valid prerequisite");
         body.Should().Contain("another valid one");
@@ -893,7 +893,7 @@ public class RefactoringExecutorTests : IDisposable
             Technique = "low <!-- hidden -->"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("**Effort:** &lt;script>alert('xss')&lt;/script>");
         body.Should().Contain("**Risk:** @\u200Badmin injection");
@@ -1038,7 +1038,7 @@ public class RefactoringExecutorTests : IDisposable
             AcceptanceCriteria = ["Criterion A", "Criterion B", "Criterion C"]
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- [ ] Criterion A");
         body.Should().Contain("- [ ] Criterion B");
@@ -1059,7 +1059,7 @@ public class RefactoringExecutorTests : IDisposable
             AcceptanceCriteria = null
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- [ ] Refactoring applied without changing observable behavior");
         body.Should().Contain("- [ ] All existing tests continue to pass");
@@ -1077,7 +1077,7 @@ public class RefactoringExecutorTests : IDisposable
             AcceptanceCriteria = []
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- [ ] Refactoring applied without changing observable behavior");
         body.Should().Contain("- [ ] All existing tests continue to pass");
@@ -1095,7 +1095,7 @@ public class RefactoringExecutorTests : IDisposable
             AcceptanceCriteria = ["valid one", null!, "another valid"]
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- [ ] valid one");
         body.Should().Contain("- [ ] another valid");
@@ -1117,7 +1117,7 @@ public class RefactoringExecutorTests : IDisposable
             AcceptanceCriteria = ["@admin injection", "<script>xss</script>"]
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- [ ] @\u200Badmin injection");
         body.Should().Contain("- [ ] &lt;script>xss&lt;/script>");
@@ -1215,7 +1215,7 @@ public class RefactoringExecutorTests : IDisposable
         var proposal = Proposal("Extract class",
             prerequisites: ["Complete proposal #1 (dead code removal)", "After #2 is merged"]);
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         // GitHub turns a bare #N into a link to issue N, which is unrelated to the proposal numbering.
         body.Should().Contain("- Complete proposal `#1` (dead code removal)");
@@ -1227,7 +1227,7 @@ public class RefactoringExecutorTests : IDisposable
     {
         var proposal = Proposal("Use primary constructors", prerequisites: ["Requires C# 12 and F#8 support"]);
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- Requires C# 12 and F#8 support");
     }
@@ -1237,7 +1237,7 @@ public class RefactoringExecutorTests : IDisposable
     {
         var proposal = Proposal("Rename", prerequisites: ["Add characterization tests for X before refactoring"]);
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- Add characterization tests for X before refactoring");
     }
@@ -1403,7 +1403,7 @@ public class RefactoringExecutorTests : IDisposable
     public void FormatRefactoringSummary_ZeroCreatedNonZeroProposals_WithHint_IncludesHintInSummary()
     {
         // Act
-        var summary = RefactoringExecutor.FormatRefactoringSummary(
+        var summary = RefactoringIssueBodyFormatter.FormatRefactoringSummary(
             [],
             proposalCount: 3,
             firstFailureHint: "401 Unauthorized — token expired or revoked");
@@ -1424,7 +1424,7 @@ public class RefactoringExecutorTests : IDisposable
         };
 
         // Act
-        var summary = RefactoringExecutor.FormatRefactoringSummary(
+        var summary = RefactoringIssueBodyFormatter.FormatRefactoringSummary(
             createdIssues,
             proposalCount: 3,
             firstFailureHint: "403 Forbidden — app missing 'issues: write' permission");
@@ -1737,7 +1737,7 @@ public class RefactoringExecutorTests : IDisposable
             Rationale = "THE-PROBLEM"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         var problem = body.IndexOf("## Problem", StringComparison.Ordinal);
         var approach = body.IndexOf("## Suggested Approach", StringComparison.Ordinal);
@@ -1760,7 +1760,7 @@ public class RefactoringExecutorTests : IDisposable
             EstimatedEffort = "small"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("**Category:** dead-code | **Effort:** small");
     }
@@ -1778,7 +1778,7 @@ public class RefactoringExecutorTests : IDisposable
             EvidenceSources = ["usage-search:Foo<T>:0-callers"]
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal).ReplaceLineEndings("\n");
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal).ReplaceLineEndings("\n");
 
         body.Should().Contain("## Evidence");
         body.Should().Contain("````\nsrc/A.cs:L10\nif (x < 0) { /* ``` */ }\n````");
@@ -1798,7 +1798,7 @@ public class RefactoringExecutorTests : IDisposable
             ScopeQuery = "git grep -n 'catch (Exception ex)' -- src"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal).ReplaceLineEndings("\n");
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal).ReplaceLineEndings("\n");
 
         body.Should().Contain("## Scope");
         body.Should().Contain("```sh\ngit grep -n 'catch (Exception ex)' -- src\n```");
@@ -1809,7 +1809,7 @@ public class RefactoringExecutorTests : IDisposable
     {
         var proposal = new RefactoringProposal { Title = "Fix", AffectedFiles = ["src/A.cs"], Description = "d", Rationale = "r" };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal, "0123456789abcdef0123");
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal, "0123456789abcdef0123");
 
         body.Should().EndWith(
             "*This issue was automatically generated by the refactoring detection consolidation loop at commit `0123456789ab`. Line numbers refer to that commit.*");
@@ -1820,7 +1820,7 @@ public class RefactoringExecutorTests : IDisposable
     {
         var proposal = new RefactoringProposal { Title = "Fix", AffectedFiles = ["src/A.cs"], Description = "d", Rationale = "r" };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().EndWith("*This issue was automatically generated by the refactoring detection consolidation loop.*");
     }
@@ -1837,7 +1837,7 @@ public class RefactoringExecutorTests : IDisposable
             Category = "bug"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal);
 
         body.Should().Contain("- [ ] A test reproduces the failure described under Problem and passes after the fix");
         body.Should().NotContain("without changing observable behavior");
@@ -2005,7 +2005,7 @@ public class RefactoringExecutorTests : IDisposable
     // ── CollectScanIssueReferencesAsync tests ────────────────────────────────────────────────
 
     private static IssueSummary MakeScanIssue(string identifier, string title = "Refactor X") =>
-        new() { Identifier = identifier, Title = title, Labels = ["agent:generated"], Description = $"*{RefactoringExecutor.GeneratedIssueFooter}.*" };
+        new() { Identifier = identifier, Title = title, Labels = ["agent:generated"], Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*" };
 
     private static IssueSummary MakeNonScanIssue(string identifier, string title = "Other issue") =>
         new() { Identifier = identifier, Title = title, Labels = [], Description = "Some other description." };
@@ -2182,7 +2182,7 @@ public class RefactoringExecutorTests : IDisposable
     [Fact]
     public void FormatRefactoringSummary_WithDroppedProposals_AppendsTheCount()
     {
-        var summary = RefactoringExecutor.FormatRefactoringSummary([], proposalCount: 0, droppedCount: 2);
+        var summary = RefactoringIssueBodyFormatter.FormatRefactoringSummary([], proposalCount: 0, droppedCount: 2);
 
         summary.Should().Be("No refactoring opportunities identified (2 proposal(s) dropped by validation)");
     }
@@ -2207,7 +2207,7 @@ public class RefactoringExecutorTests : IDisposable
             Evidence = "src/A.cs:L10\ncatch (Exception ex) { }"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal, "50e1ff446xyz012");
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal, "50e1ff446xyz012");
 
         // Section is present and before ## Suggested Approach
         var beforeYouStart = body.IndexOf("## Before You Start", StringComparison.Ordinal);
@@ -2243,7 +2243,7 @@ public class RefactoringExecutorTests : IDisposable
             Evidence = "src/A.cs:L10\ncatch (Exception ex) { }"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal, "abc123");
 
         body.Should().Contain("## Before You Start");
         body.Should().Contain("Look for the code quoted under **Evidence**.");
@@ -2263,7 +2263,7 @@ public class RefactoringExecutorTests : IDisposable
             Evidence = null
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal, "abc123");
 
         body.Should().Contain("## Before You Start");
         body.Should().Contain("Run the search under **Scope**.");
@@ -2283,7 +2283,7 @@ public class RefactoringExecutorTests : IDisposable
             Evidence = null
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal, "abc123");
 
         body.Should().NotContain("## Before You Start");
     }
@@ -2301,7 +2301,7 @@ public class RefactoringExecutorTests : IDisposable
             Evidence = "src/A.cs:L10\nsome code"
         };
 
-        var body = RefactoringExecutor.FormatIssueBody(proposal, commitSha: null);
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal, commitSha: null);
 
         body.Should().Contain("## Before You Start");
         body.Should().Contain("written against an earlier commit");

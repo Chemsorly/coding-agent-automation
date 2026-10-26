@@ -642,6 +642,137 @@ public class QualityGateExecutorPostPrCiTests
             Labels = new[] { "bug" }
         }
     };
+
+    // ── Issue #3909: post-PR CI status-read errors must not consume agent retries ──
+
+    /// <summary>
+    /// Acceptance criterion (issue #3909): when PollAndHandleInfraRetryAsync throws once during
+    /// post-PR CI (e.g. a transient GitHub API Server Error) and then returns Passed on retry,
+    /// the run must complete as non-draft (Completed). Draft finalization must never be called.
+    /// </summary>
+    [Fact]
+    public async Task PostPrCi_StatusReadThrowsOnceThenPasses_GatePasses()
+    {
+        SetupValidatorAlwaysPasses();
+        SetupNoChangesToCommit();
+
+        // GetRunStatusAsync: CI appears immediately (Running with one job)
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
+            });
+
+        // Sequence (3 entries with SetupNoChangesToCommit — cleanup skips CI):
+        //   call #1 — pre-PR CI via AppendExternalCiIfNeededAsync → passes
+        //   call #2 — post-PR CI, first attempt → throws (transient API error)
+        //   call #3 — post-PR CI, retry → passes
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = new List<PipelineJobResult>() })
+            .ThrowsAsync(new HttpRequestException("Server Error"))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = new List<PipelineJobResult>() });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContextForStatusReadTests(), CancellationToken.None);
+
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, false, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "run must complete as non-draft when post-PR CI passes after status-read retry");
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "run must NOT be finalized as draft when post-PR CI status-read error is retried successfully");
+        _run.InfrastructureRetryCount.Should().Be(1,
+            "one status-read failure on the post-PR path must increment InfrastructureRetryCount exactly once");
+    }
+
+    /// <summary>
+    /// Regression guard (issue #3909): when PollAndHandleInfraRetryAsync always throws
+    /// (persistent provider outage), the post-PR exhaustion gate must carry
+    /// <c>IsInfrastructureFailure = true</c> so the retry-loop short-circuit skips LLM invocation.
+    /// </summary>
+    [Fact]
+    public async Task PostPrCi_StatusReadAlwaysThrows_FinalizesDraftPrAsInfrastructureFailure()
+    {
+        SetupValidatorAlwaysPasses();
+        SetupNoChangesToCommit();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
+            });
+
+        // Call #1 (pre-PR CI): passes. All subsequent post-PR CI attempts always throw.
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = new List<PipelineJobResult>() });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Server Error"));
+
+        await _executor.ProceedToQualityGatesAsync(BuildContextForStatusReadTests(), CancellationToken.None);
+
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "persistent post-PR CI status-read failure must finalize as draft PR");
+        _run.RetryErrors.Should().Contain(
+            e => e.Contains("CI status unavailable"),
+            "the gate failure summary must identify the status-read exhaustion");
+    }
+
+    /// <summary>
+    /// BuildContext variant for issue #3909 status-read retry tests:
+    /// <c>MaxInfrastructureRetries = 2</c> and <c>ExternalCiPollInterval = TimeSpan.Zero</c>
+    /// so re-poll loops complete instantly in tests.
+    /// </summary>
+    private QualityGateContext BuildContextForStatusReadTests() => new()
+    {
+        Run = _run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 2,
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+            ExternalCiPollInterval = TimeSpan.Zero,
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = _mockAgent.Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new[]
+        {
+            new QualityGateConfiguration
+            {
+                DisplayName = "Test QGC",
+                CompilationCommand = "dotnet",
+                CompilationArguments = new[] { "build" },
+                TestCommand = "dotnet",
+                TestArguments = new[] { "test" }
+            }
+        },
+        Issue = new IssueDetail
+        {
+            Identifier = "2106",
+            Title = "Post-PR CI wait test",
+            Description = "Test description",
+            Labels = new[] { "bug" }
+        }
+    };
 }
 
 /// <summary>

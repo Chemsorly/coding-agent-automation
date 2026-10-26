@@ -529,14 +529,18 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
 
         // Block after two polls so we capture at least one complete runtime cycle
         var pollCount = 0;
-        var secondCycleDone = new TaskCompletionSource();
+        var secondCycleDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecondPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(
                 It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
+            .Returns(async () =>
             {
                 if (Interlocked.Increment(ref pollCount) >= 2)
+                {
                     secondCycleDone.TrySetResult();
+                    await releaseSecondPoll.Task.WaitAsync(BackgroundWait.Timeout);
+                }
                 return new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
@@ -555,21 +559,15 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
 
         await BackgroundWait.SignalledAsync(secondCycleDone.Task, "the loop should run a second cycle");
 
-        // Stop the loop immediately so cycle 3 cannot start and contaminate the log.
-        // StopLoop() sets _stopRequested and cancels _loopCts, causing RunMultiTemplateLoopAsync
-        // to exit after the current cycle's poll delay (≤50ms). Cancelling hostCts unblocks
-        // ExecuteAsync's WaitAsync, ensuring the background service terminates promptly.
-        // Snapshot the log only after the task has fully stopped so no further writes can occur.
+        // The second poll is held until the loop has been stopped, so no third cycle can start and mix its calls into the log.
         svc.StopLoop();
         hostCts.Cancel();
+        releaseSecondPoll.TrySetResult();
 
         // Wait for the background service to fully stop so no further calls are made.
         try { await executeTask.WaitAsync(BackgroundWait.Timeout); } catch { /* cancellation or timeout */ }
 
-        // Snapshot the call log after the loop has stopped — this guarantees no cycle 3 calls
-        // can appear after the snapshot, eliminating the race where cycle 3's LoadProviderConfigs_Issue
-        // (recorded after secondCycleDone but before the old snapshot) had a higher seq number than
-        // cycle 2's GetActiveIssueIdentifiers, making the LastSeq ordering check fail spuriously.
+        // Snapshot the log after the loop has fully stopped.
         List<(int Seq, string Name)> frozenLog;
         lock (sync) { frozenLog = [.. callLog]; }
 

@@ -215,16 +215,6 @@ public class BffForwardingTests : IClassFixture<BffWebApplicationFactory>
     }
 
     [Fact]
-    public async Task ApiTimeout_Is504_WithTheShortTestTimeout()
-    {
-        using var client = await _factory.SignInClientAsync("reader");
-
-        var response = await client.Http.SendAsync(Get("/api/ui/slow"));
-
-        response.StatusCode.Should().Be(HttpStatusCode.GatewayTimeout, "the 1 s test override reaches the forwarder");
-    }
-
-    [Fact]
     public async Task BrokenApiConnection_Is502()
     {
         using var client = await _factory.SignInClientAsync("reader");
@@ -232,6 +222,21 @@ public class BffForwardingTests : IClassFixture<BffWebApplicationFactory>
         var response = await client.Http.SendAsync(Get("/api/ui/abort"));
 
         response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+    }
+
+    /// <summary>
+    /// Regression guard: the base <see cref="BffWebApplicationFactory"/> must not override
+    /// <c>Bff__ActivityTimeout</c>. The stub's /api/ui/slow takes 3 s; if the factory ever
+    /// reverts to the 1 s short timeout, YARP returns 504 and this test fails.
+    /// </summary>
+    [Fact]
+    public async Task SlowApi_WithProductionTimeout_Returns200()
+    {
+        using var client = await _factory.SignInClientAsync("reader");
+
+        var response = await client.Http.SendAsync(Get("/api/ui/slow"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "the production 5-min timeout does not expire on a 3 s stub response");
     }
 
     [Fact]
