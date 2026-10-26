@@ -126,9 +126,11 @@ public class JobTemplateStoreLoggingTests
         var store = JobTemplateStore.LoadFromConfiguration(config, level, msg);
 
         store.GetAllTemplates().Should().BeEmpty();
-        capture.Events.Should().ContainSingle(e => e.Level == level);
-        var ev = capture.Events.Single();
-        ev.Properties.Should().ContainKey("Path");
+        // Filter by both level and the Path property so that unrelated Warning events emitted by
+        // concurrently-running test classes (which share the global Log.Logger) don't cause a
+        // false ContainSingle failure.
+        capture.Events.Should().ContainSingle(e => e.Level == level && e.Properties.ContainsKey("Path"));
+        var ev = capture.Events.Single(e => e.Level == level && e.Properties.ContainsKey("Path"));
         ev.Properties["Path"].ToString().Should().Contain("job-templates.yaml");
     }
 
@@ -169,9 +171,11 @@ public class JobTemplateStoreLoggingTests
         var store = JobTemplateStore.LoadFromConfiguration(config, LogEventLevel.Warning, msg);
 
         store.GetAllTemplates().Should().BeEmpty();
-        capture.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Warning);
-        var ev = capture.Events.Single();
-        ev.Properties.Should().ContainKey("Path");
+        // Filter by both level and the Path property so that unrelated Warning events emitted by
+        // concurrently-running test classes (which share the global Log.Logger) don't cause a
+        // false ContainSingle failure.
+        capture.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Warning && e.Properties.ContainsKey("Path"));
+        var ev = capture.Events.Single(e => e.Level == LogEventLevel.Warning && e.Properties.ContainsKey("Path"));
         ev.Properties["Path"].ToString().Should().Contain("job-templates.yaml");
     }
 }
