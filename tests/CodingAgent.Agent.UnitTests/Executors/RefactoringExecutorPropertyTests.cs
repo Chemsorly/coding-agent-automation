@@ -40,7 +40,7 @@ public class RefactoringExecutorPropertyTests
         var capped = createdIssues.Take(3).ToList();
         var proposalCount = createdIssues.Count;
 
-        var summary = RefactoringExecutor.FormatRefactoringSummary(capped, proposalCount);
+        var summary = RefactoringIssueBodyFormatter.FormatRefactoringSummary(capped, proposalCount);
 
         if (capped.Count == 0 && proposalCount == 0)
         {
@@ -64,7 +64,7 @@ public class RefactoringExecutorPropertyTests
     {
         var capped = createdIssues.Take(3).ToList();
 
-        var summary = RefactoringExecutor.FormatRefactoringSummary(capped, capped.Count);
+        var summary = RefactoringIssueBodyFormatter.FormatRefactoringSummary(capped, capped.Count);
 
         if (capped.Count == 0)
         {
