@@ -317,20 +317,10 @@ public sealed class PullRequestFinalizationService
 
         try
         {
-            // TODO [WARNING]: run.PullRequestBody may be stale here when GeneratePrDescriptionAsync
-            // did not update it (file missing, empty output, or invalid PR number inside
-            // GeneratePrDescriptionAsync). In those skip paths run.PullRequestBody still holds the
-            // pre-description body, causing the mark-ready PATCH to send body content that differs
-            // from what was last written to the API by GeneratePrDescriptionAsync on the happy path.
-            // Consider always keeping run.PullRequestBody in sync with the latest value sent to the
-            // API on exit from GeneratePrDescriptionAsync, or passing null for the body argument here
-            // to make this a state-change-only call that avoids overwriting with potentially stale
-            // content. The body divergence is functionally harmless (idempotent on the happy path,
-            // fallback body on skip) but obscures which body revision was used for the final PR state.
             // TODO [WARNING]: TaskCanceledException is a subclass of OperationCanceledException, so the
             // "when (ex is not OperationCanceledException)" filter correctly excludes both. This is the
             // intended behavior matching all other UpdatePullRequestAsync guards in this file.
-            await repoProvider.UpdatePullRequestAsync(prNum, run.PullRequestBody ?? "", true, ct);
+            await repoProvider.UpdatePullRequestAsync(prNum, null, true, ct);
             emitOutputLine($"✅ PR #{run.PullRequestNumber} marked ready for review");
             // Record the mark-ready timestamp so post-PR CI polling can use it as the
             // notBefore anchor (filters out push-event CI runs that completed before
