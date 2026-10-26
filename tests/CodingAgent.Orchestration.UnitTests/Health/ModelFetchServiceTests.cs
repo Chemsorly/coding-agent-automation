@@ -516,18 +516,14 @@ public class ModelFetchServiceTests
         var serviceA = new ModelFetchService(
             registry, mockCommA.Object, logger.Object,
             redis: fakeRedis,
-            // TODO: [WARNING] The 500 ms poll interval is a significant fraction of this 2000 ms
-            // responseTimeout, leaving only ~3 polling windows. On a slow CI host, scheduler starvation
-            // could cause the fetch to time out before the poll fires, making the test flaky. Consider
-            // reducing the poll interval for tests or increasing this timeout.
-            responseTimeout: TimeSpan.FromMilliseconds(2000));
+            responseTimeout: TimeSpan.FromSeconds(10));
 
         // serviceB: the replica that receives the agent's result (no pending TCS on B).
         var mockCommB = new Mock<IAgentCommunication>();
         var serviceB = new ModelFetchService(
             registry, mockCommB.Object, logger.Object,
             redis: fakeRedis,
-            responseTimeout: TimeSpan.FromMilliseconds(2000));
+            responseTimeout: TimeSpan.FromSeconds(10));
 
         // Register an agent so serviceA can find one.
         registry.Register(new AgentRegistrationMessage { AgentId = "fetch-pod-1", Hostname = "h", Labels = [] }, "conn-pod-1");
@@ -554,7 +550,7 @@ public class ModelFetchServiceTests
         });
 
         // serviceA must return the models (not time out).
-        var (models, error) = await fetchTask.WaitAsync(TimeSpan.FromSeconds(5));
+        var (models, error) = await fetchTask.WaitAsync(TimeSpan.FromSeconds(15));
 
         error.Should().BeNull("cross-replica delivery must succeed");
         models.Should().HaveCount(1);
@@ -577,7 +573,7 @@ public class ModelFetchServiceTests
         var service = new ModelFetchService(
             registry, mockComm.Object, logger.Object,
             redis: fakeRedis,
-            responseTimeout: TimeSpan.FromMilliseconds(2000));
+            responseTimeout: TimeSpan.FromSeconds(10));
 
         registry.Register(new AgentRegistrationMessage { AgentId = "agent-same-1", Hostname = "h", Labels = [] }, "conn-same-1");
 
@@ -682,16 +678,13 @@ public class ModelFetchServiceTests
         var serviceA = new ModelFetchService(
             registry, mockCommA.Object, logger.Object,
             redis: fakeRedis,
-            // TODO: [WARNING] Same timing sensitivity as Test 1: 500 ms poll / 2000 ms timeout leaves
-            // only ~3 polling windows. Flakiness is possible on a slow CI host. Consider reducing the
-            // poll interval or increasing the timeout to add more headroom.
-            responseTimeout: TimeSpan.FromMilliseconds(2000));
+            responseTimeout: TimeSpan.FromSeconds(10));
 
         var mockCommB = new Mock<IAgentCommunication>();
         var serviceB = new ModelFetchService(
             registry, mockCommB.Object, logger.Object,
             redis: fakeRedis,
-            responseTimeout: TimeSpan.FromMilliseconds(2000));
+            responseTimeout: TimeSpan.FromSeconds(10));
 
         registry.Register(new AgentRegistrationMessage { AgentId = "fetch-pod-cleanup", Hostname = "h", Labels = [] }, "conn-pod-cleanup");
 
@@ -712,11 +705,10 @@ public class ModelFetchServiceTests
             Models = [new AgentModelInfo { ModelId = "cleanup-model" }]
         });
 
-        await fetchTask.WaitAsync(TimeSpan.FromSeconds(5));
+        var (models, error) = await fetchTask.WaitAsync(TimeSpan.FromSeconds(15));
 
-        // TODO: [WARNING] This test only asserts key deletion but never asserts that the fetch returned
-        // the correct result. A bug where the key is deleted but the wrong models are returned would go
-        // undetected. Add an assertion on the models returned by fetchTask (e.g. models[0].ModelId == "cleanup-model").
+        error.Should().BeNull("cross-replica fetch must succeed");
+        models[0].ModelId.Should().Be("cleanup-model");
 
         // The Redis key must have been deleted after A read the result.
         var redisKey = $"fetch-models:result:{requestId}";
