@@ -65,32 +65,88 @@ public partial class QualityGateExecutor
                 return report;
 
             await context.Callbacks.CreateDraftPrIfNotExists(context.Run, ct);
-            var ciResult = await RunExternalCiPollAsync(context, ct);
 
-            if (ciResult.ciStatus.State == PipelineRunState.ConflictRestart)
-                return BuildConflictRestartReport(context.Run, report, context.Callbacks);
+            // Re-poll loop: when RunExternalCiPollAsync throws a transient exception (e.g. provider
+            // API 5xx), retry up to MaxInfrastructureRetries times before returning an infra-failure
+            // gate. OperationCanceledException propagates unconditionally so timeout and pipeline
+            // cancellation are not swallowed. Exceptions from CommitAndPushAsync and
+            // CreateDraftPrIfNotExists above fall through to the outer catch (unchanged).
+            (bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)? ciResult = null;
+            var localRetry = 0;
+            Exception? lastEx = null;
+            while (true)
+            {
+                try
+                {
+                    ciResult = await RunExternalCiPollAsync(context, ct);
+                    break;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    lastEx = ex;
+                    if (localRetry >= context.Config.MaxInfrastructureRetries)
+                        break; // exhausted — produce infra-failure gate below
+                    localRetry++;
+                    context.Run.InfrastructureRetryCount++;
+                    _logger.Warning(ex,
+                        "Pipeline {RunId} could not read the CI status ({Error}), polling again ({Attempt}/{Max})",
+                        context.Run.RunId, ex.Message, localRetry, context.Config.MaxInfrastructureRetries);
+                    context.Callbacks.EmitOutputLine(
+                        $"⚠️ Could not read the CI status — polling again ({localRetry}/{context.Config.MaxInfrastructureRetries})...");
+                    await Task.Delay(context.Config.ExternalCiPollInterval, ct);
+                }
+            }
 
-            if (ciResult.ciStatus.State == PipelineRunState.PrMerged)
-                return BuildPrMergedReport(report);
-
-            if (ciResult.ciStatus.State == PipelineRunState.PrClosed)
-                return BuildPrClosedReport(report);
-
-            ciGate = CiPollingCoordinator.BuildCiGateResult(
-                ciResult.ciPassed, ciResult.ciStatus, ciResult.ciLogPaths, "CI", ExternalCiName, context.Callbacks);
-
-            // Propagate infrastructure failure flag so RunRetryLoopAsync can short-circuit LLM invocation
-            if (ciResult.ciStatus.IsInfrastructureFailure)
+            if (ciResult is null && localRetry > 0)
+            {
+                // Re-poll attempts exhausted: classify as infrastructure failure so the
+                // retry loop short-circuit in RunRetryLoopAsync skips the LLM invocation.
+                var errorGate = CiPollingCoordinator.BuildCiErrorGateResult(
+                    ExternalCiName, "CI status unavailable — " + lastEx!.Message);
                 ciGate = new GateResult
                 {
-                    GateName = ciGate.GateName,
-                    Passed = ciGate.Passed,
-                    Details = ciGate.Details,
-                    TestsFailed = ciGate.TestsFailed,
-                    TestsPassed = ciGate.TestsPassed,
-                    TestsSkipped = ciGate.TestsSkipped,
+                    GateName = errorGate.GateName,
+                    Passed = errorGate.Passed,
+                    Details = errorGate.Details,
                     IsInfrastructureFailure = true
                 };
+            }
+            else if (ciResult is null)
+            {
+                // MaxInfrastructureRetries = 0: no retries configured — re-throw so the outer
+                // catch (Exception ex) handles this with the original pre-fix behaviour.
+                throw lastEx!;
+            }
+            else
+            {
+                var (ciPassed, ciStatus, ciLogPaths) = ciResult.Value;
+
+                if (ciStatus.State == PipelineRunState.ConflictRestart)
+                    return BuildConflictRestartReport(context.Run, report, context.Callbacks);
+
+                if (ciStatus.State == PipelineRunState.PrMerged)
+                    return BuildPrMergedReport(report);
+
+                if (ciStatus.State == PipelineRunState.PrClosed)
+                    return BuildPrClosedReport(report);
+
+                ciGate = CiPollingCoordinator.BuildCiGateResult(
+                    ciPassed, ciStatus, ciLogPaths, "CI", ExternalCiName, context.Callbacks);
+
+                // Propagate infrastructure failure flag so RunRetryLoopAsync can short-circuit LLM invocation
+                if (ciStatus.IsInfrastructureFailure)
+                    ciGate = new GateResult
+                    {
+                        GateName = ciGate.GateName,
+                        Passed = ciGate.Passed,
+                        Details = ciGate.Details,
+                        TestsFailed = ciGate.TestsFailed,
+                        TestsPassed = ciGate.TestsPassed,
+                        TestsSkipped = ciGate.TestsSkipped,
+                        IsInfrastructureFailure = true
+                    };
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

@@ -17,10 +17,7 @@ namespace CodingAgent.Web.UnitTests;
 /// Verifies the issue context preparation logic (fetching, parsing,
 /// comment capping, and basic staleness signal detection).
 /// </summary>
-// TODO: add [Collection("SerilogLoggerTests")] once a [CollectionDefinition("SerilogLoggerTests")]
-// class exists in this project (see IssueContextBuilderImageExtractionFailureTests below). Without
-// the definition the collection attribute is a no-op and this class can run in parallel with
-// IssueContextBuilderImageExtractionFailureTests, causing Log.Logger races in CI.
+[Collection("SerilogLoggerTests")]
 public class IssueContextBuilderTests
 {
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
@@ -468,11 +465,6 @@ public class IssueContextBuilderTests
 /// failure path. Uses <c>[Collection("SerilogLoggerTests")]</c> to serialize access to the
 /// global <see cref="Log.Logger"/> alongside other tests that swap it.
 /// </summary>
-// TODO: create a [CollectionDefinition("SerilogLoggerTests", DisableParallelization = true)] class
-// in this project (mirroring ActivityListenerTestsCollection.cs). Without it, xUnit treats each
-// [Collection("SerilogLoggerTests")] class as an independent single-class collection and does NOT
-// serialize them against each other, so concurrent Log.Logger swaps in JobTemplateStoreLoggingTests,
-// ChatDispatcherObservabilityTests, and JobSpecBuilderLoggingTests can still race with this test.
 [Collection("SerilogLoggerTests")]
 public class IssueContextBuilderImageExtractionFailureTests
 {

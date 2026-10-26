@@ -26,6 +26,8 @@ public class PushErrorClassifierTests
     [Theory]
     [InlineData("non-fast-forward update rejected")]
     [InlineData("push rejected by remote")]
+    [InlineData("cannot push non-fastforwardable reference")]
+    [InlineData("cannot push because a reference that you are trying to update on the remote contains commits that are not present locally.")]
     public void Classify_Conflict_ReturnsConflict(string message)
     {
         PushErrorClassifier.Classify(message).Should().Be(PushErrorClassifier.PushFailureCategory.Conflict);

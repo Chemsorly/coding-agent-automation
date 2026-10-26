@@ -464,6 +464,116 @@ public class QualityGateExecutorCiPollingTests
         PipelineProvider = _mockPipelineProvider.Object,
         QualityGateConfigs = new List<QualityGateConfiguration>()
     };
+
+    private QualityGateContext BuildContextForStatusReadTests(PipelineRun run) => new()
+    {
+        Run = run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 2,
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            ExternalCiPollInterval = TimeSpan.Zero,
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = new Mock<IAgentProvider>().Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new List<QualityGateConfiguration>()
+    };
+
+    // ── Issue #3909: CI status-read errors must not consume agent retries ──────
+
+    /// <summary>
+    /// Acceptance criterion (issue #3909): when WaitForCompletionAsync throws once (e.g. a
+    /// transient GitHub API Server Error) and then returns Passed on retry, the gate must
+    /// pass and the code-fix retry budget must be untouched.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_StatusReadThrowsOnceThenPasses_GatePassesWithoutLlmRetry()
+    {
+        var run = CreateRun();
+
+        // First call: throws a transient API error; second call: returns Passed
+        _mockPipelineProvider.SetupSequence(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Server Error"))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = new List<PipelineJobResult>() });
+
+        var context = BuildContextForStatusReadTests(run);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull("gate must be populated after status-read retry succeeds");
+        result.ExternalCi!.Passed.Should().BeTrue("gate must pass when the re-poll returns Passed");
+        run.InfrastructureRetryCount.Should().Be(1,
+            "one status-read failure must increment InfrastructureRetryCount exactly once");
+        run.RetryCount.Should().Be(0,
+            "code-fix retry budget must not be consumed by a transient CI status-read error");
+    }
+
+    /// <summary>
+    /// Acceptance criterion (issue #3909): when WaitForCompletionAsync always throws (e.g. the
+    /// GitHub API is consistently unavailable), the gate must fail as an infrastructure failure
+    /// so the LLM is not invoked.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_StatusReadAlwaysThrows_ReturnsInfrastructureFailureGate()
+    {
+        var run = CreateRun();
+
+        // All calls throw — simulates persistent provider outage
+        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Server Error"));
+
+        var context = BuildContextForStatusReadTests(run);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull("exhaustion path must return a gate, not null");
+        result.ExternalCi!.Passed.Should().BeFalse("gate must fail on exhaustion");
+        result.ExternalCi.IsInfrastructureFailure.Should().BeTrue(
+            "exhausted status-read must be classified as infrastructure failure so LLM is not invoked");
+        result.ExternalCi.Details.Should().Contain("CI status unavailable",
+            "Details must identify the status-read exhaustion as the cause");
+        run.InfrastructureRetryCount.Should().Be(2,
+            "each of the two re-polls (MaxInfrastructureRetries=2) must increment InfrastructureRetryCount once");
+    }
+
+    /// <summary>
+    /// Scope guard (issue #3909): an exception from CommitAndPushAsync (here CommitAllAsync
+    /// throwing a non-commit-related error) must produce the existing non-infrastructure gate
+    /// failure, NOT an infra-failure gate. This proves the scope boundary: only status-read
+    /// exceptions (inside RunExternalCiPollAsync) enter the re-poll loop; commit/push failures
+    /// still reach the outer catch and consume a code-fix retry as before.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_CommitAndPushFails_ReturnsNonInfrastructureGate()
+    {
+        var run = CreateRun();
+
+        // CommitAllAsync throws a non-"No changes to commit" exception → CommitAndPushAsync fails
+        // and reaches the outer catch in AppendExternalCiIfNeededAsync directly (not the re-poll loop)
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("push failed"));
+
+        var context = BuildContext(run);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull("CommitAndPush failure must produce a gate result");
+        result.ExternalCi!.Passed.Should().BeFalse("gate must fail when CommitAndPush throws");
+        result.ExternalCi.IsInfrastructureFailure.Should().BeNull(
+            "commit/push failure must NOT be classified as infrastructure failure — it must consume a code-fix retry");
+    }
 }
 
 
