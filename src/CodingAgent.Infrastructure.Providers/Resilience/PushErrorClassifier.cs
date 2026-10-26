@@ -42,7 +42,9 @@ public static class PushErrorClassifier
         }
 
         if (errorMessage.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) ||
-            errorMessage.Contains("rejected", StringComparison.OrdinalIgnoreCase))
+            errorMessage.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||
+            errorMessage.Contains("non-fastforwardable", StringComparison.OrdinalIgnoreCase) ||
+            errorMessage.Contains("contains commits that are not present locally", StringComparison.OrdinalIgnoreCase))
         {
             return PushFailureCategory.Conflict;
         }
