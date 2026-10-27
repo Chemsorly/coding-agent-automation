@@ -130,10 +130,10 @@ public sealed class AgentOrphanRecoveryService(
         // Check history — don't re-register a completed run.
         // Only treat runs with successful terminal states as stale.
         // Cancelled/Failed runs may be legitimately re-dispatched with the same RunId.
-        var history = await _facade.GetRunHistoryAsync(ct);
-        var inHistory = history.Any(r => r.RunId == activeJob.RunId
-            && r.FinalStep != PipelineStep.Cancelled
-            && r.FinalStep != PipelineStep.Failed);
+        var summary = await _facade.GetRunSummaryAsync(activeJob.RunId, ct);
+        var inHistory = summary is not null
+            && summary.FinalStep != PipelineStep.Cancelled
+            && summary.FinalStep != PipelineStep.Failed;
 
         if (!inHistory)
         {
@@ -443,17 +443,14 @@ public sealed class AgentOrphanRecoveryService(
         // non-Failed terminal state (e.g. Completed, PrMerged, PrClosed, ConflictRestart).
         // Mirrors the history check in RestoreRunFromAgentStateAsync. Cancelled/Failed runs
         // remain restorable — they may be legitimately re-dispatched.
-        // TODO [WARNING]: GetRunHistoryAsync returns the full history and this performs an O(N) linear scan
-        // on every orphan-recovery call. Verify that GetRunHistoryAsync does not return cross-agent history;
-        // if run history is large, consider scoping the query by agent or run ID to avoid performance issues.
         // TODO [WARNING]: Early return when inHistory==true skips processing of any other orphaned runs in
         // the active set. If mostRecent is a completed run but older entries are legitimately restorable,
         // they are silently ignored this cycle. Assess whether the active set can hold multiple orphans
         // for one agent; if so, iterate over all entries rather than only inspecting orphanedRuns[^1].
-        IReadOnlyList<PipelineRunSummary> history;
+        PipelineRunSummary? summary;
         try
         {
-            history = await _facade.GetRunHistoryAsync(ct);
+            summary = await _facade.GetRunSummaryAsync(mostRecent.RunId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -462,15 +459,15 @@ public sealed class AgentOrphanRecoveryService(
             // until ReconciliationService times it out. Failing closed here would leave the agent
             // stuck in Idle with a legitimate orphaned run for the full reconciliation grace period.
             _logger.Warning(ex,
-                "Agent {AgentId} orphan guard: GetRunHistoryAsync faulted — proceeding with restoration (fail-open)",
+                "Agent {AgentId} orphan guard: GetRunSummaryAsync faulted — proceeding with restoration (fail-open)",
                 agentId);
             return false;
         }
 
-        var inHistory = history.Any(r => r.RunId == mostRecent.RunId
-            && r.FinalStep.IsTerminal()
-            && r.FinalStep != PipelineStep.Cancelled
-            && r.FinalStep != PipelineStep.Failed);
+        var inHistory = summary is not null
+            && summary.FinalStep.IsTerminal()
+            && summary.FinalStep != PipelineStep.Cancelled
+            && summary.FinalStep != PipelineStep.Failed;
 
         if (inHistory)
         {

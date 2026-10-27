@@ -40,8 +40,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
@@ -68,18 +68,15 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#42",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.Completed,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#42",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
@@ -103,18 +100,15 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#42",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.Cancelled,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#42",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.Cancelled,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
@@ -136,18 +130,15 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#42",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.Failed,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#42",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.Failed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
@@ -169,8 +160,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var activeJob = new ActiveJobState
@@ -339,7 +330,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -428,7 +419,7 @@ public sealed class AgentOrphanRecoveryServiceTests
                 // Simulate DrainService assigning a job between GetActiveRunsByAgent and lock
                 entry.ActiveJobId = drainJobId;
             });
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -480,7 +471,7 @@ public sealed class AgentOrphanRecoveryServiceTests
                 // TransitionStatus and AddRun (skipping additionalLockedAction entirely).
                 entry.ActiveJobId = orphanRunId;
             });
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
         await _service.RecoverOrphanedStateAsync(message, agentId);
@@ -506,8 +497,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var activeJob = CreateActiveJob(runId) with { RunType = PipelineRunType.Review };
@@ -532,8 +523,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var activeJob = CreateActiveJob(runId) with { RunType = PipelineRunType.Decomposition };
@@ -561,7 +552,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
         PipelineRun? restored = null;
         _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
@@ -643,7 +634,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         WithWorkItemStore(runId, OwnedRecord(agentId));
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
         PipelineRun? restored = null;
         _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
@@ -689,7 +680,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         });
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
         PipelineRun? restored = null;
         _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
@@ -719,7 +710,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         WithWorkItemStore(runId, OwnedRecord(agentId, WorkItemTaskType.Consolidation));
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         // The agent claims an ordinary implementation run.
@@ -751,7 +742,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         WithWorkItemStore(runId, OwnedRecord("caa-0000aaaa"));
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([trackedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob: null), agentId);
 
@@ -777,7 +768,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         WithWorkItemStore(runId, OwnedRecord(agentId));
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([trackedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob: null), agentId);
 
@@ -1088,7 +1079,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
             .Returns([orphanedRun])
             .Callback(() => { entry.ActiveJobId = drainJobId; });
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
         await _service.RecoverOrphanedStateAsync(message, agentId);
@@ -1108,8 +1099,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var activeJob = CreateActiveJobWithMetadata(runId, "claude-3-5-haiku", "target-repo");
@@ -1152,8 +1143,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
@@ -1180,8 +1171,8 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null); // null entry
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var activeJob = new ActiveJobState
@@ -1217,8 +1208,8 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
@@ -1264,7 +1255,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
             .Returns([olderRun, newerRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -1287,8 +1278,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var activeJob = new ActiveJobState
@@ -1336,7 +1327,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
             .Returns([orphanedRun])
             .Callback(() => { entry.ActiveJobId = drainAssignedId; });
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -1394,8 +1385,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = CreateEntry(agentId);
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var activeJob = CreateActiveJob(runId) with { RunType = PipelineRunType.DecompositionAnalysis };
@@ -1434,7 +1425,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         // GetRun returns null — hash is absent (expired or not yet written). Under the fix,
         // GetRun returning null is the condition that triggers AddRun to re-materialize the hash.
         // If GetRun returned non-null, AddRun would be skipped (hash is live, no overwrite needed).
@@ -1508,7 +1499,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
             .Returns([orphanedRun])
             .Callback(() => { entry.ActiveJobId = drainJobId; }); // simulate drain race
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -1561,7 +1552,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId = null;
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
         await _service.RecoverOrphanedStateAsync(message, agentId);
@@ -1875,7 +1866,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
         await _service.RecoverOrphanedStateAsync(message, agentId);
@@ -1931,7 +1922,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
             .Returns([orphanedRun])
             .Callback(() => { entry.ActiveJobId = drainJobId; }); // simulate drain race
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
         // TODO (WARNING): This test relies on GetActiveRunsByAgent being called *before*
         // lock(entry.SyncRoot) in the production code — the Callback sets entry.ActiveJobId
@@ -1994,7 +1985,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         // GetRun returns non-null — hash exists in Redis (live run with advanced state)
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == runId))).Returns(liveRun);
 
@@ -2052,7 +2043,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([staleSnapshot]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         // GetRun returns the live hash — hash exists with advanced currentStep
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == runId))).Returns(liveHash);
 
@@ -2103,7 +2094,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
@@ -2152,7 +2143,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
@@ -2201,18 +2192,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#42",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.Completed,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#42",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -2248,18 +2236,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#47",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.PrMerged,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#47",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.PrMerged,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -2294,18 +2279,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#48",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.PrClosed,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#48",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.PrClosed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -2344,18 +2326,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#49",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.ConflictRestart,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#49",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.ConflictRestart,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -2369,9 +2348,9 @@ public sealed class AgentOrphanRecoveryServiceTests
     }
 
     [Fact]
-    public async Task DetectAndRestoreOrphans_GetRunHistoryAsyncThrows_FailsOpenAndRestoresRun()
+    public async Task DetectAndRestoreOrphans_GetRunSummaryAsyncThrows_FailsOpenAndRestoresRun()
     {
-        // CRITICAL: if GetRunHistoryAsync faults (e.g. Redis/DB down), the guard must not
+        // CRITICAL: if GetRunSummaryAsync faults (e.g. Redis/DB down), the guard must not
         // propagate the exception and break agent registration. Instead it fails-open and
         // proceeds with restoration (at worst, a completed run is briefly re-activated until
         // ReconciliationService times it out — preferable to leaving the agent stuck in Idle).
@@ -2393,20 +2372,20 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Redis unavailable"));
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == runId))).Returns((PipelineRun?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
 
-        // Must not throw — exception from GetRunHistoryAsync must be caught internally.
+        // Must not throw — exception from GetRunSummaryAsync must be caught internally.
         await _service.RecoverOrphanedStateAsync(message, agentId);
 
         // Fail-open: restoration must proceed as if history is empty.
         entry.ActiveJobId.Should().Be(runId,
             "fail-open: run must be restored when history check faults");
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
-            "TransitionStatus(Busy) must be called even when GetRunHistoryAsync throws");
+            "TransitionStatus(Busy) must be called even when GetRunSummaryAsync throws");
     }
 
     [Fact]
@@ -2435,18 +2414,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#43",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.Failed,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#43",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.Failed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == runId))).Returns((PipelineRun?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
@@ -2482,18 +2458,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = runId,
-                    IssueIdentifier = "org/repo#44",
-                    IssueTitle = "Test",
-                    FinalStep = PipelineStep.Cancelled,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
-                }
-            ]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#44",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.Cancelled,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == runId))).Returns((PipelineRun?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
@@ -2529,7 +2502,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
         // Empty history — run has not completed yet; must be restored
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == runId))).Returns((PipelineRun?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
@@ -2565,19 +2538,9 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-        // History has a different run as Completed — must not match this orphan
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-            [
-                new PipelineRunSummary
-                {
-                    RunId = "some-other-run-entirely",
-                    IssueIdentifier = "org/repo#99",
-                    IssueTitle = "Other Run",
-                    FinalStep = PipelineStep.Completed,
-                    StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-2)
-                }
-            ]);
+        // The orphan's RunId is not in history — point lookup returns null
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == runId))).Returns((PipelineRun?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
@@ -2718,8 +2681,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId = "run-1";
 
         _mockFacade.Setup(f => f.GetRun(new JobId("run-1"))).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
 
         // Should not throw
@@ -2740,8 +2703,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
 
         var callOrder = new List<string>();
@@ -2784,8 +2747,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
@@ -2819,8 +2782,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var message = MessageWithJob(job: activeJob);
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         // Return null for consolEntry — the if (consolEntry is not null) guard fails,
         // so the TOCTOU guard and both downstream calls are suppressed.
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
@@ -2849,8 +2812,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
 
         var callOrder = new List<string>();
@@ -2891,8 +2854,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
@@ -2921,8 +2884,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var message = MessageWithJob(job: activeJob);
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         // Return null for restoredEntry — simulates the guard failing (entry not found).
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync((AgentEntry?)null);
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
@@ -3065,7 +3028,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         // GetRun returns null so AddRun is called; we simulate the disconnect inside AddRun.
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan-concurrent")))
             .Returns((PipelineRun?)null);
@@ -3116,8 +3079,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         // The field write faults — this is the call whose fault must be logged.
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(agentId, "activeJobId", It.IsAny<string?>()))
@@ -3166,8 +3129,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(agentId, "activeJobId", It.IsAny<string?>()))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
@@ -3275,7 +3238,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         // Both field writes fault — either continuation satisfies the TCS.
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(agentId, It.IsAny<string>(), It.IsAny<string?>()))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
@@ -3349,14 +3312,14 @@ public sealed class AgentOrphanRecoveryServiceTests
     // ── Cancellation token propagation (characterization tests for issue #3283) ───
 
     [Fact]
-    public async Task RecoverOrphanedStateAsync_CancelledToken_GetRunHistoryAsync_ActiveJobPath_PropagatesCancel()
+    public async Task RecoverOrphanedStateAsync_CancelledToken_GetRunSummaryAsync_ActiveJobPath_PropagatesCancel()
     {
-        // Arrange: agent reports an active job that is not in history yet, so GetRunHistoryAsync
-        // is called via RestoreRunFromAgentStateAsync. The token should reach GetRunHistoryAsync
+        // Arrange: agent reports an active job that is not in history yet, so GetRunSummaryAsync
+        // is called via RestoreRunFromAgentStateAsync. The token should reach GetRunSummaryAsync
         // so that an OperationCanceledException propagates out of RecoverOrphanedStateAsync.
-        // TODO [WARNING]: The GetRunHistoryAsync mock uses It.IsAny<CancellationToken>() and always throws
+        // TODO [WARNING]: The GetRunSummaryAsync mock uses It.IsAny<CancellationToken>() and always throws
         // OperationCanceledException regardless of which token is supplied. This means the test would pass
-        // even if the production code still called GetRunHistoryAsync(CancellationToken.None) — it verifies
+        // even if the production code still called GetRunSummaryAsync(CancellationToken.None) — it verifies
         // that OCE propagates, not that the caller's specific token is forwarded. A stronger arrangement
         // would capture the token argument via a Callback and assert it equals cts.Token after the call.
         var agentId = MakeAgentId();
@@ -3365,7 +3328,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(new JobId("run-ct-1"))).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
 
@@ -3377,12 +3340,12 @@ public sealed class AgentOrphanRecoveryServiceTests
     }
 
     [Fact]
-    public async Task RecoverOrphanedStateAsync_CancelledToken_GetRunHistoryAsync_OrphanPath_PropagatesCancel()
+    public async Task RecoverOrphanedStateAsync_CancelledToken_GetRunSummaryAsync_OrphanPath_PropagatesCancel()
     {
         // Arrange: agent registers without active job, orphan detection calls CheckOrphanInHistoryAsync
-        // which calls GetRunHistoryAsync. An OperationCanceledException must propagate, not be
+        // which calls GetRunSummaryAsync. An OperationCanceledException must propagate, not be
         // swallowed by the fail-open catch block.
-        // TODO [WARNING]: The GetRunHistoryAsync mock uses It.IsAny<CancellationToken>() and always throws
+        // TODO [WARNING]: The GetRunSummaryAsync mock uses It.IsAny<CancellationToken>() and always throws
         // OperationCanceledException regardless of which token is supplied. A regression restoring
         // CancellationToken.None would still make this test pass. To strengthen, capture the token via a
         // Callback and assert it equals cts.Token.
@@ -3407,7 +3370,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
 
         using var cts = new CancellationTokenSource();
@@ -3418,9 +3381,9 @@ public sealed class AgentOrphanRecoveryServiceTests
     }
 
     [Fact]
-    public async Task RecoverOrphanedStateAsync_NonOce_GetRunHistoryAsync_OrphanPath_DoesNotPropagate()
+    public async Task RecoverOrphanedStateAsync_NonOce_GetRunSummaryAsync_OrphanPath_DoesNotPropagate()
     {
-        // Counterpart: a non-OCE from GetRunHistoryAsync on the orphan path must still be caught
+        // Counterpart: a non-OCE from GetRunSummaryAsync on the orphan path must still be caught
         // (fail-open). This guards against accidentally removing the when-filter entirely.
         // TODO [WARNING]: TransitionStatus and SetLocalAgentSnapshotField are called inside ActivateOrphanedRun
         // but are not set up on the mock. With MockBehavior.Loose this is silently ignored, but if the mock
@@ -3444,14 +3407,14 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("storage down"));
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-ct-orphan-noe")))
             .Returns((PipelineRun?)null);
 
         // A non-OCE must be swallowed by the fail-open catch and restoration must proceed
         var act = () => _service.RecoverOrphanedStateAsync(EmptyMessage(), agentId, CancellationToken.None);
-        await act.Should().NotThrowAsync("non-OCE from GetRunHistoryAsync must be swallowed (fail-open)");
+        await act.Should().NotThrowAsync("non-OCE from GetRunSummaryAsync must be swallowed (fail-open)");
 
         entry.ActiveJobId.Should().Be("run-ct-orphan-noe",
             "fail-open means restoration proceeds even when history storage fails");
@@ -3547,8 +3510,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(new JobId("run-live-token"))).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
 
         using var cts = new CancellationTokenSource();
@@ -3641,8 +3604,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
 
         _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
 
         var callOrder = new List<string>();
@@ -3817,7 +3780,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
             _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
             _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
-            _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+            _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
             _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "orphan-action-a"))).Returns((PipelineRun?)null);
 
             var service = new AgentOrphanRecoveryService(
@@ -3877,7 +3840,7 @@ public sealed class AgentOrphanRecoveryServiceTests
             mockFacade2.Setup(f => f.GetActiveRunsByAgent(agentId))
                 .Returns([orphanedRun2])
                 .Callback(() => { entry2.ActiveJobId = "drain-assigned"; });
-            mockFacade2.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+            mockFacade2.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
 
             var service2 = new AgentOrphanRecoveryService(
                 mockFacade2.Object, _mockChangeNotifier.Object, _mockLogger.Object);
@@ -3915,7 +3878,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(entry); // required: TransitionStatus is only called when entry is non-null
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((PipelineRunSummary?)null);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
         PipelineRun? restored = null;
         _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
