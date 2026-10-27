@@ -249,6 +249,58 @@ public sealed class HubAndDiTests
         provider.GetRequiredService<IPipelineApiAgentClient>().Should().NotBeNull();
     }
 
+    // ── Client: AddPipelineApiClient auth header invariants ──────────────────────
+
+    [Fact]
+    public void AddPipelineApiClient_HealthClient_HasNoAuthorizationHeader()
+    {
+        var services = new ServiceCollection();
+        services.AddHttpClient();
+        services.AddPipelineApiClient(new PipelineApiClientOptions
+        {
+            BaseUrl = "http://localhost:8080",
+            AgentApiKey = "test-key"
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+        // Typed clients are registered under the interface type name as the named-client key.
+        var client = factory.CreateClient(nameof(IPipelineApiHealthClient));
+        // Guard against a name-lookup miss: IHttpClientFactory silently returns a default
+        // unconfigured client when no registration matches the supplied name, and that default
+        // client also has null Authorization — making an auth-only assertion vacuously true.
+        // Asserting BaseAddress confirms the correct registration was actually retrieved
+        // (a default client has null BaseAddress).
+        client.BaseAddress.Should().Be(new Uri("http://localhost:8080/"),
+            "the Health client must be configured with the pipeline API base URL");
+        client.DefaultRequestHeaders.Authorization.Should().BeNull(
+            "healthz/readyz are anonymous endpoints — the Health client must not send credentials");
+    }
+
+    [Theory]
+    [InlineData("IPipelineApiWorkItemClient")]
+    [InlineData("IPipelineApiRunHistoryClient")]
+    [InlineData("IPipelineApiConfigClient")]
+    [InlineData("IPipelineApiAgentClient")]
+    public void AddPipelineApiClient_AuthenticatedClient_HasBearerAuthorizationHeader(string clientName)
+    {
+        var services = new ServiceCollection();
+        services.AddHttpClient();
+        services.AddPipelineApiClient(new PipelineApiClientOptions
+        {
+            BaseUrl = "http://localhost:8080",
+            AgentApiKey = "test-key"
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+        var client = factory.CreateClient(clientName);
+        client.DefaultRequestHeaders.Authorization.Should().NotBeNull(
+            "authenticated API clients must include a Bearer token");
+        client.DefaultRequestHeaders.Authorization!.Scheme.Should().Be("Bearer");
+        client.DefaultRequestHeaders.Authorization.Parameter.Should().Be("test-key");
+    }
+
     // ── Startup: missing env vars cause fast-fail ─────────────────────────────────
 
     /// <summary>
