@@ -1,5 +1,7 @@
 using System.Diagnostics.Metrics;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -1123,6 +1125,146 @@ public sealed class WorkItemStatusTransitionServiceTests
         result[2].Should().Be("api-key: ***",           "api-key: value pattern must be masked");
         result[3].Should().Be("sending Bearer ***",     "standalone Bearer token must be masked");
         result[4].Should().Be("tokens used: 1200",      "keyword must be followed by separator to match");
+    }
+
+    // ── RegexMatchTimeoutException paths (Issue #3941) ────────────────────────
+
+    // These tests cover the three catch (RegexMatchTimeoutException) { continue; } branches at
+    // L602, L604, and L606.  The [GeneratedRegex] patterns are ReDoS-safe and never time out
+    // under ordinary inputs; the only way to trigger the branches without changing production
+    // code is to temporarily shrink the regex singleton's internalMatchTimeout to 100 ns via
+    // reflection.  Each test saves the original timeout, sets it to TimeSpan.FromTicks(1), runs
+    // SanitizePodLogTail, then restores unconditionally in a finally block.  The collection's
+    // DisableParallelization = true prevents concurrent access to the shared singleton.
+
+    private static readonly FieldInfo? s_timeoutField =
+        typeof(Regex).GetField("internalMatchTimeout", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    /// <summary>
+    /// Returns the Regex singleton for the named private static partial method on
+    /// <see cref="WorkItemStatusTransitionService"/> so its timeout can be temporarily altered.
+    /// </summary>
+    private static Regex GetRegexSingleton(string methodName)
+    {
+        var method = typeof(WorkItemStatusTransitionService)
+            .GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static);
+        method.Should().NotBeNull(
+            $"{methodName}() must be a private static method on WorkItemStatusTransitionService; " +
+            "update this call if it was renamed");
+        return (Regex)method!.Invoke(null, null)!;
+    }
+
+    [Fact]
+    public void SanitizePodLogTail_KeyValueSecretRegexTimeout_DropsTimedOutLine()
+    {
+        // Covers L602: catch (RegexMatchTimeoutException) { continue; }
+        // AC1: a single timed-out line must be absent from the result (returns null).
+        s_timeoutField.Should().NotBeNull(
+            "Regex.internalMatchTimeout must exist; update this reflection call if the .NET runtime renamed it");
+
+        var regex = GetRegexSingleton("KeyValueSecretRegex");
+        var original = (TimeSpan)s_timeoutField!.GetValue(regex)!;
+        s_timeoutField.SetValue(regex, TimeSpan.FromTicks(1));
+        try
+        {
+            // "token=" followed by spaces causes the engine to attempt a match that exercises
+            // CheckTimeout; at 100 ns the call overhead alone exceeds the deadline.
+            var result = WorkItemStatusTransitionService.SanitizePodLogTail(
+                ["token=" + new string(' ', 994)]);
+
+            result.Should().BeNull(
+                "the single timed-out line must be skipped; with no surviving lines the method returns null");
+        }
+        finally
+        {
+            s_timeoutField.SetValue(regex, original);
+        }
+    }
+
+    [Fact]
+    public void SanitizePodLogTail_KeyValueSecretRegexTimeout_SubsequentLinesArePresent()
+    {
+        // Covers L602: catch (RegexMatchTimeoutException) { continue; }
+        // AC2: a timeout on the first line must not prevent subsequent lines from being processed.
+        s_timeoutField.Should().NotBeNull(
+            "Regex.internalMatchTimeout must exist; update this reflection call if the .NET runtime renamed it");
+
+        var regex = GetRegexSingleton("KeyValueSecretRegex");
+        var original = (TimeSpan)s_timeoutField!.GetValue(regex)!;
+        s_timeoutField.SetValue(regex, TimeSpan.FromTicks(1));
+        try
+        {
+            var result = WorkItemStatusTransitionService.SanitizePodLogTail(
+                ["token=" + new string(' ', 994), "log line 2"]);
+
+            result.Should().NotBeNull();
+            result!.Should().ContainSingle(
+                "the timed-out first line must be skipped while the second line survives");
+            result[0].Should().Be("log line 2",
+                "the non-triggering line must pass through unchanged");
+        }
+        finally
+        {
+            s_timeoutField.SetValue(regex, original);
+        }
+    }
+
+    [Fact]
+    public void SanitizePodLogTail_BearerTokenRegexTimeout_DropsTimedOutLine()
+    {
+        // Covers L604: catch (RegexMatchTimeoutException) { continue; }
+        s_timeoutField.Should().NotBeNull(
+            "Regex.internalMatchTimeout must exist; update this reflection call if the .NET runtime renamed it");
+
+        var regex = GetRegexSingleton("BearerTokenRegex");
+        var original = (TimeSpan)s_timeoutField!.GetValue(regex)!;
+        s_timeoutField.SetValue(regex, TimeSpan.FromTicks(1));
+        try
+        {
+            // "Bearer " followed by spaces: \s+\S+ backtracks on the trailing spaces.
+            var result = WorkItemStatusTransitionService.SanitizePodLogTail(
+                ["Bearer " + new string(' ', 993)]);
+
+            result.Should().BeNull(
+                "the timed-out line must be skipped; no surviving lines means the method returns null");
+        }
+        finally
+        {
+            s_timeoutField.SetValue(regex, original);
+        }
+    }
+
+    [Fact]
+    public void SanitizePodLogTail_GitHubTokenRegexTimeout_DropsTimedOutLine()
+    {
+        // Covers L606: catch (RegexMatchTimeoutException) { continue; }
+        s_timeoutField.Should().NotBeNull(
+            "Regex.internalMatchTimeout must exist; update this reflection call if the .NET runtime renamed it");
+
+        var regex = GetRegexSingleton("GitHubTokenRegex");
+        var original = (TimeSpan)s_timeoutField!.GetValue(regex)!;
+        s_timeoutField.SetValue(regex, TimeSpan.FromTicks(1));
+        try
+        {
+            // "!ghp_" + 19 'a's repeated to fill ~1000 chars (SanitizePodLogTail truncates to 1000).
+            // Each "!" creates a word boundary before 'g', triggering a match attempt.
+            // Each attempt processes 23 individual chars (gh[pousr]_ = 4, then 19 'a's that
+            // fail {20,} because only 19 < 20 are present) before failing — these are
+            // per-character checks that the engine cannot batch via SIMD.  With ~41 such
+            // attempts the engine makes enough CheckTimeout calls for the 100 ns deadline to be
+            // exceeded, typically within the first two attempts.
+            var block = "!ghp_" + new string('a', 19);
+            var input = string.Concat(Enumerable.Repeat(block, 42)); // 1008 chars → truncated to 1000
+
+            var result = WorkItemStatusTransitionService.SanitizePodLogTail([input]);
+
+            result.Should().BeNull(
+                "the timed-out line must be skipped; no surviving lines means the method returns null");
+        }
+        finally
+        {
+            s_timeoutField.SetValue(regex, original);
+        }
     }
 
     // ── Test Infrastructure ────────────────────────────────────────────────────
