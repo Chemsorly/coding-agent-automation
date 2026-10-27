@@ -8,12 +8,27 @@ namespace CodingAgent.Pipeline.Models;
 /// Prevents accidental transposition of string parameters (jobId vs runId vs templateId).
 /// </summary>
 /// <remarks>
-/// <c>default(JobId)</c> has <c>Value = null</c> because struct defaults bypass constructors
-/// and operators. The null guards on the implicit conversion and MessagePack formatter protect
-/// explicit creation paths but cannot prevent <c>default(T)</c> from existing.
+/// <para><b>Construction invariant:</b> <c>new JobId(value)</c> and the implicit <c>(JobId)string</c>
+/// operator both reject null and empty strings via <see cref="ArgumentException.ThrowIfNullOrEmpty"/>.
+/// <c>default(JobId)</c> is exempt — C# struct zero-initialization produces <c>Value = null</c>
+/// and cannot be prevented. Use <c>default(JobId)</c> only as a sentinel/unset value,
+/// never as a valid job identifier.</para>
 /// </remarks>
-public readonly record struct JobId(string Value)
+public readonly record struct JobId
 {
+    // TODO: The init accessor allows object-initializer (`new JobId { Value = "" }`) and with-expression
+    // (`someJobId with { Value = "" }`) bypass paths that skip the constructor guard. These paths existed
+    // before this change (the original positional primary constructor also synthesized an init accessor),
+    // so this is a pre-existing limitation, not a regression. Closing it would require removing the init
+    // accessor, which may affect JSON/serialization deserialization paths that rely on init-setters.
+    public string Value { get; init; }
+
+    public JobId(string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(value);
+        Value = value;
+    }
+
     public static implicit operator JobId(string value)
     {
         ArgumentException.ThrowIfNullOrEmpty(value);
@@ -43,6 +58,8 @@ public sealed class JobIdFormatter : IMessagePackFormatter<JobId>
         var value = reader.ReadString();
         if (value is null)
             throw new MessagePackSerializationException("JobId cannot be deserialized from a nil token.");
+        if (string.IsNullOrEmpty(value))
+            throw new MessagePackSerializationException("JobId cannot be deserialized from an empty string.");
         return new(value);
     }
 }

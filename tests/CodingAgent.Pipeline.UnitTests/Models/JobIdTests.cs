@@ -101,6 +101,22 @@ public class JobIdTests
     }
 
     [Fact]
+    public void Constructor_EmptyString_ThrowsArgumentException()
+    {
+        var act = () => new JobId("");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_NullString_ThrowsArgumentException()
+    {
+        var act = () => new JobId(null!);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void ImplicitConversion_FromEmpty_ThrowsArgumentException()
     {
         var act = () => { JobId id = ""; };
@@ -184,6 +200,17 @@ public class JobIdFormatterTests
     }
 
     [Fact]
+    public void Deserialize_EmptyString_ThrowsMessagePackSerializationException()
+    {
+        // Serialize a raw empty string, then attempt to deserialize as JobId
+        var bytes = MessagePackSerializer.Serialize("", Options);
+
+        var act = () => MessagePackSerializer.Deserialize<JobId>(bytes, Options);
+
+        act.Should().Throw<MessagePackSerializationException>();
+    }
+
+    [Fact]
     public void RoundTrip_GuidFormatJobId()
     {
         var guid = Guid.NewGuid().ToString();
@@ -193,16 +220,5 @@ public class JobIdFormatterTests
         var deserialized = MessagePackSerializer.Deserialize<JobId>(bytes, Options);
 
         deserialized.Value.Should().Be(guid);
-    }
-
-    [Fact]
-    public void RoundTrip_EmptyString()
-    {
-        var original = new JobId(string.Empty);
-
-        var bytes = MessagePackSerializer.Serialize(original, Options);
-        var deserialized = MessagePackSerializer.Deserialize<JobId>(bytes, Options);
-
-        deserialized.Value.Should().BeEmpty();
     }
 }

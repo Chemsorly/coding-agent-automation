@@ -67,10 +67,21 @@ public class RunIdTests
         implicit1.Should().Be(explicit1);
     }
 
-    // TODO: Add boundary tests verifying that lifecycle/service methods (GetRun, RemoveRun, FailRunAsync, etc.)
-    // reject empty-string RunId with ArgumentException, since production code changed from
-    // ThrowIfNull(runId) to ThrowIfNullOrEmpty(runId.Value) — this is a behavioral change that is untested.
-    // Also add integration-level test verifying that default(RunId) is rejected by consumer methods.
+    [Fact]
+    public void Constructor_EmptyString_ThrowsArgumentException()
+    {
+        var act = () => new RunId("");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_NullString_ThrowsArgumentException()
+    {
+        var act = () => new RunId(null!);
+
+        act.Should().Throw<ArgumentException>();
+    }
 
     [Fact]
     public void Default_HasNullValue()
