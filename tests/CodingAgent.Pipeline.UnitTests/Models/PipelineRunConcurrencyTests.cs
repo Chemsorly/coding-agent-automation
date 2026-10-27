@@ -6,10 +6,28 @@ namespace CodingAgent.Pipeline.UnitTests.Models;
 public class PipelineRunConcurrencyTests
 {
     [Fact]
-    // TODO: This test only validates StartedAtOffset atomicity in isolation. It does not verify that
-    //       StartedAt and StartedAtOffset are consistent with each other after a concurrent ResetStartedAt call.
-    //       A test that concurrently reads both StartedAt and StartedAtOffset and asserts they always refer
-    //       to the same logical timestamp would validate the compound-atomicity requirement.
+    public void StartedAt_BackingField_UsesInterlockedRead_NotPlainAutoProperty()
+    {
+        // Walk up from the test assembly to the repo root (same approach as SonarGatePreservationTests).
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && dir.GetFiles("*.sln").Length == 0)
+            dir = dir.Parent;
+        var repoRoot = dir?.FullName ?? throw new InvalidOperationException(
+            $"Could not locate repo root (*.sln) starting from {AppContext.BaseDirectory}");
+
+        var sourceFile = Path.Combine(repoRoot, "src", "CodingAgent.Pipeline", "Models", "PipelineRun.cs");
+        var source = File.ReadAllText(sourceFile);
+
+        // Must contain Interlocked.Read on the backing field
+        source.Should().Contain("Interlocked.Read(ref _startedAtTicks",
+            "StartedAt getter must use Interlocked.Read on its backing field, not a plain auto-property");
+
+        // Must NOT be a plain auto-property pattern
+        source.Should().NotContain("public DateTime StartedAt { get; internal set; }",
+            "StartedAt must not be a plain auto-property — it requires Interlocked semantics matching StartedAtOffset");
+    }
+
+    [Fact]
     // TODO: This concurrency test is probabilistic — on x64 with modern JIT, long reads/writes are naturally
     //       aligned and atomic, so this test would likely pass even without Interlocked. It validates safety
     //       but cannot demonstrate failure when the fix is reverted (weak regression guard).
@@ -95,9 +113,13 @@ public class PipelineRunConcurrencyTests
         readerThread1.Start();
         readerThread2.Start();
 
-        writerThread.Join(TimeSpan.FromSeconds(10));
-        readerThread1.Join(TimeSpan.FromSeconds(10));
-        readerThread2.Join(TimeSpan.FromSeconds(10));
+        var writerJoined = writerThread.Join(TimeSpan.FromSeconds(10));
+        var reader1Joined = readerThread1.Join(TimeSpan.FromSeconds(10));
+        var reader2Joined = readerThread2.Join(TimeSpan.FromSeconds(10));
+
+        writerJoined.Should().BeTrue("writer thread must terminate within the timeout");
+        reader1Joined.Should().BeTrue("reader thread 1 must terminate within the timeout");
+        reader2Joined.Should().BeTrue("reader thread 2 must terminate within the timeout");
 
         // Assert
         tornReadDetected.Should().BeFalse("every read should match a value that was actually written");
@@ -182,5 +204,94 @@ public class PipelineRunConcurrencyTests
             run.ResetStartedAt(ts);
             run.StartedAtOffset.Should().Be(ts);
         }
+    }
+
+    [Fact]
+    // TODO: This concurrency test is probabilistic — on x64 with modern JIT, long reads/writes are naturally
+    //       aligned and atomic, so this test would likely pass even without Interlocked. It validates safety
+    //       but cannot demonstrate failure when the fix is reverted (weak regression guard).
+    public void StartedAt_ConcurrentReadWrite_NeverProducesTornRead()
+    {
+        // Arrange: create a PipelineRun and define a set of known-good timestamps
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "concurrency-test-started-at",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Concurrency test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        });
+
+        var writtenValues = new DateTimeOffset[1000];
+        for (int i = 0; i < writtenValues.Length; i++)
+        {
+            writtenValues[i] = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(i + 1);
+        }
+
+#pragma warning disable CS0618 // StartedAt is Obsolete but tested deliberately here
+        var validTicks = new HashSet<long>(writtenValues.Select(v => v.UtcTicks))
+        {
+            run.StartedAt.Ticks // initial value (set by CreateCore to UtcNow — always non-zero)
+        };
+
+        var tornReadDetected = false;
+        var writerDone = false;
+
+        // Act: spin up concurrent writer and readers
+        var writerThread = new Thread(() =>
+        {
+            for (int i = 0; i < writtenValues.Length; i++)
+            {
+                run.ResetStartedAt(writtenValues[i]);
+            }
+            Volatile.Write(ref writerDone, true);
+        });
+
+        var readerThread1 = new Thread(() =>
+        {
+            while (!Volatile.Read(ref writerDone))
+            {
+                var read = run.StartedAt;
+
+                // A torn read produces ticks not matching any value that was actually written
+                // (including the initial construction value). Zero-ticks is also caught here
+                // because 0L is not in validTicks.
+                if (!validTicks.Contains(read.Ticks))
+                {
+                    Volatile.Write(ref tornReadDetected, true);
+                    break;
+                }
+            }
+        });
+
+        var readerThread2 = new Thread(() =>
+        {
+            while (!Volatile.Read(ref writerDone))
+            {
+                var read = run.StartedAt;
+
+                if (!validTicks.Contains(read.Ticks))
+                {
+                    Volatile.Write(ref tornReadDetected, true);
+                    break;
+                }
+            }
+        });
+
+        writerThread.Start();
+        readerThread1.Start();
+        readerThread2.Start();
+
+        var writerJoined = writerThread.Join(TimeSpan.FromSeconds(10));
+        var reader1Joined = readerThread1.Join(TimeSpan.FromSeconds(10));
+        var reader2Joined = readerThread2.Join(TimeSpan.FromSeconds(10));
+#pragma warning restore CS0618
+
+        writerJoined.Should().BeTrue("writer thread must terminate within the timeout");
+        reader1Joined.Should().BeTrue("reader thread 1 must terminate within the timeout");
+        reader2Joined.Should().BeTrue("reader thread 2 must terminate within the timeout");
+
+        // Assert
+        tornReadDetected.Should().BeFalse("every StartedAt read should match a value that was actually written");
     }
 }
