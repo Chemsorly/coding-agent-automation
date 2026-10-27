@@ -439,6 +439,62 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.OrphanRestoredAt.Should().BeNull();
     }
 
+    // ── Orphan detection: same run ID already set → "any non-null → skip" ────
+
+    [Fact]
+    public async Task NoActiveJob_SameRunIdAlreadySetDuringCheck_SkipsOrphanRestoration()
+    {
+        // When entry.ActiveJobId is set to the SAME run ID as mostRecent.RunId between
+        // GetActiveRunsByAgent and lock acquisition, ActivateAgentJobGuarded's "any non-null →
+        // skip" else-branch fires and returns false → early return → TransitionStatus, AddRun,
+        // and OrphanRestoredAt must all be skipped.
+        //
+        // This test pins the "any non-null → skip" semantics restored by the split refactor.
+        // Before the refactor, the unified ActivateAgentJob used "match → transition" semantics
+        // (shouldTransition = entry.ActiveJobId == runId), which would have called TransitionStatus
+        // and AddRun on this path. The refactor intentionally restores the original behavior.
+        const string agentId = "agent-same-run";
+        const string orphanRunId = "orphan-same-run-1";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = null;
+
+        var orphanedRun = new PipelineRun
+        {
+            RunId = orphanRunId,
+            IssueIdentifier = "org/repo#77",
+            IssueTitle = "Same-Run Orphan",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
+            .Returns([orphanedRun])
+            .Callback(() =>
+            {
+                // Simulate a concurrent writer assigning entry.ActiveJobId to the SAME run ID
+                // between GetActiveRunsByAgent and lock acquisition — the scenario the old
+                // "match → transition" else-branch incorrectly handled by proceeding with
+                // TransitionStatus and AddRun (skipping additionalLockedAction entirely).
+                entry.ActiveJobId = orphanRunId;
+            });
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        var message = CreateMessage(agentId, activeJob: null);
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        // "Any non-null → skip": the same run ID must not trigger an activation.
+        entry.ActiveJobId.Should().Be(orphanRunId, "entry already holds this run — must not be overwritten");
+        entry.OrphanRestoredAt.Should().BeNull(
+            "OrphanRestoredAt must not be set when ActivateAgentJobGuarded's else-branch fires");
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called when 'any non-null → skip' prevents orphan activation");
+        _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never,
+            "TransitionStatus must not be called when the same-run-id guard prevents orphan restore");
+    }
+
     // ── Active job: RunType=Review → creates a review run ────────────────
 
     [Fact]

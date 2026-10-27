@@ -173,21 +173,7 @@ public sealed class AgentOrphanRecoveryService(
         // consolidation job, so the ActiveJobId assignment is always authoritative.
         var consolEntry = await _facade.GetByAgentIdAsync(agentId, ct);
         if (consolEntry is not null)
-        {
-            if (ActivateAgentJob(consolEntry, agentId, activeJob.RunId, guardAgainstConcurrentAssignment: false, "RestoreConsolidationTracking"))
-            {
-                // TransitionStatus acquires SyncRoot internally — called OUTSIDE the lock.
-                _facade.TransitionStatus(agentId, AgentStatus.Busy);
-                // UpdateAgentFieldFireAndForget is called AFTER TransitionStatus and outside the lock
-                // so the async Redis continuation cannot overwrite the Busy status already written.
-                // TODO [WARNING]: UpdateAgentFieldFireAndForget cannot forward a CancellationToken because
-                // IAgentHubFacade.UpdateAgentFieldAsync has no CancellationToken parameter. The fire-and-forget
-                // helper intentionally uses CancellationToken.None for the ContinueWith fault-log continuation.
-                // To propagate the recovery token here, IAgentHubFacade.UpdateAgentFieldAsync would need a
-                // CancellationToken overload and UpdateAgentFieldFireAndForget would need to be updated.
-                _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, activeJob.RunId, _logger, "RestoreConsolidationTracking");
-            }
-        }
+            ActivateAgentJobUnconditional(consolEntry, agentId, activeJob.RunId, "RestoreConsolidationTracking");
 
         _changeNotifier.NotifyChange();
     }
@@ -219,21 +205,7 @@ public sealed class AgentOrphanRecoveryService(
         // authoritative.
         var restoredEntry = await _facade.GetByAgentIdAsync(agentId, ct);
         if (restoredEntry is not null)
-        {
-            if (ActivateAgentJob(restoredEntry, agentId, activeJob.RunId, guardAgainstConcurrentAssignment: false, "RestorePipelineRun"))
-            {
-                // TransitionStatus acquires SyncRoot internally — called OUTSIDE the lock.
-                _facade.TransitionStatus(agentId, AgentStatus.Busy);
-                // UpdateAgentFieldFireAndForget is called AFTER TransitionStatus and outside the lock
-                // so the async Redis continuation cannot overwrite the Busy status already written.
-                // TODO [WARNING]: UpdateAgentFieldFireAndForget cannot forward a CancellationToken because
-                // IAgentHubFacade.UpdateAgentFieldAsync has no CancellationToken parameter. The fire-and-forget
-                // helper intentionally uses CancellationToken.None for the ContinueWith fault-log continuation.
-                // To propagate the recovery token here, IAgentHubFacade.UpdateAgentFieldAsync would need a
-                // CancellationToken overload and UpdateAgentFieldFireAndForget would need to be updated.
-                _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, activeJob.RunId, _logger, "RestorePipelineRun");
-            }
-        }
+            ActivateAgentJobUnconditional(restoredEntry, agentId, activeJob.RunId, "RestorePipelineRun");
 
         _logger.Information(
             "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
@@ -392,9 +364,14 @@ public sealed class AgentOrphanRecoveryService(
             return;
 
         // Guarded path: assignment is conditional on ActiveJobId being null.
-        // UpdateAgentFieldFireAndForget is called inside the lock (by the helper);
+        // UpdateAgentFieldFireAndForget is called inside the lock by the helper;
         // TransitionStatus is called after lock release.
-        if (ActivateAgentJob(trackedEntry, agentId, activeJob.RunId, guardAgainstConcurrentAssignment: true, "LinkAgentToExistingRun"))
+        var activated = ActivateAgentJobGuarded(trackedEntry, agentId, activeJob.RunId, "LinkAgentToExistingRun", out var capturedJobId);
+
+        // Same-agent reconnect: entry already linked to this run — transition to Busy regardless.
+        // capturedJobId was captured inside lock(trackedEntry.SyncRoot) so the comparison is atomic
+        // with respect to concurrent writers between lock release and this point.
+        if (activated || capturedJobId == activeJob.RunId)
             _facade.TransitionStatus(agentId, AgentStatus.Busy);
     }
 
@@ -523,10 +500,10 @@ public sealed class AgentOrphanRecoveryService(
         // "DrainService race" path could show null instead of the drain-assigned run ID, or vice versa.
         var existingJobId = entry.ActiveJobId;
 
-        var didTransition = ActivateAgentJob(
+        var didTransition = ActivateAgentJobGuarded(
             entry, agentId, mostRecent.RunId,
-            guardAgainstConcurrentAssignment: true,
             "DetectAndRestoreOrphans",
+            out _,
             additionalLockedAction: e =>
             {
                 // Executed INSIDE lock(entry.SyncRoot), ONLY when entry.ActiveJobId was null
@@ -598,116 +575,121 @@ public sealed class AgentOrphanRecoveryService(
     }
 
     /// <summary>
-    /// Acquires <paramref name="entry"/>.SyncRoot, sets <paramref name="entry"/>.ActiveJobId to
-    /// <paramref name="runId"/> (unconditionally when <paramref name="guardAgainstConcurrentAssignment"/>
-    /// is <see langword="false"/>; only when ActiveJobId is <see langword="null"/> when
-    /// <see langword="true"/>), and on the guarded path calls
+    /// Sets <paramref name="entry"/>.ActiveJobId to <paramref name="runId"/> unconditionally
+    /// (under <see cref="AgentEntry.SyncRoot"/> for the assignment only), then calls
+    /// <see cref="IAgentHubFacade.TransitionStatus"/> and
+    /// <see cref="IAgentHubFacade.UpdateAgentFieldFireAndForget"/> for the ActiveJobId field,
+    /// both outside the lock.
+    /// </summary>
+    /// <remarks>
+    /// Call order: assignment (under lock) → TransitionStatus → UpdateAgentFieldFireAndForget.
+    /// TransitionStatus acquires SyncRoot internally and must always be called after the lock
+    /// is released. UpdateAgentFieldFireAndForget is called after TransitionStatus so the async
+    /// Redis continuation cannot race with and overwrite the Busy status.
+    /// <para>
+    /// Note: UpdateAgentFieldFireAndForget cannot forward a CancellationToken because
+    /// <see cref="IAgentHubFacade.UpdateAgentFieldAsync"/> has no CancellationToken parameter.
+    /// The fire-and-forget helper intentionally uses CancellationToken.None for the fault-log
+    /// ContinueWith continuation.
+    /// </para>
+    /// </remarks>
+    private void ActivateAgentJobUnconditional(
+        AgentEntry entry,
+        AgentId agentId,
+        string runId,
+        string callerName)
+    {
+        lock (entry.SyncRoot)
+        {
+            entry.ActiveJobId = runId;
+        }
+        // TransitionStatus acquires SyncRoot internally — called OUTSIDE the lock.
+        _facade.TransitionStatus(agentId, AgentStatus.Busy);
+        // UpdateAgentFieldFireAndForget is called AFTER TransitionStatus and outside the lock
+        // so the async Redis continuation cannot overwrite the Busy status already written.
+        _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, runId, _logger, callerName);
+    }
+
+    /// <summary>
+    /// Acquires <paramref name="entry"/>.SyncRoot and conditionally sets
+    /// <paramref name="entry"/>.ActiveJobId to <paramref name="runId"/> when it is
+    /// <see langword="null"/>. When the assignment succeeds, calls
     /// <see cref="IAgentHubFacade.UpdateAgentFieldFireAndForget"/> for the ActiveJobId field
     /// while the lock is still held.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Unconditional path</strong> (<paramref name="guardAgainstConcurrentAssignment"/> = <see langword="false"/>):
-    /// The assignment is always authoritative (e.g. agent self-reported a consolidation or restored run).
-    /// The lock is held only for the assignment; neither <c>TransitionStatus</c> nor
-    /// <c>UpdateAgentFieldFireAndForget</c> are called inside the lock.
-    /// The caller is responsible for calling both after this method returns <see langword="true"/>.
+    /// When <c>ActiveJobId</c> is <see langword="null"/>, sets the field, calls
+    /// <c>UpdateAgentFieldFireAndForget</c> inside the lock, invokes any
+    /// <paramref name="additionalLockedAction"/>, and returns <see langword="true"/>.
+    /// The caller is responsible for calling <c>TransitionStatus</c> after this method returns
+    /// <see langword="true"/>.
     /// </para>
     /// <para>
-    /// <strong>Guarded path</strong> (<paramref name="guardAgainstConcurrentAssignment"/> = <see langword="true"/>):
-    /// The assignment is conditional on <c>ActiveJobId</c> being <see langword="null"/>.
-    /// When the assignment succeeds, <c>UpdateAgentFieldFireAndForget</c> for the ActiveJobId field
-    /// is called inside the lock (before lock release), and any <paramref name="additionalLockedAction"/>
-    /// is also invoked inside the lock. The caller is responsible for calling <c>TransitionStatus</c>
-    /// after this method returns <see langword="true"/>.
-    /// When <c>ActiveJobId</c> is already set, <c>TransitionStatus</c> is gated on whether the
-    /// existing value matches <paramref name="runId"/> (same-agent reconnect path).
+    /// When <c>ActiveJobId</c> is already set (any non-null value), returns
+    /// <see langword="false"/> without modifying any state ("any non-null → skip" semantics).
+    /// The existing value of <c>ActiveJobId</c> is captured inside the lock and returned via
+    /// <paramref name="capturedActiveJobId"/> so callers can compare it without an additional
+    /// unsynchronized read outside the lock.
     /// </para>
     /// <para>
     /// <strong>Invariant</strong>: <c>TransitionStatus</c> acquires SyncRoot internally and must
     /// always be called <em>after</em> the lock is released. This method never calls
-    /// <c>TransitionStatus</c>; the returned <see langword="bool"/> tells the caller whether to call it.
+    /// <c>TransitionStatus</c>; the returned <see langword="bool"/> tells the caller whether to
+    /// call it.
     /// </para>
     /// </remarks>
     /// <param name="entry">The agent entry to update.</param>
     /// <param name="agentId">The agent identifier, forwarded to fire-and-forget writes.</param>
     /// <param name="runId">The run ID to assign as <c>ActiveJobId</c>.</param>
-    /// <param name="guardAgainstConcurrentAssignment">
-    ///   When <see langword="true"/>, the assignment is conditional (null-check under lock).
-    ///   When <see langword="false"/>, the assignment is unconditional.
-    /// </param>
     /// <param name="callerName">Forwarded to <c>UpdateAgentFieldFireAndForget</c> for log context.</param>
+    /// <param name="capturedActiveJobId">
+    ///   When the method returns <see langword="false"/> (ActiveJobId was already set), receives
+    ///   the value of <c>ActiveJobId</c> as read <em>inside</em> the lock — safe for callers to
+    ///   compare without an additional unsynchronized read. When the method returns
+    ///   <see langword="true"/> (assignment succeeded), set to <see langword="null"/>.
+    /// </param>
     /// <param name="additionalLockedAction">
     ///   Optional action executed inside the lock immediately after a successful assignment.
-    ///   Only invoked on the guarded path when the assignment succeeded (not on the "already set" branch).
-    ///   Receives the <paramref name="entry"/> so callers can set additional fields without an extra closure capture.
+    ///   Only invoked when the assignment succeeded (ActiveJobId was null).
+    ///   Receives the <paramref name="entry"/> so callers can set additional fields.
     /// </param>
     /// <returns>
-    ///   <see langword="true"/> when <c>TransitionStatus</c> should be called by the caller;
-    ///   <see langword="false"/> when the caller must not call it.
+    ///   <see langword="true"/> when the assignment succeeded and <c>TransitionStatus</c> should
+    ///   be called by the caller; <see langword="false"/> when <c>ActiveJobId</c> was already set
+    ///   and no state was changed.
     /// </returns>
-    private bool ActivateAgentJob(
+    private bool ActivateAgentJobGuarded(
         AgentEntry entry,
         AgentId agentId,
         string runId,
-        bool guardAgainstConcurrentAssignment,
         string callerName,
+        out string? capturedActiveJobId,
         Action<AgentEntry>? additionalLockedAction = null)
     {
         bool shouldTransition;
+        capturedActiveJobId = null;
         lock (entry.SyncRoot)
         {
-            if (guardAgainstConcurrentAssignment)
+            if (entry.ActiveJobId is null)
             {
-                if (entry.ActiveJobId is null)
-                {
-                    entry.ActiveJobId = runId;
-                    // UpdateAgentFieldFireAndForget is called inside the lock on the guarded path so
-                    // that the async Redis continuation (ContinueWith) cannot race with the outer
-                    // TransitionStatus call: TransitionStatus acquires SyncRoot internally and must
-                    // be invoked after this lock is released, so calling the Redis write here ensures
-                    // the fire-and-forget is started before the lock exits rather than after.
-                    _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, runId, _logger, callerName);
-                    additionalLockedAction?.Invoke(entry);
-                    shouldTransition = true;
-                }
-                else
-                {
-                    // ActiveJobId already set (same-agent reconnect or DrainService race).
-                    // Only transition to Busy if the active job matches the run being linked.
-                    // If DrainService assigned a different run between GetByAgentId and lock
-                    // acquisition, entry.ActiveJobId != runId and we skip the transition to
-                    // avoid clobbering the DrainService assignment.
-                    // TODO [WARNING]: Semantic divergence between call sites. TrackLinkedActiveJob
-                    // (Site 3) correctly uses "match → transition" semantics: shouldTransition = true
-                    // when ActiveJobId already equals runId (same-agent reconnect). However,
-                    // ActivateOrphanedRun (Site 4) had the original "any non-null → skip" semantics
-                    // (if ActiveJobId is not null, shouldTransition = false → early return, no
-                    // TransitionStatus, no AddRun). The unified helper uses "match → transition" for
-                    // both sites, so when a concurrent writer assigns entry.ActiveJobId = mostRecent.RunId
-                    // (the *same* run id) between GetActiveRunsByAgent and lock acquisition, the
-                    // ActivateOrphanedRun path now proceeds with TransitionStatus and AddRun instead
-                    // of returning early. Additionally, additionalLockedAction (which sets OrphanRestoredAt
-                    // and updates _localSnapshot) is only invoked on the null branch, so it is skipped,
-                    // leaving OrphanRestoredAt null and _localSnapshot un-updated for that path. Evaluate
-                    // whether ActivateOrphanedRun should pass a distinct guard value or perform its own
-                    // post-helper null check to restore the original "any non-null → skip" behavior.
-                    shouldTransition = entry.ActiveJobId == runId;
-                }
+                entry.ActiveJobId = runId;
+                // UpdateAgentFieldFireAndForget is called inside the lock on the guarded path so
+                // that the async Redis continuation (ContinueWith) cannot race with the outer
+                // TransitionStatus call: TransitionStatus acquires SyncRoot internally and must
+                // be invoked after this lock is released, so calling the Redis write here ensures
+                // the fire-and-forget is started before the lock exits rather than after.
+                _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, runId, _logger, callerName);
+                additionalLockedAction?.Invoke(entry);
+                shouldTransition = true;
             }
             else
             {
-                // Unconditional: this path only runs when the assignment is always authoritative.
-                // The caller handles TransitionStatus and UpdateAgentFieldFireAndForget after the lock.
-                // TODO [WARNING]: Split responsibility on the unconditional path. The guarded path
-                // calls UpdateAgentFieldFireAndForget inside the lock; the unconditional path leaves
-                // both TransitionStatus and UpdateAgentFieldFireAndForget to the caller. A future
-                // caller passing guardAgainstConcurrentAssignment: false may omit the field write
-                // since the method name ("ActivateAgentJob") implies a complete activation. If a new
-                // unconditional call site is added, ensure it calls both TransitionStatus AND
-                // UpdateAgentFieldFireAndForget after the method returns true.
-                entry.ActiveJobId = runId;
-                shouldTransition = true;
+                // "Any non-null → skip": a concurrent writer (e.g. DrainService) already assigned
+                // this agent. Capture the existing value inside the lock so callers (e.g.
+                // TrackLinkedActiveJobAsync) can compare it without a subsequent unsynchronized read.
+                capturedActiveJobId = entry.ActiveJobId;
+                shouldTransition = false;
             }
         }
         return shouldTransition;
