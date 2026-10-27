@@ -251,7 +251,15 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, IChang
                 {
                     _logger.Warning(ex,
                         "Pipeline {RunId} fallback cancel signal to agent {AgentId} also failed",
-                        run.RunId, run.AgentId);
+                        // TODO: [WARNING] Inline sanitization used here instead of LogSanitizer.SanitizeForLog()
+                        // because CodingAgent.Pipeline must not depend on CodingAgent.Infrastructure.*
+                        // (enforced by Pipeline_ShouldNot_DependOnInfrastructure in LayerBoundaryTests).
+                        // LogSanitizer lives in the CodingAgent.Infrastructure.Common namespace and NetArchTest
+                        // rejects any IL reference to that namespace from Pipeline assemblies even though
+                        // LogSanitizer.cs is physically in the Contracts project. If the escape set in
+                        // LogSanitizer is ever extended (e.g. null bytes, ANSI CSI sequences), update this
+                        // inline replacement to match. Tracked alongside issue #3968.
+                        run.RunId, run.AgentId?.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal));
                 }
             }
             else if (_agentCancellationSender is null)

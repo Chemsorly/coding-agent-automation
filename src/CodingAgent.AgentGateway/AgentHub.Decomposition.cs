@@ -301,7 +301,7 @@ public sealed partial class AgentHub
             _logger.Debug(
                 "RequestGetIssue: agent {AgentId} reading issue '{RequestedIdentifier}' " +
                 "(own issue: '{OwnIdentifier}', job {JobId})",
-                run.AgentId, SanitizeForLog(identifier), SanitizeForLog(run.IssueIdentifier), jobId.Value);
+                SanitizeForLog(run.AgentId), SanitizeForLog(identifier), SanitizeForLog(run.IssueIdentifier), jobId.Value);
         }
 
         try

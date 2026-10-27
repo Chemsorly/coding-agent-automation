@@ -3155,9 +3155,9 @@ public class ChatJobDispatcherTests
     /// <summary>
     /// When the caller's <see cref="CancellationToken"/> fires while the dispatcher is inside
     /// the agent-connect poll loop, the outer <c>catch (OperationCanceledException)</c> in
-    /// <c>PollForAgentConnectionAsync</c> must call <c>DeleteJobAsync</c> with
-    /// <c>CancellationToken.None</c> (via <c>TryCleanupFailedDispatch</c>) and then re-throw.
-    /// Covers the uncovered branch at ~L398–401.
+    /// <c>PollForAgentConnectionAsync</c> must call
+    /// <c>KubernetesJobDeleteHelper.TryDeleteJobAsync</c> with <c>CancellationToken.None</c>
+    /// and then re-throw. Covers the uncovered branch at ~L398–401.
     /// </summary>
     [Fact]
     public async Task DispatchChatPodAsync_CallerCancellationDuringConnectPoll_CallsDeleteWithNoneAndPropagatesOCE()
@@ -3183,7 +3183,7 @@ public class ChatJobDispatcherTests
         // Must propagate OperationCanceledException, not ChatPodTimeoutException
         await act.Should().ThrowAsync<OperationCanceledException>();
 
-        // TryCleanupFailedDispatch is called with CancellationToken.None from the caller-cancel catch
+        // KubernetesJobDeleteHelper.TryDeleteJobAsync is called with CancellationToken.None from the caller-cancel catch
         jobClientMock.Verify(c => c.DeleteJobAsync(
             It.Is<string>(n => n == capturedJobName),
             TestNamespace,
@@ -3195,9 +3195,10 @@ public class ChatJobDispatcherTests
     // ─── New (a2): caller cancel AND DeleteJobAsync also throws ──────────────────
 
     /// <summary>
-    /// When the caller cancels AND <c>DeleteJobAsync</c> inside <c>TryCleanupFailedDispatch</c>
-    /// also throws, the original <c>OperationCanceledException</c> must still propagate.
-    /// Covers the <c>catch (Exception)</c> in <c>TryCleanupFailedDispatch</c> (~L719).
+    /// When the caller cancels AND <c>DeleteJobAsync</c> inside
+    /// <c>KubernetesJobDeleteHelper.TryDeleteJobAsync</c> also throws, the original
+    /// <c>OperationCanceledException</c> must still propagate.
+    /// Covers the <c>catch (Exception)</c> in <c>KubernetesJobDeleteHelper.TryDeleteJobAsync</c> (~L719).
     /// </summary>
     [Fact]
     public async Task DispatchChatPodAsync_CallerCancellationAndDeleteAlsoThrows_StillPropagatesOCE()
@@ -3207,7 +3208,7 @@ public class ChatJobDispatcherTests
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        // Override the default: DeleteJobAsync throws — exercises TryCleanupFailedDispatch's catch
+        // Override the default: DeleteJobAsync throws — exercises KubernetesJobDeleteHelper.TryDeleteJobAsync's catch
         jobClientMock.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("delete forbidden"));
 
@@ -3531,5 +3532,213 @@ public class ChatJobDispatcherTests
             .BeFalse("CleanupSession must run for the first watcher entry after StopAsync timeout");
         dispatcher.HasActiveSession(jobNames[1]).Should()
             .BeFalse("CleanupSession must run for the second watcher entry after StopAsync timeout");
+    }
+
+    // ─── AC2: CleanupSession — heartbeat-tracker teardown ────────────────────
+
+    /// <summary>
+    /// When a non-null <see cref="IChatHeartbeatTracker"/> is injected and the dispatcher
+    /// shuts down, <see cref="ChatJobDispatcher.CleanupSession"/> must fire
+    /// <see cref="IChatHeartbeatTracker.DeleteRedisHeartbeatAsync"/> for the session's agent ID.
+    ///
+    /// <para>
+    /// Uses the StopAsync path to trigger cleanup rather than waiting for a terminal job.
+    /// The natural-completion approach is not viable here because the real
+    /// <see cref="ChatSessionWatcher"/> calls <c>TryGetRedisHeartbeatAsync</c> at the top of
+    /// every poll iteration before it ever calls <c>TryReadJobAsync</c>. A Moq loose mock
+    /// returns <c>(Available: false, Heartbeat: null)</c> by default, causing the watcher to
+    /// skip <c>TryReadJobAsync</c> indefinitely and never reach <c>CleanupSession</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// When <see cref="ChatJobDispatcher.StopAsync"/> fires, <c>_shutdownCts</c> is cancelled,
+    /// which cancels the linked <c>watcherCts</c>. The watcher's <c>Task.Delay(pollInterval, ct)</c>
+    /// (in the <c>if (lastHeartbeat is null)</c> branch) throws
+    /// <see cref="OperationCanceledException"/>, which is caught by the outer catch block that
+    /// calls <c>cleanupCallback</c> → <c>CleanupSession</c> → <c>DeleteRedisHeartbeatAsync</c>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task CleanupSession_WithNonNullHeartbeatTracker_CallsDeleteRedisHeartbeatAsync()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedJobName = null;
+
+        // ReadJobAsync returns non-terminal — watcher does not exit on its own.
+        // Shutdown via StopAsync is what triggers CleanupSession.
+        jobClientMock.Setup(c => c.ReadJobAsync(
+                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        jobClientMock.Setup(c => c.CreateJobAsync(
+                It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                capturedJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels["caa/chat-session-id"];
+                RegisterChatAgent(registry, capturedJobName!, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Inject a mock tracker so we can verify DeleteRedisHeartbeatAsync is called.
+        // TryGetRedisHeartbeatAsync is intentionally NOT set up: the default Moq loose mock
+        // returns (Available: false, Heartbeat: null), which causes the watcher to skip
+        // TryReadJobAsync and stay in Task.Delay(pollInterval, ct). The cancellation fired by
+        // StopAsync then exits the loop and calls cleanupCallback → CleanupSession.
+        // A TaskCompletionSource is used to signal the moment the method is invoked, so the
+        // test waits for the actual call rather than relying on a fixed-duration delay.
+        var deleteCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var heartbeatTrackerMock = new Mock<IChatHeartbeatTracker>();
+        heartbeatTrackerMock
+            .Setup(t => t.DeleteRedisHeartbeatAsync(It.IsAny<AgentId>()))
+            .Callback(() => deleteCalled.TrySetResult())
+            .Returns(Task.CompletedTask);
+
+        // Use the internal constructor to supply the mock tracker.
+        // sessionWatcher: null → real ChatSessionWatcher is constructed internally.
+        await using var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registry,
+            CreateOptions(),
+            Mock.Of<ILogger>(),
+            heartbeatTracker: heartbeatTrackerMock.Object,
+            sessionWatcher: null);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // StopAsync cancels _shutdownCts → watcherCts is cancelled → watcher's Task.Delay
+        // (inside `if (lastHeartbeat is null)`) throws OperationCanceledException → outer catch
+        // calls cleanupCallback → CleanupSession runs → DeleteRedisHeartbeatAsync is fired.
+        await dispatcher.StopAsync(CancellationToken.None);
+
+        // Await the TCS signal with a generous timeout as a safety net. Since CleanupSession
+        // calls DeleteRedisHeartbeatAsync synchronously (fire-and-forget with Task.CompletedTask),
+        // the signal fires before StopAsync returns and this await completes immediately.
+        await deleteCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        heartbeatTrackerMock.Verify(
+            t => t.DeleteRedisHeartbeatAsync(
+                It.Is<AgentId>(a => a.Value == capturedJobName)),
+            Times.AtLeastOnce,
+            "CleanupSession must call DeleteRedisHeartbeatAsync when _heartbeatTracker is non-null");
+    }
+
+    // ─── AC3: TrySendCancelChatAsync — success path reaches the Information log ─
+
+    /// <summary>
+    /// When the hub <c>CancelChat</c> call returns successfully,
+    /// <c>TrySendCancelChatAsync</c> must not throw and must emit an Information-level
+    /// log line confirming the message was sent. The failure-path Warning must not appear.
+    ///
+    /// <para>
+    /// Mirrors <see cref="TrySendCancelChatAsync_WhenHubCallThrows_LogsWarningAndDoesNotRethrow"/>
+    /// but with a succeeding hub mock and assertions for the success log line.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task TrySendCancelChatAsync_SuccessfulHubCall_LogsInformationAndDoesNotThrow()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registryMock = new Mock<IAgentRegistryService>();
+        registryMock.Setup(r => r.Deregister(It.IsAny<AgentId>())).Returns(true);
+
+        string? createdJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(
+                It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var capturedDispatchId = j.Metadata.Labels["caa/chat-session-id"];
+
+                // Wire up the mock registry: GetAgentsByLabel for the dispatch poll loop,
+                // GetByAgentIdAsync for TrySendCancelChatAsync (label extraction + hub call).
+                var agentEntry = new AgentEntry
+                {
+                    AgentId = createdJobName!,
+                    ConnectionId = "conn-success-cancelchat",
+                    Hostname = "test-host",
+                    Labels = [$"chat-session-id={capturedDispatchId}"],
+                    Status = AgentStatus.Idle,
+                    RegisteredAt = DateTimeOffset.UtcNow
+                };
+                registryMock.Setup(r => r.GetAgentsByLabel("chat-session-id", capturedDispatchId))
+                    .Returns(new List<AgentEntry> { agentEntry });
+                registryMock.Setup(r => r.GetByAgentIdAsync(
+                        It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(agentEntry);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Hub client whose CancelChat returns Task.CompletedTask — success path.
+        var successClient = new Mock<IAgentHubClient>();
+        successClient.Setup(c => c.CancelChat(It.IsAny<string>())).Returns(Task.CompletedTask);
+        var mockClients = new Mock<IHubClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client(It.IsAny<string>())).Returns(successClient.Object);
+        var hubContextMock = new Mock<IHubContext<AgentHub, IAgentHubClient>>();
+        hubContextMock.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        // CapturingLogSink to inspect which log lines are emitted.
+        var capturedEvents = new List<Serilog.Events.LogEvent>();
+        var capturingSink = new CapturingLogSink(capturedEvents);
+        var logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(capturingSink)
+            .CreateLogger();
+
+        // Stalled watcher — blocks until WatcherCts fires (same pattern as
+        // TrySendCancelChatAsync_WhenHubCallThrows_LogsWarningAndDoesNotRethrow).
+        // This ensures TerminateChatSessionAsync blocks on the grace period so that
+        // TrySendCancelChatAsync completes before ForceDeleteAndCleanupAsync runs.
+        var stalledWatcher = new Mock<IChatSessionWatcher>();
+        stalledWatcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, _, _, _, ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(
+                    _ => Task.CompletedTask, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnCanceled, TaskScheduler.Default).Unwrap());
+
+        await using var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            hubContextMock.Object,
+            CreateTemplateStore(),
+            registryMock.Object,
+            CreateOptions(gracePeriod: 1),
+            logger,
+            heartbeatTracker: null,
+            sessionWatcher: stalledWatcher.Object);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Must not throw — success path does not rethrow.
+        var act = async () => await dispatcher.TerminateChatSessionAsync(createdJobName!, CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "TrySendCancelChatAsync must not throw when hub CancelChat succeeds");
+
+        // The Information log "CancelChat sent to agent" must have been emitted.
+        capturedEvents.Should().Contain(e =>
+            e.Level == Serilog.Events.LogEventLevel.Information &&
+            e.MessageTemplate.Text.Contains("CancelChat sent"),
+            "success log line must be reached when hub CancelChat returns without throwing");
+
+        // Guard: the failure-path Warning must NOT be present.
+        // Without this, a test that accidentally executes the catch block instead of the
+        // success path could still pass the Information assertion via an unrelated log line.
+        capturedEvents.Should().NotContain(e =>
+            e.Level == Serilog.Events.LogEventLevel.Warning &&
+            e.MessageTemplate.Text.Contains("CancelChat") &&
+            e.MessageTemplate.Text.Contains("failed"),
+            "the failure-path Warning must not appear when hub CancelChat succeeds");
     }
 }
