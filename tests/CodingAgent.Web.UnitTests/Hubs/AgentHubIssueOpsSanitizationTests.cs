@@ -216,4 +216,69 @@ public sealed class AgentHubIssueOpsSanitizationTests
             Times.Once,
             "valid non-gated label must delegate to SwapLabelAsync");
     }
+
+    // ── AgentId log injection (Issue #3968) ───────────────────────────────
+    // Path: RequestLabelChange → GetRun returns run with CRLF in AgentId → Information log
+    //
+    // Unlike the newLabel tests above, this test is non-tautological: run.AgentId is set on
+    // the in-memory PipelineRun and is never validated against AgentLabels.All.Contains().
+    // A CRLF-bearing AgentId therefore reaches the Information log call at AgentHub.IssueOps.cs:L97.
+    // Pre-fix: args[3] contains raw '\r' and '\n' → assertion fails.
+    // Post-fix: args[3] contains '\\r' and '\\n' (escaped) → assertion passes.
+
+    [Fact]
+    public async Task RequestLabelChange_AgentIdWithNewline_InformationLogDoesNotContainRawNewline()
+    {
+        // Arrange: run present with an AgentId that contains CR+LF, simulating a compromised
+        // agent that registered with a crafted agentId designed to forge subsequent log lines.
+        const string jobId = "job-agentid-injection";
+        const string maliciousAgentId = "agent-1\r\n[ERR] forged-log-line";
+        const string sanitizedAgentId = "agent-1\\r\\n[ERR] forged-log-line";
+
+        var run = CreateRun(jobId);
+        run.AgentId = maliciousAgentId; // set agent-controlled field after construction
+        _mockFacade.Setup(f => f.GetRun(new JobId(jobId))).Returns(run);
+
+        var hub = CreateHub();
+
+        // Act: AgentLabels.Error is in AgentLabels.All and not in DispatchGatedLabels,
+        // so all guards pass and execution reaches the Information log at line 97.
+        await hub.RequestLabelChange(jobId, AgentLabels.Error);
+
+        // Assert: Information was emitted with the *sanitized* AgentId at args[3].
+        // Log template: "RequestLabelChange: job {JobId} requesting label {Label} for issue
+        //   {IssueIdentifier} (agent={AgentId}, currentStep={CurrentStep})"
+        // args[0]=jobId.Value, args[1]=SanitizeForLog(newLabel), args[2]=run.IssueIdentifier,
+        // args[3]=run.AgentId (must be sanitized), args[4]=run.CurrentStep
+        _mockLogger.Verify(
+            l => l.Information(
+                It.Is<string>(t => t.Contains("RequestLabelChange")),
+                It.Is<object[]>(args =>
+                    args != null &&
+                    args.Length >= 4 &&
+                    (string?)args[3] == sanitizedAgentId)),
+            Times.Once,
+            "Information log must pass SanitizeForLog(run.AgentId) — raw CRLF in AgentId must not appear in the log");
+
+        // Assert: the raw malicious value (with actual newline chars) must not appear in any arg.
+        _mockLogger.Verify(
+            l => l.Information(
+                It.IsAny<string>(),
+                It.Is<object[]>(args => args != null &&
+                    args.Any(a => (a as string) != null &&
+                        (((string)a).Contains('\r') || ((string)a).Contains('\n'))))),
+            Times.Never,
+            "no CR or LF must appear raw in any Information log argument — would enable log line injection");
+    }
+
+    // TODO: [WARNING — TestQualityReviewer] Issue #3968 also fixed run.AgentId sanitization at 8 additional
+    // log call sites (AgentHub.Decomposition.cs:304, AgentIdleTransitioner.cs:63, AgentJobLifecycleService.cs:144,
+    // DistributedRunService.cs:132, OrchestratorRunService.cs:85 & 94, RunLifecycleManager.cs:131 & 222 & 283,
+    // PipelineRunLifecycleService.cs:254). No per-site regression tests exist for those paths: reverting any
+    // SanitizeForLog wrapping there would reintroduce the vulnerability undetected by the test suite.
+    // The AC2 git grep check is the primary regression guard for those sites. To add per-site coverage,
+    // write tests analogous to RequestLabelChange_AgentIdWithNewline_InformationLogDoesNotContainRawNewline
+    // for each method: populate a PipelineRun with a CRLF-bearing AgentId, invoke the method, verify the
+    // logger received the escaped form. Priority sites: RunLifecycleManager.FailRunAsync / CompleteRunAsync /
+    // CancelRunAsync (all three invoke logger.Information with run.AgentId after terminal state transitions).
 }

@@ -85,16 +85,9 @@ public sealed partial class AgentHub
         // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
         // Note: the target kind is derived inside HubIssueOperations.SwapLabelAsync from run.LabelTargetKind.
 
-        // TODO (WARNING — Security): run.AgentId and run.CurrentStep are included in this log entry
-        // and may be external-input-derived (populated from agent-controlled fields on the WorkItem or
-        // PipelineRun). If a compromised agent can influence these values, a crafted string such as
-        // "some-step\r\nINFO: auth=admin" in CurrentStep would still be written verbatim to structured
-        // log output, forging log entries. Audit whether AgentId and CurrentStep originate from
-        // trusted or agent-controlled sources, and wrap them in SanitizeForLog if they are
-        // agent-controlled. This is a separate concern from Issue #3702 (which addresses newLabel).
         _logger.Information(
             "RequestLabelChange: job {JobId} requesting label {Label} for issue {IssueIdentifier} (agent={AgentId}, currentStep={CurrentStep})",
-            jobId.Value, SanitizeForLog(newLabel), run.IssueIdentifier, run.AgentId, run.CurrentStep);
+            jobId.Value, SanitizeForLog(newLabel), run.IssueIdentifier, SanitizeForLog(run.AgentId), run.CurrentStep); // run.CurrentStep is a PipelineStep enum — not an agent-controlled string, cannot carry CR/LF
 
         await SwapLabelAsync(run, newLabel);
     }

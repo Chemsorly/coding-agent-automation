@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -81,7 +82,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
             _outputBuffers.TryAdd(run.RunId, new OutputRingBuffer(_defaultBufferCapacity));
             _logger.Information(
                 "Active run added: {RunId} for issue {IssueIdentifier} (agent={AgentId})",
-                run.RunId, run.IssueIdentifier, run.AgentId ?? "local");
+                run.RunId, run.IssueIdentifier, LogSanitizer.SanitizeForLog(run.AgentId ?? "local"));
         }
         else
         {
@@ -90,7 +91,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
             _outputBuffers.TryAdd(run.RunId, new OutputRingBuffer(_defaultBufferCapacity));
             _logger.Information(
                 "Active run re-added: {RunId} for issue {IssueIdentifier} (agent={AgentId})",
-                run.RunId, run.IssueIdentifier, run.AgentId ?? "local");
+                run.RunId, run.IssueIdentifier, LogSanitizer.SanitizeForLog(run.AgentId ?? "local"));
         }
     }
 
