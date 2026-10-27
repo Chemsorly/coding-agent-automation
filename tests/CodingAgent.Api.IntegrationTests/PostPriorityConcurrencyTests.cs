@@ -18,6 +18,17 @@ using Microsoft.Extensions.Logging;
 namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
+/// xUnit collection for the ConcurrencyConflict priority-weight tests. Ensures a single
+/// <see cref="ConcurrencyConflictApiFactory"/> instance is shared across all tests in
+/// <see cref="PostPriorityConcurrencyTests"/>. <c>DisableParallelization = true</c>
+/// prevents the "logger is already frozen" Serilog race that occurs when two
+/// <see cref="Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory{TEntryPoint}"/>
+/// instances start concurrently — the same fix applied by <c>AgentHubGateCollection</c>.
+/// </summary>
+[CollectionDefinition("PostPriorityConcurrencyCollection", DisableParallelization = true)]
+public sealed class PostPriorityConcurrencyCollection : ICollectionFixture<ConcurrencyConflictApiFactory> { }
+
+/// <summary>
 /// Integration tests for the ConcurrencyConflict 409 path of POST /api/work-items/{id}/priority.
 ///
 /// Uses its own <see cref="ConcurrencyConflictApiFactory"/> (not the shared
@@ -25,7 +36,8 @@ namespace CodingAgent.Api.IntegrationTests;
 /// <see cref="WorkItemTransitionService"/> does not leak into the priority tests
 /// that expect successful 200 responses.
 /// </summary>
-public sealed class PostPriorityConcurrencyTests : IClassFixture<ConcurrencyConflictApiFactory>
+[Collection("PostPriorityConcurrencyCollection")]
+public sealed class PostPriorityConcurrencyTests
 {
     private readonly ConcurrencyConflictApiFactory _factory;
     private readonly HttpClient _client;
