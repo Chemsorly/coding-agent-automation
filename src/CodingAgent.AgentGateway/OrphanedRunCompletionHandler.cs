@@ -80,35 +80,18 @@ internal sealed class OrphanedRunCompletionHandler
         if (runRecord is null) return Task.CompletedTask;
 
         // Determine the label to apply — mirrors the logic in SwapLabelAndPostCommentAsync:
-        // use payload.FinalLabel when it is a known agent label, else fall back to a step-based
-        // default that depends on the task type.
+        // use payload.FinalLabel when it is a known swap-target agent label, else fall back to a
+        // step-based default that depends on the task type.
         //   - DecompositionAnalysis (Phase 1) sends FinalLabel = agent:epic-review via PostDecompositionPlanStep.
         //   - Decomposition (Phase 2) sends no FinalLabel → falls back to agent:done (Completed default).
-        //   - Review sends no FinalLabel → falls back to agent:next (the queue label for re-review if needed).
+        //   - Review sends no FinalLabel → falls back to agent:done (same as the normal completion path).
         //   - Implementation / Consolidation → agent:done.
-        // TODO: [WARNING] Validate payload.FinalLabel against AgentLabels.SwapTargets instead of AgentLabels.All.
-        // All.Contains("agent:generated") returns true, so a payload with FinalLabel = "agent:generated" would
-        // apply the provenance label as a pipeline status, stripping every real status label. SwapTargets
-        // excludes agent:generated and is the correct validator for the set of acceptable final labels.
-        // The same exposure exists in SwapLabelAndPostCommentAsync — fix both together. See review findings.
-        // TODO: [WARNING] AC3 migration gap (issue #3261): this inline `AgentLabels.All.Contains` guard
-        // duplicates the FinalLabel-validation half of CompletionOutcomeResolver.ResolveAgentLabel, which was
-        // extracted to centralise this pattern. A straight swap to ResolveAgentLabel is NOT behaviour-preserving
-        // here because this method uses a task-type-dependent fallback (Review→agent:next, else→agent:done)
-        // rather than the status-based fallback (Succeeded→agent:done). A faithful migration would call
-        // ResolveAgentLabel only for the FinalLabel validation (pass the knownLabel guard result) and keep the
-        // task-type switch for the fallback. The issue description notes this site as "should be migrated if it
-        // fits within scope"; it was left out of scope for issue #3261. Track in a follow-up.
-        var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
+        // SwapTargets is All minus agent:generated. agent:generated is a provenance/kind label that must
+        // not be used as a pipeline status — using All.Contains would allow it to corrupt the label
+        // state machine by stripping every real status label and writing the provenance label instead.
+        var finalLabel = payload.FinalLabel is not null && AgentLabels.SwapTargets.Contains(payload.FinalLabel)
             ? payload.FinalLabel
             : null;
-        // TODO: [WARNING] The Review fallback label (agent:next) diverges from the normal completion path
-        // (SwapLabelAndPostCommentAsync), which applies agent:done unconditionally for all task types
-        // including Review when FinalStep = Completed and no FinalLabel is set. A completed Review run
-        // that finishes on the normal path gets agent:done; the same run recovered via the orphan path
-        // gets agent:next. The comment above saying this "mirrors" SwapLabelAndPostCommentAsync is
-        // incorrect for the Review case. Align the two paths or document the intentional divergence.
-        // See review findings (Correctness reviewer, line 346).
         // This method is reached only when workItemStatus == WorkItemStatus.Succeeded.
         // CompletionOutcomeResolver.Resolve returns Succeeded for exactly three FinalStep values:
         //   {Completed, ConflictRestart, PrMerged}.
@@ -119,7 +102,7 @@ internal sealed class OrphanedRunCompletionHandler
         {
             PipelineStep.Completed => runRecord.TaskType switch
             {
-                WorkItemTaskType.Review => AgentLabels.Next,
+                WorkItemTaskType.Review => AgentLabels.Done,
                 // A completed triage waits for a person to review its drafts in the app
                 WorkItemTaskType.Triage => AgentLabels.TriageReview,
                 _ => AgentLabels.Done
