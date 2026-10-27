@@ -632,10 +632,10 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        // Review completion falls back to agent:next (default step-based label for Review completed).
+        // Review completion applies agent:done (same as the normal completion path).
         _labelService.Verify(l => l.SwapLabelAsync(
             "rpc-1", "pr-5",
-            AgentLabels.Next, LabelTargetKind.PullRequest,
+            AgentLabels.Done, LabelTargetKind.PullRequest,
             It.IsAny<CancellationToken>()), Times.Once);
         // Must NOT have targeted an issue.
         _labelService.Verify(l => l.SwapLabelAsync(
@@ -943,10 +943,10 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        // Fallback uses IssueProviderConfigId but still targets PullRequest
+        // Fallback uses IssueProviderConfigId but still targets PullRequest with agent:done.
         _labelService.Verify(l => l.SwapLabelAsync(
             "issue-prov", "pr-7",
-            AgentLabels.Next, LabelTargetKind.PullRequest,
+            AgentLabels.Done, LabelTargetKind.PullRequest,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
