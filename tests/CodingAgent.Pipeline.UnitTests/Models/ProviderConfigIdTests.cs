@@ -30,6 +30,22 @@ public class ProviderConfigIdTests
     }
 
     [Fact]
+    public void Constructor_EmptyString_ThrowsArgumentException()
+    {
+        var act = () => new ProviderConfigId("");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_NullString_ThrowsArgumentException()
+    {
+        var act = () => new ProviderConfigId(null!);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void ToString_ReturnsInnerValue()
     {
         var id = new ProviderConfigId("config-123");
