@@ -65,7 +65,7 @@ public static class SchedulerServiceCollectionExtensions
             .AddStandardResilienceHandler(configureResilienceOptions);
 
         services.AddHttpClient("TokenVending")
-            .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+            .AddStandardResilienceHandler(configureResilienceOptions);
 
         // ── Store shims (moved to Api.Client.Stores in Spec 047) ─────────────
         AddApiStoreShims(services, config);
@@ -279,7 +279,7 @@ public static class SchedulerServiceCollectionExtensions
         });
 
         services.AddHttpClient("SchedulerToApi")
-            .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+            .AddStandardResilienceHandler(configureResilienceOptions);
 
         services.AddSingleton<RetentionSweepSchedulerService>(sp =>
             new RetentionSweepSchedulerService(
