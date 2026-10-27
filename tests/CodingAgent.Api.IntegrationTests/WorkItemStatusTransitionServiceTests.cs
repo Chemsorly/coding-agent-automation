@@ -1356,11 +1356,11 @@ public sealed class WorkItemStatusTransitionServiceTests
         var result = WorkItemStatusTransitionService.SanitizePodLogTail(lines);
 
         result.Should().NotBeNull();
-        result![0].Should().Be("GITHUB_TOKEN=***",      "token=value pattern must be masked");
-        result[1].Should().Be("Authorization: ***",     "Authorization: Bearer must be masked");
-        result[2].Should().Be("api-key: ***",           "api-key: value pattern must be masked");
-        result[3].Should().Be("sending Bearer ***",     "standalone Bearer token must be masked");
-        result[4].Should().Be("tokens used: 1200",      "keyword must be followed by separator to match");
+        result![0].Should().Be("GITHUB_TOKEN=***", "token=value pattern must be masked");
+        result[1].Should().Be("Authorization: ***", "Authorization: Bearer must be masked");
+        result[2].Should().Be("api-key: ***", "api-key: value pattern must be masked");
+        result[3].Should().Be("sending Bearer ***", "standalone Bearer token must be masked");
+        result[4].Should().Be("tokens used: 1200", "keyword must be followed by separator to match");
     }
 
     // ── RegexMatchTimeoutException paths (Issue #3941) ────────────────────────
