@@ -156,15 +156,6 @@ internal sealed class CiPollingCoordinator
 
             if (attempt >= maxRetries)
             {
-                // TODO [WARNING] (DotNetSpecialist/TestQualityReviewer): This second call to CheckPullRequestStillOpenAsync is
-                // redundant — the identical call just above (line ~133) already returns early if the PR is merged/closed.
-                // No state-mutating operations occur between the two calls, so the second call can only differ under an
-                // extremely narrow race window. It wastes one extra provider API request on every exhaustion path.
-                // Consider removing the inner call and relying on the per-iteration check above.
-                var prStateBeforeExhaustion = await CheckPullRequestStillOpenAsync(context, callbacks, ct);
-                if (prStateBeforeExhaustion is not null)
-                    return prStateBeforeExhaustion;
-
                 return BuildNotStartedFailureStatus(run, maxRetries, callbacks);
             }
 

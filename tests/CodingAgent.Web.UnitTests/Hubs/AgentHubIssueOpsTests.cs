@@ -350,6 +350,45 @@ public sealed class AgentHubIssueOpsTests
             It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task RequestLabelChange_GeneratedLabel_ReturnsEarlyWithoutSwapping()
+    {
+        // agent:generated is in AgentLabels.All but NOT in AgentLabels.SwapTargets.
+        // After the fix the guard uses SwapTargets, so this label must be rejected as invalid.
+        // This prevents the provenance label from being applied as a pipeline status, which
+        // would strip every real status label and corrupt the issue's label state machine.
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHub();
+
+        await hub.RequestLabelChange("job-1", AgentLabels.Generated);
+
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "agent:generated must be rejected as a swap target and must not trigger a label swap");
+    }
+
+    [Fact]
+    public async Task RequestLabelChange_UnknownRun_GeneratedLabel_DoesNotAttemptFallback()
+    {
+        // Covers the DB fallback guard at AgentHub.IssueOps.cs:L115 (RequestLabelChangeFallbackAsync).
+        // agent:generated is in AgentLabels.All but not AgentLabels.SwapTargets, so the fallback
+        // guard must reject it before attempting the DB lookup (GetWorkItemIssueMetadataAsync).
+        // This is the symmetric companion to RequestLabelChange_GeneratedLabel_ReturnsEarlyWithoutSwapping,
+        // which covers the in-memory guard at L70.
+        _mockFacade.Setup(f => f.GetRun("job-fallback")).Returns((PipelineRun?)null);
+
+        var hub = CreateHub();
+
+        await hub.RequestLabelChange("job-fallback", AgentLabels.Generated);
+
+        _mockFacade.Verify(
+            f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "agent:generated must be rejected by the fallback guard before the DB lookup is attempted");
+    }
+
     // ── RequestLabelChange — gated label ─────────────────────────────────
 
     [Fact]

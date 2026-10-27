@@ -195,20 +195,13 @@ public sealed class OrphanedRunCompletionHandlerTests
     // ── Label routing: Review task type ────────────────────────────────────
 
     [Fact]
-    public async Task HandleAsync_CompletedStep_ReviewRun_SwapsLabelToNext_OnPullRequest()
+    public async Task HandleAsync_CompletedStep_ReviewRun_SwapsLabelToDone_OnPullRequest()
     {
-        // Review run completion: label must be agent:next, target must be PullRequest,
+        // Review run completion: label must be agent:done, target must be PullRequest,
         // and the provider config must be RepoProviderConfigId (not IssueProviderConfigId).
-        // TODO: [WARNING] This test asserts AgentLabels.Next for a Review completion. The production
-        // code implements agent:next for Review runs on the orphan-recovery path, but this diverges
-        // from the normal completion path (SwapLabelAndPostCommentAsync in AgentJobLifecycleService),
-        // which applies agent:done unconditionally for all task types including Review when
-        // FinalStep == Completed and no FinalLabel is set. This assertion therefore locks in a known
-        // inconsistency between the orphan path and the normal path. If the divergence is intentional,
-        // document it (e.g. rename the test to include "OrphanPath" and add a comment explaining the
-        // semantic difference). If it is a bug, fix OrphanedRunCompletionHandler to match the normal
-        // path and update this assertion to AgentLabels.Done. See in-code TODO in
-        // OrphanedRunCompletionHandler.TrySwapLabelAfterOrphanedRecoveryAsync. (DotNetSpecialist WARNING)
+        // This aligns the orphan-recovery path with the normal completion path
+        // (SwapLabelAndPostCommentAsync in AgentJobLifecycleService), which also applies
+        // agent:done for all task types including Review when FinalStep == Completed.
         _facade.Setup(f => f.GetWorkItemRunRecordAsync(new JobId("job-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WorkItemRunRecord
             {
@@ -224,9 +217,9 @@ public sealed class OrphanedRunCompletionHandlerTests
         // Must use RepoProviderConfigId and target the PR.
         _labelService.Verify(l => l.SwapLabelAsync(
             "repo-prov", "pr-5",
-            AgentLabels.Next, LabelTargetKind.PullRequest,
+            AgentLabels.Done, LabelTargetKind.PullRequest,
             It.IsAny<CancellationToken>()), Times.Once,
-            "Review completion must target the pull request via RepoProviderConfigId");
+            "Review completion must target the pull request via RepoProviderConfigId with agent:done");
 
         // Must NOT have targeted the issue.
         _labelService.Verify(l => l.SwapLabelAsync(
@@ -258,9 +251,9 @@ public sealed class OrphanedRunCompletionHandlerTests
         // Fallback: IssueProviderConfigId is used, but target is still PullRequest.
         _labelService.Verify(l => l.SwapLabelAsync(
             "issue-prov", "pr-7",
-            AgentLabels.Next, LabelTargetKind.PullRequest,
+            AgentLabels.Done, LabelTargetKind.PullRequest,
             It.IsAny<CancellationToken>()), Times.Once,
-            "null RepoProviderConfigId must fall back to IssueProviderConfigId, still targeting PullRequest");
+            "null RepoProviderConfigId must fall back to IssueProviderConfigId, still targeting PullRequest with agent:done");
     }
 
     // ── FinalLabel override ─────────────────────────────────────────────────
@@ -322,5 +315,77 @@ public sealed class OrphanedRunCompletionHandlerTests
             AgentLabels.Done, LabelTargetKind.Issue,
             It.IsAny<CancellationToken>()), Times.Once,
             "unknown FinalLabel must be ignored and the step-based default applied");
+    }
+
+    // ── AC2: agent:generated FinalLabel must be rejected (not in SwapTargets) ───────
+
+    [Fact]
+    public async Task HandleAsync_CompletedStep_GeneratedFinalLabel_FallsBackToStepDefault()
+    {
+        // Verifies AC2: "agent:generated" is in AgentLabels.All but NOT in AgentLabels.SwapTargets.
+        // Before the fix: finalLabel = "agent:generated" is accepted (All.Contains returns true),
+        //   so agent:generated gets applied as a pipeline status — corrupting the label state machine.
+        // After the fix:  finalLabel = null (SwapTargets.Contains returns false),
+        //   so the step default agent:done applies instead.
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(new JobId("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "issue-42",
+                IssueProviderConfigId = "ipc-1"
+            });
+
+        var sut = CreateHandler();
+        await sut.HandleAsync(
+            new JobId("job-1"),
+            MakePayload(PipelineStep.Completed, finalLabel: AgentLabels.Generated),
+            CancellationToken.None);
+
+        // agent:generated must be rejected; step default (Completed → Implementation → agent:done) applies.
+        _labelService.Verify(l => l.SwapLabelAsync(
+            "ipc-1", "issue-42",
+            AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "agent:generated must not be accepted as a swap target; step default (agent:done) must be applied");
+
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+            AgentLabels.Generated, It.IsAny<LabelTargetKind>(),
+            It.IsAny<CancellationToken>()), Times.Never,
+            "agent:generated must never be applied as a swap target");
+    }
+
+    // ── AC3: completed Review run must get agent:done, not agent:next ───────────────
+
+    [Fact]
+    public async Task HandleAsync_CompletedStep_ReviewRun_AppliesDoneNotNext()
+    {
+        // Verifies AC3: a completed Review run recovered via the orphan path must apply agent:done
+        // (same as the normal completion path in SwapLabelAndPostCommentAsync), not agent:next.
+        // Before the fix: AgentLabels.Next was applied, re-queuing the run for another review cycle.
+        // After the fix:  AgentLabels.Done is applied — the correct terminal state.
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(new JobId("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Review,
+                IssueIdentifier = "pr-10",
+                IssueProviderConfigId = "issue-prov",
+                RepoProviderConfigId = "repo-prov"
+            });
+
+        var sut = CreateHandler();
+        await sut.HandleAsync(new JobId("job-1"), MakePayload(PipelineStep.Completed), CancellationToken.None);
+
+        _labelService.Verify(l => l.SwapLabelAsync(
+            "repo-prov", "pr-10",
+            AgentLabels.Done, LabelTargetKind.PullRequest,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "completed Review run on orphan path must apply agent:done (not agent:next)");
+
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+            AgentLabels.Next, It.IsAny<LabelTargetKind>(),
+            It.IsAny<CancellationToken>()), Times.Never,
+            "agent:next must never be applied for a completed Review run");
     }
 }
