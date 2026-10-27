@@ -128,7 +128,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _logger.Information(
             "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
-            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, LogSanitizer.SanitizeForLog(failureReason), run.AgentId ?? "none");
+            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, LogSanitizer.SanitizeForLog(failureReason), LogSanitizer.SanitizeForLog(run.AgentId ?? "none"));
 
         return run;
     }
@@ -219,7 +219,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _logger.Information(
             "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId})",
-            runId, effectiveStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
+            runId, effectiveStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, LogSanitizer.SanitizeForLog(run.AgentId ?? "none"));
 
         // null tells the caller another path won, so it does not apply this report's label again.
         return otherPathWon ? null : run;
@@ -280,7 +280,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _logger.Information(
             "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
-            runId, effectiveStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
+            runId, effectiveStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, LogSanitizer.SanitizeForLog(run.AgentId ?? "none"), failureReason ?? "none");
 
         return run;
     }

@@ -1,4 +1,5 @@
 using CodingAgent.Contracts;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using ILogger = Serilog.ILogger;
@@ -59,7 +60,7 @@ internal sealed class AgentIdleTransitioner
             _facade.TransitionStatus(agentId, AgentStatus.Idle);
             _logger.Warning(
                 "[{CallerContext}] agent lookup returned null for job {JobId} (agentId={AgentId}) — clearing state via run fallback to prevent Busy lock",
-                callerContext, jobIdValue, run.AgentId);
+                callerContext, jobIdValue, LogSanitizer.SanitizeForLog(run.AgentId));
         }
     }
 }

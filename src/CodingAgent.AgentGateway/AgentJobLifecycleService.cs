@@ -141,7 +141,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}, retryCount={RetryCount}). " +
             "This indicates a dispatch race condition — investigate if recurring.",
-            jobId.Value, run.IssueIdentifier, run.CurrentStep, run.AgentId, retryCount);
+            jobId.Value, run.IssueIdentifier, run.CurrentStep, LogSanitizer.SanitizeForLog(run.AgentId), retryCount);
 
         _changeNotifier.NotifyChange();
     }

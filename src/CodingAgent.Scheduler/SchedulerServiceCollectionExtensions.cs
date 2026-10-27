@@ -52,20 +52,18 @@ public static class SchedulerServiceCollectionExtensions
             c.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue(BearerScheme, agentApiKey);
         };
-        Action<HttpStandardResilienceOptions> configureResilienceOptions =
-            o => o.CircuitBreaker.MinimumThroughput = 10;
 
         services.AddHttpClient<IPipelineApiConfigClient, PipelineApiConfigClient>(configurePipelineApiClient)
-            .AddStandardResilienceHandler(configureResilienceOptions);
+            .AddStandardResilienceHandler(PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
 
         services.AddHttpClient<IPipelineApiWorkItemClient, PipelineApiWorkItemClient>(configurePipelineApiClient)
-            .AddStandardResilienceHandler(configureResilienceOptions);
+            .AddStandardResilienceHandler(PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
 
         services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(configurePipelineApiClient)
-            .AddStandardResilienceHandler(configureResilienceOptions);
+            .AddStandardResilienceHandler(PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
 
         services.AddHttpClient("TokenVending")
-            .AddStandardResilienceHandler(configureResilienceOptions);
+            .AddStandardResilienceHandler(PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
 
         // ── Store shims (moved to Api.Client.Stores in Spec 047) ─────────────
         AddApiStoreShims(services, config);
@@ -232,7 +230,7 @@ public static class SchedulerServiceCollectionExtensions
 
         // ── FeedbackCommentRelayService ───────────────────────────────────────
         services.AddHttpClient<IPipelineApiFeedbackCommentOutboxClient, PipelineApiFeedbackCommentOutboxClient>(configurePipelineApiClient)
-            .AddStandardResilienceHandler(configureResilienceOptions);
+            .AddStandardResilienceHandler(PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
 
         // Registered as a named singleton (in addition to IHostedService) so that
         // SchedulerE2EWebApplicationFactory can resolve it by concrete type for test hooks
@@ -279,7 +277,7 @@ public static class SchedulerServiceCollectionExtensions
         });
 
         services.AddHttpClient("SchedulerToApi")
-            .AddStandardResilienceHandler(configureResilienceOptions);
+            .AddStandardResilienceHandler(PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
 
         services.AddSingleton<RetentionSweepSchedulerService>(sp =>
             new RetentionSweepSchedulerService(
