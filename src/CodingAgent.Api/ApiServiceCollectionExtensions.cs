@@ -314,10 +314,9 @@ public static class ApiServiceCollectionExtensions
         // AddKubernetes must run before AddDispatch (IKubernetesJobClient required by
         // DispatchLifecycleService) and before AddChatDispatch (ModelFetchJobService,
         // ChatJobDispatcher). Do not reorder these calls without tracing all cross-method deps.
-        // TODO [WARNING]: Reordering these sub-method calls would silently break DI resolution
-        // at runtime (not at build time, because ValidateOnBuild = false in the test provider).
-        // If the call order must change, verify all cross-sub-method dependencies are satisfied.
-        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:292 (Correctness review).
+        // Ordering violations surface at startup in tests: ApiWebApplicationFactory sets
+        // ValidateOnBuild = true, so any missing registration fails host startup rather than
+        // failing silently at first-use in production.
         AddOrchestrationCore(services, config);
         AddTokenVending(services);
         AddLabelServices(services);
@@ -509,13 +508,12 @@ public static class ApiServiceCollectionExtensions
         // Required by AssignmentEnricher to resolve provider configs and vend short-lived tokens
         // at assignment time (GET /api/work-items/{id}/assignment).
         // Also used by ReportConsolidationComplete hub handling.
-        // TODO [WARNING]: IConsolidationJobPreparationService requires ITokenVendingService,
+        // Note: IConsolidationJobPreparationService requires ITokenVendingService,
         // which is registered by AddTokenVending — a sibling sub-method called before
         // AddLifecycleAndConsolidation in AddApiOrchestration. This cross-sub-method dependency
-        // is correct with the current call order but is fragile: moving AddTokenVending to after
-        // AddLifecycleAndConsolidation (or calling AddLifecycleAndConsolidation standalone)
-        // would silently break resolution at runtime. See the ordering comment in AddApiOrchestration.
-        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:454 (Correctness review).
+        // is correct with the current call order. Reordering AddTokenVending after
+        // AddLifecycleAndConsolidation will fail at host startup in tests (ApiWebApplicationFactory
+        // sets ValidateOnBuild = true). See the ordering comment in AddApiOrchestration.
         services.AddSingleton<IConsolidationJobPreparationService>(sp =>
             new ConsolidationJobPreparationService(
                 sp.GetRequiredService<IProviderConfigStore>(),
