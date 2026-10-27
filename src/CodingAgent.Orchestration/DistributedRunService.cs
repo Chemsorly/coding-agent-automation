@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -128,7 +129,7 @@ return 1
         await _store.HashSetAsync(RunKey(run.RunId), run.ToHashEntries());
         await _store.SetAddAsync(ActiveSetKey, run.RunId);
         _logger.Information("Active run added: {RunId} for issue {IssueIdentifier} (agent={AgentId})",
-            run.RunId, run.IssueIdentifier, run.AgentId ?? "local");
+            run.RunId, run.IssueIdentifier, LogSanitizer.SanitizeForLog(run.AgentId ?? "local"));
     }
 
     // ── RemoveRun ─────────────────────────────────────────────────────

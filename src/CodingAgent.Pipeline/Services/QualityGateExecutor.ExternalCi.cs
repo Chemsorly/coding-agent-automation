@@ -4,9 +4,47 @@ using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.Services;
 
+/// <summary>
+/// Terminal-state outcomes from a successful external CI poll. Used by
+/// <see cref="QualityGateExecutor.ClassifyCiResult"/> to dispatch the five possible results
+/// into named handlers inside <see cref="QualityGateExecutor.AppendExternalCiIfNeededAsync"/>.
+/// Mirrors the <see cref="Models.RetryOutcome"/>/<see cref="QualityGateExecutor.ClassifyRetryOutcome"/> pattern.
+/// </summary>
+internal enum CiTerminalOutcome
+{
+    ConflictRestart,
+    PrMerged,
+    PrClosed,
+
+    /// <summary>
+    /// CI ran and returned a status with <see cref="PipelineRunStatus.IsInfrastructureFailure"/> = true
+    /// (e.g. CI never started, or <see cref="CiFailureClassifier"/> classified the run as Infrastructure).
+    /// Distinct from the exhausted-retries infra-failure path (provider API entirely unreachable),
+    /// which is handled by <see cref="QualityGateExecutor.BuildExhaustedInfraGate"/> before this
+    /// classifier is reached.
+    /// </summary>
+    InfrastructureFailure,
+
+    NormalResult
+}
+
 public partial class QualityGateExecutor
 {
     private const string ExternalCiName = "External CI";
+
+    /// <summary>
+    /// Carries the result of <see cref="RunInfraRetryPollingAsync"/> back to
+    /// <see cref="AppendExternalCiIfNeededAsync"/>.
+    /// <list type="bullet">
+    ///   <item><term>CiResult has value</term><description>Polling succeeded; proceed to <see cref="ClassifyCiResult"/>.</description></item>
+    ///   <item><term>CiResult is null, ExhaustedRetries = true</term><description>All retries consumed; produce an infra-failure gate.</description></item>
+    ///   <item><term>CiResult is null, ExhaustedRetries = false</term><description>MaxInfrastructureRetries = 0; caller must re-throw <see cref="LastException"/>.</description></item>
+    /// </list>
+    /// </summary>
+    internal readonly record struct InfraPollingResult(
+        (bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)? CiResult,
+        Exception? LastException,
+        bool ExhaustedRetries);
 
     /// <summary>
     /// Determines which ValidateAsync overload to call based on the QGC context:
@@ -66,86 +104,49 @@ public partial class QualityGateExecutor
 
             await context.Callbacks.CreateDraftPrIfNotExists(context.Run, ct);
 
-            // Re-poll loop: when RunExternalCiPollAsync throws a transient exception (e.g. provider
-            // API 5xx), retry up to MaxInfrastructureRetries times before returning an infra-failure
-            // gate. OperationCanceledException propagates unconditionally so timeout and pipeline
-            // cancellation are not swallowed. Exceptions from CommitAndPushAsync and
+            // Infrastructure-retry polling: when RunExternalCiPollAsync throws a transient exception
+            // (e.g. provider API 5xx), retry up to MaxInfrastructureRetries times before returning
+            // an infra-failure gate. OperationCanceledException propagates unconditionally so timeout
+            // and pipeline cancellation are not swallowed. Exceptions from CommitAndPushAsync and
             // CreateDraftPrIfNotExists above fall through to the outer catch (unchanged).
-            (bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)? ciResult = null;
-            var localRetry = 0;
-            Exception? lastEx = null;
-            while (true)
-            {
-                try
-                {
-                    ciResult = await RunExternalCiPollAsync(context, ct);
-                    break;
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    lastEx = ex;
-                    if (localRetry >= context.Config.MaxInfrastructureRetries)
-                        break; // exhausted — produce infra-failure gate below
-                    localRetry++;
-                    context.Run.InfrastructureRetryCount++;
-                    _logger.Warning(ex,
-                        "Pipeline {RunId} could not read the CI status ({Error}), polling again ({Attempt}/{Max})",
-                        context.Run.RunId, ex.Message, localRetry, context.Config.MaxInfrastructureRetries);
-                    context.Callbacks.EmitOutputLine(
-                        $"⚠️ Could not read the CI status — polling again ({localRetry}/{context.Config.MaxInfrastructureRetries})...");
-                    await Task.Delay(context.Config.ExternalCiPollInterval, ct);
-                }
-            }
+            var pollingResult = await RunInfraRetryPollingAsync(context, ct);
 
-            if (ciResult is null && localRetry > 0)
-            {
-                // Re-poll attempts exhausted: classify as infrastructure failure so the
-                // retry loop short-circuit in RunRetryLoopAsync skips the LLM invocation.
-                var errorGate = CiPollingCoordinator.BuildCiErrorGateResult(
-                    ExternalCiName, "CI status unavailable — " + lastEx!.Message);
-                ciGate = new GateResult
-                {
-                    GateName = errorGate.GateName,
-                    Passed = errorGate.Passed,
-                    Details = errorGate.Details,
-                    IsInfrastructureFailure = true
-                };
-            }
-            else if (ciResult is null)
+            if (pollingResult.CiResult is null && !pollingResult.ExhaustedRetries)
             {
                 // MaxInfrastructureRetries = 0: no retries configured — re-throw so the outer
                 // catch (Exception ex) handles this with the original pre-fix behaviour.
-                throw lastEx!;
+                throw pollingResult.LastException!;
+            }
+
+            if (pollingResult.ExhaustedRetries)
+            {
+                // Re-poll attempts exhausted: provider API was unreachable for all attempts.
+                // Classify as infrastructure failure so RunRetryLoopAsync skips the LLM invocation.
+                // Distinct from CiTerminalOutcome.InfrastructureFailure (CI ran but reported infra failure).
+                ciGate = BuildExhaustedInfraGate(pollingResult.LastException!);
             }
             else
             {
-                var (ciPassed, ciStatus, ciLogPaths) = ciResult.Value;
-
-                if (ciStatus.State == PipelineRunState.ConflictRestart)
-                    return BuildConflictRestartReport(context.Run, report, context.Callbacks);
-
-                if (ciStatus.State == PipelineRunState.PrMerged)
-                    return BuildPrMergedReport(report);
-
-                if (ciStatus.State == PipelineRunState.PrClosed)
-                    return BuildPrClosedReport(report);
-
-                ciGate = CiPollingCoordinator.BuildCiGateResult(
-                    ciPassed, ciStatus, ciLogPaths, "CI", ExternalCiName, context.Callbacks);
-
-                // Propagate infrastructure failure flag so RunRetryLoopAsync can short-circuit LLM invocation
-                if (ciStatus.IsInfrastructureFailure)
-                    ciGate = new GateResult
-                    {
-                        GateName = ciGate.GateName,
-                        Passed = ciGate.Passed,
-                        Details = ciGate.Details,
-                        TestsFailed = ciGate.TestsFailed,
-                        TestsPassed = ciGate.TestsPassed,
-                        TestsSkipped = ciGate.TestsSkipped,
-                        IsInfrastructureFailure = true
-                    };
+                var (ciPassed, ciStatus, ciLogPaths) = pollingResult.CiResult!.Value;
+                switch (ClassifyCiResult(ciStatus))
+                {
+                    case CiTerminalOutcome.ConflictRestart:
+                        return BuildConflictRestartReport(context.Run, report, context.Callbacks);
+                    case CiTerminalOutcome.PrMerged:
+                        return BuildPrMergedReport(report);
+                    case CiTerminalOutcome.PrClosed:
+                        return BuildPrClosedReport(report);
+                    case CiTerminalOutcome.InfrastructureFailure:
+                        // CI was polled successfully but returned an infrastructure-failure status
+                        // (e.g. CI never started, or CiFailureClassifier.Infrastructure-classified).
+                        // Distinct from ExhaustedRetries above (provider API was unreachable).
+                        ciGate = BuildInfraFlaggedGateResult(ciPassed, ciStatus, ciLogPaths, context.Callbacks);
+                        break;
+                    default: // NormalResult
+                        ciGate = CiPollingCoordinator.BuildCiGateResult(
+                            ciPassed, ciStatus, ciLogPaths, "CI", ExternalCiName, context.Callbacks);
+                        break;
+                }
             }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -159,16 +160,7 @@ public partial class QualityGateExecutor
             var baseBranch = context.RepoProvider.BaseBranch;
             var message = $"Push refused: the pipeline's GitHub App may not create or update files under .github/workflows, and this branch's workflow files differ from origin/{baseBranch}. If your change edits .github/workflows, revert that part (the pipeline cannot push it). Otherwise main changed them after this run started: run git fetch origin {baseBranch} && git rebase origin/{baseBranch}, resolve any conflicts, and keep your changes.";
             var errorGate = CiPollingCoordinator.BuildCiErrorGateResult(ExternalCiName, message);
-            var alreadyFailed = context.Run.RetryErrors.LastOrDefault()?.Contains("Push refused: the pipeline's GitHub App", StringComparison.OrdinalIgnoreCase) == true;
-            ciGate = alreadyFailed
-                ? new GateResult
-                {
-                    GateName = errorGate.GateName,
-                    Passed = errorGate.Passed,
-                    Details = errorGate.Details,
-                    IsInfrastructureFailure = true
-                }
-                : errorGate;
+            ciGate = BuildWorkflowPushRefusedGate(context, errorGate);
         }
         catch (Exception ex)
         {
@@ -182,6 +174,132 @@ public partial class QualityGateExecutor
             Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path)
             ExternalCi = ciGate
         };
+    }
+
+    /// <summary>
+    /// Retries <see cref="RunExternalCiPollAsync"/> up to
+    /// <see cref="PipelineConfiguration.MaxInfrastructureRetries"/> times when it throws a
+    /// transient exception. <see cref="OperationCanceledException"/> always propagates
+    /// unconditionally. Returns an <see cref="InfraPollingResult"/> that distinguishes three
+    /// outcomes: success, exhausted retries, and the MaxInfrastructureRetries = 0 re-throw case.
+    /// Extracted from <see cref="AppendExternalCiIfNeededAsync"/> to reduce cognitive complexity
+    /// (issue #3958).
+    /// </summary>
+    internal async Task<InfraPollingResult> RunInfraRetryPollingAsync(
+        QualityGateContext context, CancellationToken ct)
+    {
+        (bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)? ciResult = null;
+        var localRetry = 0;
+        Exception? lastEx = null;
+        while (true)
+        {
+            try
+            {
+                ciResult = await RunExternalCiPollAsync(context, ct);
+                break;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (localRetry >= context.Config.MaxInfrastructureRetries)
+                    break; // exhausted — produce infra-failure gate below
+                localRetry++;
+                context.Run.InfrastructureRetryCount++;
+                _logger.Warning(ex,
+                    "Pipeline {RunId} could not read the CI status ({Error}), polling again ({Attempt}/{Max})",
+                    context.Run.RunId, ex.Message, localRetry, context.Config.MaxInfrastructureRetries);
+                context.Callbacks.EmitOutputLine(
+                    $"⚠️ Could not read the CI status — polling again ({localRetry}/{context.Config.MaxInfrastructureRetries})...");
+                await Task.Delay(context.Config.ExternalCiPollInterval, ct);
+            }
+        }
+
+        return new InfraPollingResult(ciResult, lastEx, ExhaustedRetries: ciResult is null && localRetry > 0);
+    }
+
+    /// <summary>
+    /// Classifies a successful CI poll result into a <see cref="CiTerminalOutcome"/>.
+    /// Pure function — no I/O, no side effects.
+    /// State-equality checks precede the <see cref="PipelineRunStatus.IsInfrastructureFailure"/>
+    /// check so that a status with both a terminal <see cref="PipelineRunState"/> and the
+    /// infrastructure-failure flag is routed to the correct State-based outcome.
+    /// </summary>
+    internal static CiTerminalOutcome ClassifyCiResult(PipelineRunStatus ciStatus)
+    {
+        if (ciStatus.State == PipelineRunState.ConflictRestart) return CiTerminalOutcome.ConflictRestart;
+        if (ciStatus.State == PipelineRunState.PrMerged)        return CiTerminalOutcome.PrMerged;
+        if (ciStatus.State == PipelineRunState.PrClosed)        return CiTerminalOutcome.PrClosed;
+        if (ciStatus.IsInfrastructureFailure == true)           return CiTerminalOutcome.InfrastructureFailure;
+        return CiTerminalOutcome.NormalResult;
+    }
+
+    /// <summary>
+    /// Builds an infrastructure-failure <see cref="GateResult"/> for the exhausted-retries path:
+    /// <see cref="RunExternalCiPollAsync"/> threw on every attempt (provider API unreachable).
+    /// Sets <see cref="GateResult.IsInfrastructureFailure"/> so <c>RunRetryLoopAsync</c>
+    /// short-circuits the LLM invocation.
+    /// </summary>
+    private static GateResult BuildExhaustedInfraGate(Exception lastEx)
+    {
+        var errorGate = CiPollingCoordinator.BuildCiErrorGateResult(
+            ExternalCiName, "CI status unavailable — " + lastEx.Message);
+        return new GateResult
+        {
+            GateName = errorGate.GateName,
+            Passed = errorGate.Passed,
+            Details = errorGate.Details,
+            IsInfrastructureFailure = true
+        };
+    }
+
+    /// <summary>
+    /// Builds a <see cref="GateResult"/> for the <see cref="CiTerminalOutcome.InfrastructureFailure"/>
+    /// path: CI ran but reported <see cref="PipelineRunStatus.IsInfrastructureFailure"/> = true.
+    /// Propagates the infrastructure-failure flag so <c>RunRetryLoopAsync</c> short-circuits the LLM.
+    /// </summary>
+    private static GateResult BuildInfraFlaggedGateResult(
+        bool ciPassed,
+        PipelineRunStatus ciStatus,
+        IReadOnlyDictionary<long, string>? ciLogPaths,
+        IPipelineCallbacks callbacks)
+    {
+        var gate = CiPollingCoordinator.BuildCiGateResult(
+            ciPassed, ciStatus, ciLogPaths, "CI", ExternalCiName, callbacks);
+        return new GateResult
+        {
+            GateName = gate.GateName,
+            Passed = gate.Passed,
+            Details = gate.Details,
+            TestsFailed = gate.TestsFailed,
+            TestsPassed = gate.TestsPassed,
+            TestsSkipped = gate.TestsSkipped,
+            IsInfrastructureFailure = true
+        };
+    }
+
+    /// <summary>
+    /// Builds the <see cref="GateResult"/> for the workflow-file push-refused path.
+    /// On the second or later consecutive push-refused failure the gate is classified as an
+    /// infrastructure failure (so the retry loop does not waste LLM budget). On the first
+    /// occurrence it is returned as a plain error gate so the agent gets a chance to remove the
+    /// offending workflow file change.
+    /// Extracted from <see cref="AppendExternalCiIfNeededAsync"/> to reduce cognitive complexity
+    /// (issue #3958).
+    /// </summary>
+    private static GateResult BuildWorkflowPushRefusedGate(QualityGateContext context, GateResult errorGate)
+    {
+        var alreadyFailed = context.Run.RetryErrors.LastOrDefault()
+            ?.Contains("Push refused: the pipeline's GitHub App", StringComparison.OrdinalIgnoreCase) == true;
+        return alreadyFailed
+            ? new GateResult
+            {
+                GateName = errorGate.GateName,
+                Passed = errorGate.Passed,
+                Details = errorGate.Details,
+                IsInfrastructureFailure = true
+            }
+            : errorGate;
     }
 
     /// <summary>
