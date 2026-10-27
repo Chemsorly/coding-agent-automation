@@ -119,6 +119,17 @@ public class ApiWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.UseEnvironment("Development");
 
+        // Enable build-time DI graph validation so any mis-ordered sub-method call in
+        // AddApiOrchestration (e.g. AddTokenVending after AddLifecycleAndConsolidation) surfaces
+        // as a host-startup failure in CI rather than a silent first-use exception in production.
+        // ValidateScopes is set explicitly because UseDefaultServiceProvider replaces ASP.NET Core's
+        // Development-environment default that would otherwise enable it automatically.
+        builder.UseDefaultServiceProvider(options =>
+        {
+            options.ValidateOnBuild = true;
+            options.ValidateScopes = true;
+        });
+
         builder.ConfigureServices(services =>
         {
             // Reduce shutdown timeout in tests
@@ -181,6 +192,12 @@ public class ApiWebApplicationFactory : WebApplicationFactory<Program>
             // Register a no-op IKubernetesJobClient so DispatchLifecycleService (required by
             // POST /api/work-items/{id}/dispatch) can be constructed at startup. The integration tests
             // do not call the dispatch endpoint so the no-op implementation is never invoked.
+            // TODO: This mock means ValidateOnBuild = true cannot detect the accidental removal of
+            // AddKubernetes(services) from AddApiOrchestration: the mock satisfies the IKubernetesJobClient
+            // dependency even if the production registration is gone. The AddTokenVending →
+            // AddLifecycleAndConsolidation ordering constraint is covered (neither ITokenVendingService
+            // nor IConsolidationJobPreparationService are mocked). The AddKubernetes ordering constraint
+            // is enforced only by the ordering comment in AddApiOrchestration.
             services.RemoveAll<IKubernetesJobClient>();
             services.AddSingleton(new Mock<IKubernetesJobClient>().Object);
 
