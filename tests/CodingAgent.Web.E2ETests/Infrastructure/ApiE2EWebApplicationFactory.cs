@@ -189,9 +189,11 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             // Both replica factories receive the *same* FakeRedisStore instance, so state written
             // by one replica is immediately visible to the other — simulating shared Redis.
             //
-            // The DI factories in AddApiOrchestration construct new RedisStore(mux.GetDatabase())
-            // directly rather than resolving IRedisStore, so we must replace the registrations
-            // here rather than registering IRedisStore into the container.
+            // AddApiOrchestration registers IRedisStore? as a singleton resolved from
+            // IConnectionMultiplexer, but we need both replica processes to share the *same*
+            // FakeRedisStore instance rather than independently creating one from a multiplexer.
+            // We therefore replace IAgentRegistryService and IOrchestratorRunService directly
+            // with instances that already hold the shared store, rather than routing through IRedisStore.
             if (_sharedRedisStore is not null)
             {
                 var store = _sharedRedisStore;

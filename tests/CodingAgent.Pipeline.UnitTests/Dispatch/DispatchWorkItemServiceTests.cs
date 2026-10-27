@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Api;
 using CodingAgent.Api.Dispatch;
@@ -6,12 +7,18 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
+using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
+using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.UnitTests.Helpers;
+using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests.Dispatch;
@@ -26,6 +33,7 @@ namespace CodingAgent.Pipeline.UnitTests.Dispatch;
 /// which continue to exercise the full dispatch pipeline (including the new service).
 /// </para>
 /// </summary>
+[Collection("Metrics")]
 public sealed class DispatchWorkItemServiceTests
 {
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -56,6 +64,23 @@ public sealed class DispatchWorkItemServiceTests
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
         return new SimpleInMemoryDbContextFactory(opts);
+    }
+
+    /// <summary>
+    /// Creates raw <see cref="DbContextOptions{TContext}"/> so both the seeding context and the
+    /// <see cref="ThrowingOnSaveDbContext"/> can be constructed from the exact same in-memory
+    /// database instance. This is required for Test 1: if the throwing context is opened from
+    /// a different options object it would see an empty store, <c>FindAsync</c> would return
+    /// null, and <c>ExecuteDispatchLifecycleAsync</c> would exit via the <c>workItem is null</c>
+    /// guard (exercising the <c>!dispatched</c> 503 branch, not the exception-catch branch).
+    /// </summary>
+    private static DbContextOptions<PipelineDbContext> CreateDbOptions(string? dbName = null)
+    {
+        var name = dbName ?? $"dispatch-svc-test-{Guid.NewGuid():N}";
+        return new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(name)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
     }
 
     private static PvcAvailabilityResult MakePvcResult(int available, int claimed = 0) =>
@@ -112,6 +137,36 @@ public sealed class DispatchWorkItemServiceTests
             kubeClient ?? Mock.Of<IKubernetesJobClient>(),
             transitionSvc,
             opts);
+    }
+
+    /// <summary>
+    /// Creates a <see cref="RolloutRouting"/> over the supplied <paramref name="dbFactory"/>
+    /// WITHOUT seeding a routing table. Per <see cref="TestWorkItemRouter"/> docs: without a
+    /// seeded routing table, every route request is refused with <c>no_route</c>.
+    /// </summary>
+    private static RolloutRouting CreateRolloutRouting(IDbContextFactory<PipelineDbContext> dbFactory, JobTemplateStore templateStore)
+    {
+        var router = TestWorkItemRouter.Create(dbFactory, templateStore);
+        var transitions = new WorkItemStatusTransitionService(
+            new WorkItemTransitionService(dbFactory, NullLogger<WorkItemTransitionService>.Instance),
+            Mock.Of<IRunLifecycleManager>(),
+            NullLogger<WorkItemStatusTransitionService>.Instance,
+            dbFactory);
+        return new RolloutRouting(dbFactory, router, transitions);
+    }
+
+    /// <summary>
+    /// Returns an <see cref="IDistributedLockProvider"/> that immediately grants the lock
+    /// with a no-op dispose. Tests that do not exercise lock-acquisition can use this.
+    /// </summary>
+    private static IDistributedLockProvider CreateNoOpLockProvider()
+    {
+        var mock = new Mock<IDistributedLockProvider>();
+        var handle = new Mock<IAsyncDisposable>();
+        handle.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mock.Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        return mock.Object;
     }
 
     // ── BuildConcurrencySnapshotAsync ─────────────────────────────────────────
@@ -885,6 +940,219 @@ public sealed class DispatchWorkItemServiceTests
         statusResult!.StatusCode.Should().Be(503,
             "TimeoutException on lock acquisition maps to 503 Service Unavailable");
     }
+
+    // ── RunDispatchLifecycleAsync ─────────────────────────────────────────────
+
+    /// <summary>
+    /// AC1 (issue #3939): When <c>ExecuteDispatchLifecycleAsync</c> throws a non-<see cref="OperationCanceledException"/>
+    /// exception, <see cref="DispatchWorkItemService.RunDispatchLifecycleAsync"/> must catch it and
+    /// return 503 Service Unavailable — not propagate a 500.
+    ///
+    /// <para>
+    /// Trigger: a <see cref="ThrowingOnSaveDbContext"/> is passed as <c>ctx.Db</c>. Its
+    /// <c>SaveChangesAsync</c> throws <see cref="InvalidOperationException"/> on the K8sJobName
+    /// pre-write inside <c>ExecuteDispatchLifecycleAsync</c>. The bare <c>catch { throw; }</c>
+    /// block in <c>ExecuteDispatchLifecycleAsync</c> re-throws, and
+    /// <c>RunDispatchLifecycleAsync</c>'s <c>catch (Exception ex) when (ex is not OperationCanceledException)</c>
+    /// catches it and returns 503.
+    /// </para>
+    ///
+    /// <para>
+    /// <see cref="IsKiro"/> is set to <c>false</c> (non-kiro template) to skip
+    /// <c>SelectPvcAsync</c> and the PVC guard entirely — the exception still propagates from
+    /// the <c>SaveChangesAsync</c> pre-write. This avoids PVC-pool and semaphore setup.
+    /// </para>
+    ///
+    /// <para>
+    /// The <see cref="ThrowingOnSaveDbContext"/> is opened using the same
+    /// <see cref="DbContextOptions{TContext}"/> that the Pending item was seeded into.
+    /// Using a fresh options object would cause <c>FindAsync</c> to return <c>null</c>,
+    /// which silently exercises the <c>!dispatched</c> 503 branch instead of the exception-catch branch —
+    /// both return 503 but only one satisfies the acceptance criterion.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task RunDispatchLifecycleAsync_LifecycleThrowsNonOce_Returns503()
+    {
+        // Arrange: create raw options so we can share the same in-memory DB between the
+        // seeding context and the ThrowingOnSaveDbContext.
+        var opts = CreateDbOptions();
+
+        // Seed a Pending item so FindAsync inside ExecuteDispatchLifecycleAsync finds it.
+        var workItemId = Guid.NewGuid();
+        await using (var seedCtx = new TestPipelineDbContext(opts))
+        {
+            seedCtx.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"lifecycle-throw-test-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-1",
+                Status = WorkItemStatus.Pending,
+                AgentSelector = "opencode,python",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = "{}"
+            });
+            await seedCtx.SaveChangesAsync();
+        }
+
+        // Open the throwing context from the SAME options — FindAsync sees the seeded item,
+        // then SaveChangesAsync for the K8sJobName pre-write throws.
+        await using var throwingCtx = new ThrowingOnSaveDbContext(opts);
+
+        // Non-kiro template — IsKiro = false skips SelectPvcAsync and the PVC null-guard.
+        var templateStore = CreateTemplateStore("opencode,python", maxConcurrent: 5, providerType: "opencode");
+        var template = ResolveTemplate(templateStore, "opencode,python");
+
+        var projection = new PendingWorkItemProjection
+        {
+            Id = workItemId,
+            AgentSelector = "opencode,python",
+            CreatedAt = DateTimeOffset.UtcNow,
+            TimeoutSeconds = 3600,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"lifecycle-throw-test",
+            IssueProviderConfigId = "prov-1",
+        };
+
+        var ctx = new DispatchLifecycleContext(
+            throwingCtx,
+            projection,
+            template,
+            IsKiro: false,
+            AvailablePvcs: [],
+            ConcurrencyBySelector: new Dictionary<string, int>(),
+            LogPrefix: "test-");
+
+        var lifecycle = CreateLifecycleService();
+        var svc = CreateService("opencode,python", providerType: "opencode");
+
+        // Act
+        var result = await svc.RunDispatchLifecycleAsync(
+            ctx,
+            lifecycle,
+            onSuccess: _ => TypedResults.Ok(),
+            workItemId: workItemId,
+            callerName: "TestCaller",
+            ct: CancellationToken.None);
+
+        // Assert: the exception-catch path returns 503
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull("non-OCE exception from the lifecycle must produce a StatusCodeHttpResult");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
+            "RunDispatchLifecycleAsync must catch non-OCE exceptions and return 503, not propagate them as 500");
+
+        // Discriminator: confirm the exception-catch branch ran, not the !dispatched branch.
+        // Both branches return 503 with an identical StatusCodeHttpResult, so the status code alone
+        // cannot distinguish them. WasThrowCalled is true only when SaveChangesAsync was actually
+        // called and threw on the ThrowingOnSaveDbContext. If ExecuteDispatchLifecycleAsync were
+        // refactored to avoid ctx.Db.SaveChangesAsync (e.g. opening its own context from a factory),
+        // WasThrowCalled would be false, dispatched would remain false, and the !dispatched 503 path
+        // would be taken — this assertion would fail and signal the regression.
+        throwingCtx.WasThrowCalled.Should().BeTrue(
+            "the exception-catch path requires SaveChangesAsync to have been invoked and thrown; " +
+            "if false, the !dispatched 503 branch ran instead and AC1 is not covered");
+    }
+
+    // ── DispatchPendingWorkItemAsync ──────────────────────────────────────────
+
+    /// <summary>
+    /// AC2 (issue #3939): When <c>rollout.RouteAsync</c> returns a non-null early result,
+    /// <see cref="DispatchWorkItemService.DispatchPendingWorkItemAsync"/> must return that
+    /// result directly without dispatching the work item.
+    ///
+    /// <para>
+    /// Setup: a Pending work item is seeded with <c>AgentSelector = ""</c> (no selector)
+    /// and a fully serialized <see cref="JobDistributionRequest"/> payload (required to pass
+    /// <c>WorkItemPayload.TryDeserialize</c> inside <c>RolloutRouting.RouteAsync</c>).
+    /// <c>RolloutRouting</c> is constructed without a seeded routing table; per
+    /// <see cref="TestWorkItemRouter"/> docs, every route request is therefore refused with
+    /// <c>no_route</c>, making <c>RouteAsync</c> return
+    /// <c>(null, Ok(DispatchPendingResponse(false, "no_route")))</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// <strong>Why <c>Payload = "{}"</c> is not used:</strong> <c>JobDistributionRequest</c>
+    /// has six <c>required</c> C# properties; <c>System.Text.Json</c> throws on missing required
+    /// members, so <c>TryDeserialize("{}")</c> returns <c>false</c> and <c>RouteAsync</c> exits
+    /// via <c>return ("", null)</c> — not an early result. The test seeds a properly serialized
+    /// payload with all required fields and <c>Route = null</c>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItemAsync_RouteAsyncReturnsEarlyResult_EarlyResultReturnedWithoutDispatching()
+    {
+        // Arrange
+        var dbFactory = CreateDbFactory();
+        var workItemId = Guid.NewGuid();
+
+        // Seed a Pending item with empty AgentSelector and a routable payload.
+        // Route = null so RolloutRouting.RouteAsync proceeds to router.RouteAsync.
+        // The router refuses (no routing table seeded) → RouteAsync returns the early result.
+        await using (var seedDb = await dbFactory.CreateDbContextAsync())
+        {
+            seedDb.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"rollout-{workItemId:N}",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Pending,
+                AgentSelector = "",   // empty → triggers the rollout routing block
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = JsonSerializer.Serialize(new JobDistributionRequest
+                {
+                    IssueIdentifier = new IssueIdentifier($"rollout-{workItemId:N}"),
+                    IssueProviderConfigId = "ip-1",
+                    RepoProviderConfigId = "repo-1",
+                    InitiatedBy = "test",
+                    TaskType = WorkItemTaskType.Implementation,
+                    TimeoutSeconds = 3600,
+                    PayloadSchemaVersion = 1,
+                    // Route deliberately left null so RouteAsync routes (then refuses)
+                }, PipelineJsonOptions.Default)
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
+
+        // RolloutRouting with NO routing seeded → router refuses all requests → returns early result
+        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        var lifecycle = CreateLifecycleService(kubeClient: k8sMock.Object);
+        var lockProvider = CreateNoOpLockProvider();
+        var svc = CreateService("kiro,dotnet");
+
+        // Act
+        var result = await svc.DispatchPendingWorkItemAsync(
+            workItemId, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+
+        // Assert 1: the early result from RouteAsync is returned directly
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        okResult.Should().NotBeNull("the early result from RouteAsync must be returned as-is");
+        okResult!.Value.Should().NotBeNull();
+        okResult.Value!.Dispatched.Should().BeFalse(
+            "a refused route must not dispatch the work item");
+        okResult.Value.Reason.Should().Be("no_route",
+            "RouteAsync refusal produces the 'no_route' reason");
+
+        // Assert 2: work item was transitioned to Failed (RolloutRouting calls transitions.TransitionAsync)
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
+        item.Should().NotBeNull();
+        item!.Status.Should().Be(WorkItemStatus.Failed,
+            "RolloutRouting.RouteAsync transitions the item to Failed on route refusal");
+
+        // Assert 3: K8s was never called — dispatch did not reach the lifecycle
+        k8sMock.Verify(
+            k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never(),
+            "the K8s Job must not be created when the early result is returned before dispatch");
+    }
 }
 
 // ── Test infrastructure ──────────────────────────────────────────────────────
@@ -901,6 +1169,78 @@ file sealed class SimpleInMemoryDbContextFactory : IDbContextFactory<PipelineDbC
 file sealed class TestPipelineDbContext : PipelineDbContext
 {
     public TestPipelineDbContext(DbContextOptions<PipelineDbContext> opts) : base(opts) { }
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        base.OnModelCreating(mb);
+        foreach (var et in mb.Model.GetEntityTypes())
+        {
+            var rv = et.FindProperty("RowVersion");
+            if (rv != null) { rv.IsConcurrencyToken = false; rv.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never; }
+        }
+        foreach (var et in mb.Model.GetEntityTypes())
+        {
+            foreach (var idx in et.GetIndexes().Where(i => i.GetFilter() != null).ToList())
+                et.RemoveIndex(idx);
+        }
+    }
+}
+
+/// <summary>
+/// A <see cref="PipelineDbContext"/> that throws <see cref="InvalidOperationException"/> on every
+/// <c>SaveChangesAsync</c> call. Used by
+/// <see cref="DispatchWorkItemServiceTests.RunDispatchLifecycleAsync_LifecycleThrowsNonOce_Returns503"/>
+/// to trigger the <c>catch (Exception ex) when (ex is not OperationCanceledException)</c> path in
+/// <see cref="DispatchWorkItemService.RunDispatchLifecycleAsync"/>.
+///
+/// <para>
+/// Both <c>SaveChangesAsync(CancellationToken)</c> and
+/// <c>SaveChangesAsync(bool, CancellationToken)</c> must be overridden: EF Core's default
+/// <c>SaveChangesAsync(CancellationToken)</c> delegates to the two-argument overload, so omitting
+/// either lets EF bypass the throw via the non-overridden path.
+/// </para>
+///
+/// <para>
+/// Inherits from <see cref="PipelineDbContext"/> directly (not <c>TestPipelineDbContext</c>, which is
+/// <c>file sealed</c> and therefore cannot be subclassed). The same <c>OnModelCreating</c> overrides
+/// (disable RowVersion concurrency token, remove filtered indexes) are replicated here.
+/// </para>
+/// </summary>
+file sealed class ThrowingOnSaveDbContext : PipelineDbContext
+{
+    public ThrowingOnSaveDbContext(DbContextOptions<PipelineDbContext> opts) : base(opts) { }
+
+    /// <summary>
+    /// Set to <c>true</c> the first time any <c>SaveChangesAsync</c> or <c>SaveChanges</c> override
+    /// is entered. Asserted by <c>RunDispatchLifecycleAsync_LifecycleThrowsNonOce_Returns503</c>
+    /// to confirm the exception-catch path was taken rather than the <c>!dispatched</c> early-exit
+    /// path (both return 503 but only the exception-catch path calls <c>SaveChangesAsync</c>).
+    /// </summary>
+    public bool WasThrowCalled { get; private set; }
+
+    public override Task<int> SaveChangesAsync(CancellationToken ct = default)
+    {
+        WasThrowCalled = true;
+        return Task.FromException<int>(new InvalidOperationException("simulated lifecycle failure"));
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken ct = default)
+    {
+        WasThrowCalled = true;
+        return Task.FromException<int>(new InvalidOperationException("simulated lifecycle failure"));
+    }
+
+    public override int SaveChanges()
+    {
+        WasThrowCalled = true;
+        throw new InvalidOperationException("simulated lifecycle failure");
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        WasThrowCalled = true;
+        throw new InvalidOperationException("simulated lifecycle failure");
+    }
+
     protected override void OnModelCreating(ModelBuilder mb)
     {
         base.OnModelCreating(mb);
