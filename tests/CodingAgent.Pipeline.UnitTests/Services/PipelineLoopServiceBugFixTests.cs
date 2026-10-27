@@ -1400,11 +1400,18 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     [Fact]
     public void IsTransientApiFailure_ClassifiesResilienceHandlerFailuresAsTransient()
     {
-        // Transient — the full AddStandardResilienceHandler failure surface + HttpClient timeout.
+        // Transient — the full AddStandardResilienceHandler failure surface.
         PipelineLoopService.IsTransientApiFailure(new HttpRequestException("connection refused")).Should().BeTrue();
         PipelineLoopService.IsTransientApiFailure(new TimeoutRejectedException("timed out")).Should().BeTrue();
         PipelineLoopService.IsTransientApiFailure(new BrokenCircuitException("circuit open")).Should().BeTrue();
-        PipelineLoopService.IsTransientApiFailure(new TaskCanceledException("http timeout")).Should().BeTrue();
+
+        // TaskCanceledException wrapping a Polly TimeoutRejectedException — still transient.
+        PipelineLoopService.IsTransientApiFailure(
+            new TaskCanceledException("polly", new TimeoutRejectedException("inner"))).Should().BeTrue();
+
+        // Bare TaskCanceledException (provider-internal timeout, no inner TimeoutRejectedException)
+        // — no longer treated as transient; propagates so genuine timeouts are not silently retried.
+        PipelineLoopService.IsTransientApiFailure(new TaskCanceledException("provider internal")).Should().BeFalse();
 
         // Fatal — genuine bugs must still surface as Error and stop the loop.
         PipelineLoopService.IsTransientApiFailure(new InvalidOperationException("real bug")).Should().BeFalse();
