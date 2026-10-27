@@ -3447,4 +3447,89 @@ public class ChatJobDispatcherTests
             Times.Once,
             "DeleteJobAsync must be attempted in the force-delete path");
     }
+
+    // ─── New (f): StopAsync — watcher tasks time out, CleanupSession runs for all entries ──
+
+    /// <summary>
+    /// Exercises the bare <c>catch</c> block in <c>StopAsync</c>: when watcher tasks do not
+    /// complete within the 5-second <c>WaitAsync</c> window, the timeout exception is swallowed
+    /// and the <c>foreach</c> cleanup loop must still invoke <c>CleanupSession</c> for every
+    /// entry in <c>_activeWatchers</c>.
+    ///
+    /// <para>
+    /// The mock watcher returns <c>Task.Delay(Timeout.InfiniteTimeSpan)</c> <strong>without</strong>
+    /// a <c>CancellationToken</c>, making it unresponsive to <c>_shutdownCts</c> cancellation.
+    /// This forces <c>WaitAsync(TimeSpan.FromSeconds(5))</c> to throw <c>TimeoutException</c>
+    /// after the full 5-second wait, entering the catch block.
+    /// </para>
+    ///
+    /// <para>
+    /// Note: this test intentionally takes ~5 seconds to run. The <c>TimeSpan.FromSeconds(5)</c>
+    /// timeout is hardcoded in production code and cannot be shortened without a production code change.
+    /// The two <c>Task.Delay(InfiniteTimeSpan)</c> continuations remain pending after the test ends —
+    /// this is harmless (same pattern as <c>ForceDeleteAndCleanupAsync_ConcurrentCalls_*</c>).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task StopAsync_WatcherTasksTimeout_CleanupSessionCalledForAllEntries()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        var jobNames = new List<string>();
+
+        // RegisterChatAgent in the CreateJobAsync callback so both dispatches connect immediately.
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                var name = j.Metadata.Name;
+                jobNames.Add(name);
+                var dispatchId = j.Metadata.Labels["caa/chat-session-id"];
+                RegisterChatAgent(registry, name, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Never-completing watcher: Task.Delay without a CancellationToken so it ignores
+        // _shutdownCts cancellation. Critical difference from the stalled-watcher pattern in
+        // tests 23/24b/25 — those pass `ct` to Task.Delay and therefore complete when watcherCts
+        // fires; this one does not, forcing WaitAsync(5s) to time out.
+        var neverCompletingWatcher = new Mock<IChatSessionWatcher>();
+        neverCompletingWatcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, _, _, _, _) => Task.Delay(Timeout.InfiniteTimeSpan)); // No CT — ignores cancellation
+
+        await using var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registry,
+            CreateOptions(),
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: neverCompletingWatcher.Object);
+
+        // Dispatch two pods so _activeWatchers has two entries.
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        jobNames.Should().HaveCount(2).And.OnlyHaveUniqueItems("two dispatches must produce two distinct job names");
+
+        // StopAsync: cancels _shutdownCts (no effect on never-completing tasks),
+        // WaitAsync(5s) → TimeoutException, bare catch swallows it, foreach calls
+        // CleanupSession for both entries. Takes ~5 seconds by design.
+        await dispatcher.StopAsync(CancellationToken.None);
+
+        dispatcher.HasActiveSession(jobNames[0]).Should()
+            .BeFalse("CleanupSession must run for the first watcher entry after StopAsync timeout");
+        dispatcher.HasActiveSession(jobNames[1]).Should()
+            .BeFalse("CleanupSession must run for the second watcher entry after StopAsync timeout");
+    }
 }
