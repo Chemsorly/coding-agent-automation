@@ -6,6 +6,7 @@ using CodingAgent.Web.TestUtilities;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using Polly.CircuitBreaker;
+using Polly.Timeout;
 using System.Reflection;
 using Xunit;
 
@@ -123,7 +124,7 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
             .Returns(mockRepoProvider.Object);
     }
 
-    private PipelineLoopService CreateServiceWithHousekeeping(IHousekeepingService housekeepingService)
+    private PipelineLoopService CreateServiceWithHousekeeping(IHousekeepingService? housekeepingService)
     {
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
         {
@@ -583,6 +584,152 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
         // CleanupAsync has run by the time executeTask completes — IsLoopActive reflects the stopped state
         svc.IsLoopActive.Should().BeFalse(
             "loop must be stopped after the stoppingToken is cancelled");
+    }
+
+    // ── Issue #3955 acceptance-criteria tests ────────────────────────────
+
+    /// <summary>
+    /// AC1-a (issue #3955): a bare <see cref="TaskCanceledException"/> (no inner
+    /// <see cref="TimeoutRejectedException"/>) that escapes <c>ExecuteCycleAsync</c>
+    /// via the L58 call site (<c>RunMultiTemplateLoopAsync</c>) must propagate rather
+    /// than being retried as transient.
+    ///
+    /// Injection: <see cref="IHousekeepingService.ExecuteAsync"/> — <c>RunHousekeepingAsync</c>
+    /// has no internal catch, so the exception propagates through <c>ExecuteCycleAsync</c>
+    /// directly to <c>RunMultiTemplateLoopAsync</c>'s <c>IsTransientApiFailure</c> guard.
+    /// Post-fix the guard no longer fires; the exception reaches <c>ExecuteAsync</c>'s
+    /// <c>catch (Exception ex)</c> at <c>PipelineLoopService.cs:334</c>, logs at Error
+    /// level, and stops the loop.
+    /// </summary>
+    [Fact]
+    public async Task WhenBareTaskCanceledEscapesExecuteCycle_LoopStops_NotRetried()
+    {
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        housekeepingMock
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Throws(new TaskCanceledException("provider internal timeout — no inner TimeoutRejectedException"));
+
+        var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        (await svc.StartLoopAsync()).Should().BeTrue();
+        await WaitUntilAsync(() => svc.IsLoopActive, TimeSpan.FromSeconds(5), "loop must start");
+
+        // Post-fix: bare TaskCanceledException propagates out of RunMultiTemplateLoopAsync
+        // to ExecuteAsync's catch(Exception ex) → Error logged → CleanupAsync(false) → loop stops.
+        await WaitUntilAsync(() => !svc.IsLoopActive, TimeSpan.FromSeconds(30),
+            "bare TaskCanceledException must stop the loop — it is no longer treated as transient");
+
+        svc.IsLoopActive.Should().BeFalse(
+            "bare TaskCanceledException must propagate as a non-transient exception and stop the loop");
+
+        // The production log call at PipelineLoopService.cs:334 is non-generic Error(Exception, string)
+        // with no extra structured parameters — this Verify correctly targets that exact overload.
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("unexpected error"))),
+            Times.Once,
+            "bare TaskCanceledException must be logged at Error level exactly once");
+
+        hostCts.Cancel();
+    }
+
+    /// <summary>
+    /// AC1-b (issue #3955): a bare <see cref="TaskCanceledException"/> thrown by
+    /// <c>LoadPipelineConfigAsync</c> (the first async call inside
+    /// <c>SnapshotCycleConfigAsync</c>) must propagate rather than being swallowed
+    /// and returning <c>null</c> for a retry, exercising the L690 call site.
+    ///
+    /// <c>SnapshotCycleConfigAsync</c> is called outside the
+    /// <c>try { ExecuteCycleAsync } catch</c> block in <c>RunMultiTemplateLoopAsync</c>,
+    /// so the exception escapes the inner loop directly to <c>ExecuteAsync</c>'s
+    /// <c>catch (Exception ex)</c>.
+    /// </summary>
+    [Fact]
+    public async Task WhenBareTaskCanceledDuringSnapshot_LoopStops_NotRetried()
+    {
+        // Override default LoadPipelineConfigAsync to throw a bare TaskCanceledException.
+        // _mockStore is wired into CreateServiceWithHousekeeping as PipelineConfigStore.
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("provider internal timeout — no inner TimeoutRejectedException"));
+
+        // CreateServiceWithHousekeeping(null): HousekeepingService is IHousekeepingService?
+        // (nullable), so null is a valid argument.
+        var svc = CreateServiceWithHousekeeping(null);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        (await svc.StartLoopAsync()).Should().BeTrue();
+        await WaitUntilAsync(() => svc.IsLoopActive, TimeSpan.FromSeconds(5), "loop must start");
+
+        await WaitUntilAsync(() => !svc.IsLoopActive, TimeSpan.FromSeconds(30),
+            "bare TaskCanceledException from SnapshotCycleConfigAsync must propagate and stop the loop");
+
+        svc.IsLoopActive.Should().BeFalse(
+            "bare TaskCanceledException during snapshot is not transient — loop must stop");
+
+        // Same non-generic Error(Exception, string) overload as in AC1-a.
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("unexpected error"))),
+            Times.Once,
+            "bare TaskCanceledException during snapshot must be logged at Error level");
+
+        hostCts.Cancel();
+    }
+
+    /// <summary>
+    /// AC2 (issue #3955): a <see cref="TaskCanceledException"/> whose
+    /// <see cref="Exception.InnerException"/> is a <see cref="TimeoutRejectedException"/>
+    /// must still be treated as transient and retried — the loop must stay alive.
+    ///
+    /// Note: with <c>AddStandardResilienceHandler</c>, Polly raises
+    /// <see cref="TimeoutRejectedException"/> as the outer exception (already in the
+    /// transient list), so this pattern does not occur naturally in the current call graph.
+    /// The new arm is a forward-compatibility guard and this test exercises it directly as
+    /// required by the acceptance criteria.
+    /// </summary>
+    [Fact]
+    public async Task WhenTaskCanceledWrappingTimeoutRejectedException_EscapesCycle_LoopRetries()
+    {
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default() with { ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50) });
+
+        var callCount = 0;
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        housekeepingMock
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                // Interlocked.Increment for the write: the lambda runs on the loop thread;
+                // WaitUntilAsync polls on the test thread. Without a memory barrier the JIT
+                // could cache callCount in a register and the test thread would never see the update.
+                var count = Interlocked.Increment(ref callCount);
+                if (count == 1)
+                    // TaskCanceledException(string, Exception) sets InnerException to the second arg.
+                    throw new TaskCanceledException("polly-mediated timeout",
+                        new TimeoutRejectedException("polly inner"));
+                return Task.CompletedTask;
+            });
+
+        var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        (await svc.StartLoopAsync()).Should().BeTrue();
+        await WaitUntilAsync(() => svc.IsLoopActive, TimeSpan.FromSeconds(5), "loop must start");
+
+        // The wrapped TaskCanceledException still matches IsTransientApiFailure → retried.
+        // Volatile.Read for the read: pairs with Interlocked.Increment in the lambda above to
+        // ensure cross-thread visibility without a full lock.
+        await WaitUntilAsync(() => Volatile.Read(ref callCount) >= 2, TimeSpan.FromSeconds(30),
+            "TaskCanceledException wrapping TimeoutRejectedException must still be retried as transient");
+
+        svc.IsLoopActive.Should().BeTrue(
+            "TaskCanceledException wrapping TimeoutRejectedException is still transient — loop must not stop");
+
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("unexpected error"))),
+            Times.Never,
+            "Polly-wrapped TaskCanceledException must NOT log at Error level");
+
+        hostCts.Cancel();
     }
 
     public async ValueTask DisposeAsync()

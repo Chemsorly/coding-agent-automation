@@ -319,7 +319,7 @@ return 1
         _ = AppendOutputToRedisAsync(runId.Value, lines)
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "AppendOutputLines: Redis write failed for run {RunId} — output lines lost",
-                runId.Value), TaskContinuationOptions.OnlyOnFaulted);
+                runId.Value), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     private async Task AppendOutputToRedisAsync(string runId, IReadOnlyList<string> lines)
@@ -362,7 +362,7 @@ return 1
         _ = AppendChatToRedisAsync(runId.Value, entry)
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "AppendChatEntry: Redis write failed for run {RunId} — chat entry lost",
-                runId.Value), TaskContinuationOptions.OnlyOnFaulted);
+                runId.Value), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     private async Task AppendChatToRedisAsync(string runId, ChatEntry entry)
@@ -398,15 +398,10 @@ return 1
         ArgumentNullException.ThrowIfNull(report);
 
         // Fire-and-forget Redis write — same delivery guarantee as AppendChatEntry.
-        // TODO: Pass TaskScheduler.Default as the fourth ContinueWith argument to guarantee the
-        // error-logging continuation runs on a thread-pool thread regardless of the ambient
-        // TaskScheduler (e.g. an ASP.NET synchronization context). The same omission exists in
-        // AppendOutputLines and AppendChatEntry. Fix all three together when refactoring the
-        // fire-and-forget pattern.
         _ = AppendQgReportToRedisAsync(runId.Value, report)
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "AppendQualityGateReport: Redis write failed for run {RunId} — quality gate report lost",
-                runId.Value), TaskContinuationOptions.OnlyOnFaulted);
+                runId.Value), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     private async Task AppendQgReportToRedisAsync(string runId, QualityGateReport report)
@@ -478,7 +473,7 @@ return 1
             when: When.Always)
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "MarkRecentlyCompleted: Redis write failed for issue {IssueIdentifier} — anti-race key not set, duplicate dispatch possible",
-                issueIdentifier.Value), TaskContinuationOptions.OnlyOnFaulted);
+                issueIdentifier.Value), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     /// <inheritdoc />

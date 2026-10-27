@@ -67,7 +67,7 @@ public sealed partial class AgentHub
             return;
         }
 
-        if (!string.IsNullOrEmpty(newLabel) && !AgentLabels.All.Contains(newLabel))
+        if (!string.IsNullOrEmpty(newLabel) && !AgentLabels.SwapTargets.Contains(newLabel))
         {
             _logger.Warning("Agent requested invalid label '{Label}' for job {JobId}, ignoring", SanitizeForLog(newLabel), jobId.Value);
             return;
@@ -105,7 +105,7 @@ public sealed partial class AgentHub
         // Validate the label before attempting the DB lookup — the same guards applied
         // in the in-memory path must apply here too to prevent invalid or gated labels
         // from being applied via the fallback path.
-        if (!string.IsNullOrEmpty(newLabel) && !AgentLabels.All.Contains(newLabel))
+        if (!string.IsNullOrEmpty(newLabel) && !AgentLabels.SwapTargets.Contains(newLabel))
         {
             _logger.Warning(
                 "RequestLabelChange fallback: invalid label '{Label}' for job {JobId}, ignoring",
