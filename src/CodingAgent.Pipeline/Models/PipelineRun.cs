@@ -17,7 +17,7 @@ namespace CodingAgent.Pipeline.Models;
 /// <para><b>Thread-safety contract:</b></para>
 /// <list type="bullet">
 ///   <item><b>Volatile fields:</b> <see cref="CurrentStep"/>, <see cref="AgentId"/> — single-word atomic read/write via <see cref="Volatile"/>.</item>
-///   <item><b>Interlocked fields:</b> <see cref="StartedAtOffset"/>, <see cref="LastStepChangeAt"/>, <see cref="CodeReviewCriticalCount"/>/<see cref="CodeReviewWarningCount"/>/<see cref="CodeReviewSuggestionCount"/> — atomic read/exchange via <see cref="Interlocked"/>.</item>
+///   <item><b>Interlocked fields:</b> <see cref="StartedAt"/>, <see cref="StartedAtOffset"/>, <see cref="LastStepChangeAt"/>, <see cref="CodeReviewCriticalCount"/>/<see cref="CodeReviewWarningCount"/>/<see cref="CodeReviewSuggestionCount"/> — atomic read/exchange via <see cref="Interlocked"/>.</item>
 ///   <item><b>Lock-guarded pairs:</b> (<see cref="StartedAt"/>, <see cref="StartedAtOffset"/>) via <c>_startedAtLock</c>; (<see cref="CompletedAt"/>, <see cref="CompletedAtOffset"/>) via <c>_completedAtLock</c>. Both writes in each pair are always committed together under the respective lock.</item>
 ///   <item><b>Concurrent collections:</b> <see cref="CodeReviewAgentFindings"/>, <see cref="RetryErrors"/>, <see cref="ChatHistory"/>, <see cref="OutputLines"/>, <see cref="QualityGateHistory"/> — thread-safe containers.</item>
 ///   <item><b>Unprotected mutable properties:</b> everything else — callers must synchronize externally or ensure single-writer semantics.</item>
@@ -52,13 +52,16 @@ public sealed partial class PipelineRun
     /// <summary>Highest pipeline step ever reached during this run (excludes terminal states). Used by the sidebar to show revisited steps.</summary>
     public PipelineStep HighWaterMark { get; set; }
 
-    // TODO: StartedAt (DateTime, 8 bytes) has no Interlocked/volatile on reads. The lock in ResetStartedAt
-    //       guards the write side only — readers (e.g. ToSummary) have no memory barrier guaranteeing they see
-    //       the updated value consistently with StartedAtOffset. On x64 this is safe in practice (aligned 64-bit
-    //       reads are atomic) but inconsistent with the Interlocked treatment of StartedAtOffset. Consider adding
-    //       Volatile.Read/Write or making readers acquire _startedAtLock for compound-read consistency.
+    /// <summary>Deprecated UTC timestamp. Use <see cref="StartedAtOffset"/> for timezone-safe comparisons.</summary>
+    /// <remarks>Uses Interlocked on ticks for thread-safe reads, matching the pattern used by
+    /// <see cref="StartedAtOffset"/> and <see cref="LastStepChangeAt"/>.</remarks>
     [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]
-    public DateTime StartedAt { get; internal set; }
+    public DateTime StartedAt
+    {
+        get => new DateTime(Interlocked.Read(ref _startedAtTicks), DateTimeKind.Utc);
+        internal set => Interlocked.Exchange(ref _startedAtTicks, value.Ticks);
+    }
+    private long _startedAtTicks;
 
     [Obsolete("Use CompletedAtOffset for timezone-safe comparisons")]
     public DateTime? CompletedAt { get; set; }
