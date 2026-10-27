@@ -10,6 +10,7 @@ using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Health;
+using CodingAgent.Orchestration.Redis;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
@@ -303,27 +304,41 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
     // most likely source of a future regression.
     // See review finding [WARNING] ApiOrchestrationDiTests.cs:195 (TestQualityReviewer review).
 
-    // ── ResolveRedisStoreOrNull tests ────────────────────────────────────────────
+    // ── IRedisStore DI registration tests ────────────────────────────────────────
 
     [Fact]
-    public void ResolveRedisStoreOrNull_WhenNoMultiplexer_ReturnsNull()
+    public void AddApiOrchestration_WithoutRedis_IRedisStore_ReturnsNull()
     {
-        // Provider with no IConnectionMultiplexer registered
-        var services = new ServiceCollection();
-        using var sp = services.BuildServiceProvider();
+        // _provider is built without an IConnectionMultiplexer, so the IRedisStore
+        // singleton factory must cache and return null.
+        // NOTE: GetService<T>() returns null both when a service is unregistered AND when its
+        // singleton factory cached null. This test cannot distinguish the two cases on its own.
+        // The complementary test AddApiOrchestration_WithRedis_IRedisStore_IsSingleton proves
+        // the registration IS present (non-null when Redis is configured), so a regression that
+        // removes the registration entirely would be caught there.
+        var sp = _provider!;
 
-        var result = ApiServiceCollectionExtensions.ResolveRedisStoreOrNull(sp);
-
-        result.Should().BeNull("without a registered IConnectionMultiplexer the fallback path returns null");
+        sp.GetService<IRedisStore>().Should().BeNull(
+            "without a registered IConnectionMultiplexer the IRedisStore singleton must be null");
     }
 
     [Fact]
-    public void ResolveRedisStoreOrNull_WhenNullServiceProvider_ThrowsArgumentNullException()
+    public void AddApiOrchestration_WithRedis_IRedisStore_IsSingleton()
     {
-        var act = () => ApiServiceCollectionExtensions.ResolveRedisStoreOrNull(null!);
+        // Verifies two properties of the IRedisStore singleton registration:
+        // 1. Non-null: proves the AddSingleton<IRedisStore> registration is present and the
+        //    factory is invoked (detection: removing the registration makes this test fail).
+        // 2. Same instance: proves the registration is a singleton (detection: changing to
+        //    AddTransient would reintroduce the original bug of multiple IDatabase handles).
+        _redisProvider = BuildProvider(CreateRedisMultiplexerMock());
 
-        act.Should().Throw<ArgumentNullException>()
-            .WithParameterName("sp");
+        var store1 = _redisProvider.GetService<IRedisStore>();
+        var store2 = _redisProvider.GetService<IRedisStore>();
+
+        store1.Should().NotBeNull(
+            "with IConnectionMultiplexer registered the IRedisStore singleton factory must return a non-null RedisStore");
+        store1.Should().BeSameAs(store2,
+            "IRedisStore must be a singleton — both resolutions must return the same instance (not a new IDatabase handle each time)");
     }
 
     // ── Redis / no-Redis branch selection ────────────────────────────────────────

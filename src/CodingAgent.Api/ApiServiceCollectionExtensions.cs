@@ -10,6 +10,7 @@ using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Health;
+using CodingAgent.Orchestration.Redis;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline.Interfaces;
@@ -191,7 +192,7 @@ public static class ApiServiceCollectionExtensions
         // ArgumentNullException.ThrowIfNull(sp) and ArgumentNullException.ThrowIfNull(config) at
         // the top of this method.
         // See review finding [WARNING] ApiServiceCollectionExtensions.cs:169 (DotNetSpecialist review).
-        var redisStore = ResolveRedisStoreOrNull(sp);
+        var redisStore = sp.GetService<IRedisStore>();
         if (redisStore is not null)
         {
             Log.Information("AgentRegistry: distributed (Redis)");
@@ -242,25 +243,17 @@ public static class ApiServiceCollectionExtensions
     /// <see cref="CodingAgent.Orchestration.Redis.RedisStore"/> wrapping it, or
     /// <c>null</c> when no multiplexer is registered (in-memory fallback path).
     ///
-    /// Called by <see cref="CreateAgentRegistryService"/>, the
-    /// <see cref="IOrchestratorRunService"/> registration lambda, and the
-    /// <see cref="ChatJobDispatcher"/> registration lambda — the three consumers of the
-    /// Redis-or-in-memory selection pattern.
+    /// Called exactly once — from the <c>AddSingleton&lt;IRedisStore?&gt;</c> registration
+    /// in <see cref="AddOrchestrationCore"/>. All Redis consumers in this host resolve
+    /// <c>IRedisStore</c> via <c>sp.GetService&lt;IRedisStore&gt;()</c> instead of calling
+    /// this method directly.
     /// </summary>
     /// <remarks>
-    /// Only call this inside <c>AddSingleton</c> factory lambdas — each call creates a new
-    /// <see cref="CodingAgent.Orchestration.Redis.RedisStore"/> (and calls
-    /// <c>mux.GetDatabase()</c>), so request-scoped use would silently allocate extra
-    /// <c>IDatabase</c> handles from the multiplexer's connection pool.
+    /// The singleton semantics ensure <c>mux.GetDatabase()</c> is called at most once,
+    /// and the resulting <see cref="CodingAgent.Orchestration.Redis.RedisStore"/> instance
+    /// is shared across all consumers in the process lifetime.
     /// </remarks>
-    // TODO [WARNING]: This method is `internal` (not `private`) solely to enable the
-    // ResolveRedisStoreOrNull_WhenNoMultiplexer_ReturnsNull unit test. The broader `internal`
-    // visibility means any future code in this assembly can call it from a scoped or transient
-    // factory lambda, silently exhausting the multiplexer's connection pool under load. There
-    // is no compiler/analyser guard against misuse. Consider making it `private` and testing
-    // the behaviour indirectly via the observable DI wiring (IOrchestratorRunService concrete
-    // type) instead. See review finding [WARNING] ApiServiceCollectionExtensions.cs:244.
-    internal static CodingAgent.Orchestration.Redis.IRedisStore? ResolveRedisStoreOrNull(
+    private static CodingAgent.Orchestration.Redis.IRedisStore? ResolveRedisStoreOrNull(
         IServiceProvider sp)
     {
         ArgumentNullException.ThrowIfNull(sp);
@@ -347,12 +340,25 @@ public static class ApiServiceCollectionExtensions
     // ── Sub-methods ──────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Registers the orchestration core: provider factory, agent registry, and run service.
-    /// Calls <see cref="ResolveRedisStoreOrNull"/> and <see cref="CreateIsIssueDistributedDelegate"/>
-    /// to keep business logic out of inline lambdas.
+    /// Registers the orchestration core: IRedisStore singleton, provider factory, agent
+    /// registry, and run service.
+    /// Calls <see cref="CreateIsIssueDistributedDelegate"/> to keep business logic out of
+    /// inline lambdas.
     /// </summary>
     private static void AddOrchestrationCore(IServiceCollection services, IConfiguration config)
     {
+        // ── IRedisStore singleton ─────────────────────────────────────────────
+        // Registered once here so every Redis consumer in this host resolves the same
+        // IRedisStore instance via sp.GetService<IRedisStore>() instead of each lambda
+        // calling ResolveRedisStoreOrNull(sp) and creating a separate RedisStore handle.
+        // The factory returns null when no IConnectionMultiplexer is registered (i.e. when
+        // the SignalR Redis backplane is not configured), so callers that accept IRedisStore?
+        // fall back to their in-memory equivalents as before.
+        // IConnectionMultiplexer is registered by AddApiSignalR (called after AddApiOrchestration
+        // in Program.cs) but DI lambdas are lazy — the multiplexer is present in the container
+        // before any singleton factory that resolves IRedisStore is first invoked.
+        services.AddSingleton<IRedisStore>(sp => ResolveRedisStoreOrNull(sp)!);
+
         // ── Five services shared with the Scheduler host ──────────────────────
         // IProviderFactory, IConsolidationService, IDependencyChecker,
         // IDispatchOrchestrationService, ConsolidationStalenessService.
@@ -377,7 +383,7 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<OrchestratorRunService>(sp => new OrchestratorRunService(Log.Logger));
         services.AddSingleton<IOrchestratorRunService>(sp =>
         {
-            var redisStore = ResolveRedisStoreOrNull(sp);
+            var redisStore = sp.GetService<IRedisStore>();
             if (redisStore is not null)
             {
                 // IsIssueBeingProcessed: direct Postgres query — no HTTP self-call needed.
@@ -456,14 +462,14 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger,
-            ResolveRedisStoreOrNull(sp)));  // null when Redis is not configured
+            sp.GetService<IRedisStore>()));  // null when Redis is not configured
 
         // ── ConsolidationBadgeService ────────────────────────────────────────
         services.AddSingleton<ConsolidationBadgeService>();
 
         // ── LoopStatusStore — the Scheduler leader's last loop status (spec 051 D11) ──
         services.AddSingleton(sp => new CodingAgent.Api.Loop.LoopStatusStore(
-            ResolveRedisStoreOrNull(sp), sp.GetRequiredService<TimeProvider>()));
+            sp.GetService<IRedisStore>(), sp.GetRequiredService<TimeProvider>()));
 
         // ── IActiveRunQueryService ────────────────────────────────────────────
         services.AddSingleton<IActiveRunQueryService>(sp => new PostgresActiveRunQueryService(
@@ -685,7 +691,6 @@ public static class ApiServiceCollectionExtensions
     /// <summary>
     /// Registers chat dispatch services: model fetch job service, ChatJobDispatcher hosted
     /// service, and the IChatJobDispatcher forwarding registration.
-    /// Calls <see cref="ResolveRedisStoreOrNull"/> — the third consumer of the shared helper.
     /// </summary>
     private static void AddChatDispatch(IServiceCollection services)
     {
@@ -719,7 +724,7 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<ChatJobDispatcher>(sp =>
         {
             var options = sp.GetRequiredService<DispatchServiceOptions>();
-            var redisStore = ResolveRedisStoreOrNull(sp);
+            var redisStore = sp.GetService<IRedisStore>();
             return new ChatJobDispatcher(
                 sp.GetRequiredService<IKubernetesJobClient>(),
                 sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub, IAgentHubClient>>(),
@@ -740,7 +745,7 @@ public static class ApiServiceCollectionExtensions
         {
             var options = sp.GetRequiredService<DispatchServiceOptions>();
             return new CodingAgent.Api.Chat.ChatSessionStore(
-                ResolveRedisStoreOrNull(sp), TimeSpan.FromSeconds(options.ChatJobMaxDurationSeconds) + TimeSpan.FromHours(1));
+                sp.GetService<IRedisStore>(), TimeSpan.FromSeconds(options.ChatJobMaxDurationSeconds) + TimeSpan.FromHours(1));
         });
         services.AddSingleton(sp =>
         {
