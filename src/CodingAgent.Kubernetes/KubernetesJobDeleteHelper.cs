@@ -62,7 +62,7 @@ public static class KubernetesJobDeleteHelper
         }
         catch (HttpOperationException httpEx) when (httpEx.Response?.StatusCode == HttpStatusCode.NotFound)
         {
-            logger.Debug("K8s Job {JobName} already deleted (404) — {Context}", jobName, context);
+            logger.Debug(httpEx, "K8s Job {JobName} already deleted (404) — {Context}", jobName, context);
             return false;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
