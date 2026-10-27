@@ -210,6 +210,222 @@ public sealed class DistributedRunServiceTests
             .Should().BeTrue();
     }
 
+    // ── TaskScheduler.Default pinning (issue #3956) ───────────────────────────
+
+    /// <summary>
+    /// Regression guard for issue #3956: the fire-and-forget error-logging continuations must
+    /// use <c>TaskScheduler.Default</c> so they schedule on the thread pool regardless of the
+    /// ambient <c>TaskScheduler.Current</c> at the call site.
+    ///
+    /// <para>
+    /// Mechanism:
+    /// <list type="number">
+    ///   <item>A <see cref="DrainingTaskScheduler"/> runs the outer task, setting
+    ///         <c>TaskScheduler.Current</c> to itself inside the delegate.</item>
+    ///   <item><c>StartDraining()</c> makes all subsequent <c>QueueTask</c> calls throw.</item>
+    ///   <item><c>AppendOutputLines</c> is called — the mock store's
+    ///         <c>ListRightPushAsync</c> returns a pre-faulted task.</item>
+    ///   <item><c>ContinueWith</c> evaluates <c>TaskScheduler.Current</c>:
+    ///     <list type="bullet">
+    ///       <item>2-arg overload (before fix): schedules on <c>DrainingTaskScheduler</c>
+    ///             → <c>QueueTask</c> throws → continuation never runs → Warning not logged
+    ///             → <c>WaitAsync</c> times out → test FAILS.</item>
+    ///       <item>4-arg overload with <c>TaskScheduler.Default</c> (after fix): schedules on
+    ///             thread pool → continuation runs → Warning logged → TCS resolves → test PASSES.</item>
+    ///     </list>
+    ///   </item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task AppendOutputLines_RedisWriteFailure_LogsWarning_EvenUnderDrainingScheduler()
+    {
+        // Arrange: TCS is resolved by the mock logger's Callback when Warning fires.
+        var warningLogged = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var mockLogger = new Mock<ILogger>();
+        mockLogger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception?>(),
+                It.IsAny<string>(),
+                It.IsAny<string>()))
+            .Callback(() => warningLogged.TrySetResult(true));
+
+        var mockStore = new Mock<IRedisStore>();
+        mockStore
+            .Setup(s => s.ListRightPushAsync(It.IsAny<string>(), It.IsAny<string[]>()))
+            .Returns(Task.FromException<long>(new InvalidOperationException("simulated Redis failure")));
+
+        var sut = new DistributedRunService(
+            mockStore.Object,
+            (_, _, _) => Task.FromResult(false),
+            mockLogger.Object);
+
+        var scheduler = new DrainingTaskScheduler();
+
+        // Act: run AppendOutputLines from within a task whose TaskScheduler.Current is
+        // the draining scheduler. DrainingTaskScheduler.QueueTask executes the outer task
+        // synchronously on a dedicated thread so that TryExecuteTask sets TaskScheduler.Current
+        // to this scheduler for the duration of the delegate.
+        await Task.Factory.StartNew(
+            () =>
+            {
+                // Switch to draining mode: any QueueTask call hereafter (including the
+                // fire-and-forget ContinueWith continuation) will throw.
+                scheduler.StartDraining();
+                sut.AppendOutputLines(new RunId("run-drain-test"), ["line-1"]);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.None,
+            scheduler);
+
+        // Wait for the fire-and-forget continuation to complete on TaskScheduler.Default.
+        // The 5-second timeout surfaces the pre-fix regression: if the 2-arg ContinueWith
+        // overload is used, QueueTask throws and the warning is never logged, so WaitAsync
+        // throws TimeoutException and the test fails.
+        await warningLogged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert: Warning fired exactly once, with the expected template and the run ID.
+        mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception?>(),
+                It.Is<string>(msg => msg.Contains("AppendOutputLines")),
+                It.Is<string>(id => id == "run-drain-test")),
+            Times.Once,
+            "Warning must be logged when a Redis write fails, even when called under a draining TaskScheduler");
+    }
+
+    /// <summary>
+    /// Regression guard for issue #3956 — <see cref="DistributedRunService.AppendChatEntry"/>:
+    /// same draining-scheduler scenario as <c>AppendOutputLines</c>.
+    /// The fire-and-forget <c>ContinueWith</c> must use <c>TaskScheduler.Default</c> so the
+    /// error-logging continuation runs on the thread pool regardless of <c>TaskScheduler.Current</c>.
+    /// </summary>
+    [Fact]
+    public async Task AppendChatEntry_RedisWriteFailure_LogsWarning_EvenUnderDrainingScheduler()
+    {
+        var warningLogged = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var mockLogger = new Mock<ILogger>();
+        mockLogger
+            .Setup(l => l.Warning(It.IsAny<Exception?>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Callback(() => warningLogged.TrySetResult(true));
+
+        var mockStore = new Mock<IRedisStore>();
+        mockStore
+            .Setup(s => s.ListRightPushAsync(It.IsAny<string>(), It.IsAny<string[]>()))
+            .Returns(Task.FromException<long>(new InvalidOperationException("simulated Redis failure")));
+
+        var sut = new DistributedRunService(mockStore.Object, (_, _, _) => Task.FromResult(false), mockLogger.Object);
+
+        var scheduler = new DrainingTaskScheduler();
+        await Task.Factory.StartNew(
+            () =>
+            {
+                scheduler.StartDraining();
+                sut.AppendChatEntry(new RunId("run-drain-chat"), new ChatEntry { Role = ChatRole.Agent, Content = "hello" });
+            },
+            CancellationToken.None, TaskCreationOptions.None, scheduler);
+
+        await warningLogged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception?>(),
+                It.Is<string>(msg => msg.Contains("AppendChatEntry")),
+                It.Is<string>(id => id == "run-drain-chat")),
+            Times.Once,
+            "Warning must be logged when a Redis write fails, even when called under a draining TaskScheduler");
+    }
+
+    /// <summary>
+    /// Regression guard for issue #3956 — <see cref="DistributedRunService.AppendQualityGateReport"/>:
+    /// same draining-scheduler scenario as <c>AppendOutputLines</c>.
+    /// </summary>
+    [Fact]
+    public async Task AppendQualityGateReport_RedisWriteFailure_LogsWarning_EvenUnderDrainingScheduler()
+    {
+        var warningLogged = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var mockLogger = new Mock<ILogger>();
+        mockLogger
+            .Setup(l => l.Warning(It.IsAny<Exception?>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Callback(() => warningLogged.TrySetResult(true));
+
+        var mockStore = new Mock<IRedisStore>();
+        mockStore
+            .Setup(s => s.ListRightPushAsync(It.IsAny<string>(), It.IsAny<string[]>()))
+            .Returns(Task.FromException<long>(new InvalidOperationException("simulated Redis failure")));
+
+        var sut = new DistributedRunService(mockStore.Object, (_, _, _) => Task.FromResult(false), mockLogger.Object);
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false },
+            Tests = new GateResult { GateName = "Tests", Passed = false },
+        };
+
+        var scheduler = new DrainingTaskScheduler();
+        await Task.Factory.StartNew(
+            () =>
+            {
+                scheduler.StartDraining();
+                sut.AppendQualityGateReport(new RunId("run-drain-qg"), report);
+            },
+            CancellationToken.None, TaskCreationOptions.None, scheduler);
+
+        await warningLogged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception?>(),
+                It.Is<string>(msg => msg.Contains("AppendQualityGateReport")),
+                It.Is<string>(id => id == "run-drain-qg")),
+            Times.Once,
+            "Warning must be logged when a Redis write fails, even when called under a draining TaskScheduler");
+    }
+
+    /// <summary>
+    /// Regression guard for issue #3956 — <see cref="DistributedRunService.MarkRecentlyCompleted"/>:
+    /// same draining-scheduler scenario as <c>AppendOutputLines</c>.
+    /// Note: this call site wraps <c>_store.SetAsync</c>, not <c>ListRightPushAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task MarkRecentlyCompleted_RedisWriteFailure_LogsWarning_EvenUnderDrainingScheduler()
+    {
+        var warningLogged = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var mockLogger = new Mock<ILogger>();
+        mockLogger
+            .Setup(l => l.Warning(It.IsAny<Exception?>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Callback(() => warningLogged.TrySetResult(true));
+
+        var mockStore = new Mock<IRedisStore>();
+        mockStore
+            .Setup(s => s.SetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<When>()))
+            .Returns(Task.FromException<bool>(new InvalidOperationException("simulated Redis failure")));
+
+        var sut = new DistributedRunService(mockStore.Object, (_, _, _) => Task.FromResult(false), mockLogger.Object);
+
+        var scheduler = new DrainingTaskScheduler();
+        await Task.Factory.StartNew(
+            () =>
+            {
+                scheduler.StartDraining();
+                sut.MarkRecentlyCompleted(new IssueIdentifier("org/repo#1"), new ProviderConfigId("prov-drain"));
+            },
+            CancellationToken.None, TaskCreationOptions.None, scheduler);
+
+        await warningLogged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception?>(),
+                It.Is<string>(msg => msg.Contains("MarkRecentlyCompleted")),
+                It.Is<string>(id => id == "org/repo#1")),
+            Times.Once,
+            "Warning must be logged when a Redis write fails, even when called under a draining TaskScheduler");
+    }
+
     // ── ReplaceRun race simulation ────────────────────────────────────────────
 
     // TODO: [WARNING] No happy-path test exists for ReplaceRun when the run IS in the active set
@@ -314,6 +530,47 @@ public sealed class DistributedRunServiceTests
             Times.Once,
             "Warning must be logged exactly once with the 'not in the active set' message template " +
             "and the run ID when the atomic script returns 0 (not a member)");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A <see cref="TaskScheduler"/> that executes the first task queued to it synchronously
+    /// on a dedicated thread (so <c>Task.Factory.StartNew</c> works and
+    /// <c>TaskScheduler.Current</c> is set correctly inside the delegate), then rejects all
+    /// further <c>QueueTask</c> calls once <see cref="StartDraining"/> is called.
+    /// This simulates a scheduler that is shutting down — a scenario where fire-and-forget
+    /// continuations using the 2-argument <c>ContinueWith</c> overload silently fail to
+    /// schedule, swallowing error-logging calls.
+    /// </summary>
+    private sealed class DrainingTaskScheduler : TaskScheduler
+    {
+        private volatile bool _isDraining;
+
+        /// <summary>
+        /// Switch the scheduler into draining mode: any subsequent <c>QueueTask</c> call
+        /// (including continuations registered by <c>ContinueWith</c>) will throw
+        /// <see cref="InvalidOperationException"/>.
+        /// </summary>
+        public void StartDraining() => _isDraining = true;
+
+        protected override IEnumerable<Task> GetScheduledTasks() => Enumerable.Empty<Task>();
+
+        protected override void QueueTask(Task task)
+        {
+            if (_isDraining)
+                throw new InvalidOperationException("Scheduler is draining — rejecting new tasks");
+
+            // Run the task synchronously on a dedicated background thread.
+            // Using TryExecuteTask (rather than Task.Run) ensures that TaskScheduler.Current
+            // inside the task delegate is set to this scheduler instance, which is what the
+            // test relies on to reproduce the bug.
+            var thread = new Thread(() => TryExecuteTask(task)) { IsBackground = true };
+            thread.Start();
+            thread.Join();
+        }
+
+        protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) => false;
     }
 }
 

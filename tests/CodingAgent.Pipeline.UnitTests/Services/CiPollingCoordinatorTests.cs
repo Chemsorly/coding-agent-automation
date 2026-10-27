@@ -1520,4 +1520,119 @@ public class CiPollingCoordinatorTests
             Times.Exactly(2),
             "must push exactly N-1 empty commits before detecting the merge on iteration N");
     }
+
+    // ── Issue #3957: redundant CheckPullRequestStillOpenAsync call on CI-exhaustion path ──
+
+    /// <summary>
+    /// Regression test for issue #3957: when all CI-not-started retries are exhausted while the
+    /// PR remains open, <c>CheckPullRequestStillOpenAsync</c> must be called exactly once per
+    /// loop iteration — not twice on the final iteration.
+    ///
+    /// Before the fix, the <c>if (attempt >= maxRetries)</c> block contained a second identical
+    /// call to <c>CheckPullRequestStillOpenAsync</c>. On the final iteration (attempt == maxRetries),
+    /// this caused two calls instead of one: the per-iteration call (which returned null because PR
+    /// is open) and the redundant inner call (also null). The second call wasted one provider API
+    /// round-trip per exhaustion event.
+    ///
+    /// With <c>ciNotStartedMaxRetries = 2</c> there are 3 loop iterations (attempts 0, 1, 2).
+    /// This test asserts <c>Times.Exactly(3)</c> — one call per iteration. Before the fix, the
+    /// assertion would fail with count 4 (2 calls on the final iteration).
+    /// </summary>
+    [Fact]
+    public async Task WhenAllCiRetriesExhausted_PrOpen_CheckPullRequestCalledExactlyOncePerIteration()
+    {
+        const int maxRetries = 2;   // 3 iterations: attempts 0, 1, 2
+        var run = CreateRun();
+        run.PullRequestNumber = "46";
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var coordinator = BuildCoordinator();
+
+        // CI never starts on any call.
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR is always open — forces the loop to exhaust all retries.
+        _mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(46, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Open);
+
+        var result = await coordinator.PollCiWithNotStartedRetryAsync(
+            context, pollSha: null, context.Config, _mockCallbacks.Object, CancellationToken.None);
+
+        // Exhaustion path must return a deterministic infrastructure failure.
+        result.State.Should().Be(PipelineRunState.Failed,
+            "exhausted CI-not-started retries with an open PR must produce a Failed status");
+        result.IsInfrastructureFailure.Should().BeTrue(
+            "CI never starting is an infrastructure problem, not a code-level failure");
+
+        // Key regression assertion: exactly one call per iteration (3 total), not 4.
+        // Before the fix this would fail with count 4 (the final iteration made two calls).
+        _mockRepoProvider.Verify(
+            r => r.GetPullRequestStateAsync(46, It.IsAny<CancellationToken>()),
+            Times.Exactly(maxRetries + 1),
+            $"CheckPullRequestStillOpenAsync must be called exactly once per iteration ({maxRetries + 1} total for maxRetries={maxRetries}); a count of {maxRetries + 2} indicates the redundant second call was not removed");
+    }
+
+    /// <summary>
+    /// When CI retries are exhausted and the PR is closed on the final loop iteration, the
+    /// per-iteration <c>CheckPullRequestStillOpenAsync</c> call correctly short-circuits and
+    /// returns <c>PrClosed</c>. This verifies acceptance criterion 3: the per-iteration check
+    /// still handles the PR-closed case after the redundant inner call has been removed.
+    ///
+    /// Note: this test does NOT detect the removed redundant call. With the sequence
+    /// Open → Open → Closed, the PR closes before the <c>attempt >= maxRetries</c> block is
+    /// evaluated, so <c>GetPullRequestStateAsync</c> is called 3 times regardless of whether
+    /// the bug is present. The <c>Times.Exactly(3)</c> assertion here verifies that the
+    /// per-iteration check fires correctly on each iteration and short-circuits on the third.
+    /// </summary>
+    // TODO [WARNING] (TestQualityReviewer, issue #3957): This test does not distinguish the pre-fix
+    // from the post-fix code — with Open → Open → Closed the per-iteration check on attempt 2
+    // consumes the "Closed" response and exits before the `attempt >= maxRetries` block is reached,
+    // so the inner redundant call (if re-introduced) would never fire and both assertions would still
+    // pass. A stronger variant would use Open → Open → Open → Closed: the buggy code would produce
+    // 4 calls and return PrClosed (inner call gets Closed), while the fixed code produces 3 calls and
+    // returns Failed (no 4th call). However that variant no longer verifies that the per-iteration
+    // check handles PrClosed — a separate test would be needed to keep that coverage. Left as is
+    // since WhenAllCiRetriesExhausted_PrOpen_CheckPullRequestCalledExactlyOncePerIteration is the
+    // primary regression detector for the removed inner call.
+    [Fact]
+    public async Task WhenAllCiRetriesExhausted_PrClosedOnFinalIteration_ReturnsFromPerIterationCheck()
+    {
+        const int maxRetries = 2;   // 3 iterations: attempts 0, 1, 2
+        var run = CreateRun();
+        run.PullRequestNumber = "47";
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var coordinator = BuildCoordinator();
+
+        // CI never starts on any call.
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR is open for the first two iterations, then closed on the third.
+        _mockRepoProvider.SetupSequence(r => r.GetPullRequestStateAsync(47, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Open)
+            .ReturnsAsync(PullRequestState.Open)
+            .ReturnsAsync(PullRequestState.Closed);
+
+        var result = await coordinator.PollCiWithNotStartedRetryAsync(
+            context, pollSha: null, context.Config, _mockCallbacks.Object, CancellationToken.None);
+
+        // The per-iteration check on the final attempt must short-circuit to PrClosed.
+        result.State.Should().Be(PipelineRunState.PrClosed,
+            "the per-iteration CheckPullRequestStillOpenAsync call must still handle PR-closed after the redundant inner call was removed");
+
+        // Terminal run-state mutations from BuildPrClosedStatus must have been applied.
+        run.CurrentStep.Should().Be(PipelineStep.PrClosed);
+        run.FinalLabel.Should().Be(AgentLabels.Cancelled);
+
+        // Exactly one call per iteration (3 total). This confirms the per-iteration check
+        // fires on every iteration and the third one correctly short-circuits the loop.
+        _mockRepoProvider.Verify(
+            r => r.GetPullRequestStateAsync(47, It.IsAny<CancellationToken>()),
+            Times.Exactly(maxRetries + 1),
+            "GetPullRequestStateAsync must be called exactly once per iteration");
+    }
 }
