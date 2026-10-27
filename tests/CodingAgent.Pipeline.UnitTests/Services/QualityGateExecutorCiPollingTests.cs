@@ -846,6 +846,100 @@ public class QualityGateExecutorGuardTests
         result.ExternalCi!.Passed.Should().BeTrue();
     }
 
+    /// <summary>
+    /// Acceptance criterion (issue #3938): when CommitAllAsync raises 'nothing to commit' and
+    /// HasCommitsAheadAsync returns false, the rethrow path fires — CommitAndPushAsync propagates
+    /// the exception, AppendExternalCiIfNeededAsync converts it to a failing gate result via the
+    /// outer catch (Exception ex), and PushBranchAsync is never called.
+    /// Regression guard: removing the <c>throw;</c> would cause an uninformative push on an
+    /// empty branch, leading to an infinite CI poll loop.
+    /// </summary>
+    [Fact]
+    public async Task CommitAndPush_WhenNoChangesToCommitAndNoCommitsAhead_RethrowsAndDoesNotPush()
+    {
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("No changes to commit"));
+
+        _mockRepoProvider.Setup(r => r.HasCommitsAheadAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+        };
+        var context = BuildContext(CreateRun());
+
+        // The rethrown InvalidOperationException propagates out of CommitAndPushAsync and is caught
+        // by AppendExternalCiIfNeededAsync's outer catch (Exception ex), which converts it to a
+        // failing gate result — the public method returns normally rather than throwing.
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, report, allowEmptyCommit: false, CancellationToken.None, skipCiIfNoChanges: false);
+
+        result.ExternalCi.Should().NotBeNull(
+            "the rethrow path must produce a gate error result via the outer catch, not null");
+        result.ExternalCi!.Passed.Should().BeFalse(
+            "gate must fail when no changes to commit and no commits ahead of base");
+
+        _mockRepoProvider.Verify(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "PushBranchAsync must not be called when the rethrow path exits CommitAndPushAsync early");
+    }
+
+    /// <summary>
+    /// Acceptance criterion (issue #3938): when CommitAllAsync raises 'nothing to commit' but
+    /// HasCommitsAheadAsync returns true, the informational-proceed path fires — execution falls
+    /// through to PushBranchAsync and CI polling succeeds normally.
+    /// Regression guard: broken HasCommitsAheadAsync mock wiring would silently suppress valid
+    /// CI pushes; the Times.Once assertion makes that regression immediately visible.
+    /// </summary>
+    [Fact]
+    public async Task CommitAndPush_WhenNoChangesToCommitButHasCommitsAhead_PushProceedsWithoutException()
+    {
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("No changes to commit"));
+
+        _mockRepoProvider.Setup(r => r.HasCommitsAheadAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Explicit setup for the 4-param overload called by CommitAndPushAsync (forcePush: true).
+        // The 3-param constructor default covers the DIM delegation path, but explicitly setting
+        // up the 4-param overload makes the mock wiring self-documenting and consistent with
+        // other tests in the suite that verify PushBranchAsync Times.Once.
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+        };
+        var context = BuildContext(CreateRun());
+
+        // Falls through to PushBranchAsync; the constructor default for WaitForCompletionAsync
+        // returns Passed immediately so the gate succeeds without timing delays.
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, report, allowEmptyCommit: false, CancellationToken.None, skipCiIfNoChanges: false);
+
+        result.ExternalCi.Should().NotBeNull(
+            "the informational-proceed path must reach CI polling and produce a gate result");
+        result.ExternalCi!.Passed.Should().BeTrue(
+            "CI polling must succeed when execution proceeds past the HasCommitsAheadAsync check");
+
+        _mockRepoProvider.Verify(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PushBranchAsync must be called exactly once when branch has commits ahead");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static PipelineRun CreateRun() => new()

@@ -467,23 +467,37 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             outcomeContext.Length > 0 ? outcomeContext : null,
             job.RefactoringFocus);
 
-        (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase2.Aggregation", job.JobId, async _ =>
+        async Task<ConsolidationJobResult?> RunAggregationAsync()
         {
-            return await ExecuteAgentAndCheckAsync(
-                agentProvider,
-                new AgentRequest
-                {
-                    Prompt = aggregationPrompt,
-                    WorkspacePath = workspacePath,
-                    Timeout = job.PipelineConfiguration.AgentTimeout
-                },
-                job.JobId,
-                ct,
-                onOutputLine,
-                "refactoring_aggregation");
-        });
+            var (_, aggregationFailure) = await RunWithTracingAsync("RefactoringDetection.Phase2.Aggregation", job.JobId, async _ =>
+            {
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = aggregationPrompt,
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct,
+                    onOutputLine,
+                    "refactoring_aggregation");
+            });
+            return aggregationFailure;
+        }
 
+        failure = await RunAggregationAsync();
         if (failure is not null) return (failure, detectors);
+
+        // The aggregation writes [] when it drops every finding, so a missing file after a clean exit means the
+        // call broke off. Run it once more: the Phase 1 findings are still on disk.
+        if (!File.Exists(Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringProposalsFilePath)))
+        {
+            Logger.Warning("Aggregation wrote no refactoring proposals file in run {RunId}, retrying once", job.JobId);
+            failure = await RunAggregationAsync();
+            if (failure is not null) return (failure, detectors);
+        }
 
         // Proposals are now at .agent/refactoring-proposals.json — return success
         // (the caller will finalize with review + issue creation)

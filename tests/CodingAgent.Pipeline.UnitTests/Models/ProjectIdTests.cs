@@ -29,6 +29,22 @@ public class ProjectIdTests
         act.Should().Throw<ArgumentException>();
     }
 
+    [Fact]
+    public void Constructor_EmptyString_ThrowsArgumentException()
+    {
+        var act = () => new ProjectId("");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_NullString_ThrowsArgumentException()
+    {
+        var act = () => new ProjectId(null!);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     // TODO: [WARNING] ArgumentException.ThrowIfNullOrEmpty does NOT reject whitespace-only strings.
     // A value like "   " produces a ProjectId with Value == "   ", which silently fails Guid.TryParse
     // in PostgresConfigurationStore (silent no-op) or produces unexpected HTTP payloads via .Value.
@@ -73,12 +89,10 @@ public class ProjectIdTests
         implicit1.Should().Be(explicit1);
     }
 
-    // TODO: [WARNING] This test documents an invalid object state (null Value) as expected/acceptable behavior.
-    // Treating default(ProjectId) as a valid state makes it harder to add constructor validation in a
-    // follow-up phase without breaking this test. Consider renaming to Default_ValueIsNull_KnownLimitation
-    // and adding a comment clarifying this is a known design gap, not intended behavior. When constructor
-    // validation is added, this test should be updated to expect a throw or be replaced with a test that
-    // asserts default(ProjectId) is unusable.
+    // default(ProjectId) has Value = null because C# struct zero-initialisation bypasses all
+    // constructors. This is a known struct exemption, not a gap — the same applies to all
+    // strongly-typed ID types. Use default(ProjectId) only as a sentinel/unset value,
+    // never as a valid project identifier.
     [Fact]
     public void Default_HasNullValue()
     {
