@@ -30,6 +30,22 @@ public class TemplateIdTests
     }
 
     [Fact]
+    public void Constructor_EmptyString_ThrowsArgumentException()
+    {
+        var act = () => new TemplateId("");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_NullString_ThrowsArgumentException()
+    {
+        var act = () => new TemplateId(null!);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void ToString_ReturnsInnerValue()
     {
         var id = new TemplateId("tmpl-456");

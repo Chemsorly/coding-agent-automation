@@ -409,7 +409,8 @@ public static class ApiServiceCollectionExtensions
         // clients during a pod blip.
         services.AddStandardHttpClientPoolDefaults();
         services.AddHttpClient("TokenVending")
-            .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+            .AddStandardResilienceHandler(
+                PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
         services.AddTokenVendingCore();
     }
 

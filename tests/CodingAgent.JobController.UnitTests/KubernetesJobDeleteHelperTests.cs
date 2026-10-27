@@ -27,15 +27,16 @@ public sealed class KubernetesJobDeleteHelperTests
             new System.Net.Http.HttpResponseMessage(code), "")
     };
 
-    // ─── TryDeleteJobAsync: 404 → swallowed, logged at Debug (not Warning) ───
+    // ─── TryDeleteJobAsync: 404 → swallowed, logged at Debug with exception attached ───
 
     [Fact]
-    public async Task TryDeleteJobAsync_WhenJobNotFound_SwallowsAndLogsDebugNoWarning()
+    public async Task TryDeleteJobAsync_WhenJobNotFound_SwallowsAndLogsDebugWithException()
     {
+        var notFoundEx = NotFound404();
         var clientMock = new Mock<IKubernetesJobClient>();
         clientMock
             .Setup(c => c.DeleteJobAsync(TestJobName, TestNamespace, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(NotFound404());
+            .ThrowsAsync(notFoundEx);
 
         var loggerMock = new Mock<ILogger>();
         loggerMock.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
@@ -46,12 +47,13 @@ public sealed class KubernetesJobDeleteHelperTests
             clientMock.Object, TestJobName, TestNamespace, loggerMock.Object, TestContext, CancellationToken.None);
         result.Should().BeFalse("404 is a swallowed failure, not a success");
 
-        // A Debug log must be emitted (already deleted is expected)
-        // Serilog resolves Debug("template", string, string) to Debug<string,string>
+        // The caught HttpOperationException must be attached to the Debug log entry (S6667)
+        // Serilog resolves Debug(ex, "template", string, string) to Debug<string,string>(Exception?, ...)
         loggerMock.Verify(l => l.Debug(
+            It.Is<HttpOperationException>(e => ReferenceEquals(e, notFoundEx)),
             It.IsAny<string>(),
             It.IsAny<string>(),
-            It.IsAny<string>()), Times.AtLeastOnce);
+            It.IsAny<string>()), Times.Once);
 
         // No Warning must be emitted — check both params and generic 2-string overloads
         loggerMock.Verify(l => l.Warning(
