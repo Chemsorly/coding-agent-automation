@@ -76,15 +76,6 @@ public sealed partial class PipelineLoopService
                 //   narrow window between run creation and that run becoming visible to those checks,
                 //   and inflated ProcessedCount/FailedCount for the abandoned partial cycle regardless.
                 //   Confirm the dedup window is fully closed before removing this note.
-                // TODO: TaskCanceledException is included in IsTransientApiFailure and reaches this
-                //   handler when ct.IsCancellationRequested is false (i.e. the preceding OCE catch
-                //   did not fire). A TaskCanceledException thrown by a provider call that uses its
-                //   own independent private timeout CancellationTokenSource (not ct) will have
-                //   ct.IsCancellationRequested==false and be silently retried here as a transient
-                //   failure rather than propagated. This could mask genuine internal timeouts as
-                //   "transient API noise". If provider implementations begin using independent
-                //   timeout tokens, consider tightening this catch to exclude TaskCanceledException
-                //   unless it is wrapped in a TimeoutRejectedException by Polly.
                 _logger.Warning(ex, "Pipeline loop: transient API failure mid-cycle — backing off and retrying");
                 await DelayOrStop(TimeSpan.FromSeconds(5), ct);
             }
@@ -102,10 +93,14 @@ public sealed partial class PipelineLoopService
     ///   <item><see cref="BrokenCircuitException"/> — Polly circuit breaker open, raised under a sustained
     ///         outage (e.g. a rolling restart long enough to trip the breaker) — the exact scenario this
     ///         guard exists for, and one that does NOT surface as <see cref="HttpRequestException"/>.</item>
-    ///   <item><see cref="TaskCanceledException"/> — HttpClient timeout surfaced as cancellation. Genuine loop
-    ///         cancellation is peeled off by <see cref="SnapshotCycleConfigAsync"/>'s
-    ///         <c>when (ct.IsCancellationRequested)</c> filter that runs before this predicate, so any
-    ///         remainder is a timeout, not a shutdown.</item>
+    ///   <item><see cref="TaskCanceledException"/> wrapping a <see cref="TimeoutRejectedException"/>
+    ///         — a Polly-mediated timeout surfaced as cancellation. Only matches when
+    ///         <see cref="Exception.InnerException"/> is a <see cref="TimeoutRejectedException"/>;
+    ///         bare <see cref="TaskCanceledException"/> (e.g. from a provider's own private timeout
+    ///         <see cref="System.Threading.CancellationTokenSource"/>) is intentionally excluded so
+    ///         genuine provider-internal timeouts propagate and stop the loop rather than being
+    ///         silently retried as transient noise. Genuine loop cancellation is peeled off earlier
+    ///         by the <c>when (ct.IsCancellationRequested)</c> filter and does not reach this predicate.</item>
     /// </list>
     /// Non-transient exceptions (e.g. <see cref="InvalidOperationException"/>) are intentionally excluded so
     /// genuine bugs still surface as an Error and stop the loop rather than being retried forever.
@@ -114,7 +109,7 @@ public sealed partial class PipelineLoopService
         HttpRequestException or
         TimeoutRejectedException or
         BrokenCircuitException or
-        TaskCanceledException;
+        TaskCanceledException { InnerException: TimeoutRejectedException };
 
     /// <summary>
     /// Executes a single pipeline loop cycle: poll → circuit-breaker → dispatch → wait.
