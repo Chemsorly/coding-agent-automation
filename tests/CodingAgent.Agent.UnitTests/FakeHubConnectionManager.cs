@@ -117,4 +117,7 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
     public Task SimulateCancelChatAsync(string sessionId)
         => OnCancelChat?.Invoke(sessionId) ?? Task.CompletedTask;
 
+    public Task SimulateFetchModelsAsync(FetchModelsRequest request)
+        => OnFetchModels?.Invoke(request) ?? Task.CompletedTask;
+
 }

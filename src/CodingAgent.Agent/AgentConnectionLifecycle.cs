@@ -51,10 +51,10 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     // ── Named delegate fields for event handler wiring ────────────────────────
     // Stored as fields so that -= in UnwireEventHandlers references the same delegate instance
     // as the += in WireEventHandlers, preventing GC reference leaks on every reconnect.
-    private Func<ChatPromptMessage, Task> _onAssignChatPromptHandler = null!;
-    private Func<string, Task> _onCancelChatHandler = null!;
-    private Func<FetchModelsRequest, Task> _onFetchModelsHandler = null!;
-    private Func<Exception?, Task> _onClosedHandler = null!;
+    private readonly Func<ChatPromptMessage, Task> _onAssignChatPromptHandler;
+    private readonly Func<string, Task> _onCancelChatHandler;
+    private readonly Func<FetchModelsRequest, Task> _onFetchModelsHandler;
+    private readonly Func<Exception?, Task> _onClosedHandler;
 
     internal TimeSpan ExtendedRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 

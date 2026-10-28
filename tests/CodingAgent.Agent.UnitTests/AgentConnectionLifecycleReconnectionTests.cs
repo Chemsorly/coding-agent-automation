@@ -180,6 +180,59 @@ public class AgentConnectionLifecycleReconnectionTests
         stopCalled.Should().BeFalse("disposed — no retry or StopApplication");
     }
 
+    // ── Event forwarding: OnCancelChat and OnFetchModels ─────────────────
+
+    /// <summary>
+    /// Covers the _onCancelChatHandler and _onFetchModelsHandler lambda bodies, which
+    /// forward hub events to lifecycle-level subscribers. Without this test, those lambda
+    /// bodies are never invoked and their conditional branches are uncovered.
+    /// </summary>
+    [Fact]
+    public async Task WiredHub_ForwardsCancelChatAndFetchModels_ToLifecycleSubscribers()
+    {
+        var initialHub = new FakeHubConnectionManager(new RecordingHubConnection());
+        var factory = new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager(new RecordingHubConnection()));
+        var lifetimeMock = new Mock<IHostApplicationLifetime>();
+        lifetimeMock.Setup(l => l.ApplicationStopping).Returns(CancellationToken.None);
+
+        var lifecycle = new AgentConnectionLifecycle(
+            initialHub,
+            factory,
+            new AgentId("test-agent"),
+            lifetimeMock.Object,
+            new Mock<Serilog.ILogger>().Object,
+            new AgentRuntimeOptions
+            {
+                IsChatMode = true,
+                ChatSessionId = "s-fwd",
+                ChatModel = "auto",
+                AgentLabels = ""
+            });
+
+        lifecycle.SignalChatEnd();
+
+        string? cancelChatReceived = null;
+        lifecycle.OnCancelChat += sessionId => { cancelChatReceived = sessionId; return Task.CompletedTask; };
+
+        FetchModelsRequest? fetchModelsReceived = null;
+        lifecycle.OnFetchModels += req => { fetchModelsReceived = req; return Task.CompletedTask; };
+
+        // ConnectAndRunAsync wires the initial hub and returns immediately (chat mode + pre-signalled end)
+        await lifecycle.ConnectAndRunAsync(CancellationToken.None);
+
+        // Fire OnCancelChat and OnFetchModels on the wired initial hub
+        await initialHub.SimulateCancelChatAsync("session-abc");
+        await initialHub.SimulateFetchModelsAsync(new FetchModelsRequest { RequestId = "req-1" });
+
+        cancelChatReceived.Should().Be("session-abc",
+            "_onCancelChatHandler must forward OnCancelChat events to lifecycle.OnCancelChat subscribers");
+        fetchModelsReceived.Should().NotBeNull(
+            "_onFetchModelsHandler must forward OnFetchModels events to lifecycle.OnFetchModels subscribers");
+        fetchModelsReceived!.RequestId.Should().Be("req-1");
+
+        await lifecycle.DisposeAsync();
+    }
+
     // ── UnwireEventHandlers via two consecutive reconnects ────────────────
 
     /// <summary>
