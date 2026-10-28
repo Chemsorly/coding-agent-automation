@@ -2,6 +2,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using ILogger = Serilog.ILogger;
@@ -22,7 +23,7 @@ namespace CodingAgent.Scheduler.Services;
 /// </summary>
 public sealed class WorkItemCountsService : BackgroundService
 {
-    private readonly ISchedulerApiClient _apiClient;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
     private readonly TimeSpan _interval;
@@ -44,12 +45,14 @@ public sealed class WorkItemCountsService : BackgroundService
     private CredentialPoolCounts? _cachedCredentialPoolCounts;
 
     public WorkItemCountsService(
-        ISchedulerApiClient apiClient,
+        IServiceScopeFactory scopeFactory,
         ILeaderGate? leaderGate,
         ILogger logger,
         TimeSpan? interval = null)
     {
-        _apiClient = apiClient;
+        ArgumentNullException.ThrowIfNull(scopeFactory);
+        ArgumentNullException.ThrowIfNull(logger);
+        _scopeFactory = scopeFactory;
         _leaderGate = leaderGate;
         _logger = logger.ForContext<WorkItemCountsService>();
         _interval = interval ?? TimeSpan.FromSeconds(10);
@@ -128,11 +131,17 @@ public sealed class WorkItemCountsService : BackgroundService
         // Fix: clear the caches in this non-leader branch.
         if (_leaderGate is { IsLeader: false }) return;
 
+        // Resolve ISchedulerApiClient from a short-lived scope for this tick so each tick gets a
+        // fresh HttpClient. The scope is disposed after the tick completes, returning the client
+        // to the IHttpClientFactory pool for connection recycling (90s PooledConnectionLifetime).
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var apiClient = scope.ServiceProvider.GetRequiredService<ISchedulerApiClient>();
+
         try
         {
-            var countsTask = _apiClient.GetWorkItemCountsAsync(ct);
-            var agentsTask = _apiClient.GetAgentsAsync(ct);
-            var poolTask = _apiClient.GetCredentialPoolAsync(ct);
+            var countsTask = apiClient.GetWorkItemCountsAsync(ct);
+            var agentsTask = apiClient.GetAgentsAsync(ct);
+            var poolTask   = apiClient.GetCredentialPoolAsync(ct);
 
             // NOTE (issue #3555): The three calls share one Task.WhenAll and one catch block, so a failure of
             // GET /api/agents or GET /api/agents/credential-pool also discards the successfully fetched

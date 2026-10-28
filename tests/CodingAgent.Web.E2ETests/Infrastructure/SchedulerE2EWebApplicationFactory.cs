@@ -283,8 +283,7 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
             services.RemoveAll<LoopWatchdogService>();
             services.AddSingleton(sp => new LoopWatchdogService(
                 sp.GetRequiredService<IPipelineLoopService>(),
-                sp.GetRequiredService<IPipelineApiConfigClient>(),
-                sp.GetRequiredService<ISchedulerApiClient>(),
+                sp.GetRequiredService<IServiceScopeFactory>(),
                 leaderGate: null,
                 Serilog.Log.Logger,
                 TimeSpan.FromMilliseconds(250)));

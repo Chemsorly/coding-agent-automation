@@ -3,6 +3,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -43,37 +44,34 @@ public sealed class FeedbackCommentRelayService : BackgroundService
     /// </remarks>
     internal static readonly TimeSpan FastPathReservation = TimeSpan.FromMinutes(15);
 
-    private readonly IPipelineApiFeedbackCommentOutboxClient _outboxClient;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IProviderFactory _providerFactory;
-    private readonly IPipelineApiConfigClient _configClient;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
     private readonly TimeSpan _gracePeriod;
     private readonly TimeSpan _sweepInterval;
 
     public FeedbackCommentRelayService(
-        IPipelineApiFeedbackCommentOutboxClient outboxClient,
+        IServiceScopeFactory scopeFactory,
         IProviderFactory providerFactory,
-        IPipelineApiConfigClient configClient,
         ILeaderGate? leaderGate,
         ILogger logger)
-        : this(outboxClient, providerFactory, configClient, leaderGate, logger, DefaultGracePeriod, DefaultSweepInterval)
+        : this(scopeFactory, providerFactory, leaderGate, logger, DefaultGracePeriod, DefaultSweepInterval)
     {
     }
 
     /// <summary>Internal constructor for testing — allows overriding grace period and sweep interval.</summary>
     internal FeedbackCommentRelayService(
-        IPipelineApiFeedbackCommentOutboxClient outboxClient,
+        IServiceScopeFactory scopeFactory,
         IProviderFactory providerFactory,
-        IPipelineApiConfigClient configClient,
         ILeaderGate? leaderGate,
         ILogger logger,
         TimeSpan gracePeriod,
         TimeSpan sweepInterval = default)
     {
-        _outboxClient = outboxClient;
+        ArgumentNullException.ThrowIfNull(scopeFactory);
+        _scopeFactory = scopeFactory;
         _providerFactory = providerFactory;
-        _configClient = configClient;
         _leaderGate = leaderGate;
         _logger = logger.ForContext<FeedbackCommentRelayService>();
         _gracePeriod = gracePeriod == default ? DefaultGracePeriod : gracePeriod;
@@ -142,11 +140,19 @@ public sealed class FeedbackCommentRelayService : BackgroundService
             : null;
         var sweepCt = linked?.Token ?? ct;
 
+        // Resolve both API clients from a single short-lived scope for this sweep so each
+        // sweep gets fresh HttpClient instances. The scope is disposed after the sweep
+        // completes, returning the clients to the IHttpClientFactory pool for connection
+        // recycling (90s PooledConnectionLifetime).
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var outboxClient = scope.ServiceProvider.GetRequiredService<IPipelineApiFeedbackCommentOutboxClient>();
+        var configClient = scope.ServiceProvider.GetRequiredService<IPipelineApiConfigClient>();
+
         // Load maxAttempts from config; fall back to default on transient failure.
-        var maxAttempts = await LoadMaxAttemptsAsync(sweepCt);
+        var maxAttempts = await LoadMaxAttemptsAsync(configClient, sweepCt);
         const int pageSize = 20;
 
-        var pending = await _outboxClient.GetPendingAsync(maxAttempts, pageSize, sweepCt);
+        var pending = await outboxClient.GetPendingAsync(maxAttempts, pageSize, sweepCt);
         if (pending is null || pending.Count == 0) return;
 
         // Rows younger than the reservation may still be in delivery by the inline fast path.
@@ -157,17 +163,18 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         _logger.Information("Feedback comment relay: processing {Count} pending entry/entries", pending.Count);
 
         // Load provider configs once per sweep (all needed kinds: Issue + Repository)
-        var issueProviders = await LoadProviderConfigsAsync(ProviderKind.Issue, sweepCt);
-        var repoProviders = await LoadProviderConfigsAsync(ProviderKind.Repository, sweepCt);
+        var issueProviders = await LoadProviderConfigsAsync(configClient, ProviderKind.Issue, sweepCt);
+        var repoProviders = await LoadProviderConfigsAsync(configClient, ProviderKind.Repository, sweepCt);
 
         foreach (var entry in pending)
         {
             sweepCt.ThrowIfCancellationRequested();
-            await ProcessEntryAsync(entry, issueProviders, repoProviders, maxAttempts, sweepCt);
+            await ProcessEntryAsync(outboxClient, entry, issueProviders, repoProviders, maxAttempts, sweepCt);
         }
     }
 
     private async Task ProcessEntryAsync(
+        IPipelineApiFeedbackCommentOutboxClient outboxClient,
         FeedbackCommentOutboxEntry entry,
         IReadOnlyList<ProviderConfig> issueProviderConfigs,
         IReadOnlyList<ProviderConfig> repoProviderConfigs,
@@ -188,7 +195,7 @@ public sealed class FeedbackCommentRelayService : BackgroundService
                 _logger.Warning(
                     "Feedback comment relay: entry {EntryId} (run {RunId}) has no formatted comment body — marking completed without posting",
                     entry.Id, entry.RunId);
-                await _outboxClient.MarkCompletedAsync(entry.Id, ct);
+                await outboxClient.MarkCompletedAsync(entry.Id, ct);
                 return;
             }
 
@@ -199,7 +206,7 @@ public sealed class FeedbackCommentRelayService : BackgroundService
                 _logger.Warning(
                     "Feedback comment relay: issue provider config '{ConfigId}' not found for run {RunId} — will retry",
                     entry.IssueProviderConfigId, entry.RunId);
-                await _outboxClient.MarkFailedAsync(
+                await outboxClient.MarkFailedAsync(
                     entry.Id,
                     $"Issue provider config '{entry.IssueProviderConfigId}' not found",
                     maxAttempts,
@@ -226,7 +233,7 @@ public sealed class FeedbackCommentRelayService : BackgroundService
                     ct);
             }
 
-            await _outboxClient.MarkCompletedAsync(entry.Id, ct);
+            await outboxClient.MarkCompletedAsync(entry.Id, ct);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -237,7 +244,7 @@ public sealed class FeedbackCommentRelayService : BackgroundService
                 entry.RunId, entry.Id);
             try
             {
-                await _outboxClient.MarkFailedAsync(entry.Id, ex.Message, maxAttempts, ct);
+                await outboxClient.MarkFailedAsync(entry.Id, ex.Message, maxAttempts, ct);
             }
             catch (Exception markEx) when (markEx is not OperationCanceledException)
             {
@@ -299,11 +306,11 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         }
     }
 
-    private async Task<int> LoadMaxAttemptsAsync(CancellationToken ct)
+    private async Task<int> LoadMaxAttemptsAsync(IPipelineApiConfigClient configClient, CancellationToken ct)
     {
         try
         {
-            var config = await _configClient.GetPipelineConfigAsync(ct);
+            var config = await configClient.GetPipelineConfigAsync(ct);
             return config.FeedbackCommentOutboxMaxAttempts > 0
                 ? config.FeedbackCommentOutboxMaxAttempts
                 : PipelineConstants.DefaultFeedbackCommentOutboxMaxAttempts;
@@ -315,11 +322,12 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         }
     }
 
-    private async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
+    private async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(
+        IPipelineApiConfigClient configClient, ProviderKind kind, CancellationToken ct)
     {
         try
         {
-            return await _configClient.GetProviderConfigsWithSecretsAsync(kind, ct);
+            return await configClient.GetProviderConfigsWithSecretsAsync(kind, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

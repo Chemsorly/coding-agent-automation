@@ -6,6 +6,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Serilog;
 using Serilog.Events;
@@ -94,9 +95,18 @@ public sealed class WorkItemCountsServiceAgentGaugeTests : IDisposable
             .ReturnsAsync(new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null));
     }
 
+    // TODO [WARNING]: Singleton registration means a cached-scope regression would not be detected.
+    // See the same TODO in LoopWatchdogServiceTests.CreateScopeFactory for details.
+    private IServiceScopeFactory CreateScopeFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_mockClient.Object);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
     private WorkItemCountsService CreateService(ILeaderGate? gate = null)
         => new WorkItemCountsService(
-            _mockClient.Object,
+            CreateScopeFactory(),
             gate ?? _mockLeaderGate.Object,
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
