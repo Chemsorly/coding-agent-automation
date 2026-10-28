@@ -255,18 +255,18 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
     private void WireEventHandlers(IHubConnectionManager hubManager)
     {
-        hubManager.OnCancelJob       += HandleCancelJobAsync;
+        hubManager.OnCancelJob += HandleCancelJobAsync;
         hubManager.OnForceDisconnect += HandleForceDisconnectAsync;
-        hubManager.OnReconnected     += HandleReconnectedAsync;
-        hubManager.OnClosed          += _onClosedHandler;
+        hubManager.OnReconnected += HandleReconnectedAsync;
+        hubManager.OnClosed += _onClosedHandler;
     }
 
     private void UnwireEventHandlers(IHubConnectionManager hubManager)
     {
-        hubManager.OnCancelJob       -= HandleCancelJobAsync;
+        hubManager.OnCancelJob -= HandleCancelJobAsync;
         hubManager.OnForceDisconnect -= HandleForceDisconnectAsync;
-        hubManager.OnReconnected     -= HandleReconnectedAsync;
-        hubManager.OnClosed          -= _onClosedHandler;
+        hubManager.OnReconnected -= HandleReconnectedAsync;
+        hubManager.OnClosed -= _onClosedHandler;
     }
 
     private async Task HandleCancelJobAsync(string jobId)

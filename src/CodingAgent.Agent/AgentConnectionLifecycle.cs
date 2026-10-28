@@ -112,10 +112,10 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
         // Initialise named delegate fields before constructing the coordinator, so that
         // WireEventHandlers (passed as a callback) and UnwireEventHandlers both reference the same instances.
-        _onAssignChatPromptHandler = msg  => OnAssignChatPrompt?.Invoke(msg) ?? Task.CompletedTask;
-        _onCancelChatHandler       = sid  => OnCancelChat?.Invoke(sid)       ?? Task.CompletedTask;
-        _onFetchModelsHandler      = req  => OnFetchModels?.Invoke(req)      ?? Task.CompletedTask;
-        _onClosedHandler           = err  => HandleTerminalClosedAsync(err);
+        _onAssignChatPromptHandler = msg => OnAssignChatPrompt?.Invoke(msg) ?? Task.CompletedTask;
+        _onCancelChatHandler = sid => OnCancelChat?.Invoke(sid) ?? Task.CompletedTask;
+        _onFetchModelsHandler = req => OnFetchModels?.Invoke(req) ?? Task.CompletedTask;
+        _onClosedHandler = err => HandleTerminalClosedAsync(err);
 
         // Compose the coordinator. It takes ownership of the initial hub manager.
         // afterSuccessfulReconnect is null — chat pods no longer need a drain step
@@ -294,19 +294,19 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     private void WireEventHandlers(IHubConnectionManager hubManager)
     {
         hubManager.OnAssignChatPrompt += _onAssignChatPromptHandler;
-        hubManager.OnCancelChat       += _onCancelChatHandler;
-        hubManager.OnFetchModels      += _onFetchModelsHandler;
-        hubManager.OnReconnected      += HandleReconnectedAsync;
-        hubManager.OnClosed           += _onClosedHandler;
+        hubManager.OnCancelChat += _onCancelChatHandler;
+        hubManager.OnFetchModels += _onFetchModelsHandler;
+        hubManager.OnReconnected += HandleReconnectedAsync;
+        hubManager.OnClosed += _onClosedHandler;
     }
 
     private void UnwireEventHandlers(IHubConnectionManager hubManager)
     {
         hubManager.OnAssignChatPrompt -= _onAssignChatPromptHandler;
-        hubManager.OnCancelChat       -= _onCancelChatHandler;
-        hubManager.OnFetchModels      -= _onFetchModelsHandler;
-        hubManager.OnReconnected      -= HandleReconnectedAsync;
-        hubManager.OnClosed           -= _onClosedHandler;
+        hubManager.OnCancelChat -= _onCancelChatHandler;
+        hubManager.OnFetchModels -= _onFetchModelsHandler;
+        hubManager.OnReconnected -= HandleReconnectedAsync;
+        hubManager.OnClosed -= _onClosedHandler;
     }
 
     // delayOverride is a test seam (null in production) so reconnection tests need not wait the real
