@@ -808,6 +808,63 @@ public class AgentAuthorizationFilterRedisFallbackTests
             "with null HttpContext the agentId cannot be read, so the cold-pod fallback finds nothing and rejects the call");
     }
 
+    // ── Validation guard: oversized and invalid-character agentId ─────────
+
+    /// <summary>
+    /// A 128-character all-alphanumeric agentId sits exactly at the limit: it passes validation
+    /// and the lookup reaches GetByAgentId (which returns null here, causing a rejection, but the
+    /// point is that GetByAgentId was called).  A 129-character value is rejected by the guard
+    /// and GetByAgentId is never called.
+    /// </summary>
+    [Theory]
+    [InlineData(128, false)] // exactly at limit — passes validation, reaches GetByAgentId
+    [InlineData(129, true)]  // one over the limit — rejected, GetByAgentId never called
+    public async Task GuardAgentMethod_AgentIdAtOrBeyondLengthBoundary_BehavesCorrectly(
+        int length, bool expectRejection)
+    {
+        const string connectionId = "conn-boundary";
+        var agentId = new string('a', length);
+
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+        // For the 128-char case, Redis returns null (just testing the validation boundary)
+        _registryMock.Setup(r => r.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+
+        var ctx = MakeContextWithAgentIdQuery(connectionId, agentId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        await _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null))
+            .AsTask().ContinueWith(_ => { }); // HubException expected in all cases
+
+        var expectedTimes = expectRejection ? Times.Never() : Times.Once();
+        _registryMock.Verify(r => r.GetByAgentId(It.IsAny<AgentId>()), expectedTimes);
+    }
+
+    /// <summary>
+    /// An agentId containing characters outside [a-zA-Z0-9-] (here '/' and '.') is rejected by
+    /// the validation guard and GetByAgentId is never called.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_InvalidCharacterAgentIdQueryParam_ReturnsFalse_WithoutCallingGetByAgentId()
+    {
+        const string connectionId = "conn-invalid-chars";
+        const string invalidId = "agent/../../../etc/passwd"; // contains / and . — not in [a-zA-Z0-9-]
+
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+
+        var ctx = MakeContextWithAgentIdQuery(connectionId, invalidId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        await _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null))
+            .AsTask().ContinueWith(_ => { }); // HubException expected
+
+        _registryMock.Verify(r => r.GetByAgentId(It.IsAny<AgentId>()), Times.Never(),
+            "GetByAgentId must not be called for an agentId containing disallowed characters");
+    }
+
     // ── Inner helper for IHttpContextFeature ─────────────────────────────
 
     private sealed class TestHttpContextFeature : IHttpContextFeature

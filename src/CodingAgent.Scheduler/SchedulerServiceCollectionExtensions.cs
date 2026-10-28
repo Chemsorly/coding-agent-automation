@@ -198,17 +198,9 @@ public static class SchedulerServiceCollectionExtensions
         // also self-heals a loop an exception or hang stopped, and is how the loop starts after a pod
         // start or a leadership change. A null leader gate (dev/single-replica
         // mode) causes the watchdog to treat this instance as the leader — matching WorkItemCountsService.
-        // TODO: DI lifetime skew — IPipelineApiConfigClient is registered as transient (AddHttpClient),
-        //   but LoopWatchdogService is a singleton, so the transient instance is captured for the
-        //   process lifetime. This prevents socket recycling and bypasses IHttpClientFactory's
-        //   managed connection-pool refresh. Other singletons here exhibit the same pattern
-        //   (e.g. ApiPipelineConfigStore), so this is consistent with existing practice. If
-        //   IHttpClientFactory lifetime management becomes important, refactor to resolve the
-        //   client per-call via IServiceScopeFactory instead of constructor injection.
         services.AddSingleton<LoopWatchdogService>(sp => new LoopWatchdogService(
             sp.GetRequiredService<IPipelineLoopService>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
-            sp.GetRequiredService<ISchedulerApiClient>(),
+            sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetService<ILeaderElectionService>(),
             Log.Logger,
             time: sp.GetService<TimeProvider>()));
@@ -220,8 +212,7 @@ public static class SchedulerServiceCollectionExtensions
         // (SweepOnceForTestAsync). Pattern mirrors LoopWatchdogService above.
         services.AddSingleton<OrphanedLabelRecoveryService>(sp => new OrphanedLabelRecoveryService(
             sp.GetRequiredService<IRunActivityQuery>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
-            sp.GetRequiredService<IPipelineApiWorkItemClient>(),
+            sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
             sp.GetService<ILeaderElectionService>(),
@@ -236,9 +227,8 @@ public static class SchedulerServiceCollectionExtensions
         // SchedulerE2EWebApplicationFactory can resolve it by concrete type for test hooks
         // (SweepOnceForTestAsync). Pattern mirrors LoopWatchdogService above.
         services.AddSingleton<FeedbackCommentRelayService>(sp => new FeedbackCommentRelayService(
-            sp.GetRequiredService<IPipelineApiFeedbackCommentOutboxClient>(),
+            sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetService<ILeaderElectionService>(),
             Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<FeedbackCommentRelayService>());
@@ -266,22 +256,16 @@ public static class SchedulerServiceCollectionExtensions
             ?? new RunServiceCleanupService(new NullRedisStore(), Log.Logger));
 
         // ── Scheduler-specific background services ────────────────────────────
-        services.AddSingleton<ISchedulerApiClient>(sp =>
-        {
-            // RetentionSweepSchedulerService and WorkItemCountsService call the API (not the Scheduler).
-            // Register an HttpClient pointing to the Pipeline API base URL.
-            var factory = sp.GetRequiredService<IHttpClientFactory>();
-            var httpClient = factory.CreateClient("SchedulerToApi");
-            configurePipelineApiClient(httpClient);
-            return new HttpSchedulerApiClient(httpClient);
-        });
-
-        services.AddHttpClient("SchedulerToApi")
+        // ISchedulerApiClient is registered as a typed HTTP client so that singletons that need it
+        // can resolve a fresh instance per tick via IServiceScopeFactory.CreateAsyncScope(),
+        // ensuring connection pools are recycled by IHttpClientFactory on the 90-second
+        // PooledConnectionLifetime schedule after a Kubernetes rolling update.
+        services.AddHttpClient<ISchedulerApiClient, HttpSchedulerApiClient>(configurePipelineApiClient)
             .AddStandardResilienceHandler(PipelineApiClientServiceCollectionExtensions.ConfigureResilienceOptions);
 
         services.AddSingleton<RetentionSweepSchedulerService>(sp =>
             new RetentionSweepSchedulerService(
-                sp.GetRequiredService<ISchedulerApiClient>(),
+                sp.GetRequiredService<IServiceScopeFactory>(),
                 sp.GetService<ILeaderElectionService>(),
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<RetentionSweepSchedulerService>());
@@ -291,14 +275,14 @@ public static class SchedulerServiceCollectionExtensions
                 sp.GetRequiredService<IConsolidationService>(),
                 sp.GetRequiredService<ConsolidationStalenessService>(),
                 sp.GetRequiredService<IPipelineConfigStore>(),
-                sp.GetRequiredService<IPipelineApiConfigClient>(),
+                sp.GetRequiredService<IServiceScopeFactory>(),
                 sp.GetService<ILeaderElectionService>(),
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<AutoConsolidationService>());
 
         services.AddSingleton<WorkItemCountsService>(sp =>
             new WorkItemCountsService(
-                sp.GetRequiredService<ISchedulerApiClient>(),
+                sp.GetRequiredService<IServiceScopeFactory>(),
                 sp.GetService<ILeaderElectionService>(),
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<WorkItemCountsService>());
