@@ -711,8 +711,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(agentEntry);
         _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
 
         // Setup context to pass validation (query param + user claim)
         var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
@@ -786,8 +786,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             StartedAt = DateTime.UtcNow.AddHours(-8),
             StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-8)
         };
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { cancelledSummary });
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cancelledSummary);
 
         var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
 
@@ -860,8 +860,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             StartedAt = DateTime.UtcNow.AddHours(-4),
             StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-4)
         };
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { failedSummary });
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(failedSummary);
 
         var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
 
@@ -934,8 +934,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             StartedAt = DateTime.UtcNow.AddHours(-2),
             StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-2)
         };
-        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { completedSummary });
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(completedSummary);
 
         var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
 
