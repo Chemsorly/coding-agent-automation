@@ -136,4 +136,30 @@ public class ProjectPageTests : BunitContext
         Assert.NotNull(enabledCheckbox);
         Assert.True(enabledCheckbox!.HasAttribute("disabled"), "Enabled checkbox should be disabled for project admin");
     }
+
+    [Fact]
+    public async Task OnProjectSaved_ShowsStatusFeedback()
+    {
+        // Before the fix, HandleProjectSaved() was an empty method: firing OnProjectSaved produced no
+        // visible status in the UI. This test reproduces that bug (fails against the empty body) and
+        // serves as a permanent regression guard after the fix.
+        var project = new PipelineProject { Id = TestProjectId, Name = "My Project" };
+        _configClient.Setup(c => c.GetProjectByIdAsync(TestProjectId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+
+        var cut = Render<ProjectPage>(p => p.Add(x => x.ProjectId, TestProjectId));
+
+        // No status shown before OnProjectSaved fires
+        Assert.Empty(cut.FindAll(".inline-status"));
+
+        // Fire OnProjectSaved directly on the child component instance — this calls HandleProjectSaved
+        // on ProjectPage without triggering any save method or Guard.DemandAsync in ProjectDetailSection.
+        var section = cut.FindComponent<ProjectDetailSection>();
+        await cut.InvokeAsync(() => section.Instance.OnProjectSaved.InvokeAsync());
+
+        // HandleProjectSaved must set a status message, causing InlineStatus to render its div.
+        var statusDiv = cut.Find(".inline-status");
+        Assert.NotEmpty(statusDiv.TextContent.Trim());
+    }
 }
