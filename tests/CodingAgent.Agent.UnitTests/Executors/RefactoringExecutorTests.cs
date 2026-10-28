@@ -2879,6 +2879,57 @@ public class RefactoringExecutorTests : IDisposable
             Times.Exactly(6));
     }
 
+    /// <summary>
+    /// When the brain repository provider succeeds (CloneAsync returns normally),
+    /// Logger.Information containing "Brain repo cloned" is emitted once and
+    /// execution continues through Phase 2 as normal.
+    /// Covers the success path (try block body) in <c>TryCloneBrainRepoAsync</c> at L150–L151.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_BrainCloneSucceeds_InformationLogged()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var brainProviderMock = new Mock<IRepositoryProvider>();
+
+        // Code-repo clone writes an empty proposals array so Phase 2 completes normally
+        // and the executor returns "No proposals" success — no issue creation needed.
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
+            .Returns(Task.CompletedTask);
+
+        // Brain clone succeeds — executor must log an Information and continue normally
+        brainProviderMock
+            .Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // All agent calls succeed so the full Phase 0 → Phase 1 × 4 → Phase 2 pipeline runs
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, brainProviderMock.Object,
+            _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — Information logged for the brain clone success
+        // Production call: Logger.Information("Brain repo cloned for architectural context in run {RunId}", jobId)
+        // Resolves to Information<string>(string, string)
+        _mockLogger.Verify(
+            l => l.Information(
+                It.Is<string>(s => s.Contains("Brain repo cloned")),
+                It.IsAny<string>()),   // jobId
+            Times.Once);
+
+        // Phase 2 was reached: Phase 0 (1) + Phase 1 × 4 (4) + Phase 2 (1) = 6 calls
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(6));
+    }
+
     // ── AC2: Phase 1 partial failure ─────────────────────────────────────────────────────────────
 
     /// <summary>

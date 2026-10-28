@@ -385,4 +385,89 @@ public class RefactoringExecutorReviewTests : IDisposable
         result.ReviewTokenUsage.Should().Be(reviewUsage);
         result.RefinementTokenUsage.Should().Be(refinementUsage);
     }
+
+    /// <summary>
+    /// When the refinement agent deletes the proposals file instead of overwriting it,
+    /// <c>ParseProposalsAsync</c> hits the <c>!File.Exists</c> branch (L716–L717) and returns null.
+    /// The executor logs a Warning about the missing file, falls back to the original proposals
+    /// from Phase 2, and succeeds — creating an issue with the original proposal title.
+    /// Covers <c>ParseProposalsAsync</c> L716–L717.
+    /// </summary>
+    [Fact]
+    public async Task RefinedFileDeleted_FileNotFoundBranch_OriginalProposalsPreserved()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob(reviewEnabled: true);
+        SetupCloneWritesProposals(ValidProposalsJson);
+        SetupIssueCreation();
+
+        var callCount = 0;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
+            {
+                // Interlocked.Increment avoids the race condition that arises with callCount++
+                // when the 4 Phase 1 tasks run concurrently via Task.WhenAll.
+                var call = Interlocked.Increment(ref callCount);
+                if (call <= 6)
+                {
+                    // Phased detection calls (Phase 0 + 4× Phase 1 + Phase 2)
+                    return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
+                }
+                if (call == 7)
+                {
+                    // Discriminator call — write a CRITICAL finding to trigger refinement
+                    var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(reviewPath)!);
+                    File.WriteAllText(reviewPath, "[CRITICAL] Proposal references non-existent file");
+                    return new AgentResult { ExitCode = 0, OutputLines = ["Review done."] };
+                }
+                // Refinement call — delete the proposals file instead of overwriting it.
+                // This exercises the !File.Exists branch inside ParseProposalsAsync at L716–L717.
+                // File.Delete does not throw when the file is absent, and the original proposals
+                // variable (set before the refinement block) remains in memory for the fallback.
+                File.Delete(Path.Combine(req.WorkspacePath!, ".agent", "refactoring-proposals.json"));
+                return new AgentResult { ExitCode = 0, OutputLines = ["Refined."] };
+            });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — file-not-found Warning fired (L716)
+        // Production call: Logger.Warning("No refactoring proposals file found at {Path}", filePath)
+        // Resolves to Warning<string>(string, string) — no Exception arg
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("No refactoring proposals file found")),
+                It.IsAny<string>()),   // filePath
+            Times.Once);
+
+        // Assert — fallback-to-original Warning fired (FinalizeProposalsAsync L599)
+        // Production call: Logger.Warning("Refined proposals file is missing or malformed in run {RunId}, ...", jobId)
+        // Resolves to Warning<string>(string, string) — no Exception arg
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("Refined proposals file is missing or malformed")),
+                It.IsAny<string>()),   // jobId
+            Times.Once);
+
+        // Assert — executor fell back to original proposals and succeeded
+        result.Success.Should().BeTrue();
+
+        // Assert — issue created with original title, confirming original proposals were preserved unchanged
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(
+                It.Is<string>(t => t.Contains("Extract shared validation logic")),
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Assert — 8 agent calls: 6 phased + discriminator + refinement
+        _mockAgentProvider.Verify(
+            x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(8));
+    }
 }
