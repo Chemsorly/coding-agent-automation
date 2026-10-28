@@ -429,6 +429,20 @@ public sealed class DispatchWorkItemServiceTests
             .Should().BeFalse("null selector uses empty key, not in map → 0 active");
     }
 
+    [Fact]
+    public void IsAtConcurrencyLimit_NullSelector_AtLimit_ReturnsTrue()
+    {
+        // Null agentSelector → "" key; "" key has count == maxConcurrent → at limit.
+        // This covers the combination of the null-effective-selector path AND the
+        // max-concurrency-exactly-reached boundary: neither of the companion tests covers
+        // both simultaneously (IsAtConcurrencyLimit_AtLimit_ReturnsTrue uses a non-null
+        // selector; IsAtConcurrencyLimit_NullSelector_FallsBackToEmpty_ReturnsFalse uses
+        // null but count=0, well below the limit).
+        var concurrency = new Dictionary<string, int> { [""] = 2 };
+        DispatchWorkItemService.IsAtConcurrencyLimit(null, concurrency, maxConcurrent: 2)
+            .Should().BeTrue("null selector maps to '' key; current(2) == max(2) — at limit");
+    }
+
     // ── HandleUniqueViolationFallback ─────────────────────────────────────────
 
     [Fact]
@@ -772,6 +786,81 @@ public sealed class DispatchWorkItemServiceTests
             "a Pending item has no early-return reason — the caller proceeds to dispatch");
         lockHandle.Verify(h => h.DisposeAsync(), Times.Never(),
             "caller owns the lock on the Pending success path — DisposeAsync must not be called inside TryEnterSelectorDispatchAsync");
+    }
+
+    /// <summary>
+    /// Happy-path non-Pending: when the post-lock re-read finds a work item that is no longer
+    /// <c>Pending</c> (e.g. already <c>Dispatched</c> by a concurrent caller) and
+    /// <c>DisposeAsync()</c> succeeds, <see cref="DispatchWorkItemService.TryEnterSelectorDispatchAsync"/>
+    /// must dispose the acquired lock and return <c>(null, 200/deferred)</c>.
+    ///
+    /// <para>
+    /// This is the normal-disposal complement to
+    /// <see cref="TryEnterSelectorDispatchAsync_NonPendingBranchDisposeThrows_CatchDoesNotDisposeAgainAndRethrows"/>:
+    /// both tests enter the non-Pending if-block, but here <c>DisposeAsync()</c> returns
+    /// <c>ValueTask.CompletedTask</c> so execution reaches the
+    /// <c>return (null, TypedResults.Ok(...))</c> statement — the lines that are unreachable
+    /// when disposal throws.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task TryEnterSelectorDispatchAsync_NonPendingAfterLockAcquisition_ReturnsDeferredResultAndDisposesLock()
+    {
+        // Arrange — lock handle whose DisposeAsync() succeeds (no throw on the normal path).
+        var lockHandle = new Mock<IAsyncDisposable>();
+        lockHandle.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var lockProvider = new Mock<IDistributedLockProvider>();
+        lockProvider
+            .Setup(p => p.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(lockHandle.Object);
+
+        // Seed a non-Pending (Dispatched) work item so the post-lock re-check enters the
+        // non-Pending branch. The item is seeded as Dispatched to simulate the race where
+        // a concurrent caller won the dispatch between the fast-path check and lock acquisition.
+        var dbFactory = CreateDbFactory();
+        var workItemId = Guid.NewGuid();
+        await using (var seedCtx = await dbFactory.CreateDbContextAsync())
+        {
+            seedCtx.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                Status = WorkItemStatus.Dispatched,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-1",
+                AgentSelector = "dotnet,kiro",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = "{}"
+            });
+            await seedCtx.SaveChangesAsync();
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // Act
+        var (returnedLock, earlyReturn) = await DispatchWorkItemService.TryEnterSelectorDispatchAsync(
+            lockProvider.Object, "dotnet,kiro", db, workItemId, CancellationToken.None);
+
+        // Assert — the lock must be disposed inside the method (not transferred to the caller).
+        returnedLock.Should().BeNull(
+            "the lock must be disposed inside the method and not transferred to the caller when the item is no longer Pending");
+        earlyReturn.Should().NotBeNull(
+            "a non-Pending item after lock acquisition must produce a non-null early-return result");
+        var ok = earlyReturn as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        ok.Should().NotBeNull(
+            "the non-Pending early-return must be a 200 Ok<DispatchPendingResponse>");
+        ok!.Value.Should().NotBeNull();
+        ok.Value!.Dispatched.Should().BeFalse(
+            "a deferred result must indicate that dispatch did not occur");
+        ok.Value.Reason.Should().Be("not_pending",
+            "the reason must match NotPendingReason in DispatchWorkItemService");
+        // DisposeAsync must have been called exactly once (the in-try disposal call).
+        // If lockTransferred = true is removed before DisposeAsync(), the catch block would
+        // call it a second time — this assertion catches that double-dispose regression (#3795).
+        lockHandle.Verify(h => h.DisposeAsync(), Times.Once(),
+            "the acquired lock must be disposed exactly once inside the method on the non-Pending path");
     }
 
     // ── PrepareDispatchVariantAsync ───────────────────────────────────────────
@@ -1152,6 +1241,96 @@ public sealed class DispatchWorkItemServiceTests
             k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never(),
             "the K8s Job must not be created when the early result is returned before dispatch");
+    }
+
+    /// <summary>
+    /// When a Pending work item has an empty <c>AgentSelector</c> and its payload already
+    /// contains a non-null <see cref="AgentRouteSnapshot"/> (<c>Route != null</c>),
+    /// <see cref="RolloutRouting.RouteAsync"/> returns <c>("", null)</c> — routing succeeds with
+    /// an empty selector and no early-return result.
+    ///
+    /// <para>
+    /// The assignment <c>agentSelector = routedSelector!</c> (and its closing brace) then
+    /// execute. That assignment is the empty-selector rollout-routing success branch and was
+    /// previously unreachable because all other tests that trigger the rollout path end with
+    /// <c>RouteAsync</c> returning a non-null early result (refusal/error) before reaching it.
+    /// </para>
+    ///
+    /// <para>
+    /// After the assignment, template resolution finds no template for the empty selector, and
+    /// the method returns 200 <c>DispatchPendingResponse(false, "no_template")</c>.
+    /// </para>
+    /// </summary>
+    // TODO [WARNING]: The `agentSelector = routedSelector!` assignment is a no-op in this
+    // test: both `agentSelector` (initial "") and `routedSelector` ("", from RolloutRouting's
+    // `request.Route is not null` short-circuit) are the same empty string. The test therefore
+    // covers the *line* for SonarQube purposes (AC#4) but cannot detect removal of that
+    // assignment — omitting the line would leave `agentSelector` as "" and the test would still
+    // pass with the same `no_template` outcome. A stronger test would seed a real routing table
+    // and use `Route = null` in the payload so `RouteAsync` returns a non-empty selector; the
+    // `agentSelector = routedSelector!` assignment would then be observable through the
+    // resolved template or the dispatched selector. TestWorkItemRouter.Create requires a seeded
+    // routing table (KeyValueStore row), which is more involved setup.
+    [Fact]
+    public async Task DispatchPendingWorkItemAsync_RolloutRoutingSucceedsWithNonNullRouteInPayload_Returns200NoTemplate()
+    {
+        // Arrange: seed a Pending item with an empty AgentSelector and a payload that has
+        // Route != null. RolloutRouting.RouteAsync checks `request.Route is not null` and,
+        // when true, returns ("", null) — routing "succeeds" (no early result) with an empty
+        // selector. This causes the `agentSelector = routedSelector!` assignment to execute.
+        var dbFactory = CreateDbFactory();
+        var workItemId = Guid.NewGuid();
+        var issueId = $"rollout-notemplate-{workItemId:N}";
+
+        await using (var seedDb = await dbFactory.CreateDbContextAsync())
+        {
+            seedDb.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = issueId,
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Pending,
+                AgentSelector = "",   // empty → triggers rollout routing
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = JsonSerializer.Serialize(new JobDistributionRequest
+                {
+                    IssueIdentifier = new IssueIdentifier(issueId),
+                    IssueProviderConfigId = "ip-1",
+                    RepoProviderConfigId = "repo-1",
+                    InitiatedBy = "test",
+                    TaskType = WorkItemTaskType.Implementation,
+                    TimeoutSeconds = 3600,
+                    PayloadSchemaVersion = 1,
+                    // Route is non-null: RolloutRouting takes the `request.Route is not null`
+                    // branch and returns ("", null) — the routing-success path with empty selector.
+                    Route = new AgentRouteSnapshot("prof-1", "Profile 1", "kiro", "gpt-4o", "medium", AgentRouteSource.Dispatch),
+                }, PipelineJsonOptions.Default)
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        // Template store has no template for empty selector ("").
+        // Template resolution returns null → the method short-circuits to no_template.
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
+        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var lifecycle = CreateLifecycleService();
+        var lockProvider = CreateNoOpLockProvider();
+        var svc = CreateService("kiro,dotnet");
+
+        // Act
+        var result = await svc.DispatchPendingWorkItemAsync(
+            workItemId, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+
+        // Assert: no template for the empty selector → 200 no_template deferred response.
+        var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        ok.Should().NotBeNull(
+            "when routing returns an empty selector and no template matches, the response must be 200 Ok<DispatchPendingResponse>");
+        ok!.Value!.Dispatched.Should().BeFalse(
+            "no template found for the empty selector — dispatch must not occur");
+        ok.Value.Reason.Should().Be("no_template",
+            "RolloutRouting.RouteAsync returned an empty selector, template resolution found null");
     }
 }
 
