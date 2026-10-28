@@ -23,13 +23,8 @@ public partial class AgentPhaseExecutor
         context.Callbacks.TransitionTo(PipelineStep.GeneratingCode);
         try
         {
-            var brainContextWritten = await WriteBrainContextIfNeededAsync(run, ct);
-
-            var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
-                run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
-
             var prompt = promptOverride
-                ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, brainWriteInstructions, brainContextWritten, imageCount: context.DownloadedImages?.Count ?? 0);
+                ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, imageCount: context.DownloadedImages?.Count ?? 0);
             _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
             Activity.Current?.SetTag("pipeline.prompt_length_chars", prompt.Length);
 

@@ -18,8 +18,17 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 {
     protected override string ExecutorName => "Refactoring detection";
 
-    public RefactoringExecutor(Serilog.ILogger logger, ConsolidationProgress? progress = null) : base(logger, progress)
+    private readonly string? _claudeRulesDirectory;
+    private readonly string? _openCodeDirectory;
+
+    public RefactoringExecutor(
+        Serilog.ILogger logger,
+        ConsolidationProgress? progress = null,
+        string? claudeRulesDirectory = null,
+        string? openCodeDirectory = null) : base(logger, progress)
     {
+        _claudeRulesDirectory = claudeRulesDirectory;
+        _openCodeDirectory = openCodeDirectory;
     }
 
     /// <summary>
@@ -90,7 +99,23 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             {
                 await repoProvider.CloneAsync(workspacePath, ct);
                 if (brainProvider is not null)
+                {
                     await TryCloneBrainRepoAsync(brainProvider, workspacePath, job.JobId, ct);
+                    // Inject brain skills if the clone succeeded (spec 054, req 5.7)
+                    var brainPath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainDirectory);
+                    if (Directory.Exists(brainPath))
+                    {
+                        var injection = await BrainSkillsReader.ReadAsync(
+                            brainPath,
+                            repoProvider.RepositoryFullName.Split('/')[^1],
+                            job.StackLabels,
+                            brainProvider,
+                            Logger,
+                            ct);
+                        BrainSkillsWriter.Write(agentProvider.ProviderType, workspacePath, injection.Text,
+                            _claudeRulesDirectory, _openCodeDirectory);
+                    }
+                }
             });
 
             // 2b. Query open issues for deduplication context (before hotspot so refs can be passed to hotspot)

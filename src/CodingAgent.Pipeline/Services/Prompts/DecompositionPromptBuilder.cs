@@ -32,7 +32,7 @@ public static class DecompositionPromptBuilder
             s.AppendLine("Before proposing sub-issues, thoroughly explore the codebase:");
             s.AppendLine();
             s.AppendLine("1. **Directory tree** — Understand the project structure, solution layout, and module boundaries");
-            s.AppendLine("2. **Architecture files** — Read README, design docs, and any `.brain/` knowledge if available");
+            s.AppendLine("2. **Architecture files** — Read README, design docs, and the brain skills in your steering (when present)");
             s.AppendLine("3. **DI setup** — Review dependency injection configuration to understand service wiring");
             s.AppendLine("4. **Similar features** — Find 1-2 existing features similar to the epic and study their implementation patterns");
         });

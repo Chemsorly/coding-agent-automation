@@ -107,7 +107,7 @@ internal sealed class WriteSteeringStep : IPipelineStep
             context.Callbacks.EmitOutputLine($"📋 Wrote pipeline steering ({string.Join("+", written)}) to {_openCodeDirectory}");
     }
 
-    private static string FormatKiroFile(string content) =>
+    internal static string FormatKiroFile(string content) =>
         $"""
         ---
         inclusion: always

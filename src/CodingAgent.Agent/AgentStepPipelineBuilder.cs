@@ -38,6 +38,7 @@ internal static class AgentStepPipelineBuilder
         var steps = BuildCommonPrefix(job, includeProjectClone);
         steps.Add(new RunEnvironmentSetupStep(job));
         steps.Add(new SyncBrainPreRunStep());
+        steps.Add(new WriteBrainSkillsStep());
         steps.Add(new DownloadIssueImagesStep(
             ct => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct),
             repoConfig));
@@ -69,6 +70,7 @@ internal static class AgentStepPipelineBuilder
         steps.AddRange([
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
+            new WriteBrainSkillsStep(),
             new DownloadIssueImagesStep(
                 ct => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct),
                 repoConfig),

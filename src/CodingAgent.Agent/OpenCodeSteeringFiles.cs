@@ -13,6 +13,7 @@ internal static class OpenCodeSteeringFiles
 {
     internal const string ProjectFileName = "pipeline-project.md";
     internal const string RepoFileName = "pipeline-repo.md";
+    internal const string BrainFileName = "pipeline-brain.md";
     internal const string ConfigFileName = "opencode.json";
 
     /// <summary><c>~/.opencode</c> of the user the agent runs as.</summary>
@@ -49,6 +50,37 @@ internal static class OpenCodeSteeringFiles
             written.Add("repo");
         }
 
+        EnsureInstructions(directory);
+
+        return written;
+    }
+
+    /// <summary>
+    /// Deletes any stale brain skills file, writes the text when non-empty, and ensures the instructions entry.
+    /// </summary>
+    /// <returns>True when a file was written.</returns>
+    internal static bool WriteBrain(string directory, string? text)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        Directory.CreateDirectory(directory);
+
+        var path = Path.Combine(directory, BrainFileName);
+        if (File.Exists(path))
+            File.Delete(path);
+
+        if (string.IsNullOrEmpty(text))
+        {
+            EnsureInstructions(directory);
+            return false;
+        }
+
+        File.WriteAllText(path, $"# Brain Skills\n\n{text}\n");
+        EnsureInstructions(directory);
+        return true;
+    }
+
+    private static void EnsureInstructions(string directory)
+    {
         var instructions = Path.Combine(directory, "pipeline-*.md");
         OpenCodeConfigFile.Update(Path.Combine(directory, ConfigFileName), root =>
         {
@@ -57,10 +89,8 @@ internal static class OpenCodeSteeringFiles
                 list = new JsonArray();
                 root["instructions"] = list;
             }
-            if (!list.Any(entry => entry is JsonValue value && value.TryGetValue<string>(out var path) && path == instructions))
+            if (!list.Any(entry => entry is JsonValue value && value.TryGetValue<string>(out var p) && p == instructions))
                 list.Add(instructions);
         });
-
-        return written;
     }
 }

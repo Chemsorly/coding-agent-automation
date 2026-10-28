@@ -177,19 +177,16 @@ Set `recommendation` to:
 - `"not_ready"` if the issue is too vague, contradictory, has hard blockers, requires information you can't determine from the codebase, OR if the scope is too broad for a single agent run (heuristic: changes affecting >30 files or spanning >3 distinct projects). When rejecting for scope, include splitting recommendations in `blockingIssues` (e.g., "Split by concern: UI changes, data layer, test updates"). Add any blocking issues to `blockingIssues`.
 - `"wont_do"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`. **Important:** if the production code fix described in the issue is already present on the branch, set `"wont_do"` — do NOT pivot to `"ready"` on the grounds that test coverage could still be added. Test-only follow-up work belongs in a separate issue.
 
-Project knowledge and conventions are at `.agent/brain-context.md` — consult it for coding standards and patterns.
-
 Analyze the workspace now and write your recommendation to `.agent/analysis.md`.
 """;
 
     [Fact]
-    public void BuildAnalysisPrompt_BrainContextWritten_MatchesSnapshot()
+    public void BuildAnalysisPrompt_MatchesSnapshot()
     {
         var result = PromptBuilder.BuildAnalysisPrompt(
             "Analyze carefully.",
             TestIssue,
-            TestParsed,
-            brainContextWritten: true);
+            TestParsed);
 
         result.Should().Be(Snapshot_BuildAnalysisPrompt_BrainContextWritten);
     }
@@ -222,19 +219,16 @@ The full issue description and discussion thread are at `.agent/issue-context.md
 - Criterion one
 - Criterion two
 
-Project knowledge and conventions are at `.agent/brain-context.md` — consult it for coding standards and patterns.
-
 Implement these changes now.
 """;
 
     [Fact]
-    public void BuildPrompt_BrainContextWritten_MatchesSnapshot()
+    public void BuildPrompt_MatchesSnapshot()
     {
         var result = PromptBuilder.BuildPrompt(
             "Implement carefully.",
             TestIssue,
-            TestParsed,
-            brainContextWritten: true);
+            TestParsed);
 
         result.Should().Be(Snapshot_BuildPrompt_BrainContextWritten);
     }
@@ -638,7 +632,7 @@ that breaks the epic into implementation-ready sub-issues.
 Before proposing sub-issues, thoroughly explore the codebase:
 
 1. **Directory tree** — Understand the project structure, solution layout, and module boundaries
-2. **Architecture files** — Read README, design docs, and any `.brain/` knowledge if available
+2. **Architecture files** — Read README, design docs, and the brain skills in your steering (when present)
 3. **DI setup** — Review dependency injection configuration to understand service wiring
 4. **Similar features** — Find 1-2 existing features similar to the epic and study their implementation patterns
 

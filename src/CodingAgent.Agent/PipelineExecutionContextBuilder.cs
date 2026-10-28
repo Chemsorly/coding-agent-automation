@@ -90,6 +90,7 @@ internal sealed class PipelineExecutionContextBuilder
         run.LinkedPullRequest = job.LinkedPullRequest;
         run.ProjectId = job.ProjectId;
         run.ProjectName = job.ProjectName;
+        run.StackLabels = job.StackLabels;
 
         run.IssueLabels = job.IssueDetail.Labels;
 

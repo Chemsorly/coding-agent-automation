@@ -47,12 +47,6 @@ public static class AgentWorkspacePaths
     public const string IssueContextFilePath = ".agent/issue-context.md";
 
     /// <summary>
-    /// The file path (relative to workspace) where the pipeline writes brain context
-    /// for the agent to read on demand.
-    /// </summary>
-    public const string BrainContextFilePath = ".agent/brain-context.md";
-
-    /// <summary>
     /// The file path (relative to workspace) where refactoring proposals are written.
     /// </summary>
     public const string RefactoringProposalsFilePath = ".agent/refactoring-proposals.json";
@@ -234,5 +228,11 @@ public static class AgentWorkspacePaths
 
     /// <summary>Kiro CLI steering file for repository-level content.</summary>
     public const string KiroSteeringRepoFilePath = ".kiro/steering/pipeline-repo.md";
+
+    /// <summary>Kiro CLI steering file for brain skills (spec 054, req 5.4).</summary>
+    public const string KiroSteeringBrainFilePath = ".kiro/steering/pipeline-brain.md";
+
+    /// <summary>Agent candidates file written during the reflection phase (spec 054).</summary>
+    public const string BrainCandidatesFilePath = ".agent/brain-candidates.md";
 
 }

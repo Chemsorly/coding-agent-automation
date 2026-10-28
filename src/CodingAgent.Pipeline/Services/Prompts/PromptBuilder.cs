@@ -97,7 +97,7 @@ public static partial class PromptBuilder
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildAnalysisPrompt(string analysisInstructions, IssueDetail issue, ParsedIssue parsed,
-        bool brainContextWritten = false, int imageCount = 0, AnalysisReworkContext? reworkContext = null)
+        int imageCount = 0, AnalysisReworkContext? reworkContext = null)
     {
         ArgumentNullException.ThrowIfNull(analysisInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -160,11 +160,6 @@ public static partial class PromptBuilder
         }
 
         sb.AppendLine();
-
-        if (brainContextWritten)
-        {
-            AppendBrainContextReference(sb);
-        }
 
         sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AgentWorkspacePaths.AnalysisFilePath}`.");
 
@@ -231,7 +226,7 @@ public static partial class PromptBuilder
     /// The configurable implementation instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildPrompt(string implementationInstructions, IssueDetail issue, ParsedIssue parsed,
-        string? brainWriteInstructions = null, bool brainContextWritten = false, int imageCount = 0)
+        int imageCount = 0)
     {
         ArgumentNullException.ThrowIfNull(implementationInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -251,18 +246,7 @@ public static partial class PromptBuilder
 
         AppendIssueContext(sb, issue, parsed);
 
-        if (brainContextWritten)
-        {
-            AppendBrainContextReference(sb);
-        }
-
         sb.AppendLine("Implement these changes now.");
-
-        if (!string.IsNullOrEmpty(brainWriteInstructions))
-        {
-            sb.AppendLine();
-            sb.AppendLine(brainWriteInstructions);
-        }
 
         if (imageCount > 0)
         {
@@ -587,18 +571,6 @@ public static partial class PromptBuilder
     }
 
     /// <summary>
-    /// Appends the brain context reference line to a prompt.
-    /// Called from every Build* method that accepts a <c>brainContextWritten</c> flag.
-    /// Extracting this 2-line block to a single helper ensures both call sites stay in sync
-    /// if the brain context path or the phrasing ever changes.
-    /// </summary>
-    private static void AppendBrainContextReference(StringBuilder sb)
-    {
-        sb.AppendLine($"Project knowledge and conventions are at `{AgentWorkspacePaths.BrainContextFilePath}` — consult it for coding standards and patterns.");
-        sb.AppendLine();
-    }
-
-    /// <summary>
     /// Appends the "## Output Format" heading. Single source of truth for this heading string.
     /// All prompt builders that need the heading call this helper so that a wording change
     /// only needs to be made in one place.
@@ -699,52 +671,6 @@ public static partial class PromptBuilder
         sb.AppendLine("- Continue after writing the report");
         sb.AppendLine();
         sb.AppendLine(PipelineConstants.GitRestrictionShort);
-        return sb.ToString().TrimEnd();
-    }
-
-    /// <summary>
-    /// Builds the brain context section to inject into agent prompts.
-    /// Returns empty string when brain context is not available.
-    /// </summary>
-    public static string BuildBrainContextSection(
-        bool brainAvailable,
-        string? projectName = null,
-        string? techStack = null)
-    {
-        if (!brainAvailable)
-            return string.Empty;
-
-        var sb = new StringBuilder();
-        sb.AppendLine("## Brain Repository — Accumulated Knowledge");
-        sb.AppendLine();
-        sb.AppendLine("A `.brain/` directory is available in this workspace containing accumulated project knowledge");
-        sb.AppendLine("from previous pipeline runs. It is a SEPARATE Git repository — do NOT reference `.brain/` files");
-        sb.AppendLine("in code repository commits, commit messages, or pull request descriptions.");
-        sb.AppendLine();
-        sb.AppendLine("### How to Retrieve Brain Knowledge");
-        sb.AppendLine();
-        sb.AppendLine("Delegate brain exploration to a subagent. Do NOT read brain files inline in your main session.");
-        sb.AppendLine("Use a subagent to search the brain and return only relevant entries:");
-        sb.AppendLine();
-        sb.AppendLine("1. Invoke a subagent with a prompt like:");
-        sb.AppendLine("   \"Read `.brain/AGENTS.md` for the structure. Then find entries in `.brain/` relevant to: {your issue summary}.");
-        sb.AppendLine("   Check for a `SKILL.md` in the relevant project folder first — it contains a distilled summary.");
-
-        if (!string.IsNullOrWhiteSpace(projectName))
-            sb.AppendLine($"   Check `.brain/projects/{projectName}/` for project-specific knowledge.");
-
-        if (!string.IsNullOrWhiteSpace(techStack))
-            sb.AppendLine($"   Check `.brain/technology/` for knowledge about: {techStack}.");
-
-        sb.AppendLine("   Return the full text of the 5-8 most relevant entries. Only read, do not modify any files.\"");
-        sb.AppendLine("2. Use the subagent's returned knowledge to inform your work.");
-        sb.AppendLine("3. If the subagent finds nothing relevant, proceed without brain context.");
-        sb.AppendLine();
-        sb.AppendLine("This keeps your main context clean and avoids spending tool calls on navigation.");
-        sb.AppendLine();
-        sb.AppendLine("Do NOT run git commands (commit, push, pull) inside the `.brain/` directory.");
-        sb.AppendLine("The orchestrator handles all git operations on the brain repository.");
-
         return sb.ToString().TrimEnd();
     }
 
@@ -904,52 +830,6 @@ public static partial class PromptBuilder
         sb.AppendLine($"Refer to `{AgentWorkspacePaths.IssueContextFilePath}` for the full issue description and comments.");
         sb.AppendLine();
         sb.AppendLine(PipelineConstants.GitRestrictionShort);
-
-        return sb.ToString().TrimEnd();
-    }
-
-    /// <summary>
-    /// Builds the brain write instructions section for the implementation prompt.
-    /// Returns empty string when brain context is not available or when BrainReadOnly is true.
-    /// </summary>
-    public static string BuildBrainWriteInstructions(
-        bool brainAvailable, string runId, string issueIdentifier,
-        bool brainReadOnly = false)
-    {
-        if (!brainAvailable || brainReadOnly)
-            return string.Empty;
-
-        var sb = new StringBuilder();
-        sb.AppendLine("## Brain Repository — Write Back What You Learned");
-        sb.AppendLine();
-        sb.AppendLine("After completing your work, write lessons learned back to the `.brain/` directory:");
-        sb.AppendLine("- General pitfalls and solutions → `.brain/general/lessons-learned.md`");
-        sb.AppendLine("- Technology-specific discoveries → `.brain/technology/{tech}.md`");
-        sb.AppendLine("- Project-specific knowledge → `.brain/projects/{project}/`");
-        sb.AppendLine($"- Session log for this run → `.brain/sessions/{DateTime.UtcNow:yyyy-MM-dd}_{runId}.md`");
-        sb.AppendLine("- Update the operation log → `.brain/log.md`");
-        sb.AppendLine();
-        sb.AppendLine("APPEND to existing files — never overwrite. Follow the entry format in `.brain/AGENTS.md`.");
-        sb.AppendLine("Include source attribution with typed source tags ([docs], [community], [experience], [verified]).");
-        sb.AppendLine("You may create new files and folders as needed.");
-        sb.AppendLine();
-        sb.AppendLine("### Brain Entry Citations");
-        sb.AppendLine();
-        sb.AppendLine("In your session log, include a `## Brain Entries Referenced` section listing which");
-        sb.AppendLine("`.brain/` entries you consulted during this run and their usefulness:");
-        sb.AppendLine();
-        sb.AppendLine("```markdown");
-        sb.AppendLine("## Brain Entries Referenced");
-        sb.AppendLine();
-        sb.AppendLine("- `technology/dotnet.md#entry-title` — **used, helpful** — brief reason");
-        sb.AppendLine("- `general/lessons-learned.md#entry-title` — **read, not applicable** — why it didn't apply");
-        sb.AppendLine("- `technology/blazor.md#entry-title` — **used, outdated** — what was wrong");
-        sb.AppendLine("```");
-        sb.AppendLine();
-        sb.AppendLine("Use one of: `used, helpful` | `read, not applicable` | `used, outdated` | `not consulted`.");
-        sb.AppendLine("Only list entries you actually read. If you did not consult the brain, write `No brain entries referenced.`");
-        sb.AppendLine();
-        sb.AppendLine("Do NOT commit these changes — the orchestrator handles git operations.");
 
         return sb.ToString().TrimEnd();
     }

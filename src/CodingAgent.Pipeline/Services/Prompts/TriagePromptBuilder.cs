@@ -55,7 +55,7 @@ public static class TriagePromptBuilder
             if (projectContext is not null)
                 s.AppendLine($"- `{AgentWorkspacePaths.ProjectContextFilePath}` — the project's repositories. The workspace root is one of them; the others are read-only clones under `repos/`.");
             AppendMcpServersInput(s, mcpServers);
-            s.AppendLine($"- `{AgentWorkspacePaths.BrainContextFilePath}`, when present — project knowledge.");
+            s.AppendLine("- The brain skills in your steering, when present — lessons this pipeline learned from earlier runs.");
         });
 
         PromptBuilder.AppendSection(sb, "## Method", s => s.AppendLine(InvestigationMethod));

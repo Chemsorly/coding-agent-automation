@@ -76,22 +76,6 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void BuildAnalysisPrompt_WithBrainContext_ContainsBrainReference()
-    {
-        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
-            brainContextWritten: true);
-        result.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
-    }
-
-    [Fact]
-    public void BuildAnalysisPrompt_WithoutBrainContext_OmitsBrainReference()
-    {
-        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
-            brainContextWritten: false);
-        result.Should().NotContain("Project knowledge and conventions are at");
-    }
-
-    [Fact]
     public void BuildAnalysisPrompt_NullInstructions_Throws()
     {
         var act = () => PromptBuilder.BuildAnalysisPrompt(null!, CreateIssue(), CreateParsedIssue());
@@ -291,22 +275,6 @@ public class PromptBuilderTests
         var issue = CreateIssue(id: "99", title: "Refactor DB layer");
         var result = PromptBuilder.BuildPrompt("Instructions", issue, CreateParsedIssue());
         result.Should().Contain("Issue #99: Refactor DB layer");
-    }
-
-    [Fact]
-    public void BuildPrompt_WithBrainWriteInstructions_AppendsAtEnd()
-    {
-        var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
-            brainWriteInstructions: "Write lessons to .brain/");
-        result.Should().Contain("Write lessons to .brain/");
-    }
-
-    [Fact]
-    public void BuildPrompt_WithBrainContext_ContainsBrainReference()
-    {
-        var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
-            brainContextWritten: true);
-        result.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
     }
 
     [Fact]
@@ -658,45 +626,6 @@ public class PromptBuilderTests
 
     #endregion
 
-    #region BuildBrainContextSection
-
-    [Fact]
-    public void BuildBrainContextSection_NotAvailable_ReturnsEmpty()
-    {
-        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: false);
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void BuildBrainContextSection_Available_ContainsBrainHeader()
-    {
-        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true);
-        result.Should().Contain("Brain Repository");
-    }
-
-    [Fact]
-    public void BuildBrainContextSection_WithProjectName_ContainsProjectPath()
-    {
-        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true, projectName: "my-app");
-        result.Should().Contain(".brain/projects/my-app/");
-    }
-
-    [Fact]
-    public void BuildBrainContextSection_WithTechStack_ContainsTechReference()
-    {
-        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true, techStack: "dotnet, blazor");
-        result.Should().Contain("dotnet, blazor");
-    }
-
-    [Fact]
-    public void BuildBrainContextSection_ContainsNoGitWarning()
-    {
-        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true);
-        result.Should().Contain("Do NOT run git commands");
-    }
-
-    #endregion
-
     #region BuildReflectionPrompt
 
     [Fact]
@@ -771,39 +700,6 @@ public class PromptBuilderTests
         var result = PromptBuilder.BuildReflectionPrompt(run);
         result.Should().NotContain("Feedback Collection");
         result.Should().NotContain("Feedback Questions");
-    }
-
-    #endregion
-
-    #region BuildBrainWriteInstructions
-
-    [Fact]
-    public void BuildBrainWriteInstructions_NotAvailable_ReturnsEmpty()
-    {
-        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: false, "run1", "issue1");
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void BuildBrainWriteInstructions_ReadOnly_ReturnsEmpty()
-    {
-        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: true, "run1", "issue1",
-            brainReadOnly: true);
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void BuildBrainWriteInstructions_Available_ContainsWriteHeader()
-    {
-        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: true, "run1", "issue1");
-        result.Should().Contain("Write Back What You Learned");
-    }
-
-    [Fact]
-    public void BuildBrainWriteInstructions_ContainsAppendWarning()
-    {
-        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: true, "run1", "issue1");
-        result.Should().Contain("APPEND to existing files");
     }
 
     #endregion

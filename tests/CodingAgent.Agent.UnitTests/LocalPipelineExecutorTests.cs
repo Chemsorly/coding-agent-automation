@@ -1447,7 +1447,7 @@ public class LocalPipelineExecutorTests : IDisposable
     // DisposeAsync is skipped. Use 'await using' declarations for reliable cleanup.
 
     [Fact]
-    public async Task BuildAgentStepPipeline_Returns18Steps()
+    public async Task BuildAgentStepPipeline_Returns19Steps()
     {
         var job = CreateMinimalJobAssignment();
         await using var connection = CreateDisconnectedHubConnection();
@@ -1456,7 +1456,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
         var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
-        steps.Should().HaveCount(18);
+        steps.Should().HaveCount(19);
     }
 
     [Fact]
@@ -1517,6 +1517,40 @@ public class LocalPipelineExecutorTests : IDisposable
         var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps.Should().ContainItemsAssignableTo<DownloadIssueImagesStep>();
+    }
+
+    /// <summary>
+    /// Req 5.4: WriteBrainSkillsStep must immediately follow SyncBrainPreRunStep in every pipeline.
+    /// </summary>
+    [Fact]
+    public async Task AllPipelines_WriteBrainSkillsStep_FollowsSyncBrainPreRunStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var pipelines = new[]
+        {
+            AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildTriageStepPipeline(job, proxy, repoConfig),
+        };
+
+        foreach (var steps in pipelines)
+        {
+            var syncIdx = steps
+                .Select((s, i) => (s, i))
+                .Where(t => t.s is SyncBrainPreRunStep)
+                .Select(t => t.i)
+                .FirstOrDefault(-1);
+
+            syncIdx.Should().NotBe(-1, "pipeline should contain SyncBrainPreRunStep");
+            steps[syncIdx + 1].Should().BeOfType<WriteBrainSkillsStep>(
+                "WriteBrainSkillsStep must immediately follow SyncBrainPreRunStep (spec 054, req 5.4)");
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

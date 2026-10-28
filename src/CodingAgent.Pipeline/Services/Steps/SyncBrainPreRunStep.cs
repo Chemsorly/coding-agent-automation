@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.Services.Steps;
@@ -65,70 +66,19 @@ public sealed class SyncBrainPreRunStep : IPipelineStep
     {
         var brainPath = Path.Combine(context.Run.WorkspacePath!, ".brain");
         var run = context.Run;
-
-        // Get the repository short name from the issue identifier (owner/repo#123 → repo)
         var repoShortName = ExtractShortName(run.IssueIdentifier);
 
-        // Read all candidate skill files from the brain
-        var stackLabels = run.StackLabels ?? [];
-        var candidatePaths = new List<string> { BrainLayout.GeneralSkillPath };
-        if (!string.IsNullOrEmpty(repoShortName))
-            candidatePaths.Add(BrainLayout.RepositorySkillPath(repoShortName));
-        foreach (var label in stackLabels)
-        {
-            var techPath = BrainLayout.TechnologySkillPath(label);
-            if (techPath is not null) candidatePaths.Add(techPath);
-        }
+        var injection = await BrainSkillsReader.ReadAsync(
+            brainPath, repoShortName, run.StackLabels ?? [], context.BrainProvider!, context.Logger, ct);
 
-        var files = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var rel in candidatePaths)
-        {
-            var full = Path.Combine(brainPath, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(full))
-            {
-                try
-                {
-                    var content = await File.ReadAllTextAsync(full, new System.Text.UTF8Encoding(false, true), ct);
-                    files[rel] = content;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    context.Logger.Warning(ex, "Pipeline {RunId} could not read brain skill file {SkillFile}: {Error}",
-                        run.RunId, rel, ex.Message);
-                }
-            }
-        }
-
-        var assembly = BrainSkillsAssembler.Assemble(files, repoShortName, stackLabels);
-
-        // Get the brain commit SHA
-        string? commitSha = null;
-        try
-        {
-            commitSha = await context.BrainProvider!.GetHeadCommitShaAsync(brainPath, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            context.Logger.Warning(ex, "Pipeline {RunId} could not read brain commit SHA: {Error}", run.RunId, ex.Message);
-        }
-
-        run.BrainSkillsResult = assembly.Result;
-        run.BrainSkillsBytes = assembly.Bytes;
-        run.BrainSkillsCommit = commitSha;
-        run.BrainSkills = new BrainSkillsInjection(
-            assembly.Text, assembly.Result, assembly.Bytes,
-            assembly.FilesInjected, commitSha);
-
-        if (assembly.FilesSkipped.Count > 0)
-        {
-            foreach (var skip in assembly.FilesSkipped)
-                context.Logger.Warning("Pipeline {RunId} skipped brain skill file {SkillFile}: {Reason}",
-                    run.RunId, skip.Path, skip.Reason);
-        }
+        run.BrainSkillsResult = injection.Result;
+        run.BrainSkillsBytes = injection.Bytes;
+        run.BrainSkillsCommit = injection.Commit;
+        run.BrainSkills = injection;
 
         context.Logger.Information(
             "Pipeline {RunId} brain skills assembled: result={BrainSkillsResult}, bytes={BrainSkillsBytes}, commit={BrainCommit}",
-            run.RunId, assembly.Result, assembly.Bytes, commitSha ?? "none");
+            run.RunId, injection.Result, injection.Bytes, injection.Commit ?? "none");
     }
 
     private static string? ExtractShortName(string? issueIdentifier)

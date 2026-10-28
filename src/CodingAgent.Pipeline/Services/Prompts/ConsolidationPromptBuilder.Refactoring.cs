@@ -65,7 +65,7 @@ $"""
         PromptBuilder.AppendSection(sb, "## What to Read", s =>
         {
             s.AppendLine("1. **README.md** and any top-level documentation");
-            s.AppendLine("2. **Architecture docs** in `docs/` or `.brain/` if present");
+            s.AppendLine("2. **Architecture docs** in `docs/`, and the brain skills in your steering (when present)");
             s.AppendLine("3. **Solution structure** — list all projects, identify layers and their intended relationships");
             s.AppendLine("4. **Key configuration files** — `.editorconfig`, `Directory.Build.props`, `package.json`, `pyproject.toml`, linter configs");
             s.AppendLine("5. **A sample of 5-10 representative source files** — identify the project's actual style");
@@ -141,10 +141,10 @@ $"""
             s.AppendLine("- **Observe, don't judge.** This phase extracts what IS, not what should be.");
             s.AppendLine("- **intentionalPatterns is critical.** If a pattern looks unusual but is clearly deliberate");
             s.AppendLine("  (used consistently, matches docs/comments, has tests), list it here.");
-            s.AppendLine("- **knownDebt** lists debt the team acknowledged in documentation, decision records, the brain, or the issue tracker.");
+            s.AppendLine("- **knownDebt** lists debt the team acknowledged in documentation, decision records, the brain skills in your steering, or the issue tracker.");
             s.AppendLine("  Do NOT copy inline TODO/FIXME/HACK comments into knownDebt — a later agent checks each of those against the current code.");
             s.AppendLine($"- Describe the project code only. Do NOT describe `{AgentWorkspacePaths.MetadataDirectory}/` or `{AgentWorkspacePaths.BrainDirectory}/` — they are pipeline scratch space, not project code.");
-            s.AppendLine("- If `.brain/` exists, consult project SKILL.md files — they contain curated context.");
+            s.AppendLine("- Use the brain skills in your steering (when present) — they contain curated lessons.");
             s.AppendLine("- Keep the output concise. Each field should be 1-3 sentences, not paragraphs.");
         });
 

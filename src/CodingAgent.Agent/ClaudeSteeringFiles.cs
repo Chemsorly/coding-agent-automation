@@ -13,6 +13,7 @@ internal static class ClaudeSteeringFiles
 {
     internal const string ProjectFileName = "pipeline-project.md";
     internal const string RepoFileName = "pipeline-repo.md";
+    internal const string BrainFileName = "pipeline-brain.md";
 
     /// <summary><c>~/.claude/rules</c> of the user the agent runs as.</summary>
     internal static string DefaultRulesDirectory =>
@@ -62,5 +63,24 @@ internal static class ClaudeSteeringFiles
 
             {content}
             """);
+    }
+
+    /// <summary>
+    /// Deletes any stale brain skills file, then writes the given text when non-empty.
+    /// </summary>
+    /// <returns>True when a file was written.</returns>
+    internal static bool WriteBrain(string rulesDirectory, string? text)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(rulesDirectory);
+
+        var path = Path.Combine(rulesDirectory, BrainFileName);
+        if (File.Exists(path))
+            File.Delete(path);
+
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        WriteRule(rulesDirectory, BrainFileName, "Brain Skills", text);
+        return true;
     }
 }
