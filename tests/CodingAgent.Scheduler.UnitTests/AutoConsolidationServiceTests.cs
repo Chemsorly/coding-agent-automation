@@ -5,6 +5,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 using ILogger = Serilog.ILogger;
@@ -114,11 +115,18 @@ public sealed class AutoConsolidationServiceTests
         };
         _configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(cfg);
+
+        // Build a scope factory backed by the test mock so RunOnceAsync resolves the
+        // same mock object when it creates a scope and calls GetRequiredService.
+        var services = new ServiceCollection();
+        services.AddSingleton(_configClient.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
         return new AutoConsolidationService(
             _consolidation.Object,
             _staleness.Object,
             _configStore.Object,
-            _configClient.Object,
+            scopeFactory,
             _leaderGate.Object,
             _logger.Object);
     }
@@ -356,11 +364,16 @@ public sealed class AutoConsolidationServiceTests
 
         // Execute full BackgroundService loop with leader=false
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        var services1 = new ServiceCollection();
+        services1.AddSingleton(_configClient.Object);
+        var scopeFactory1 = services1.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
         var sut = new AutoConsolidationService(
             _consolidation.Object,
             _staleness.Object,
             _configStore.Object,
-            _configClient.Object,
+            scopeFactory1,
             _leaderGate.Object,
             _logger.Object,
             interval: TimeSpan.FromMilliseconds(10));
@@ -580,11 +593,15 @@ public sealed class AutoConsolidationServiceTests
                 });
             });
 
+        var services2 = new ServiceCollection();
+        services2.AddSingleton(_configClient.Object);
+        var scopeFactory2 = services2.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
         var sut = new AutoConsolidationService(
             _consolidation.Object,
             _staleness.Object,
             _configStore.Object,
-            _configClient.Object,
+            scopeFactory2,
             _leaderGate.Object,
             _logger.Object,
             interval: TimeSpan.FromMilliseconds(10));

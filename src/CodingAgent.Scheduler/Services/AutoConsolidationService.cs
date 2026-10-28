@@ -3,6 +3,7 @@ using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
@@ -18,7 +19,7 @@ public sealed class AutoConsolidationService : BackgroundService
     private readonly IConsolidationService _consolidation;
     private readonly ConsolidationStalenessService _staleness;
     private readonly IPipelineConfigStore _configStore;
-    private readonly IPipelineApiConfigClient _configClient;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
     private readonly TimeSpan _interval;
@@ -27,7 +28,7 @@ public sealed class AutoConsolidationService : BackgroundService
         IConsolidationService consolidation,
         ConsolidationStalenessService staleness,
         IPipelineConfigStore configStore,
-        IPipelineApiConfigClient configClient,
+        IServiceScopeFactory scopeFactory,
         ILeaderGate? leaderGate,
         ILogger logger,
         TimeSpan? interval = null)
@@ -35,13 +36,13 @@ public sealed class AutoConsolidationService : BackgroundService
         ArgumentNullException.ThrowIfNull(consolidation);
         ArgumentNullException.ThrowIfNull(staleness);
         ArgumentNullException.ThrowIfNull(configStore);
-        ArgumentNullException.ThrowIfNull(configClient);
+        ArgumentNullException.ThrowIfNull(scopeFactory);
         ArgumentNullException.ThrowIfNull(logger);
 
         _consolidation = consolidation;
         _staleness = staleness;
         _configStore = configStore;
-        _configClient = configClient;
+        _scopeFactory = scopeFactory;
         _leaderGate = leaderGate;
         _logger = logger.ForContext<AutoConsolidationService>();
         _interval = interval ?? TimeSpan.FromMinutes(15);
@@ -99,8 +100,13 @@ public sealed class AutoConsolidationService : BackgroundService
             && config.AutoRefactoringScanAfterClosedIssues == 0)
             return;
 
-        var allTemplates = await _configClient.GetAllTemplatesAsync(ct);
-        var projects = await _configClient.GetProjectsAsync(ct);
+        // Resolve IPipelineApiConfigClient from a short-lived scope for this tick so the
+        // HttpClient is released after the tick and connection pools are recycled on schedule.
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var configClient = scope.ServiceProvider.GetRequiredService<IPipelineApiConfigClient>();
+
+        var allTemplates = await configClient.GetAllTemplatesAsync(ct);
+        var projects = await configClient.GetProjectsAsync(ct);
 
         // Keep only enabled templates that belong to an enabled project, ordered:
         // projects by name (ordinal), then each project's TemplateIds insertion order.
