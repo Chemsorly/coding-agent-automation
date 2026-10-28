@@ -6,20 +6,42 @@ namespace CodingAgent.Pipeline.Brain;
 /// </summary>
 public sealed class BrainEvidence
 {
-    /// <summary>Failed gate attempts, at most 10 kept (first and newest 9).</summary>
-    public List<BrainEvidenceAttempt> Attempts { get; } = [];
+    private readonly List<BrainEvidenceAttempt> _attempts = [];
+    private readonly List<BrainEvidenceComment> _humanComments = [];
+
+    /// <summary>
+    /// Failed gate attempts, at most 10 kept (first and newest 9).
+    /// Read-only externally; mutated only by <see cref="BrainEvidenceRecorder"/>.
+    /// </summary>
+    public IReadOnlyList<BrainEvidenceAttempt> Attempts => _attempts;
 
     /// <summary>Code-review findings summary, populated after the review phase.</summary>
     public BrainEvidenceReview? Review { get; set; }
 
-    /// <summary>Human review comments, at most 10.</summary>
-    public List<BrainEvidenceComment> HumanComments { get; } = [];
+    /// <summary>
+    /// Human review comments, at most 10.
+    /// Read-only externally; mutated only by <see cref="BrainEvidenceRecorder"/>.
+    /// </summary>
+    public IReadOnlyList<BrainEvidenceComment> HumanComments => _humanComments;
 
     /// <summary>True after the ready finalize; set by BrainEvidenceRecorder.MarkPostPr.</summary>
     public bool PostPr { get; set; }
 
     /// <summary>Transient state pending the next RecordReport call.</summary>
     internal BrainEvidencePending Pending { get; } = new();
+
+    // ── Internal mutation API for BrainEvidenceRecorder ───────────────
+
+    internal void AddAttempt(BrainEvidenceAttempt attempt) => _attempts.Add(attempt);
+    internal void ReplaceAttemptAt(int index, BrainEvidenceAttempt attempt) => _attempts[index] = attempt;
+    internal void RemoveAttemptAt(int index) => _attempts.RemoveAt(index);
+    internal int AttemptCount => _attempts.Count;
+    internal int FindAttemptIndex(int number) => _attempts.FindIndex(a => a.Number == number);
+    internal void SetHumanComments(IEnumerable<BrainEvidenceComment> comments)
+    {
+        _humanComments.Clear();
+        _humanComments.AddRange(comments);
+    }
 }
 
 /// <summary>Transient buffer consumed by the next RecordReport call.</summary>

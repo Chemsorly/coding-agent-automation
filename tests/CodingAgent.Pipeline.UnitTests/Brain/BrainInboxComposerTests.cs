@@ -121,7 +121,7 @@ public class BrainInboxComposerTests
                 [new BrainEvidenceCiJob("SonarQube", [], Enumerable.Range(0, 8)
                     .Select(k => $"QUALITY GATE STATUS: FAILED at step {k} with {new string('x', 250)}").ToList())],
                 "code", null, [], null);
-            evidence.Attempts.Add(attempt);
+            evidence.AddAttempt(attempt);
         }
         var result = BrainInboxComposer.Compose(MakeHeader(), null, evidence, null, []);
         result.Shortened.Should().BeTrue();

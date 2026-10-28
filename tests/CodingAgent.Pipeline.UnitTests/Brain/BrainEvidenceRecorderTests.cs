@@ -131,3 +131,101 @@ public class BrainEvidenceRecorderTests
         run.BrainEvidence!.HumanComments.Should().HaveCount(10);
     }
 }
+
+// ── Tests for RecordCiFailure / RecordCiStatusError / RecordCiTimeout / RecordReview ──
+
+public class BrainEvidenceRecorderCiTests
+{
+    private static PipelineRun MakeRun() => new PipelineRun
+    {
+        RunId = "run-1", IssueIdentifier = "owner/repo#1", IssueTitle = "Test",
+        IssueProviderConfigId = "issue-1", RepoProviderConfigId = "repo-1"
+    };
+
+    private static PipelineRunStatus MakeStatus(IReadOnlyList<PipelineJobResult> jobs) =>
+        new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = jobs };
+
+    [Theory]
+    [InlineData(CodingAgent.Pipeline.Services.CiFailureClassifier.CiFailureCategory.CodeFailure, "code")]
+    [InlineData(CodingAgent.Pipeline.Services.CiFailureClassifier.CiFailureCategory.Infrastructure, "infrastructure")]
+    [InlineData(CodingAgent.Pipeline.Services.CiFailureClassifier.CiFailureCategory.RateLimited, "rate_limited")]
+    public void RecordCiFailure_MapsCategory(
+        CodingAgent.Pipeline.Services.CiFailureClassifier.CiFailureCategory category,
+        string expectedClassification)
+    {
+        var run = MakeRun();
+        var status = MakeStatus([]);
+        BrainEvidenceRecorder.RecordCiFailure(run, status, category);
+        run.BrainEvidence!.Pending.Classification.Should().Be(expectedClassification);
+    }
+
+    [Fact]
+    public void RecordCiFailure_ExtractsFailedJobLines()
+    {
+        var run = MakeRun();
+        var jobs = new[]
+        {
+            new PipelineJobResult
+            {
+                Name = "SonarQube", State = PipelineRunState.Failed,
+                LogContent = "QUALITY GATE STATUS: FAILED"
+            }
+        };
+        BrainEvidenceRecorder.RecordCiFailure(run, MakeStatus(jobs),
+            CodingAgent.Pipeline.Services.CiFailureClassifier.CiFailureCategory.CodeFailure);
+        run.BrainEvidence!.Pending.CiJobs.Should().HaveCount(1);
+        run.BrainEvidence.Pending.CiJobs[0].Name.Should().Be("SonarQube");
+        run.BrainEvidence.Pending.CiJobs[0].Lines.Should().ContainSingle()
+            .Which.Should().Contain("QUALITY GATE STATUS");
+    }
+
+    [Fact]
+    public void RecordCiStatusError_SetsClassification()
+    {
+        var run = MakeRun();
+        BrainEvidenceRecorder.RecordCiStatusError(run, "External CI", "Server Error");
+        run.BrainEvidence!.Pending.Classification.Should().Be("ci_status_error");
+    }
+
+    [Fact]
+    public void RecordCiTimeout_SetsClassification()
+    {
+        var run = MakeRun();
+        BrainEvidenceRecorder.RecordCiTimeout(run);
+        run.BrainEvidence!.Pending.Classification.Should().Be("timeout");
+    }
+
+    [Fact]
+    public void RecordReview_CountsPerReviewer()
+    {
+        // Req: CRITICAL findings are prioritised in the top-5 list
+        var run = MakeRun();
+        run.CodeReviewAgentFindings["Reviewer1"] =
+            "[CRITICAL] src/A.cs:1 — critical issue 1\n" +
+            "[CRITICAL] src/B.cs:2 — critical issue 2\n" +
+            "[WARNING] src/C.cs:3 — warning issue";
+        BrainEvidenceRecorder.RecordReview(run);
+        var review = run.BrainEvidence!.Review!;
+        review.ByReviewer.Should().ContainKey("Reviewer1");
+        review.ByReviewer["Reviewer1"].Critical.Should().Be(2);
+        review.ByReviewer["Reviewer1"].Warning.Should().Be(1);
+        review.TopFindings.Should().Contain(f => f.Contains("CRITICAL"));
+        review.TopFindings.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void RecordReview_CriticalTakesPrecedenceOverWarning()
+    {
+        var run = MakeRun();
+        // 4 warnings + 2 criticals — top 5 should lead with criticals
+        var text = string.Join("\n", Enumerable.Range(1, 4)
+            .Select(i => $"[WARNING] src/W{i}.cs:{i} — warn {i}"));
+        text += "\n[CRITICAL] src/C1.cs:1 — crit 1\n[CRITICAL] src/C2.cs:2 — crit 2";
+        run.CodeReviewAgentFindings["R"] = text;
+        BrainEvidenceRecorder.RecordReview(run);
+        var top = run.BrainEvidence!.Review!.TopFindings;
+        top.Should().HaveCountGreaterThan(0);
+        top.Count.Should().BeLessThan(6);
+        top.Take(2).Should().OnlyContain(f => f.Contains("CRITICAL"));
+    }
+}

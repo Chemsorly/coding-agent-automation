@@ -195,9 +195,9 @@ public static class BrainInboxComposer
     private static BrainEvidence BuildEvidenceForRender(BrainEvidence source, List<BrainEvidenceAttempt> attempts)
     {
         var e = new BrainEvidence { PostPr = source.PostPr };
-        foreach (var a in attempts) e.Attempts.Add(a);
+        foreach (var a in attempts) e.AddAttempt(a);
         e.Review = source.Review;
-        foreach (var c in source.HumanComments) e.HumanComments.Add(c);
+        e.SetHumanComments(source.HumanComments);
         return e;
     }
 

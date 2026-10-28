@@ -82,20 +82,11 @@ public static class BrainEvidenceRecorder
     /// <summary>Adds an attempt, keeping at most MaxEvidenceAttempts (first + newest 9).</summary>
     private static void AddAttempt(BrainEvidence evidence, BrainEvidenceAttempt attempt)
     {
-        // Replace if same number already recorded
-        int idx = evidence.Attempts.FindIndex(a => a.Number == attempt.Number);
-        if (idx >= 0)
-        {
-            evidence.Attempts[idx] = attempt;
-            return;
-        }
-        evidence.Attempts.Add(attempt);
-        // Keep first + newest 9
-        while (evidence.Attempts.Count > BrainLayout.MaxEvidenceAttempts)
-        {
-            // Remove the second-oldest (index 1), keeping the first at index 0
-            evidence.Attempts.RemoveAt(1);
-        }
+        int idx = evidence.FindAttemptIndex(attempt.Number);
+        if (idx >= 0) { evidence.ReplaceAttemptAt(idx, attempt); return; }
+        evidence.AddAttempt(attempt);
+        while (evidence.AttemptCount > BrainLayout.MaxEvidenceAttempts)
+            evidence.RemoveAttemptAt(1); // keep first (0) and newest
     }
 
     // ── CI failure classification ─────────────────────────────────────
@@ -171,17 +162,17 @@ public static class BrainEvidenceRecorder
             .ToList();
         var noCodeChange = paths.Count == 0;
 
-        var last = evidence.Attempts[^1];
-        evidence.Attempts[^1] = last with { ChangedPaths = paths, NoCodeChange = noCodeChange };
+        var last = evidence.Attempts[evidence.AttemptCount - 1];
+        evidence.ReplaceAttemptAt(evidence.AttemptCount - 1, last with { ChangedPaths = paths, NoCodeChange = noCodeChange });
     }
 
     /// <summary>Marks the last attempt as having no code change.</summary>
     public static void RecordNoCodeChange(PipelineRun run)
     {
         var evidence = run.BrainEvidence;
-        if (evidence is null || evidence.Attempts.Count == 0) return;
-        var last = evidence.Attempts[^1];
-        evidence.Attempts[^1] = last with { NoCodeChange = true };
+        if (evidence is null || evidence.AttemptCount == 0) return;
+        var last = evidence.Attempts[evidence.AttemptCount - 1];
+        evidence.ReplaceAttemptAt(evidence.AttemptCount - 1, last with { NoCodeChange = true });
     }
 
     /// <summary>Stores the commit SHA for the next gate attempt.</summary>
@@ -284,8 +275,7 @@ public static class BrainEvidenceRecorder
                     excerpt);
             });
 
-        evidence.HumanComments.Clear();
-        evidence.HumanComments.AddRange(eligible);
+        evidence.SetHumanComments(eligible);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

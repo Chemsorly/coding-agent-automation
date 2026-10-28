@@ -71,9 +71,10 @@ internal static class JobCompletionMapper
         if (payload.BrainPushFailed is not null) run.BrainPushFailed = payload.BrainPushFailed;
         if (payload.BrainInboxFileUrl is not null)
         {
-            run.BrainInboxFileUrl = CodingAgent.Contracts.Services.AgentLinkSanitizer.HttpsOrNull(payload.BrainInboxFileUrl);
+            var sanitized = CodingAgent.Contracts.Services.AgentLinkSanitizer.HttpsOrNull(payload.BrainInboxFileUrl);
+            run.BrainInboxFileUrl = sanitized;
             // Non-null values that don't pass the https check are dropped (req 12.8).
-            // The call site in RegularJobCompletionStrategy should log the warning.
+            // The call site in RegularJobCompletionStrategy logs the warning.
         }
     }
 

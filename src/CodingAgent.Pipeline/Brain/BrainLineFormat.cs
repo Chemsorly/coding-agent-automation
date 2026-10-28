@@ -204,7 +204,7 @@ public static partial class BrainLineFormat
 
     private static bool IsWholeWordMatch(string body, string term)
     {
-        var pattern = $@"(?<![\\w-]){Regex.Escape(term)}(?![\\w-])";
+        var pattern = $@"(?<![\w-]){Regex.Escape(term)}(?![\w-])";
         try
         {
             return Regex.IsMatch(body, pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100));

@@ -189,4 +189,18 @@ public class BrainLineFormatTests
         // Whole-word check: "myrepo" should not match "repo" (if "repo" is only 4 chars)
         BrainLineFormat.FindSharedContentViolation("use myrepo-helper", ["repo"]).Should().BeNull();
     }
+
+    [Fact]
+    public void FindSharedContentViolation_RepoNameAsWordCharPrefix_NotDetected()
+    {
+        // Regression: [\w-] lookbehind — 'y' in "yfunc" is a word char, so "func" inside "yfunc" must not match
+        BrainLineFormat.FindSharedContentViolation("prefer functional approaches", ["func"]).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindSharedContentViolation_RepoNameStandaloneWithWordCharBoundary_Detected()
+    {
+        // "func" as a standalone word (space boundaries) should match
+        BrainLineFormat.FindSharedContentViolation("use func library directly", ["func"]).Should().Be("repository");
+    }
 }

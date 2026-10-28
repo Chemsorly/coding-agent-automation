@@ -195,7 +195,7 @@ public class QualityGateValidator : IQualityGateValidator
             TestsPassed = totalTestsPassed,
             TestsFailed = totalTestsFailed,
             TestsSkipped = totalTestsSkipped,
-            IsInfrastructureFailure = firstFailingQgc?.Tests?.IsInfrastructureFailure,
+            IsInfrastructureFailure = qgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true) ? true : null,
             FailedTestNames = qgcResults
                 .SelectMany(r => r.Tests?.FailedTestNames ?? [])
                 .Distinct(StringComparer.Ordinal)
