@@ -61,7 +61,7 @@ public interface IRedisStore
     Task ListTrimAsync(string key, long start, long stop);
 
     /// <summary>LRANGE key start stop — returns elements.</summary>
-    Task<string[]> ListRangeAsync(string key, long start, long stop);
+    Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default);
 
     /// <summary>EXISTS key — returns true if key exists.</summary>
     Task<bool> ExistsAsync(string key);
