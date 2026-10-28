@@ -2,6 +2,7 @@ using System.Text.Json;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
@@ -34,8 +35,7 @@ namespace CodingAgent.Scheduler.Services;
 public sealed class LoopWatchdogService : BackgroundService
 {
     private readonly IPipelineLoopService _loopService;
-    private readonly IPipelineApiConfigClient _configClient;
-    private readonly ISchedulerApiClient _statusClient;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
     private readonly TimeSpan _interval;
@@ -56,8 +56,12 @@ public sealed class LoopWatchdogService : BackgroundService
     public static readonly TimeSpan StatusRefreshInterval = TimeSpan.FromSeconds(30);
 
     /// <param name="loopService">The pipeline loop service to reconcile.</param>
-    /// <param name="configClient">Client for reading the desired loop state from the API.</param>
-    /// <param name="statusClient">Client for pushing the loop status to the API.</param>
+    /// <param name="scopeFactory">
+    /// DI scope factory used to resolve <see cref="IPipelineApiConfigClient"/> and
+    /// <see cref="ISchedulerApiClient"/> per tick, so each tick gets a fresh
+    /// <see cref="System.Net.Http.HttpClient"/> instance and connection pools are recycled
+    /// by <see cref="System.Net.Http.IHttpClientFactory"/> on schedule.
+    /// </param>
     /// <param name="leaderGate">
     /// Leader election gate. Pass <c>null</c> in single-replica / dev mode
     /// (no K8s leader election) — this pod then acts as the leader.
@@ -67,20 +71,17 @@ public sealed class LoopWatchdogService : BackgroundService
     /// <param name="time">Clock for the status refresh; the system clock when <c>null</c>.</param>
     public LoopWatchdogService(
         IPipelineLoopService loopService,
-        IPipelineApiConfigClient configClient,
-        ISchedulerApiClient statusClient,
+        IServiceScopeFactory scopeFactory,
         ILeaderGate? leaderGate,
         ILogger logger,
         TimeSpan? interval = null,
         TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(loopService);
-        ArgumentNullException.ThrowIfNull(configClient);
-        ArgumentNullException.ThrowIfNull(statusClient);
+        ArgumentNullException.ThrowIfNull(scopeFactory);
         ArgumentNullException.ThrowIfNull(logger);
         _loopService = loopService;
-        _configClient = configClient;
-        _statusClient = statusClient;
+        _scopeFactory = scopeFactory;
         _leaderGate = leaderGate;
         _logger = logger.ForContext<LoopWatchdogService>();
         _interval = interval ?? DefaultInterval;
@@ -113,15 +114,22 @@ public sealed class LoopWatchdogService : BackgroundService
             return;
         }
 
-        await ReconcileAsync(ct);
-        await PushStatusAsync(ct);
+        // Resolve both clients from a single short-lived scope so each tick gets a fresh
+        // HttpClient. The scope is disposed after the tick completes, returning the client
+        // to the IHttpClientFactory pool for connection recycling (90s PooledConnectionLifetime).
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var configClient = scope.ServiceProvider.GetRequiredService<IPipelineApiConfigClient>();
+        var statusClient = scope.ServiceProvider.GetRequiredService<ISchedulerApiClient>();
+
+        await ReconcileAsync(configClient, ct);
+        await PushStatusAsync(statusClient, ct);
     }
 
-    private async Task ReconcileAsync(CancellationToken ct)
+    private async Task ReconcileAsync(IPipelineApiConfigClient configClient, CancellationToken ct)
     {
         try
         {
-            var config = await _configClient.GetPipelineConfigAsync(ct);
+            var config = await configClient.GetPipelineConfigAsync(ct);
             _reconcileFailing = false;
 
             ApplyResumeRequest(config.LoopResumeRequestedAt);
@@ -190,7 +198,7 @@ public sealed class LoopWatchdogService : BackgroundService
         loop.ValidationErrors,
         loop.TemplateStatuses);
 
-    private async Task PushStatusAsync(CancellationToken ct)
+    private async Task PushStatusAsync(ISchedulerApiClient statusClient, CancellationToken ct)
     {
         var status = BuildStatus(_loopService);
         var serialized = JsonSerializer.Serialize(status, PipelineJsonOptions.Default);
@@ -200,7 +208,7 @@ public sealed class LoopWatchdogService : BackgroundService
 
         try
         {
-            await _statusClient.ReportLoopStatusAsync(status, ct);
+            await statusClient.ReportLoopStatusAsync(status, ct);
             _pushedStatus = serialized;
             _pushedAt = now;
             _pushFailing = false;

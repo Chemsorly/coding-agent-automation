@@ -1497,4 +1497,100 @@ public class TokenVendingServiceTests
     }
 
     #endregion
+
+    #region TokenCacheKey isolates cache entries by ClientId
+
+    /// <summary>
+    /// Verifies that two GitHub App provider configs sharing the same installationId but with
+    /// different ClientId values produce separate cache entries.
+    ///
+    /// Without ClientId in the cache key, both configs would collide to the same entry and
+    /// one app's token would be served to the other's callers (the security issue described
+    /// in the TODO comment that this change removes).
+    ///
+    /// Red phase: fails with CacheCount == 1 on unfixed code (both configs map to identical key).
+    /// Green phase: passes with CacheCount == 2 once ClientId is included in TokenCacheKey.
+    /// </summary>
+    [Fact]
+    public async Task GenerateAgentTokenAsync_SameInstallationId_DifferentClientId_CacheEntriesAreIsolated()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+
+        // Two configs: same installationId/repo/apiUrl, but different ClientId values.
+        var configAppA = new ProviderConfig
+        {
+            Id = "repo-app-a",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "App A",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                [ProviderSettingKeys.ClientId] = "app-client-1",       // ← differs
+                [ProviderSettingKeys.InstallationId] = "99999",         // ← same
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "shared-repo"              // ← same
+            }
+        };
+
+        var configAppB = new ProviderConfig
+        {
+            Id = "repo-app-b",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "App B",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                [ProviderSettingKeys.ClientId] = "app-client-2",       // ← differs
+                [ProviderSettingKeys.InstallationId] = "99999",         // ← same
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "shared-repo"              // ← same
+            }
+        };
+
+        var httpCallCount = 0;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                httpCallCount++;
+                var expiresAt = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = $"ghs_token_app_{httpCallCount}", expires_at = expiresAt }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                });
+            });
+
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient(mockHandler.Object));
+
+        // Call for App A — mints a fresh token
+        var (tokenA, _) = await service.GenerateAgentTokenAsync(configAppA, CancellationToken.None);
+
+        // Call for App B — must produce a SEPARATE cache entry, not reuse App A's token
+        var (tokenB, _) = await service.GenerateAgentTokenAsync(configAppB, CancellationToken.None);
+
+        // Each config must have its own distinct cache entry
+        service.CacheCount.Should().Be(2,
+            "two configs with the same installationId but different ClientId must map to separate cache keys");
+        httpCallCount.Should().Be(2,
+            "each app must trigger its own HTTP mint — no cross-app cache sharing");
+        tokenA.Should().NotBe(tokenB, "each app must receive its own distinct token");
+
+        // Repeat call for App A must be a cache hit — no additional HTTP call
+        var (tokenA2, _) = await service.GenerateAgentTokenAsync(configAppA, CancellationToken.None);
+        httpCallCount.Should().Be(2, "repeat call for App A must be a cache hit, not a new mint");
+        tokenA2.Should().Be(tokenA, "cached token for App A must be returned unchanged");
+    }
+
+    #endregion
 }

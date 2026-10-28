@@ -39,7 +39,12 @@ else
     private string? _statusMessage;
     private bool _isError;
 
-    private void HandleProjectSaved() { }
+    private void HandleProjectSaved()
+    {
+        _isError = false;
+        _statusMessage = "Project saved.";
+        StateHasChanged();
+    }
 
     private void HandleShowStatus((string Message, bool IsError) args)
     {
