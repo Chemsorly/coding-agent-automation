@@ -28,7 +28,7 @@ internal sealed class NullRedisStore : IRedisStore
     public Task<long> SetCardinalityAsync(string key) => Task.FromResult(0L);
     public Task<long> ListRightPushAsync(string key, string[] values) => Task.FromResult(0L);
     public Task ListTrimAsync(string key, long start, long stop) => Task.CompletedTask;
-    public Task<string[]> ListRangeAsync(string key, long start, long stop) => Task.FromResult(Array.Empty<string>());
+    public Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default) => Task.FromResult(Array.Empty<string>());
     public Task<bool> ExistsAsync(string key) => Task.FromResult(false);
     public Task<bool> PingAsync() => Task.FromResult(false);
     public Task<RedisResult> ScriptEvaluateAsync(string script, RedisKey[] keys, RedisValue[] values)

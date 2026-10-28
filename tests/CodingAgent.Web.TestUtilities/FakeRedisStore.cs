@@ -189,8 +189,9 @@ public sealed class FakeRedisStore : IRedisStore
         return Task.CompletedTask;
     }
 
-    public Task<string[]> ListRangeAsync(string key, long start, long stop)
+    public Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (IsExpired(key) || !_lists.TryGetValue(key, out var list))
             return Task.FromResult(Array.Empty<string>());
         lock (list)

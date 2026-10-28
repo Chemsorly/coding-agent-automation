@@ -229,6 +229,76 @@ public static class AttentionAggregator
 
     private enum ServerOutcome { Neutral, Problem, Ok }
 
+    /// <summary>
+    /// Single-pass summary of one run's data for a specific server.
+    /// Produced by <see cref="SummarizeForServer"/> so that <see cref="ClassifyServer"/>
+    /// and <see cref="BuildReason"/> never iterate <see cref="PipelineRunSummary.PhaseBreakdown"/> directly.
+    /// </summary>
+    private sealed record ServerRunSummary(
+        bool AppearsInRun,
+        bool IsUnavailable,
+        /// <summary>
+        /// Status value (<see cref="McpServerStatuses"/>) from the first phase where the server
+        /// is unavailable. Null when <see cref="IsUnavailable"/> is false.
+        /// First-found is used to match the short-circuit semantics of the original BuildReason.
+        /// </summary>
+        string? UnavailabilityStatus,
+        bool HasCalls,
+        McpCallCounts TotalCalls);
+
+    /// <summary>
+    /// Produces a <see cref="ServerRunSummary"/> for <paramref name="server"/> in a single pass
+    /// over <see cref="PipelineRunSummary.PhaseBreakdown"/>. Iteration order of the dictionary is
+    /// preserved (insertion order for <see cref="Dictionary{TKey,TValue}"/>), which is relevant
+    /// for <see cref="UnavailabilityStatus"/>: the status from the first-iterated phase wins.
+    /// </summary>
+    private static ServerRunSummary SummarizeForServer(PipelineRunSummary run, string server)
+    {
+        bool appearsInRun = run.McpServers?.Any(
+            s => string.Equals(s, server, StringComparison.OrdinalIgnoreCase)) == true;
+        bool isUnavailable = false;
+        string? unavailabilityStatus = null;
+        bool hasCalls = false;
+        var total = new McpCallCounts();
+
+        if (run.PhaseBreakdown is not null)
+        {
+            foreach (var phase in run.PhaseBreakdown.Values)
+            {
+                if (phase.UnavailableMcpServers is not null)
+                {
+                    foreach (var (name, status) in phase.UnavailableMcpServers)
+                    {
+                        if (string.Equals(name, server, StringComparison.OrdinalIgnoreCase))
+                        {
+                            appearsInRun = true;
+                            if (!isUnavailable)          // capture first-found status only
+                            {
+                                isUnavailable = true;
+                                unavailabilityStatus = status;
+                            }
+                        }
+                    }
+                }
+
+                if (phase.ToolCalls is not null)
+                {
+                    foreach (var (key, counts) in phase.ToolCalls)
+                    {
+                        if (string.Equals(McpToolKeys.ServerOf(key), server, StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasCalls = true;
+                            appearsInRun = true;
+                            total = total.Add(counts);
+                        }
+                    }
+                }
+            }
+        }
+
+        return new ServerRunSummary(appearsInRun, isUnavailable, unavailabilityStatus, hasCalls, total);
+    }
+
     /// <summary>Adds all server names mentioned by <paramref name="run"/> to <paramref name="servers"/>.</summary>
     private static void CollectServerNames(PipelineRunSummary run, HashSet<string> servers)
     {
@@ -253,56 +323,19 @@ public static class AttentionAggregator
     /// <summary>Determines this run's outcome for <paramref name="server"/>.</summary>
     private static ServerOutcome ClassifyServer(PipelineRunSummary run, string server)
     {
-        bool appearsInRun = false;
-        bool isUnavailable = false;
-        bool hasCalls = false;
-        var total = new McpCallCounts();
+        var s = SummarizeForServer(run, server);
 
-        if (run.McpServers?.Any(s => string.Equals(s, server, StringComparison.OrdinalIgnoreCase)) == true)
-            appearsInRun = true;
-
-        if (run.PhaseBreakdown is not null)
-        {
-            foreach (var phase in run.PhaseBreakdown.Values)
-            {
-                if (phase.UnavailableMcpServers is not null)
-                {
-                    foreach (var (name, _) in phase.UnavailableMcpServers)
-                    {
-                        if (string.Equals(name, server, StringComparison.OrdinalIgnoreCase))
-                        {
-                            isUnavailable = true;
-                            appearsInRun = true;
-                        }
-                    }
-                }
-
-                if (phase.ToolCalls is not null)
-                {
-                    foreach (var (key, counts) in phase.ToolCalls)
-                    {
-                        if (string.Equals(McpToolKeys.ServerOf(key), server, StringComparison.OrdinalIgnoreCase))
-                        {
-                            hasCalls = true;
-                            appearsInRun = true;
-                            total = total.Add(counts);
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!appearsInRun) return ServerOutcome.Neutral;
+        if (!s.AppearsInRun) return ServerOutcome.Neutral;
 
         // Problem: unavailable in any phase.
-        if (isUnavailable) return ServerOutcome.Problem;
+        if (s.IsUnavailable) return ServerOutcome.Problem;
 
         // Problem: every call failed, none with cause "other".
-        if (hasCalls && total.Calls > 0 && total.Failed == total.Calls && total.FailedOther == 0)
+        if (s.HasCalls && s.TotalCalls.Calls > 0 && s.TotalCalls.Failed == s.TotalCalls.Calls && s.TotalCalls.FailedOther == 0)
             return ServerOutcome.Problem;
 
         // OK: had calls (but not all failed, or some failed with "other").
-        if (hasCalls) return ServerOutcome.Ok;
+        if (s.HasCalls) return ServerOutcome.Ok;
 
         // Neutral: configured but not unavailable and not called.
         return ServerOutcome.Neutral;
@@ -311,50 +344,20 @@ public static class AttentionAggregator
     /// <summary>Builds the human-readable reason string for the first problem run of <paramref name="server"/>.</summary>
     private static string BuildReason(PipelineRunSummary run, string server)
     {
-        // Check unavailability first.
-        if (run.PhaseBreakdown is not null)
-        {
-            foreach (var phase in run.PhaseBreakdown.Values)
-            {
-                if (phase.UnavailableMcpServers is null) continue;
-                foreach (var (name, status) in phase.UnavailableMcpServers)
-                {
-                    if (string.Equals(name, server, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return status == McpServerStatuses.NeedsAuth
-                            ? "unavailable (needs-auth)"
-                            : "unavailable (failed)";
-                    }
-                }
-            }
-        }
+        var s = SummarizeForServer(run, server);
+
+        if (s.IsUnavailable)
+            return s.UnavailabilityStatus == McpServerStatuses.NeedsAuth
+                ? "unavailable (needs-auth)"
+                : "unavailable (failed)";
 
         // Calls failed.
-        var total = AggregateToolCalls(run, server);
+        var total = s.TotalCalls;
         var causes = new List<string>();
         if (total.FailedConnection > 0) causes.Add($"connection {total.FailedConnection}");
         if (total.FailedAuth > 0) causes.Add($"auth {total.FailedAuth}");
         if (total.FailedUnknown > 0) causes.Add($"unknown {total.FailedUnknown}");
 
         return $"all {total.Calls} calls failed ({string.Join(", ", causes)})";
-    }
-
-    /// <summary>Sums all tool calls for <paramref name="server"/> across all phases of <paramref name="run"/>.</summary>
-    private static McpCallCounts AggregateToolCalls(PipelineRunSummary run, string server)
-    {
-        var total = new McpCallCounts();
-        if (run.PhaseBreakdown is null) return total;
-
-        foreach (var phase in run.PhaseBreakdown.Values)
-        {
-            if (phase.ToolCalls is null) continue;
-            foreach (var (key, counts) in phase.ToolCalls)
-            {
-                if (string.Equals(McpToolKeys.ServerOf(key), server, StringComparison.OrdinalIgnoreCase))
-                    total = total.Add(counts);
-            }
-        }
-
-        return total;
     }
 }
