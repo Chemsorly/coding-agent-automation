@@ -295,6 +295,14 @@ public sealed record JobAssignmentMessage
     // corrupt in-flight deserialization. Flag for human confirmation that Key(44) is the intended assignment.
     [Key(44)]
     public RefactoringScanFocus RefactoringFocus { get; init; }
+
+    /// <summary>Stack labels from the pipeline job template (spec 054, req 10, task 3.6). Wire-compat: additive.</summary>
+    [Key(45)]
+    public IReadOnlyList<string> StackLabels { get; init; } = [];
+
+    /// <summary>Brain group for brain consolidation assignments (spec 054, req 10.2, task 3.6). Wire-compat: additive.</summary>
+    [Key(46)]
+    public IReadOnlyList<BrainGroupMember>? BrainGroup { get; init; }
 }
 
 /// <summary>
@@ -426,6 +434,30 @@ public sealed record JobCompletionPayload
     /// </summary>
     [Key(29)]
     public IReadOnlyList<string>? McpServers { get; init; }
+
+    /// <summary>Skills injection result from the pre-run brain sync. Wire-compat: additive.</summary>
+    [Key(30)]
+    public string? BrainSkillsResult { get; init; }
+
+    /// <summary>Number of bytes in the injected brain skills text. Wire-compat: additive.</summary>
+    [Key(31)]
+    public int? BrainSkillsBytes { get; init; }
+
+    /// <summary>Brain commit SHA from which skills were injected. Wire-compat: additive.</summary>
+    [Key(32)]
+    public string? BrainSkillsCommit { get; init; }
+
+    /// <summary>Relative inbox file path written for this run (e.g. inbox/2026-10-26_run.md). Wire-compat: additive.</summary>
+    [Key(33)]
+    public string? BrainInboxFile { get; init; }
+
+    /// <summary>True when the brain inbox push was attempted and failed. Null from old agents = unknown. Wire-compat: additive.</summary>
+    [Key(34)]
+    public bool? BrainPushFailed { get; init; }
+
+    /// <summary>Web link of the commit that added or last rewrote the inbox file (D22). Wire-compat: additive.</summary>
+    [Key(35)]
+    public string? BrainInboxFileUrl { get; init; }
 }
 
 /// <summary>

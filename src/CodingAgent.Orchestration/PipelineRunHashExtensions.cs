@@ -107,6 +107,13 @@ public static class PipelineRunHashExtensions
             F("linesRemoved",               run.LinesRemoved.ToString()),
             F("brainKnowledgeFileCount",    run.BrainKnowledgeFileCount.ToString()),
             F("brainFilesCommitted",        run.BrainFilesCommitted.ToString()),
+            // Brain v2 fields (spec 054)
+            F("brainSkillsResult",          run.BrainSkillsResult ?? ""),
+            F("brainSkillsBytes",           run.BrainSkillsBytes?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
+            F("brainSkillsCommit",          run.BrainSkillsCommit ?? ""),
+            F("brainInboxFile",             run.BrainInboxFile ?? ""),
+            F("brainPushFailed",            run.BrainPushFailed?.ToString() ?? ""),
+            F("brainInboxFileUrl",          run.BrainInboxFileUrl ?? ""),
             F("decompSubIssuesCreated",     run.DecompositionSubIssuesCreated.ToString()),
             F("decompSubIssuesAttempted",   run.DecompositionSubIssuesAttempted.ToString()),
             F("openIssuesDownloaded",       run.OpenIssuesDownloaded.ToString()),
@@ -298,6 +305,13 @@ public static class PipelineRunHashExtensions
         run.LinesRemoved = r.Int("linesRemoved");
         run.BrainKnowledgeFileCount = r.Int("brainKnowledgeFileCount");
         run.BrainFilesCommitted = r.Int("brainFilesCommitted");
+        // Brain v2 fields (spec 054)
+        run.BrainSkillsResult = r.OptionalString("brainSkillsResult") is { Length: > 0 } s1 ? s1 : null;
+        if (int.TryParse(r.OptionalString("brainSkillsBytes"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var bsb)) run.BrainSkillsBytes = bsb;
+        run.BrainSkillsCommit = r.OptionalString("brainSkillsCommit") is { Length: > 0 } s2 ? s2 : null;
+        run.BrainInboxFile = r.OptionalString("brainInboxFile") is { Length: > 0 } s3 ? s3 : null;
+        run.BrainPushFailed = r.BoolNullable("brainPushFailed");
+        run.BrainInboxFileUrl = r.OptionalString("brainInboxFileUrl") is { Length: > 0 } s4 ? s4 : null;
         run.DecompositionSubIssuesCreated = r.Int("decompSubIssuesCreated");
         run.DecompositionSubIssuesAttempted = r.Int("decompSubIssuesAttempted");
         run.OpenIssuesDownloaded = r.Int("openIssuesDownloaded");

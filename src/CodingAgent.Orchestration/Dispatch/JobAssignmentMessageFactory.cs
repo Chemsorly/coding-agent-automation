@@ -74,7 +74,10 @@ public static class JobAssignmentMessageFactory
             AutoDispatch = request.AutoDispatch,
             RefactoringFocus = request.RefactoringFocus,
             StalenessSignal = request.StalenessSignal,
-            AnalysisRefreshCount = request.AnalysisRefreshCount
+            AnalysisRefreshCount = request.AnalysisRefreshCount,
+            // Brain v2 (spec 054, req 10, task 3.6)
+            StackLabels = request.StackLabels ?? [],
+            BrainGroup = request.BrainGroup
             // NOTE: ProjectSecrets are NOT serialized to WorkItem payload (security).
             // Injected at delivery time from IProjectStore.
         };

@@ -78,6 +78,25 @@ public sealed class PipelineRunSummary
     /// <summary>Number of brain knowledge files loaded into this run's context (0 when none/unused). Powers the Knowledge usage aggregate.</summary>
     public int BrainKnowledgeFileCount { get; init; }
 
+    // ── Brain v2 run-record fields (spec 054, req 8.1) ────────────────
+    /// <summary>Skills injection result (injected/empty/truncated/skipped_invalid/no_brain).</summary>
+    public string? BrainSkillsResult { get; init; }
+
+    /// <summary>Number of bytes in the injected brain skills text.</summary>
+    public int? BrainSkillsBytes { get; init; }
+
+    /// <summary>Brain commit SHA from which skills were injected.</summary>
+    public string? BrainSkillsCommit { get; init; }
+
+    /// <summary>Relative inbox file path written for this run.</summary>
+    public string? BrainInboxFile { get; init; }
+
+    /// <summary>True when the brain inbox push was attempted and failed.</summary>
+    public bool? BrainPushFailed { get; init; }
+
+    /// <summary>Web link of the commit that added or last rewrote the inbox file (D22).</summary>
+    public string? BrainInboxFileUrl { get; init; }
+
     /// <summary>Which agent executed this run, or null for test-infrastructure runs.</summary>
     public string? AgentId { get; init; }
 

@@ -373,7 +373,14 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         HarnessVersion = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion),
         PhaseBreakdown = BuildPhaseBreakdownPayload(run.Metrics.PhaseBreakdown),
         RateLimits = run.Metrics.RateLimits.IsEmpty ? null : run.Metrics.RateLimits.Values.ToList(),
-        McpServers = run.McpServers
+        McpServers = run.McpServers,
+        // Brain v2 fields (spec 054, req 8.1) — in BuildPayloadBase so failed runs also carry injection results
+        BrainSkillsResult = run.BrainSkillsResult,
+        BrainSkillsBytes = run.BrainSkillsBytes,
+        BrainSkillsCommit = run.BrainSkillsCommit,
+        BrainInboxFile = run.BrainInboxFile,
+        BrainPushFailed = run.BrainPushFailed,
+        BrainInboxFileUrl = run.BrainInboxFileUrl
     };
 
     /// <summary>

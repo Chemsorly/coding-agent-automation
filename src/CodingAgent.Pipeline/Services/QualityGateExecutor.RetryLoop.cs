@@ -684,6 +684,9 @@ public partial class QualityGateExecutor
         run.QualityGateHistory.Enqueue(report);
         callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
+        // Brain v2 evidence recording (spec 054, req 4)
+        CodingAgent.Pipeline.Brain.BrainEvidenceRecorder.RecordReport(run, run.QualityGateHistory.Count, report);
+
         _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, ExternalCi={ExternalCiResult}",
             run.RunId, phase, report.AllPassed, report.Compilation.Passed, FormatGateLogValue(report.Tests),
             FormatGateLogValue(report.ExternalCi));

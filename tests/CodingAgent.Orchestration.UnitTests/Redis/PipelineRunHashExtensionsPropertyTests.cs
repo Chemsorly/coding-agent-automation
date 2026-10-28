@@ -609,6 +609,9 @@ public class PipelineRunHashExtensionsPropertyTests
         ["NotReappliedIdentifiersByFile"] = "set only in the agent process",
         ["LinkedIssueContexts"] = "set only in the agent process",
         ["PrMarkedReadyAt"] = "set only in the agent process",
+        ["BrainEvidence"] = "set only in the agent process",
+        ["BrainSkills"] = "set only in the agent process",
+        ["StackLabels"] = "set only in the agent process",
     };
 
     [Fact]

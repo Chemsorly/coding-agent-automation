@@ -476,7 +476,7 @@ public sealed class AgentHubFacadeTests
 
     /// <summary>
     /// K8s mode: when no in-memory run exists but a TransitionStore is wired and returns
-    /// a repoProviderId for the GUID job ID, ResolveBrainReadOnlyAsync resolves BrainReadOnly
+    /// a WorkItemRunRecord for the GUID job ID, ResolveBrainReadOnlyAsync resolves BrainReadOnly
     /// via the config chain and returns the correct value.
     /// </summary>
     [Fact]
@@ -486,8 +486,14 @@ public sealed class AgentHubFacadeTests
 
         var mockTransitionStore = new Mock<IWorkItemTransitionStore>();
         mockTransitionStore
-            .Setup(s => s.GetWorkItemProviderConfigIdsAsync(jobId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("repo-k8s-1", "brain-k8s-1"));
+            .Setup(s => s.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#1",
+                IssueProviderConfigId = "issue-1",
+                RepoProviderConfigId = "repo-k8s-1"
+            });
 
         var mockPipelineStore = new Mock<IPipelineConfigStore>();
         mockPipelineStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -513,7 +519,61 @@ public sealed class AgentHubFacadeTests
 
         result.Should().BeTrue("K8s fallback via TransitionStore must resolve BrainReadOnly correctly");
         mockTransitionStore.Verify(
-            s => s.GetWorkItemProviderConfigIdsAsync(jobId, It.IsAny<CancellationToken>()), Times.Once);
+            s => s.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// K8s mode: when the WorkItemRunRecord carries a ProjectId, the project's BrainReadOnly override
+    /// must be applied. Global = false, project override = true → result must be true. (Req 12.3)
+    /// </summary>
+    [Fact]
+    public async Task ResolveBrainReadOnlyAsync_K8sFallback_ProjectOverridesBrainReadOnly_ReturnsTrue()
+    {
+        // Req 12.3
+        var jobId = Guid.NewGuid();
+        var projectGuid = Guid.NewGuid();
+
+        var mockTransitionStore = new Mock<IWorkItemTransitionStore>();
+        mockTransitionStore
+            .Setup(s => s.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#1",
+                IssueProviderConfigId = "issue-1",
+                RepoProviderConfigId = "repo-k8s-1",
+                ProjectId = projectGuid
+            });
+
+        var mockPipelineStore = new Mock<IPipelineConfigStore>();
+        // Global: BrainReadOnly = false
+        mockPipelineStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { BrainReadOnly = false });
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
+        // Project override: BrainReadOnly = true
+        mockProjectStore
+            .Setup(s => s.GetProjectByIdAsync(projectGuid.ToString("D"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject { Id = projectGuid.ToString("D"), Name = "Test", BrainReadOnly = true });
+
+        var facade = new AgentHubFacade(new AgentHubFacadeDependencies(
+            _registry,
+            _runService,
+            _mockHistory.Object,
+            _mockConfigStore.Object,
+            _mockProviderFactory.Object,
+            _facadeLogger,
+            TransitionStore: mockTransitionStore.Object,
+            ProjectStore: mockProjectStore.Object,
+            PipelineConfigStore: mockPipelineStore.Object));
+
+        var result = await facade.ResolveBrainReadOnlyAsync(new JobId(jobId.ToString()), CancellationToken.None);
+
+        result.Should().BeTrue("project-level BrainReadOnly = true must override global false in K8s mode");
+        mockTransitionStore.Verify(
+            s => s.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>

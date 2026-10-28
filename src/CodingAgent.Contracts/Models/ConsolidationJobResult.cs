@@ -76,6 +76,10 @@ public sealed class ConsolidationJobResult
     /// </summary>
     [IgnoreMember]
     public IReadOnlyDictionary<string, PhaseUsagePayload>? PhaseBreakdown { get; set; }
+
+    /// <summary>Reason the brain review push was refused (spec 054, req 13.2, task 3.5). Wire-compat: additive.</summary>
+    [Key(16)]
+    public string? BrainReviewRefusalReason { get; set; }
 }
 
 /// <summary>
