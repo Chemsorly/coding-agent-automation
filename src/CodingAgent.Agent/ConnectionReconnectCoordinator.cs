@@ -36,6 +36,7 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
     private readonly Serilog.ILogger _logger;
     private readonly IHostApplicationLifetime? _lifetime;
     private readonly Action<IHubConnectionManager> _wireHandlers;
+    private readonly Action<IHubConnectionManager>? _unwireHandlers;
     private readonly Func<IHubConnectionManager, CancellationToken, Task> _registerAgent;
     private readonly Func<Task>? _afterSuccessfulReconnect;
 
@@ -86,6 +87,7 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
         _logger = logger;
         _lifetime = lifetime;
         _wireHandlers = callbacks.WireHandlers;
+        _unwireHandlers = callbacks.UnwireHandlers;
         _registerAgent = callbacks.RegisterAgent;
         _afterSuccessfulReconnect = callbacks.AfterSuccessfulReconnect;
     }
@@ -231,6 +233,9 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
                 if (Interlocked.CompareExchange(ref _hubManager, newManager, oldManager) != oldManager)
 #pragma warning restore 0420
                 {
+                    // Concurrent DisposeAsync won the CAS. Unwire newManager before disposing so its
+                    // OnClosed delegate cannot trigger a spurious HandleTerminalClosedAsync.
+                    _unwireHandlers?.Invoke(newManager);
                     await SafeDisposeAsync(newManager);
                     newManager = null;
                     // Gate was already cancelled by DisposeAsync — leave it as-is
@@ -238,6 +243,9 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
                 }
                 newManager = null; // Ownership transferred — skip disposal in catch
 
+                // Unwire event handlers from old manager before disposing to prevent
+                // stale closures from forwarding events and to release GC references.
+                _unwireHandlers?.Invoke(oldManager);
                 // Dispose old manager after successful swap.
                 await SafeDisposeAsync(oldManager);
 
@@ -263,11 +271,13 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
                 // the gate. The hang is bounded (not indefinite) and now matches AgentConnectionLifecycle
                 // behaviour — confirm this deviation is intentional.
                 // (Correctness review — see review-findings.md)
+                if (newManager is not null) _unwireHandlers?.Invoke(newManager);
                 await SafeDisposeAsync(newManager);
                 return;
             }
             catch (Exception ex)
             {
+                if (newManager is not null) _unwireHandlers?.Invoke(newManager);
                 await SafeDisposeAsync(newManager);
                 _logger.Warning(ex, "Reconnection attempt {Attempt} failed", attempt);
             }
@@ -298,6 +308,7 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
         var manager = Interlocked.Exchange(ref _hubManager, null);
 #pragma warning restore 0420
         if (manager is null) return;
+        _unwireHandlers?.Invoke(manager);
         await SafeDisposeAsync(manager);
     }
 
@@ -327,7 +338,14 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
 ///   <see cref="AgentConnectionLifecycle"/> passes <see langword="null"/> (chat pods no longer need a drain step);
 ///   <see cref="AgentConnectionManager"/> passes <see langword="null"/>.
 /// </param>
+/// <param name="UnwireHandlers">
+///   Optional delegate called on the old <see cref="IHubConnectionManager"/> immediately before
+///   <see cref="ConnectionReconnectCoordinator.SafeDisposeAsync"/> disposes it. Removes all event
+///   subscriptions added by <see cref="WireHandlers"/> so that disposed managers do not retain
+///   delegate closures that reference the outer lifecycle object.
+/// </param>
 internal sealed record ReconnectCallbacks(
     Action<IHubConnectionManager> WireHandlers,
     Func<IHubConnectionManager, CancellationToken, Task> RegisterAgent,
-    Func<Task>? AfterSuccessfulReconnect = null);
+    Func<Task>? AfterSuccessfulReconnect = null,
+    Action<IHubConnectionManager>? UnwireHandlers = null);

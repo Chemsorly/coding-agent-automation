@@ -48,6 +48,14 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
     internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // ── Named delegate fields for event handler wiring ────────────────────────
+    // Stored as fields so that -= in UnwireEventHandlers references the same delegate instance
+    // as the += in WireEventHandlers, preventing GC reference leaks on every reconnect.
+    private Func<ChatPromptMessage, Task> _onAssignChatPromptHandler = null!;
+    private Func<string, Task> _onCancelChatHandler = null!;
+    private Func<FetchModelsRequest, Task> _onFetchModelsHandler = null!;
+    private Func<Exception?, Task> _onClosedHandler = null!;
+
     internal TimeSpan ExtendedRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
@@ -102,6 +110,13 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId)
             ?? "";
 
+        // Initialise named delegate fields before constructing the coordinator, so that
+        // WireEventHandlers (passed as a callback) and UnwireEventHandlers both reference the same instances.
+        _onAssignChatPromptHandler = msg  => OnAssignChatPrompt?.Invoke(msg) ?? Task.CompletedTask;
+        _onCancelChatHandler       = sid  => OnCancelChat?.Invoke(sid)       ?? Task.CompletedTask;
+        _onFetchModelsHandler      = req  => OnFetchModels?.Invoke(req)      ?? Task.CompletedTask;
+        _onClosedHandler           = err  => HandleTerminalClosedAsync(err);
+
         // Compose the coordinator. It takes ownership of the initial hub manager.
         // afterSuccessfulReconnect is null — chat pods no longer need a drain step
         // (CriticalMessageBuffer was removed; buffer was always empty in chat mode).
@@ -115,7 +130,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                 WireHandlers: WireEventHandlers,
                 RegisterAgent: (mgr, ct) => _signalRPipeline.ExecuteAsync(async token =>
                     await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, BuildRegistrationMessage(), token), ct).AsTask(),
-                AfterSuccessfulReconnect: null));
+                AfterSuccessfulReconnect: null,
+                UnwireHandlers: UnwireEventHandlers));
     }
 
     /// <summary>The underlying hub connection for business handlers to invoke server methods.</summary>
@@ -275,16 +291,22 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// </summary>
     public ValueTask DisposeAsync() => _coordinator.DisposeAsync();
 
-    // TODO: Event handlers on old HubConnectionManager instances are never unwired before disposal.
-    // While disposal should prevent further event firings, explicitly unsubscribing before
-    // SafeDisposeAsync would be more defensive and prevent potential GC reference leaks.
     private void WireEventHandlers(IHubConnectionManager hubManager)
     {
-        hubManager.OnAssignChatPrompt += msg => OnAssignChatPrompt?.Invoke(msg) ?? Task.CompletedTask;
-        hubManager.OnCancelChat += sessionId => OnCancelChat?.Invoke(sessionId) ?? Task.CompletedTask;
-        hubManager.OnFetchModels += request => OnFetchModels?.Invoke(request) ?? Task.CompletedTask;
-        hubManager.OnReconnected += HandleReconnectedAsync;
-        hubManager.OnClosed += error => HandleTerminalClosedAsync(error);
+        hubManager.OnAssignChatPrompt += _onAssignChatPromptHandler;
+        hubManager.OnCancelChat       += _onCancelChatHandler;
+        hubManager.OnFetchModels      += _onFetchModelsHandler;
+        hubManager.OnReconnected      += HandleReconnectedAsync;
+        hubManager.OnClosed           += _onClosedHandler;
+    }
+
+    private void UnwireEventHandlers(IHubConnectionManager hubManager)
+    {
+        hubManager.OnAssignChatPrompt -= _onAssignChatPromptHandler;
+        hubManager.OnCancelChat       -= _onCancelChatHandler;
+        hubManager.OnFetchModels      -= _onFetchModelsHandler;
+        hubManager.OnReconnected      -= HandleReconnectedAsync;
+        hubManager.OnClosed           -= _onClosedHandler;
     }
 
     // delayOverride is a test seam (null in production) so reconnection tests need not wait the real
