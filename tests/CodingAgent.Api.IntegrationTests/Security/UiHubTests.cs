@@ -252,7 +252,6 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
         connection.On<string, JobCompletionPayload>(HubMethodNames.OnRunCompleted, (_, v) => received[HubMethodNames.OnRunCompleted] = v);
         connection.On<string, ChatRole, string>(HubMethodNames.OnChatEntry, (_, r, c) => received[HubMethodNames.OnChatEntry] = (r, c));
         connection.On<string, QualityGateReport>(HubMethodNames.OnQualityGateResult, (_, v) => received[HubMethodNames.OnQualityGateResult] = v);
-        connection.On<string, bool, int>(HubMethodNames.OnBrainSyncResult, (_, l, n) => received[HubMethodNames.OnBrainSyncResult] = (l, n));
         connection.On<string, RunStateSnapshot>(HubMethodNames.OnRunStateSnapshot, (_, v) => received[HubMethodNames.OnRunStateSnapshot] = v);
         await connection.InvokeAsync(HubMethodNames.SubscribeToRun, run);
 
@@ -290,16 +289,14 @@ public sealed class UiHubTests(ApiKestrelFactory api) : IClassFixture<ApiKestrel
         await group.SendAsync(HubMethodNames.OnRunCompleted, run, completion);
         await group.SendAsync(HubMethodNames.OnChatEntry, run, ChatRole.User, "hi");
         await group.SendAsync(HubMethodNames.OnQualityGateResult, run, report);
-        await group.SendAsync(HubMethodNames.OnBrainSyncResult, run, true, 3);
         await group.SendAsync(HubMethodNames.OnRunStateSnapshot, run, snapshot);
 
-        await WaitUntilAsync(() => received.Count == 7);
+        await WaitUntilAsync(() => received.Count == 6);
         received[HubMethodNames.OnOutputLines].Should().BeEquivalentTo(OutputLines);
         received[HubMethodNames.OnStepTransition].Should().Be((PipelineStep.RunningQualityGates, at));
         received[HubMethodNames.OnRunCompleted].Should().BeEquivalentTo(completion);
         received[HubMethodNames.OnChatEntry].Should().Be((ChatRole.User, "hi"));
         received[HubMethodNames.OnQualityGateResult].Should().BeEquivalentTo(report);
-        received[HubMethodNames.OnBrainSyncResult].Should().Be((true, 3));
         received[HubMethodNames.OnRunStateSnapshot].Should().BeEquivalentTo(snapshot);
     }
 

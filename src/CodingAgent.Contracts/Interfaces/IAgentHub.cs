@@ -75,7 +75,6 @@ public interface IUiHubClient
     Task OnRunCompleted(string jobId, JobCompletionPayload payload);
     Task OnChatEntry(string jobId, ChatRole role, string content);
     Task OnQualityGateResult(string jobId, QualityGateReport report);
-    Task OnBrainSyncResult(string jobId, bool contextLoaded, int fileCount);
     Task OnChatResponse(string sessionId, IReadOnlyList<string> lines);
     Task OnChatCompleted(string sessionId, int exitCode, string? error);
 

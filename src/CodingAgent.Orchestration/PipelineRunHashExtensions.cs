@@ -106,7 +106,6 @@ public static class PipelineRunHashExtensions
             F("linesAdded",                 run.LinesAdded.ToString()),
             F("linesRemoved",               run.LinesRemoved.ToString()),
             F("brainKnowledgeFileCount",    run.BrainKnowledgeFileCount.ToString()),
-            F("brainFilesCommitted",        run.BrainFilesCommitted.ToString()),
             // Brain v2 fields (spec 054)
             F("brainSkillsResult",          run.BrainSkillsResult ?? ""),
             F("brainSkillsBytes",           run.BrainSkillsBytes?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
@@ -143,7 +142,6 @@ public static class PipelineRunHashExtensions
             JEnum("runMode",                (RunMode?)run.RunMode),
             JEnum("failureCategory",        run.FailureCategory),
             J("acceptanceCriteriaReport",   run.AcceptanceCriteriaReport),
-            J("brainValidation",            run.BrainValidation),
             J("feedback",                   run.Feedback),
             J("issueLabels",                run.IssueLabels),
             J("blacklistedFilesDetected",   run.BlacklistedFilesDetected),
@@ -304,7 +302,6 @@ public static class PipelineRunHashExtensions
         run.LinesAdded = r.Int("linesAdded");
         run.LinesRemoved = r.Int("linesRemoved");
         run.BrainKnowledgeFileCount = r.Int("brainKnowledgeFileCount");
-        run.BrainFilesCommitted = r.Int("brainFilesCommitted");
         // Brain v2 fields (spec 054)
         run.BrainSkillsResult = r.OptionalString("brainSkillsResult") is { Length: > 0 } s1 ? s1 : null;
         if (int.TryParse(r.OptionalString("brainSkillsBytes"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var bsb)) run.BrainSkillsBytes = bsb;
@@ -347,7 +344,6 @@ public static class PipelineRunHashExtensions
         run.RunMode = r.EnumOrNull<RunMode>("runMode") ?? RunMode.New;
         run.FailureCategory = r.EnumOrNull<FailureReason>("failureCategory");
         run.AcceptanceCriteriaReport = r.Json<AcceptanceCriteriaReport>("acceptanceCriteriaReport");
-        run.BrainValidation = r.Json<BrainValidationResult>("brainValidation");
         run.Feedback = r.Json<RunFeedback>("feedback");
 
         run.IssueLabels = r.Json<List<string>>("issueLabels") ?? (IReadOnlyList<string>)Array.Empty<string>();

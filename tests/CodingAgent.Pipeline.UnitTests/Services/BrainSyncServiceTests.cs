@@ -89,7 +89,7 @@ public class BrainSyncServiceTests : IDisposable
 
         await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
 
-        run.BrainFilesCommitted.Should().Be(2);
+        // BrainFilesCommitted removed (spec 054, task 3.4)
     }
 
     // ── Non-empty changes path — failed push ───────────────────────────────

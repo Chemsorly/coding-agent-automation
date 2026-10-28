@@ -158,8 +158,7 @@ public class BrainSyncUnitTests
         run.BrainContextLoaded.Should().BeFalse();
         run.BrainKnowledgeFileCount.Should().Be(0);
         run.BrainUpdatesPushed.Should().BeFalse();
-        run.BrainFilesCommitted.Should().Be(0);
-        run.BrainValidation.Should().BeNull();
+        // BrainFilesCommitted and BrainValidation removed (spec 054, task 3.4)
     }
 
     [Fact]

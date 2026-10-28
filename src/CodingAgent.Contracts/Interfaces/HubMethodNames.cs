@@ -22,7 +22,6 @@ public static class HubMethodNames
     public const string OnRunCompleted = nameof(IUiHubClient.OnRunCompleted);
     public const string OnChatEntry = nameof(IUiHubClient.OnChatEntry);
     public const string OnQualityGateResult = nameof(IUiHubClient.OnQualityGateResult);
-    public const string OnBrainSyncResult = nameof(IUiHubClient.OnBrainSyncResult);
 
     /// <summary>
     /// Sent to the caller only, in SubscribeToRun, with the full live run state snapshot.

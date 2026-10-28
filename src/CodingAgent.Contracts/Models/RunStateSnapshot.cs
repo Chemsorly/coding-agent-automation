@@ -101,8 +101,7 @@ public sealed record RunStateSnapshot
     [Key(27)]
     public int OpenIssuesDownloaded { get; init; }
 
-    [Key(28)]
-    public int BrainFilesCommitted { get; init; }
+    // Key(28) is retired (was BrainFilesCommitted). Do not reuse.
 
     [Key(29)]
     public bool BrainUpdatesPushed { get; init; }

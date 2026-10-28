@@ -123,7 +123,6 @@ public sealed class UiHub(IUiHubAuthorizer authorizer, IAgentHubFacade facade, I
         IsDraftPr = run.IsDraftPr,
         BlacklistedFilesDetected = run.BlacklistedFilesDetected,
         OpenIssuesDownloaded = run.OpenIssuesDownloaded,
-        BrainFilesCommitted = run.BrainFilesCommitted,
         BrainUpdatesPushed = run.BrainUpdatesPushed,
         DecompositionSubIssuesCreated = run.DecompositionSubIssuesCreated,
         DecompositionSubIssuesAttempted = run.DecompositionSubIssuesAttempted,

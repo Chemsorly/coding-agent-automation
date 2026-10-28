@@ -261,12 +261,6 @@ public sealed partial class PipelineRun
     /// <summary>Whether post-run brain updates were pushed successfully.</summary>
     public bool BrainUpdatesPushed { get; set; }
 
-    /// <summary>Number of brain files committed during post-run sync.</summary>
-    public int BrainFilesCommitted { get; set; }
-
-    /// <summary>Brain update validation result from BrainUpdateService.</summary>
-    public BrainValidationResult? BrainValidation { get; set; }
-
     // ── Brain v2 run-record fields (spec 054, req 8.1) ────────────────
     // These travel via the completion payload (keys 30-35) and are copied to PipelineRunSummary.
 

@@ -103,7 +103,6 @@ public sealed class BrainSyncService : IBrainSyncService
         if (changedFiles.Count > 0)
         {
             var validation = _brainUpdateService.Validate(brainPath, run.RunId, changedFiles);
-            run.BrainValidation = validation;
 
             if (!validation.OperationLogUpdated)
             {
@@ -114,7 +113,6 @@ public sealed class BrainSyncService : IBrainSyncService
             var syncResult = await _brainUpdateService.CommitAndPushAsync(
                 brainPath, run.RunId, run.IssueIdentifier, brainProvider, ct, maxPushRetries);
             run.BrainUpdatesPushed = syncResult.Success;
-            run.BrainFilesCommitted = syncResult.FilesCommitted;
 
             _logger.Information(
                 "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",

@@ -45,7 +45,6 @@ public sealed class RunSidebarModel
     public IReadOnlyList<string> BlacklistedFilesDetected { get; set; } = [];
     public int OpenIssuesDownloaded { get; set; }
     public int LinkedIssueCount { get; set; }
-    public int BrainFilesCommitted { get; set; }
     public bool BrainUpdatesPushed { get; set; }
     public int DecompositionSubIssuesCreated { get; set; }
     public int DecompositionSubIssuesAttempted { get; set; }

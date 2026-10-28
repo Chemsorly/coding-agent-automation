@@ -334,12 +334,11 @@ public class PipelineSidebarComponentTests : BunitContext
     {
         var run = CreateBrainRun(PipelineStep.Completed, PipelineStep.Completed);
         run.BrainUpdatesPushed = true;
-        run.BrainFilesCommitted = 3;
         run.CompletedAtOffset = DateTimeOffset.UtcNow;
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
-        Assert.Contains("3 file(s) pushed", cut.Find("#step-SyncingBrainRepoPostRun").TextContent);
+        Assert.Contains("Inbox pushed", cut.Find("#step-SyncingBrainRepoPostRun").TextContent);
     }
 
     [Fact]
