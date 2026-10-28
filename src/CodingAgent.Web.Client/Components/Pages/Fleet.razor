@@ -116,9 +116,6 @@
                                         <div class="fleet-work-links">
                                             @if (!string.IsNullOrEmpty(a.ActiveIssueUrl))
                                             {
-                                                @* TODO: Validate that ActiveIssueUrl starts with https:// before rendering as href.
-                                                   Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
-                                                   so a malicious/corrupted record could produce a clickable XSS link. *@
                                                 <a href="@a.ActiveIssueUrl" target="_blank" rel="noopener noreferrer" class="runs-link fleet-work-issue" title="Open issue @a.ActiveIssueIdentifier">
                                                     <Icon Name="message-square" Size="13" /> #@a.ActiveIssueIdentifier
                                                     @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
@@ -135,8 +132,6 @@
                                             }
                                             @if (!string.IsNullOrEmpty(a.ActivePullRequestUrl))
                                             {
-                                                @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
-                                                   Same javascript: URI injection risk as ActiveIssueUrl above. *@
                                                 <a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" class="runs-link runs-link-pr" title="Open pull request">
                                                     <Icon Name="git-pull-request" Size="13" /> PR
                                                 </a>
@@ -166,9 +161,10 @@
                                                         <div class="v">
                                                             @* TODO: [WARNING] When ActiveIssueTitle is null/empty (operationally valid for older job records),
                                                                the fallback renders "#<identifier>" as plain text with no link to the issue. The previous code
-                                                               rendered a navigable anchor (with an unvalidated XSS risk noted in the removed TODO). Fix: validate
-                                                               ActiveIssueUrl starts with https://, then render as a link; keep the title span as a supplement.
-                                                               Until then, operators on records without a title lose URL navigation entirely. *@
+                                                               rendered a navigable anchor here; it was removed due to an unvalidated XSS risk.
+                                                               Fix: render a.ActiveIssueUrl as an anchor (it is already scheme-validated by AgentEntryDtoFactory.ValidateUrl —
+                                                               no inline validation is needed); keep the title span as a supplement. Until then, operators on records
+                                                               without a title lose URL navigation in the expanded row. *@
                                                             @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
                                                             {
                                                                 <span class="monitoring-muted">@a.ActiveIssueTitle</span>
@@ -191,9 +187,6 @@
                                                 {
                                                     <div class="cockpit-detail-item">
                                                         <div class="k">Pull request</div>
-                                                        @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
-                                                           Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
-                                                           so a malicious/corrupted record could produce a clickable XSS link. *@
                                                         <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" title="@a.ActivePullRequestUrl">View PR</a></div>
                                                     </div>
                                                 }
