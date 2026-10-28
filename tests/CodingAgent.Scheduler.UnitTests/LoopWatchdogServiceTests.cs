@@ -3,6 +3,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Xunit;
@@ -36,8 +37,31 @@ public sealed class LoopWatchdogServiceTests
         _loop.SetupGet(s => s.TemplateStatuses).Returns(new Dictionary<string, ConfigStatusSnapshot>());
     }
 
+    /// <summary>
+    /// Builds an <see cref="IServiceScopeFactory"/> backed by a minimal ServiceCollection that
+    /// returns the test mocks when the service types are resolved inside a scope.
+    /// Using <c>AddSingleton(instance)</c> means every scope resolution returns the same mock
+    /// object, keeping <c>Mock.Verify()</c> assertions working correctly.
+    /// </summary>
+    /// <remarks>
+    /// TODO [WARNING]: Because the mocks are registered as singletons, the same mock object is
+    /// returned regardless of how many scopes are created. This means a regression where the
+    /// service caches its first scope (e.g. <c>_cachedScope ??= _scopeFactory.CreateAsyncScope()</c>)
+    /// instead of creating one per tick would not be detected by any <c>Verify()</c> call. To
+    /// catch such a regression, this helper would need to be replaced by a custom
+    /// <c>IServiceScopeFactory</c> implementation that counts scope-creation calls and can
+    /// assert exactly one scope was created per tick/sweep invocation.
+    /// </remarks>
+    private IServiceScopeFactory CreateScopeFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_config.Object);
+        services.AddSingleton(_statusClient.Object);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
     private LoopWatchdogService CreateWatchdog(ILeaderGate? leaderGate) =>
-        new(_loop.Object, _config.Object, _statusClient.Object, leaderGate, _logger.Object, TimeSpan.FromMilliseconds(1), _time);
+        new(_loop.Object, CreateScopeFactory(), leaderGate, _logger.Object, TimeSpan.FromMilliseconds(1), _time);
 
     private LoopWatchdogService CreateWatchdog() => CreateWatchdog(_leaderGate.Object);
 
