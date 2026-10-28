@@ -433,4 +433,173 @@ public sealed class AutoConsolidationServiceTests
         // Must complete without throwing even when the trigger returns null
         await sut.RunOnceAsync(CancellationToken.None);
     }
+
+    // ── WorkItemRefusedException handler ──────────────────────────────────
+
+    [Fact]
+    public async Task RunOnce_TriggerThrowsWorkItemRefusedException_DoesNotPropagateAndLogsWarning()
+    {
+        // Exercises the catch (WorkItemRefusedException ex) block in TryTriggerIfThresholdReachedAsync
+        // (L268–L275). When the API refuses a run (no agent route, or one that cannot run), the
+        // exception must be absorbed and a warning logged — the loop must NOT exit.
+        _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("bp-auto-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(5); // meets the threshold of 5
+
+        _consolidation.Setup(c => c.TriggerAutomaticAsync(
+                ConsolidationRunType.BrainConsolidation, It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemRefusedException("No agent route configured for this template"));
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 5,
+            AutoRefactoringScanAfterClosedIssues = 0,
+        });
+
+        // Must complete without throwing
+        await sut.RunOnceAsync(CancellationToken.None);
+
+        // A warning with the refusal reason must have been logged.
+        // Production call: _logger.Warning(ex, "...{Type}...{Scope}...{RefusalText}", type, scopeKey, ex.Message)
+        // resolves to Warning<ConsolidationRunType, string, string>(Exception, string, T0, T1, T2).
+        _logger.Verify(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.IsAny<string>(),
+                It.IsAny<ConsolidationRunType>(),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.Once);
+    }
+
+    // ── OCE re-throw — TryTriggerBrainScopeAsync ──────────────────────────
+
+    [Fact]
+    public async Task RunOnce_BrainScopeCancelledMidCall_PropagatesOperationCanceledException()
+    {
+        // Exercises the catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        // guard in TryTriggerBrainScopeAsync (L177–L179). A cancellation that fires inside a brain
+        // scope must propagate to the caller rather than being silently swallowed by the general
+        // catch (Exception ex) block below it.
+        //
+        // The when-filter checks ct.IsCancellationRequested at the moment the exception is caught,
+        // so the token MUST be cancelled before the faulted task is returned (not after).
+        using var cts = new CancellationTokenSource();
+
+        _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((_, _) =>
+            {
+                cts.Cancel(); // mark as cancelled BEFORE throwing
+                return Task.FromException<int>(new OperationCanceledException(cts.Token));
+            });
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 1,
+            AutoRefactoringScanAfterClosedIssues = 0,
+        });
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => sut.RunOnceAsync(cts.Token));
+    }
+
+    // ── OCE re-throw — TryTriggerRefactoringDetectionScopeAsync ───────────
+
+    [Fact]
+    public async Task RunOnce_RefactoringScopeCancelledMidCall_PropagatesOperationCanceledException()
+    {
+        // Exercises the catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        // guard in TryTriggerRefactoringDetectionScopeAsync (L223–L225). Same invariant as the brain
+        // scope: a timely cancellation must NOT be swallowed by the general exception handler.
+        //
+        // CountOpenScanIssuesAsync is the first async call in TryTriggerRefactoringDetectionScopeAsync,
+        // so the cancellation fires there (before any count threshold is evaluated).
+        using var cts = new CancellationTokenSource();
+
+        _staleness.Setup(s => s.CountOpenScanIssuesAsync(It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Returns<PipelineJobTemplate, CancellationToken>((_, _) =>
+            {
+                cts.Cancel(); // mark as cancelled BEFORE throwing
+                return Task.FromException<int>(new OperationCanceledException(cts.Token));
+            });
+
+        var sut = CreateSut(new PipelineConfiguration
+        {
+            AutoBrainConsolidationAfterRuns = 0,
+            AutoRefactoringScanAfterClosedIssues = 1,
+        });
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => sut.RunOnceAsync(cts.Token));
+    }
+
+    // ── BackgroundService loop — ExecuteAsync exception handler and graceful-exit ──
+
+    // NOTE: The `if (!await timer.WaitForNextTickAsync(stoppingToken)) break;` path at L61 is not
+    // covered here. PeriodicTimer is sealed and its WaitForNextTickAsync only returns false when
+    // Dispose() is called on the timer while awaiting — a path reachable only from within
+    // ExecuteAsync itself (the timer is a `using var` local). BackgroundService.StopAsync cancels
+    // the stopping token, which throws OperationCanceledException (L65–68), not returns false (L61).
+    //
+    // Covering L61 requires either:
+    //   (a) Making the timer injectable (a production code change), or
+    //   (b) Reflection to access and dispose the private local.
+    //
+    // The issue acceptance criteria prohibit production file changes (AC4). Since AC3 sub-requirement
+    // (cover L61) and AC4 (no production changes) are irreconcilable, L61 remains uncovered.
+    // The equivalent graceful-exit behaviour IS covered via L65–68 by RunOnce_NotLeader_TriggersNothing
+    // and ExecuteAsync_RunOnceThrowsUnexpectedly_LoopContinuesOnNextTick (both call StopAsync, which
+    // exits the loop via the OCE path). A follow-up issue should request extracting PeriodicTimer
+    // creation behind a factory to enable direct L61 coverage.
+
+    [Fact]
+    public async Task ExecuteAsync_RunOnceThrowsUnexpectedly_LoopContinuesOnNextTick()
+    {
+        // Exercises the catch (Exception ex) handler in ExecuteAsync (L82–L85) which logs a warning
+        // and retries on the next tick. If the handler were missing (or used break/return/rethrow),
+        // the service would exit after the first exception and the signal below would never fire.
+        //
+        // Uses BackgroundServiceRunner + CallSignal to avoid timing-based assertions that flake on
+        // resource-limited CI runners.
+        var signal = new CallSignal(count: 1);
+        var firstCall = true;
+
+        _configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(_ =>
+            {
+                if (firstCall)
+                {
+                    firstCall = false;
+                    // First tick: simulate an unexpected error to exercise the catch (Exception) path.
+                    return Task.FromException<PipelineConfiguration>(
+                        new InvalidOperationException("Simulated unexpected error on first tick"));
+                }
+
+                // Subsequent ticks: succeed and signal that the loop continued.
+                signal.Hit();
+                return Task.FromResult(new PipelineConfiguration
+                {
+                    AutoBrainConsolidationAfterRuns = 0,
+                    AutoRefactoringScanAfterClosedIssues = 0,
+                });
+            });
+
+        var sut = new AutoConsolidationService(
+            _consolidation.Object,
+            _staleness.Object,
+            _configStore.Object,
+            _configClient.Object,
+            _leaderGate.Object,
+            _logger.Object,
+            interval: TimeSpan.FromMilliseconds(10));
+
+        await BackgroundServiceRunner.RunUntilAsync(
+            sut,
+            signal.Reached,
+            "ExecuteAsync loop must continue after an unexpected exception — catch (Exception ex) at L82 was probably removed or changed to rethrow");
+
+        // Confirm the loop ran at least twice (once throwing, once succeeding)
+        _configStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
+
+        // Warning was emitted on the throwing tick.
+        // Production call: _logger.Warning(ex, "AutoConsolidationService: unexpected error during tick...")
+        // — no template properties, so this is the non-generic two-arg overload Warning(Exception, string).
+        _logger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()), Times.AtLeastOnce());
+    }
 }

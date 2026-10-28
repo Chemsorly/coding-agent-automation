@@ -1401,10 +1401,26 @@ public sealed class WorkItemEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
-    // TODO: Add a test for POST /{id}/priority with a missing or empty body (i.e. priorityWeight
-    // is null after deserialization, sending `{}` or no body). The production handler returns
-    // 400 "priorityWeight is required." for PriorityWeightRequest.PriorityWeight == null,
-    // but this path is currently untested.
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/priority with body {} (priorityWeight absent/null after
+    /// deserialization) returns 400 with response body containing 'priorityWeight is required.'
+    /// A seeded Pending item is used so the test remains correct even if a future refactor
+    /// moves the existence check before the null-body check.
+    /// </summary>
+    [Fact]
+    public async Task PostPriority_WithNullBody_Returns400WithMessage()
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/priority",
+            new { },
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("priorityWeight is required.");
+    }
 
     /// <summary>
     /// AC: POST /api/work-items/{id}/priority with boundary values 0 and 1000 returns 200.
