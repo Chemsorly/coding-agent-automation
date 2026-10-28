@@ -33,12 +33,27 @@ public static class AgentEntryDtoFactory
             Disabled = entry.Disabled,
             OrphanRestoredAt = entry.OrphanRestoredAt,
             BusySince = entry.BusySince,
-            // Enrichment from active run (null-safe)
+            // Enrichment from active run (null-safe); URLs are scheme-validated to prevent XSS.
             ActiveIssueIdentifier = run?.IssueIdentifier.Value,
             ActiveIssueTitle = run?.IssueTitle,
-            ActiveIssueUrl = run?.IssueUrl,
+            ActiveIssueUrl = ValidateUrl(run?.IssueUrl),
             ActiveRunId = run?.RunId,
-            ActivePullRequestUrl = run?.PullRequestUrl,
+            ActivePullRequestUrl = ValidateUrl(run?.PullRequestUrl),
         };
+    }
+
+    /// <summary>
+    /// Returns <paramref name="url"/> unchanged when its scheme is <c>https</c> or <c>http</c>;
+    /// returns <c>null</c> for any other value (including <c>javascript:</c>, <c>data:</c>,
+    /// relative paths, or null). This prevents XSS via crafted URI schemes when URLs are
+    /// rendered as <c>href</c> attributes in Blazor components.
+    /// </summary>
+    private static string? ValidateUrl(string? url)
+    {
+        if (url is null) return null;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? url
+            : null;
     }
 }
