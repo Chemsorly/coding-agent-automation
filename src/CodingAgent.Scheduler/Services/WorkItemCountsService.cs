@@ -141,7 +141,7 @@ public sealed class WorkItemCountsService : BackgroundService
         {
             var countsTask = apiClient.GetWorkItemCountsAsync(ct);
             var agentsTask = apiClient.GetAgentsAsync(ct);
-            var poolTask   = apiClient.GetCredentialPoolAsync(ct);
+            var poolTask = apiClient.GetCredentialPoolAsync(ct);
 
             // NOTE (issue #3555): The three calls share one Task.WhenAll and one catch block, so a failure of
             // GET /api/agents or GET /api/agents/credential-pool also discards the successfully fetched

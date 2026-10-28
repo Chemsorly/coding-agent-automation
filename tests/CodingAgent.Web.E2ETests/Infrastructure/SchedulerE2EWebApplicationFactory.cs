@@ -223,7 +223,8 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
                 configClient,
                 sp.GetRequiredService<ApiPipelineConfigStore>(),
                 sp.GetRequiredService<ApiProviderConfigStore>(),
-                sp.GetRequiredService<ApiProjectStore>()) { CacheTtlSeconds = 0 });
+                sp.GetRequiredService<ApiProjectStore>())
+            { CacheTtlSeconds = 0 });
             services.RemoveAll<IConfigurationStore>();
             services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
             services.RemoveAll<IQualityGateConfigStore>();
