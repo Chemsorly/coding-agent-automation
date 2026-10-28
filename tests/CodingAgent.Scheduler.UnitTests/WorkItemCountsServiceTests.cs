@@ -4,6 +4,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 using ILogger = Serilog.ILogger;
@@ -59,9 +60,24 @@ public sealed class WorkItemCountsServiceTests : IDisposable
         TotalConnectionsCallbackField.SetValue(null, null);
     }
 
+    /// <summary>
+    /// Builds an <see cref="IServiceScopeFactory"/> backed by a minimal ServiceCollection that
+    /// returns the test mock when <see cref="ISchedulerApiClient"/> is resolved inside a scope.
+    /// </summary>
+    /// <remarks>
+    /// TODO [WARNING]: Singleton registration means a cached-scope regression would not be detected.
+    /// See the same TODO in <c>LoopWatchdogServiceTests.CreateScopeFactory</c> for details.
+    /// </remarks>
+    private IServiceScopeFactory CreateScopeFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_mockClient.Object);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
     private WorkItemCountsService CreatePoller()
         => new WorkItemCountsService(
-            _mockClient.Object,
+            CreateScopeFactory(),
             _mockLeaderGate.Object,
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
@@ -128,7 +144,7 @@ public sealed class WorkItemCountsServiceTests : IDisposable
             .ReturnsAsync(new WorkItemCountsResponseDto([], null));
 
         var poller = new WorkItemCountsService(
-            _mockClient.Object,
+            CreateScopeFactory(),
             leaderGate: null,
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
