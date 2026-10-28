@@ -56,7 +56,7 @@ public static class BrainEvidenceRecorder
 
         // Failed tests: from the Tests gate
         IReadOnlyList<string> failedTests = gate == "Tests"
-            ? (IReadOnlyList<string>)(report.Tests.FailedTestNames ?? [])
+            ? report.Tests.FailedTestNames ?? []
             : evidence.Pending.CiFailedTests.Take(BrainLayout.MaxFailedTestNames).ToList();
 
         var attempt = new BrainEvidenceAttempt(
@@ -163,12 +163,8 @@ public static class BrainEvidenceRecorder
         if (before is null || after is null) return;
 
         var changed = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var kv in before)
-            if (!after.TryGetValue(kv.Key, out var v) || v != kv.Value)
-                changed.Add(kv.Key);
-        foreach (var kv in after)
-            if (!before.ContainsKey(kv.Key))
-                changed.Add(kv.Key);
+        changed.UnionWith(before.Where(kv => !after.TryGetValue(kv.Key, out var v) || v != kv.Value).Select(kv => kv.Key));
+        changed.UnionWith(after.Where(kv => !before.ContainsKey(kv.Key)).Select(kv => kv.Key));
 
         var paths = changed.OrderBy(p => p, StringComparer.Ordinal)
             .Take(BrainLayout.MaxChangedPaths)
@@ -217,35 +213,37 @@ public static class BrainEvidenceRecorder
             int critical = findings.Count(f => f.Severity == FindingSeverity.Critical);
             int warning = findings.Count(f => f.Severity == FindingSeverity.Warning);
             byReviewer[reviewer] = (critical, warning);
-
-            if (topFindings.Count < BrainLayout.MaxFindingLines)
-            {
-                // Add CRITICAL first, then WARNING
-                foreach (var f in findings
-                    .Where(f => f.Severity == FindingSeverity.Critical)
-                    .Take(BrainLayout.MaxFindingLines - topFindings.Count))
-                {
-                    topFindings.Add(FormatFinding("CRITICAL", f));
-                }
-            }
+            AddCriticalFindings(findings, topFindings);
         }
-        // Fill remaining slots with WARNINGs
-        if (topFindings.Count < BrainLayout.MaxFindingLines)
-        {
-            foreach (var (_, text) in run.CodeReviewAgentFindings)
-            {
-                foreach (var f in FindingsParser.Parse(text, "")
-                    .Where(f => f.Severity == FindingSeverity.Warning)
-                    .Take(BrainLayout.MaxFindingLines - topFindings.Count))
-                {
-                    topFindings.Add(FormatFinding("WARNING", f));
-                    if (topFindings.Count >= BrainLayout.MaxFindingLines) break;
-                }
-                if (topFindings.Count >= BrainLayout.MaxFindingLines) break;
-            }
-        }
-
+        AddWarningFindings(run.CodeReviewAgentFindings, topFindings);
         evidence.Review = new BrainEvidenceReview(byReviewer, topFindings);
+    }
+
+    private static void AddCriticalFindings(
+        IReadOnlyList<StructuredFinding> findings,
+        List<string> topFindings)
+    {
+        if (topFindings.Count >= BrainLayout.MaxFindingLines) return;
+        foreach (var f in findings.Where(f => f.Severity == FindingSeverity.Critical))
+        {
+            if (topFindings.Count >= BrainLayout.MaxFindingLines) break;
+            topFindings.Add(FormatFinding("CRITICAL", f));
+        }
+    }
+
+    private static void AddWarningFindings(
+        System.Collections.Concurrent.ConcurrentDictionary<string, string> findingsByReviewer,
+        List<string> topFindings)
+    {
+        foreach (var (_, text) in findingsByReviewer)
+        {
+            if (topFindings.Count >= BrainLayout.MaxFindingLines) break;
+            foreach (var f in FindingsParser.Parse(text, "").Where(f => f.Severity == FindingSeverity.Warning))
+            {
+                if (topFindings.Count >= BrainLayout.MaxFindingLines) break;
+                topFindings.Add(FormatFinding("WARNING", f));
+            }
+        }
     }
 
     private static string FormatFinding(string severity, StructuredFinding f)

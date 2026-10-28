@@ -21,82 +21,31 @@ public static class BrainReviewValidator
 {
     public static BrainReviewValidationResult Validate(BrainReviewValidationInput input)
     {
-        // 1. disallowed_path: any changed path that is not allowed
-        foreach (var change in input.Changes)
+        var result = CheckPaths(input.Changes);
+        if (!result.IsValid) return result;
+
+        result = CheckSkillFiles(input.Changes, input.NewContents, input.GroupRepositoryNames);
+        if (!result.IsValid) return result;
+
+        result = CheckShrink(input.Changes, input.HeadContents, input.NewContents);
+        if (!result.IsValid) return result;
+
+        result = CheckPending(input.Changes, input.NewContents);
+        if (!result.IsValid) return result;
+
+        return CheckSummary(input.SummaryJson);
+    }
+
+    // ── Path check ────────────────────────────────────────────────────
+
+    private static BrainReviewValidationResult CheckPaths(IReadOnlyList<BrainPathChange> changes)
+    {
+        foreach (var change in changes)
         {
-            if (BrainLayout.IsUnderAgentDirectory(change.Path)) continue;
-            if (!IsAllowedChange(change, input.Changes)) 
+            if (!BrainLayout.IsUnderAgentDirectory(change.Path) && !IsAllowedChange(change, changes))
                 return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.DisallowedPath, change.Path);
         }
-
-        // 2. missing_marker, over_budget, invalid_line on changed skill paths
-        foreach (var change in input.Changes)
-        {
-            if (!BrainLayout.IsSkillPath(change.Path)) continue;
-            if (change.Kind == BrainPathChangeKind.Deleted) continue;
-            if (!input.NewContents.TryGetValue(change.Path, out var content) || content is null) continue;
-            var maxLines = BrainLineFormat.MaxLinesFor(change.Path);
-            var check = BrainLineFormat.CheckSkillFile(content, maxLines);
-            if (!check.IsValid)
-                return new BrainReviewValidationResult(false, check.Reason!, change.Path);
-        }
-
-        // 3. shared_line_content: technology and general skill lines must not have repo names, URLs or paths
-        foreach (var change in input.Changes)
-        {
-            if (!BrainLayout.IsSkillPath(change.Path)) continue;
-            if (change.Path.StartsWith("projects/", StringComparison.Ordinal)) continue;
-            if (change.Kind == BrainPathChangeKind.Deleted) continue;
-            if (!input.NewContents.TryGetValue(change.Path, out var content) || content is null) continue;
-            var maxLines = BrainLineFormat.MaxLinesFor(change.Path);
-            var check = BrainLineFormat.CheckSkillFile(content, maxLines);
-            if (!check.IsValid) continue; // already caught above
-            foreach (var sl in check.Lines)
-            {
-                var violation = BrainLineFormat.FindSharedContentViolation(sl.Body, input.GroupRepositoryNames);
-                if (violation is not null)
-                    return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.SharedLineContent, change.Path);
-            }
-        }
-
-        // 4. shrank: a skill file that had at least ShrinkRuleMinLines lost more than half its lines
-        foreach (var change in input.Changes)
-        {
-            if (!BrainLayout.IsSkillPath(change.Path)) continue;
-            var headContent = input.HeadContents.GetValueOrDefault(change.Path);
-            var newContent = change.Kind == BrainPathChangeKind.Deleted ? null
-                : input.NewContents.GetValueOrDefault(change.Path);
-            int before = CountSkillLines(headContent);
-            if (before < BrainLayout.ShrinkRuleMinLines) continue;
-
-            int removed = CountRemovedLines(headContent, newContent);
-            if (removed * 2 > before)
-                return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.Shrank, change.Path);
-        }
-
-        // 5. pending_invalid: review/pending.md marker and line count
-        if (input.Changes.Any(c => c.Path == BrainLayout.PendingPath && c.Kind != BrainPathChangeKind.Deleted))
-        {
-            if (input.NewContents.TryGetValue(BrainLayout.PendingPath, out var pendingContent) && pendingContent is not null)
-            {
-                var pendingLines = pendingContent.Split('\n');
-                var firstLine = pendingLines.Length > 0 ? pendingLines[0].TrimEnd('\r') : "";
-                if (firstLine != BrainLayout.PendingMarker)
-                    return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.PendingInvalid, BrainLayout.PendingPath);
-                int nonBlank = pendingLines.Skip(1).Count(l => !string.IsNullOrWhiteSpace(l.TrimEnd('\r')));
-                if (nonBlank > BrainLayout.PendingMaxLines)
-                    return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.PendingInvalid, BrainLayout.PendingPath);
-            }
-        }
-
-        // 6. summary_missing / summary_invalid
-        if (input.SummaryJson is null)
-            return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.SummaryMissing, null);
-        var parseResult = BrainReviewSummaryParser.Parse(input.SummaryJson);
-        if (parseResult.Error is not null)
-            return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.SummaryInvalid, null);
-
-        return new BrainReviewValidationResult(true, null, null);
+        return Valid;
     }
 
     private static bool IsAllowedChange(BrainPathChange change, IReadOnlyList<BrainPathChange> allChanges)
@@ -104,22 +53,70 @@ public static class BrainReviewValidator
         if (BrainLayout.IsSkillPath(change.Path)) return true;
         if (change.Path == BrainLayout.PendingPath) return true;
         if (change.Path == BrainLayout.ReadmePath) return true;
-        // Inbox deletions allowed
         if (change.Kind == BrainPathChangeKind.Deleted && BrainLayout.IsInboxPath(change.Path)) return true;
-        // Archive move: deletion of non-v2 path + corresponding add under archive/v1/
+        return IsArchiveMovePair(change, allChanges);
+    }
+
+    private static bool IsArchiveMovePair(BrainPathChange change, IReadOnlyList<BrainPathChange> allChanges)
+    {
         if (change.Kind == BrainPathChangeKind.Deleted && !BrainLayout.IsV2Path(change.Path))
         {
             var archivePath = $"{BrainLayout.ArchiveV1Directory}/{change.Path}";
-            if (allChanges.Any(c => c.Path == archivePath && c.Kind == BrainPathChangeKind.Added))
-                return true;
+            return allChanges.Any(c => c.Path == archivePath && c.Kind == BrainPathChangeKind.Added);
         }
         if (change.Kind == BrainPathChangeKind.Added && change.Path.StartsWith($"{BrainLayout.ArchiveV1Directory}/", StringComparison.Ordinal))
         {
             var originalPath = change.Path[($"{BrainLayout.ArchiveV1Directory}/").Length..];
-            if (allChanges.Any(c => c.Path == originalPath && c.Kind == BrainPathChangeKind.Deleted))
-                return true;
+            return allChanges.Any(c => c.Path == originalPath && c.Kind == BrainPathChangeKind.Deleted);
         }
         return false;
+    }
+
+    // ── Skill file checks ─────────────────────────────────────────────
+
+    private static BrainReviewValidationResult CheckSkillFiles(
+        IReadOnlyList<BrainPathChange> changes,
+        IReadOnlyDictionary<string, string?> newContents,
+        IReadOnlyCollection<string> groupRepositoryNames)
+    {
+        foreach (var change in changes)
+        {
+            if (!BrainLayout.IsSkillPath(change.Path) || change.Kind == BrainPathChangeKind.Deleted) continue;
+            if (!newContents.TryGetValue(change.Path, out var content) || content is null) continue;
+
+            var check = BrainLineFormat.CheckSkillFile(content, BrainLineFormat.MaxLinesFor(change.Path));
+            if (!check.IsValid) return new BrainReviewValidationResult(false, check.Reason!, change.Path);
+
+            if (!change.Path.StartsWith("projects/", StringComparison.Ordinal))
+            {
+                foreach (var sl in check.Lines)
+                {
+                    if (BrainLineFormat.FindSharedContentViolation(sl.Body, groupRepositoryNames) is not null)
+                        return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.SharedLineContent, change.Path);
+                }
+            }
+        }
+        return Valid;
+    }
+
+    // ── Shrink check ──────────────────────────────────────────────────
+
+    private static BrainReviewValidationResult CheckShrink(
+        IReadOnlyList<BrainPathChange> changes,
+        IReadOnlyDictionary<string, string?> headContents,
+        IReadOnlyDictionary<string, string?> newContents)
+    {
+        foreach (var change in changes)
+        {
+            if (!BrainLayout.IsSkillPath(change.Path)) continue;
+            var headContent = headContents.GetValueOrDefault(change.Path);
+            var before = CountSkillLines(headContent);
+            if (before < BrainLayout.ShrinkRuleMinLines) continue;
+            var newContent = change.Kind == BrainPathChangeKind.Deleted ? null : newContents.GetValueOrDefault(change.Path);
+            if (CountRemovedLines(headContent, newContent) * 2 > before)
+                return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.Shrank, change.Path);
+        }
+        return Valid;
     }
 
     private static int CountSkillLines(string? content)
@@ -134,16 +131,48 @@ public static class BrainReviewValidator
         if (headContent is null) return 0;
         var headCheck = BrainLineFormat.CheckSkillFile(headContent, int.MaxValue);
         if (!headCheck.IsValid) return 0;
-
         var newBodies = new HashSet<string>(StringComparer.Ordinal);
         if (newContent is not null)
         {
             var newCheck = BrainLineFormat.CheckSkillFile(newContent, int.MaxValue);
             if (newCheck.IsValid)
-                foreach (var sl in newCheck.Lines)
-                    newBodies.Add(sl.Body);
+                foreach (var sl in newCheck.Lines) newBodies.Add(sl.Body);
         }
-
         return headCheck.Lines.Count(sl => !newBodies.Contains(sl.Body));
     }
+
+    // ── Pending check ─────────────────────────────────────────────────
+
+    private static BrainReviewValidationResult CheckPending(
+        IReadOnlyList<BrainPathChange> changes,
+        IReadOnlyDictionary<string, string?> newContents)
+    {
+        if (!changes.Any(c => c.Path == BrainLayout.PendingPath && c.Kind != BrainPathChangeKind.Deleted))
+            return Valid;
+        if (!newContents.TryGetValue(BrainLayout.PendingPath, out var content) || content is null)
+            return Valid;
+
+        var lines = content.Split('\n');
+        var firstLine = lines.Length > 0 ? lines[0].TrimEnd('\r') : "";
+        if (firstLine != BrainLayout.PendingMarker)
+            return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.PendingInvalid, BrainLayout.PendingPath);
+
+        int nonBlank = lines.Skip(1).Count(l => !string.IsNullOrWhiteSpace(l.TrimEnd('\r')));
+        if (nonBlank > BrainLayout.PendingMaxLines)
+            return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.PendingInvalid, BrainLayout.PendingPath);
+
+        return Valid;
+    }
+
+    // ── Summary check ─────────────────────────────────────────────────
+
+    private static BrainReviewValidationResult CheckSummary(string? summaryJson)
+    {
+        if (summaryJson is null) return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.SummaryMissing, null);
+        var parseResult = BrainReviewSummaryParser.Parse(summaryJson);
+        if (parseResult.Error is not null) return new BrainReviewValidationResult(false, BrainReviewRefusalReasons.SummaryInvalid, null);
+        return Valid;
+    }
+
+    private static readonly BrainReviewValidationResult Valid = new(true, null, null);
 }

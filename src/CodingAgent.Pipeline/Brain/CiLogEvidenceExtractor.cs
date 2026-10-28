@@ -33,7 +33,6 @@ public static partial class CiLogEvidenceExtractor
         string? logContent)
     {
         var lines = new List<string>();
-        var testNames = ExtractFailedTestNames(logContent);
         int errorCount = 0;
 
         if (logContent is not null)
@@ -94,14 +93,20 @@ public static partial class CiLogEvidenceExtractor
             var m = TimestampPrefix().Match(line);
             if (m.Success) line = line[m.Length..];
         }
-        catch (RegexMatchTimeoutException) { }
+        catch (RegexMatchTimeoutException)
+        {
+            // Timeout treated as no-match — continue with original line
+        }
 
         try
         {
             var m = ShardPrefix().Match(line);
             if (m.Success) line = line[m.Length..];
         }
-        catch (RegexMatchTimeoutException) { }
+        catch (RegexMatchTimeoutException)
+        {
+            // Timeout treated as no-match — continue with original line
+        }
 
         return line;
     }

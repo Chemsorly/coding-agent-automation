@@ -42,12 +42,6 @@ public sealed record BrainReviewSummaryParseResult(BrainReviewSummary? Summary, 
 /// </summary>
 public static partial class BrainReviewSummaryParser
 {
-    private static readonly JsonSerializerOptions _options = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        AllowTrailingCommas = true
-    };
-
     public static BrainReviewSummaryParseResult Parse(string? json)
     {
         if (json is null)
@@ -83,7 +77,7 @@ public static partial class BrainReviewSummaryParser
         }
     }
 
-    private static IReadOnlyList<BrainReviewSummaryLine> ParseLines(JsonElement root, string key)
+    private static List<BrainReviewSummaryLine> ParseLines(JsonElement root, string key)
     {
         if (!root.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array)
             return [];
@@ -100,7 +94,7 @@ public static partial class BrainReviewSummaryParser
         return result;
     }
 
-    private static IReadOnlyList<BrainReviewSummaryCheck> ParseChecks(JsonElement root)
+    private static List<BrainReviewSummaryCheck> ParseChecks(JsonElement root)
     {
         if (!root.TryGetProperty("checks", out var arr) || arr.ValueKind != JsonValueKind.Array)
             return [];
@@ -116,7 +110,7 @@ public static partial class BrainReviewSummaryParser
         return result;
     }
 
-    private static IReadOnlyList<BrainReviewSummaryFlakyTest> ParseFlakyTests(JsonElement root)
+    private static List<BrainReviewSummaryFlakyTest> ParseFlakyTests(JsonElement root)
     {
         if (!root.TryGetProperty("flakyTests", out var arr) || arr.ValueKind != JsonValueKind.Array)
             return [];
@@ -153,7 +147,7 @@ public static partial class BrainReviewSummaryParser
         return 0;
     }
 
-    private static IReadOnlyList<string> GetStringList(JsonElement el, string key)
+    private static List<string> GetStringList(JsonElement el, string key)
     {
         if (!el.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array)
             return [];

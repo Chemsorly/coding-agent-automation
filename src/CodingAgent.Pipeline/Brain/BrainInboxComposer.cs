@@ -34,119 +34,38 @@ public static class BrainInboxComposer
 {
     private const string ShortenedMarker = "_Evidence shortened to fit 16 KB._";
 
-    /// <summary>
-    /// Validates candidate lines from the agent's output.
-    /// </summary>
-    public static BrainCandidateValidation ValidateCandidates(
-        string? text,
-        IReadOnlyList<string> stackLabels)
-    {
-        if (string.IsNullOrEmpty(text))
-            return new BrainCandidateValidation([], 0);
+    // ── Public API ────────────────────────────────────────────────────
 
+    /// <summary>Validates candidate lines from the agent's output.</summary>
+    public static BrainCandidateValidation ValidateCandidates(string? text, IReadOnlyList<string> stackLabels)
+    {
+        if (string.IsNullOrEmpty(text)) return new BrainCandidateValidation([], 0);
         var kept = new List<string>();
         int dropped = 0;
-        var lines = text.Split('\n');
-        foreach (var rawLine in lines)
+        foreach (var rawLine in text.Split('\n'))
         {
             var line = rawLine.TrimEnd('\r');
             if (string.IsNullOrWhiteSpace(line)) continue;
-            if (kept.Count >= BrainLayout.MaxCandidates)
-            {
-                dropped++;
-                continue;
-            }
-            if (BrainLineFormat.TryParseCandidate(line, stackLabels, out _))
-                kept.Add(line);
-            else
-                dropped++;
+            if (kept.Count >= BrainLayout.MaxCandidates) { dropped++; continue; }
+            if (BrainLineFormat.TryParseCandidate(line, stackLabels, out _)) kept.Add(line);
+            else dropped++;
         }
         return new BrainCandidateValidation(kept, dropped);
     }
 
-    /// <summary>
-    /// Renders the evidence section from a <see cref="BrainEvidence"/> instance.
-    /// </summary>
+    /// <summary>Renders the evidence section.</summary>
     public static string RenderEvidence(BrainEvidence evidence)
     {
         if (evidence.Attempts.Count == 0 && evidence.Review is null && evidence.HumanComments.Count == 0)
             return "No failures, findings or human comments.";
-
         var sb = new StringBuilder();
-        foreach (var attempt in evidence.Attempts)
-        {
-            sb.Append($"### Attempt {attempt.Number} — {attempt.Gate} ({attempt.Classification})");
-            sb.Append('\n');
-            if (attempt.CommitSha is not null)
-            {
-                sb.Append($"- commit: {attempt.CommitSha}");
-                sb.Append('\n');
-            }
-            if (attempt.FailedTests.Count > 0)
-            {
-                sb.Append($"- failed tests: {string.Join(", ", attempt.FailedTests)}");
-                sb.Append('\n');
-            }
-            foreach (var job in attempt.CiJobs)
-            {
-                var stepsText = job.FailedSteps.Count > 0
-                    ? $"; failed steps: {string.Join(", ", job.FailedSteps)}"
-                    : "";
-                sb.Append($"- job {job.Name}{stepsText}");
-                sb.Append('\n');
-                foreach (var line in job.Lines)
-                {
-                    sb.Append($"  - {line}");
-                    sb.Append('\n');
-                }
-            }
-            if (attempt.NoCodeChange == true)
-            {
-                sb.Append("- next attempt changed no code");
-                sb.Append('\n');
-            }
-            else if (attempt.ChangedPaths.Count > 0)
-            {
-                sb.Append($"- next attempt changed: {string.Join(", ", attempt.ChangedPaths)}");
-                sb.Append('\n');
-            }
-        }
-
-        if (evidence.Review is { } review)
-        {
-            sb.Append("### Review findings");
-            sb.Append('\n');
-            var reviewerSummaries = review.ByReviewer
-                .Select(kv => $"{kv.Key}: {kv.Value.Critical} critical, {kv.Value.Warning} warnings");
-            sb.Append($"- {string.Join("; ", reviewerSummaries)}");
-            sb.Append('\n');
-            foreach (var finding in review.TopFindings)
-            {
-                sb.Append($"- {finding}");
-                sb.Append('\n');
-            }
-        }
-
-        if (evidence.HumanComments.Count > 0)
-        {
-            sb.Append("### Human review comments");
-            sb.Append('\n');
-            foreach (var comment in evidence.HumanComments)
-            {
-                var location = comment.FilePath is not null
-                    ? $" on {comment.FilePath}" + (comment.Line.HasValue ? $":{comment.Line}" : "")
-                    : "";
-                sb.Append($"- {comment.Author}{location} ({comment.CreatedAt:yyyy-MM-dd}): {comment.Excerpt}");
-                sb.Append('\n');
-            }
-        }
-
+        RenderAttempts(sb, evidence.Attempts);
+        RenderReview(sb, evidence.Review);
+        RenderHumanComments(sb, evidence.HumanComments);
         return sb.ToString().TrimEnd('\n');
     }
 
-    /// <summary>
-    /// Composes and masks the full inbox file text.
-    /// </summary>
+    /// <summary>Composes and masks the full inbox file text.</summary>
     public static BrainInboxComposition Compose(
         BrainInboxHeader header,
         string? candidatesText,
@@ -154,48 +73,45 @@ public static class BrainInboxComposer
         string? existingText,
         IReadOnlyCollection<KeyValuePair<string, string>> secrets)
     {
-        // 1. Validate candidates (or recover them from existing text)
-        var candidateValidation = ValidateCandidates(candidatesText, header.StackLabels);
-        IReadOnlyList<string> keptCandidates = candidateValidation.Kept;
-        int droppedCandidates = candidateValidation.Dropped;
-
-        // If candidatesText is null but existingText has candidates, recover them
-        if (candidatesText is null && existingText is not null)
-        {
-            var recoveredCandidates = ExtractCandidatesFromExisting(existingText, header.StackLabels);
-            keptCandidates = recoveredCandidates.Kept;
-            droppedCandidates = recoveredCandidates.Dropped;
-        }
-
-        // 2. Build the evidence list — may be shortened later
+        var (keptCandidates, droppedCandidates) = ResolveCandidates(candidatesText, existingText, header.StackLabels);
         var attempts = new List<BrainEvidenceAttempt>(evidence.Attempts);
         bool shortened = false;
 
-        // 3. Render, mask and size-check; drop oldest attempts when over budget
         string text;
         while (true)
         {
-            text = RenderFull(header, keptCandidates, attempts, evidence, shortened);
-            text = SecretMasker.Mask(text, secrets);
+            text = SecretMasker.Mask(RenderFull(header, keptCandidates, attempts, evidence, shortened), secrets);
             if (Encoding.UTF8.GetByteCount(text) <= BrainLayout.MaxInboxBytes) break;
             if (attempts.Count <= 2)
             {
-                // Drop human comments, then review section
-                var evidenceWithoutComments = new BrainEvidence();
-                foreach (var a in attempts) evidenceWithoutComments.Attempts.Add(a);
-                evidenceWithoutComments.PostPr = evidence.PostPr;
-                // Don't copy HumanComments or Review
-                text = RenderFull(header, keptCandidates, attempts, evidenceWithoutComments, true);
-                text = SecretMasker.Mask(text, secrets);
+                text = SecretMasker.Mask(RenderFull(header, keptCandidates, attempts, new BrainEvidence { PostPr = evidence.PostPr }, true), secrets);
                 shortened = true;
                 break;
             }
-            // Drop the oldest attempt that is neither first nor newest
             attempts.RemoveAt(1);
             shortened = true;
         }
-
         return new BrainInboxComposition(text, keptCandidates, droppedCandidates, evidence.Attempts.Count, shortened);
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────
+
+    private static (IReadOnlyList<string> kept, int dropped) ResolveCandidates(
+        string? candidatesText,
+        string? existingText,
+        IReadOnlyList<string> stackLabels)
+    {
+        if (candidatesText is not null)
+        {
+            var v = ValidateCandidates(candidatesText, stackLabels);
+            return (v.Kept, v.Dropped);
+        }
+        if (existingText is not null)
+        {
+            var v = ExtractCandidatesFromExisting(existingText, stackLabels);
+            return (v.Kept, v.Dropped);
+        }
+        return ([], 0);
     }
 
     private static string RenderFull(
@@ -206,112 +122,102 @@ public static class BrainInboxComposer
         bool shortened)
     {
         var sb = new StringBuilder();
-
-        // Marker
-        sb.Append(BrainLayout.InboxMarker);
+        AppendHeader(sb, header);
+        AppendCandidates(sb, candidates);
+        sb.Append("\n## Evidence\n");
+        var forRender = BuildEvidenceForRender(evidence, attempts);
+        sb.Append(RenderEvidence(forRender));
         sb.Append('\n');
-
-        // Title
-        sb.Append($"# Run {header.RunId}");
-        sb.Append('\n');
-
-        // Header fields
-        sb.Append($"- run type: {header.RunType}");
-        sb.Append('\n');
-        sb.Append($"- outcome: {header.Outcome}");
-        sb.Append('\n');
-        sb.Append($"- repository: {header.RepositoryFullName}");
-        sb.Append('\n');
-        if (header.ProjectName is not null)
-        {
-            sb.Append($"- project: {header.ProjectName}");
-            sb.Append('\n');
-        }
-        var labelsText = header.StackLabels.Count > 0
-            ? string.Join(", ", header.StackLabels)
-            : "none";
-        sb.Append($"- stack labels: {labelsText}");
-        sb.Append('\n');
-        sb.Append($"- issue: {header.Issue}");
-        sb.Append('\n');
-        if (header.PullRequestUrl is not null)
-        {
-            sb.Append($"- pull request: {header.PullRequestUrl}");
-            sb.Append('\n');
-        }
-        if (header.SkillsCommit is not null && header.SkillsFiles.Count > 0)
-        {
-            sb.Append($"- skills injected from: {header.SkillsCommit} ({string.Join(", ", header.SkillsFiles)})");
-        }
-        else
-        {
-            sb.Append("- skills injected from: none");
-        }
-        sb.Append('\n');
-
-        // Candidates section (omit for drafts unless recovered from existing text)
-        if (candidates.Count > 0)
-        {
-            sb.Append('\n');
-            sb.Append("## Candidates");
-            sb.Append('\n');
-            foreach (var c in candidates)
-            {
-                sb.Append(c);
-                sb.Append('\n');
-            }
-        }
-
-        // Evidence section using a temporary evidence with possibly truncated attempts
-        var evidenceForRender = BuildEvidenceForRender(evidence, attempts);
-        sb.Append('\n');
-        sb.Append("## Evidence");
-        sb.Append('\n');
-        sb.Append(RenderEvidence(evidenceForRender));
-        sb.Append('\n');
-
-        if (shortened)
-        {
-            sb.Append(ShortenedMarker);
-            sb.Append('\n');
-        }
-
+        if (shortened) sb.Append($"{ShortenedMarker}\n");
         return sb.ToString();
+    }
+
+    private static void AppendHeader(StringBuilder sb, BrainInboxHeader h)
+    {
+        sb.Append($"{BrainLayout.InboxMarker}\n# Run {h.RunId}\n");
+        sb.Append($"- run type: {h.RunType}\n");
+        sb.Append($"- outcome: {h.Outcome}\n");
+        sb.Append($"- repository: {h.RepositoryFullName}\n");
+        if (h.ProjectName is not null) sb.Append($"- project: {h.ProjectName}\n");
+        sb.Append($"- stack labels: {(h.StackLabels.Count > 0 ? string.Join(", ", h.StackLabels) : "none")}\n");
+        sb.Append($"- issue: {h.Issue}\n");
+        if (h.PullRequestUrl is not null) sb.Append($"- pull request: {h.PullRequestUrl}\n");
+        var skills = h.SkillsCommit is not null && h.SkillsFiles.Count > 0
+            ? $"{h.SkillsCommit} ({string.Join(", ", h.SkillsFiles)})" : "none";
+        sb.Append($"- skills injected from: {skills}\n");
+    }
+
+    private static void AppendCandidates(StringBuilder sb, IReadOnlyList<string> candidates)
+    {
+        if (candidates.Count == 0) return;
+        sb.Append("\n## Candidates\n");
+        foreach (var c in candidates) sb.Append($"{c}\n");
+    }
+
+    private static void RenderAttempts(StringBuilder sb, IReadOnlyList<BrainEvidenceAttempt> attempts)
+    {
+        foreach (var a in attempts)
+        {
+            sb.Append($"### Attempt {a.Number} — {a.Gate} ({a.Classification})\n");
+            if (a.CommitSha is not null) sb.Append($"- commit: {a.CommitSha}\n");
+            if (a.FailedTests.Count > 0) sb.Append($"- failed tests: {string.Join(", ", a.FailedTests)}\n");
+            foreach (var job in a.CiJobs)
+            {
+                var steps = job.FailedSteps.Count > 0 ? $"; failed steps: {string.Join(", ", job.FailedSteps)}" : "";
+                sb.Append($"- job {job.Name}{steps}\n");
+                foreach (var l in job.Lines) sb.Append($"  - {l}\n");
+            }
+            if (a.NoCodeChange == true) sb.Append("- next attempt changed no code\n");
+            else if (a.ChangedPaths.Count > 0) sb.Append($"- next attempt changed: {string.Join(", ", a.ChangedPaths)}\n");
+        }
+    }
+
+    private static void RenderReview(StringBuilder sb, BrainEvidenceReview? review)
+    {
+        if (review is null) return;
+        sb.Append("### Review findings\n");
+        sb.Append($"- {string.Join("; ", review.ByReviewer.Select(kv => $"{kv.Key}: {kv.Value.Critical} critical, {kv.Value.Warning} warnings"))}\n");
+        foreach (var f in review.TopFindings) sb.Append($"- {f}\n");
+    }
+
+    private static void RenderHumanComments(StringBuilder sb, IReadOnlyList<BrainEvidenceComment> comments)
+    {
+        if (comments.Count == 0) return;
+        sb.Append("### Human review comments\n");
+        foreach (var c in comments)
+        {
+            var lineNum = c.Line.HasValue ? $":{c.Line}" : "";
+            var loc = c.FilePath is not null ? $" on {c.FilePath}{lineNum}" : "";
+            sb.Append($"- {c.Author}{loc} ({c.CreatedAt:yyyy-MM-dd}): {c.Excerpt}\n");
+        }
     }
 
     private static BrainEvidence BuildEvidenceForRender(BrainEvidence source, List<BrainEvidenceAttempt> attempts)
     {
-        var e = new BrainEvidence();
+        var e = new BrainEvidence { PostPr = source.PostPr };
         foreach (var a in attempts) e.Attempts.Add(a);
         e.Review = source.Review;
         foreach (var c in source.HumanComments) e.HumanComments.Add(c);
-        e.PostPr = source.PostPr;
         return e;
     }
 
     private static BrainCandidateValidation ExtractCandidatesFromExisting(
-        string existingText,
-        IReadOnlyList<string> stackLabels)
+        string existingText, IReadOnlyList<string> stackLabels)
     {
         const string sectionHeader = "## Candidates";
-        var lines = existingText.Split('\n');
         bool inSection = false;
         var kept = new List<string>();
         int dropped = 0;
-        foreach (var rawLine in lines)
+        foreach (var rawLine in existingText.Split('\n'))
         {
             var line = rawLine.TrimEnd('\r');
             if (line == sectionHeader) { inSection = true; continue; }
-            if (inSection)
-            {
-                if (line.StartsWith("## ", StringComparison.Ordinal)) break;
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                if (kept.Count >= BrainLayout.MaxCandidates) { dropped++; continue; }
-                if (BrainLineFormat.TryParseCandidate(line, stackLabels, out _))
-                    kept.Add(line);
-                else
-                    dropped++;
-            }
+            if (!inSection) continue;
+            if (line.StartsWith("## ", StringComparison.Ordinal)) break;
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (kept.Count >= BrainLayout.MaxCandidates) { dropped++; continue; }
+            if (BrainLineFormat.TryParseCandidate(line, stackLabels, out _)) kept.Add(line);
+            else dropped++;
         }
         return new BrainCandidateValidation(kept, dropped);
     }

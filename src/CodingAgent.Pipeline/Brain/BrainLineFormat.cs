@@ -8,6 +8,10 @@ namespace CodingAgent.Pipeline.Brain;
 /// </summary>
 public static partial class BrainLineFormat
 {
+    private const string ReasonInvalidLine = "invalid_line";
+    private const string ReasonMissingMarker = "missing_marker";
+    private const string ReasonOverBudget = "over_budget";
+
     // ── Skill line ────────────────────────────────────────────────────
     //   - [<tag>] For <situation>, <what to do> (<refs>)[. missed again <refs>]
     [GeneratedRegex(
@@ -26,16 +30,7 @@ public static partial class BrainLineFormat
     [GeneratedRegex(@"https?://", RegexOptions.None, matchTimeoutMilliseconds: 100)]
     private static partial Regex UrlPattern();
 
-    // A path: token containing / and ending in a known extension, OR token with two or more /
-    // Trailing punctuation stripped before check (D23).
-    [GeneratedRegex(
-        @"(?<=\s|^)(?<tok>[^\s]+?)(?=[.,;:)\s]|$)",
-        RegexOptions.None, matchTimeoutMilliseconds: 100)]
-    private static partial Regex TokenPattern();
-
-    [GeneratedRegex(
-        @"\.[a-z]+$",
-        RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"\.[a-z]+$", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
     private static partial Regex FileExtPattern();
 
     // ── Public API ────────────────────────────────────────────────────
@@ -85,21 +80,35 @@ public static partial class BrainLineFormat
     }
 
     /// <summary>
-    /// Checks a whole skill file for structural validity. Returns a result with IsValid = false
-    /// and a reason when invalid.
+    /// Checks a whole skill file for structural validity.
     /// </summary>
     public static BrainSkillFileCheck CheckSkillFile(string content, int maxLines)
     {
-        var lines = content.Split('\n');
-        // Normalise CRLF
-        lines = lines.Select(l => l.TrimEnd('\r')).ToArray();
+        var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
 
         if (lines.Length == 0 || lines[0].TrimEnd() != BrainLayout.SkillMarker)
-            return new BrainSkillFileCheck(false, "missing_marker", null, []);
+            return new BrainSkillFileCheck(false, ReasonMissingMarker, null, []);
 
+        var result = ParseSkillFileBody(lines);
+        if (!result.IsValid) return result;
+
+        var skillLines = result.Lines;
+        var title = result.Title;
+
+        if (skillLines.Count > maxLines)
+            return new BrainSkillFileCheck(false, ReasonOverBudget, title, skillLines);
+
+        if (System.Text.Encoding.UTF8.GetByteCount(content) > BrainLayout.MaxSkillFileBytes)
+            return new BrainSkillFileCheck(false, ReasonOverBudget, title, skillLines);
+
+        return new BrainSkillFileCheck(true, null, title, skillLines);
+    }
+
+    private static BrainSkillFileCheck ParseSkillFileBody(string[] lines)
+    {
         string? title = null;
         bool seenH2 = false;
-        bool mostMissedFirst = true; // only the first ## is allowed to be Most missed
+        bool mostMissedFirst = true;
         bool seenNonMostMissedH2 = false;
         var skillLines = new List<BrainSkillLine>();
 
@@ -111,22 +120,17 @@ public static partial class BrainLineFormat
             if (l.StartsWith("## ", StringComparison.Ordinal))
             {
                 seenH2 = true;
-                if (l == "## Most missed")
-                {
-                    if (seenNonMostMissedH2)
-                        mostMissedFirst = false;
-                }
-                else
-                {
+                if (l == "## Most missed" && seenNonMostMissedH2)
+                    mostMissedFirst = false;
+                else if (l != "## Most missed")
                     seenNonMostMissedH2 = true;
-                }
                 continue;
             }
 
             if (l.StartsWith("# ", StringComparison.Ordinal))
             {
                 if (title is not null || seenH2)
-                    return new BrainSkillFileCheck(false, "invalid_line", null, []);
+                    return new BrainSkillFileCheck(false, ReasonInvalidLine, null, []);
                 title = l[2..];
                 continue;
             }
@@ -134,24 +138,16 @@ public static partial class BrainLineFormat
             if (l.StartsWith("- ", StringComparison.Ordinal))
             {
                 if (!TryParseSkillLine(l, out var sl))
-                    return new BrainSkillFileCheck(false, "invalid_line", null, []);
+                    return new BrainSkillFileCheck(false, ReasonInvalidLine, null, []);
                 skillLines.Add(sl);
                 continue;
             }
 
-            // Any other non-blank content is invalid
-            return new BrainSkillFileCheck(false, "invalid_line", null, []);
+            return new BrainSkillFileCheck(false, ReasonInvalidLine, null, []);
         }
 
         if (!mostMissedFirst)
-            return new BrainSkillFileCheck(false, "invalid_line", null, []);
-
-        if (skillLines.Count > maxLines)
-            return new BrainSkillFileCheck(false, "over_budget", title, skillLines);
-
-        var bytes = System.Text.Encoding.UTF8.GetByteCount(content);
-        if (bytes > BrainLayout.MaxSkillFileBytes)
-            return new BrainSkillFileCheck(false, "over_budget", title, skillLines);
+            return new BrainSkillFileCheck(false, ReasonInvalidLine, null, []);
 
         return new BrainSkillFileCheck(true, null, title, skillLines);
     }
@@ -167,56 +163,61 @@ public static partial class BrainLineFormat
     };
 
     /// <summary>
-    /// Checks body text (before refs) for shared content: URL, path or repository name.
+    /// Checks body text for shared content violations: URL, path, or repository name.
     /// Returns the violation kind or null when clean. (Req 6.4, D23)
     /// </summary>
     public static string? FindSharedContentViolation(string body, IReadOnlyCollection<string> repositoryNames)
     {
-        // URL check
-        try
-        {
-            if (UrlPattern().IsMatch(body)) return "url";
-        }
-        catch (RegexMatchTimeoutException) { }
+        if (ContainsUrl(body)) return "url";
+        if (ContainsPath(body)) return "path";
+        if (ContainsRepositoryName(body, repositoryNames)) return "repository";
+        return null;
+    }
 
-        // Path check: whitespace-delimited tokens, strip trailing .,;:)
+    private static bool ContainsUrl(string body)
+    {
+        try { return UrlPattern().IsMatch(body); }
+        catch (RegexMatchTimeoutException) { return false; } // Timeout → no match
+    }
+
+    private static bool ContainsPath(string body)
+    {
         foreach (var token in body.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
         {
-            var t = token.TrimEnd('.', ',', ';', ':', ')');
-            if (IsPathToken(t)) return "path";
+            if (IsPathToken(token.TrimEnd('.', ',', ';', ':', ')')))
+                return true;
         }
+        return false;
+    }
 
-        // Repository name check
+    private static bool ContainsRepositoryName(string body, IReadOnlyCollection<string> repositoryNames)
+    {
         foreach (var name in repositoryNames)
         {
             if (string.IsNullOrEmpty(name)) continue;
-            // Use full name (owner/repo) or short name (last segment)
-            var shortName = name.Contains('/') ? name.Split('/').Last() : name;
+            var shortName = name.Contains('/') ? name.Split('/')[^1] : name;
             if (shortName.Length < BrainLayout.MinCheckedRepositoryNameLength) continue;
-            // Build regex for whole-word, case-insensitive match
-            var pattern = $@"(?<![\\w-]){Regex.Escape(shortName)}(?![\\w-])";
-            try
-            {
-                if (Regex.IsMatch(body, pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100)))
-                    return "repository";
-            }
-            catch (RegexMatchTimeoutException) { }
+            if (IsWholeWordMatch(body, shortName)) return true;
         }
+        return false;
+    }
 
-        return null;
+    private static bool IsWholeWordMatch(string body, string term)
+    {
+        var pattern = $@"(?<![\\w-]){Regex.Escape(term)}(?![\\w-])";
+        try
+        {
+            return Regex.IsMatch(body, pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100));
+        }
+        catch (RegexMatchTimeoutException) { return false; } // Timeout → no match
     }
 
     private static bool IsPathToken(string token)
     {
         if (!token.Contains('/')) return false;
-        var slashes = token.Count(c => c == '/');
-        if (slashes >= 2) return true;
-        // One slash + ends in a file extension
-        try
-        {
-            return FileExtPattern().IsMatch(token);
-        }
-        catch (RegexMatchTimeoutException) { return false; }
+        if (token.Count(c => c == '/') >= 2) return true;
+        try { return FileExtPattern().IsMatch(token); }
+        catch (RegexMatchTimeoutException) { return false; } // Timeout → no match
     }
 }
 

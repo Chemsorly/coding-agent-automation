@@ -69,8 +69,9 @@ public class BrainLineFormatTests
     {
         var line = "- [2+] For " + new string('a', 50_000) + ", something (#1).";
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        BrainLineFormat.TryParseSkillLine(line, out _);
+        var result = BrainLineFormat.TryParseSkillLine(line, out _);
         sw.Stop();
+        result.Should().BeFalse();
         sw.ElapsedMilliseconds.Should().BeLessThan(500);
     }
 

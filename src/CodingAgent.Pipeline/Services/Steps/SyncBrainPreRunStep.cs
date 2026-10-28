@@ -93,7 +93,7 @@ public sealed class SyncBrainPreRunStep : IPipelineStep
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    context.Logger.Warning("Pipeline {RunId} could not read brain skill file {SkillFile}: {Error}",
+                    context.Logger.Warning(ex, "Pipeline {RunId} could not read brain skill file {SkillFile}: {Error}",
                         run.RunId, rel, ex.Message);
                 }
             }
@@ -109,7 +109,7 @@ public sealed class SyncBrainPreRunStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            context.Logger.Warning("Pipeline {RunId} could not read brain commit SHA: {Error}", run.RunId, ex.Message);
+            context.Logger.Warning(ex, "Pipeline {RunId} could not read brain commit SHA: {Error}", run.RunId, ex.Message);
         }
 
         run.BrainSkillsResult = assembly.Result;

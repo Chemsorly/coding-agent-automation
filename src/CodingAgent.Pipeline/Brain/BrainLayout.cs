@@ -68,11 +68,8 @@ public static class BrainLayout
         if (string.IsNullOrEmpty(label))
             return null;
         var lower = label.ToLowerInvariant();
-        foreach (var ch in lower)
-        {
-            if (!char.IsAsciiLetterOrDigit(ch) && ch != '.' && ch != '_' && ch != '-')
-                return null;
-        }
+        if (lower.Any(ch => !char.IsAsciiLetterOrDigit(ch) && ch != '.' && ch != '_' && ch != '-'))
+            return null;
         return $"technology/{lower}/SKILL.md";
     }
 
