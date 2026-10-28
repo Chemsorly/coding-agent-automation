@@ -316,6 +316,15 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
         => _historyService.GetRunHistoryAsync(ct);
 
+    /// <inheritdoc />
+    public Task<PipelineRunSummary?> GetRunSummaryAsync(string runId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!Guid.TryParse(runId, out var id))
+            return Task.FromResult<PipelineRunSummary?>(null);
+        return _historyService.GetRunAsync(id, ct);
+    }
+
     // ── Issue provider operations ───────────────────────────────────────
 
     /// <inheritdoc />

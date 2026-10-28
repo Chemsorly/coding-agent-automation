@@ -44,7 +44,8 @@ public sealed class WorkItemStatusTransitionServiceTests
         DbContextOptions<PipelineDbContext> opts,
         WorkItemStatus status,
         DateTimeOffset? completedAt = null,
-        FailureReason? failureReason = null)
+        FailureReason? failureReason = null,
+        WorkItemTaskType taskType = WorkItemTaskType.Implementation)
     {
         var item = new WorkItemEntity
         {
@@ -52,7 +53,7 @@ public sealed class WorkItemStatusTransitionServiceTests
             IssueIdentifier = $"org/repo#{Guid.NewGuid():N}",
             IssueProviderConfigId = "ip-1",
             Status = status,
-            TaskType = WorkItemTaskType.Implementation,
+            TaskType = taskType,
             CreatedAt = DateTimeOffset.UtcNow,
             CompletedAt = completedAt,
             FailureReason = failureReason,
@@ -168,6 +169,34 @@ public sealed class WorkItemStatusTransitionServiceTests
         // Assert
         outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget,
             "pre-read guard returns AlreadyAtTarget for incoming terminal on already-Succeeded item");
+        lifecycleManager.VerifyNoOtherCalls();
+    }
+
+    // ── AlreadyAtTarget via TransitionDetailedAsync (Issue #3975) ────────────────
+
+    [Fact]
+    public async Task TransitionAsync_Running_AlreadyRunning_ReturnsAlreadyAtTarget_NoLifecycleCalls()
+    {
+        // Arrange: Pending item receiving Pending status.
+        // Running→Running is intercepted by TryRecoverFromInfrastructureFailureAsync which
+        // returns true (idempotent) for an already-Running item, bypassing TransitionDetailedAsync.
+        // Pending is non-terminal and not subject to the infra-recovery guard, so
+        // TransitionDetailedAsync(Pending→Pending) is called; it returns AlreadyAtTarget at the
+        // same-status check (item.Status == target) → L171 fires.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var svc = CreateService(opts, lifecycleManager.Object);
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Pending };
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None);
+
+        // Assert
+        outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget,
+            "TransitionDetailedAsync returns AlreadyAtTarget for a same-status Pending→Pending " +
+            "transition; L171 must be reached on this path");
         lifecycleManager.VerifyNoOtherCalls();
     }
 
@@ -780,6 +809,142 @@ public sealed class WorkItemStatusTransitionServiceTests
         lifecycleManager.VerifyNoOtherCalls();
     }
 
+    // ── Telemetry exception catches (Issue #3975) ─────────────────────────────
+
+    [Fact]
+    public async Task TransitionAsync_TerminalStatus_TelemetryDbFactoryThrows_ExceptionNotPropagated()
+    {
+        // Arrange: Running item transitioning to Succeeded.
+        // ThrowingDbContextFactory is injected as _dbFactory — the factory distinct from the
+        // one used by WorkItemTransitionService. ResolveRunContextAsync calls
+        // dbFactory.CreateDbContextAsync, which throws, triggering the catch block at L299–L303
+        // inside EmitTerminalStatusTelemetryAsync. The catch must swallow the exception.
+        // awaitTelemetry: true is required so the fire-and-forget task completes before the
+        // assertion; without it the test finishes before the catch block is exercised.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
+        var svc = new WorkItemStatusTransitionService(
+            CreateTransitionService(opts),
+            lifecycleManager,
+            NullLogger<WorkItemStatusTransitionService>.Instance,
+            new ThrowingDbContextFactory());
+
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded };
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None, awaitTelemetry: true);
+
+        // Assert — if the catch at L299–L303 failed to swallow the exception it would surface here
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned,
+            "exception inside EmitTerminalStatusTelemetryAsync must be caught at L299–L303 " +
+            "and must not propagate to the caller");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_AlreadyTerminal_NonConsolidationRunType_WithPhaseBreakdown_ReturnsAlreadyAtTarget()
+    {
+        // Arrange: already-Cancelled item with TaskType=Implementation (explicit, not relying on
+        // SeedWorkItemAsync default so the test documents its own invariant).
+        // A Failed request with PhaseBreakdown triggers the pre-read guard → AlreadyAtTarget.
+        // EmitConsolidationUsageTelemetryAsync is started; inside it ResolveRunContextAsync
+        // resolves runTypeTag="implementation" (TaskType→ToDefaultRunTypeOrNull()→"implementation"),
+        // which is not "consolidation" → the early return at L321 fires.
+        // The MeterListener verifies the behavioral effect of L321: RecordRunUsageMetrics must NOT
+        // be called, so no pipeline.run.tokens measurement is emitted for a non-Consolidation type.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Cancelled,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            taskType: WorkItemTaskType.Implementation);
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new PhaseUsagePayload { Tokens = 500 }
+            }
+        };
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            Result = JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default)
+        };
+
+        // Listen for pipeline.run.tokens — must remain empty if L321 early return fires
+        var tokenMeasurements = new System.Collections.Concurrent.ConcurrentBag<long>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.tokens")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) => tokenMeasurements.Add(value));
+        listener.Start();
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var svc = CreateService(opts, lifecycleManager.Object);
+
+        // Act — awaitTelemetry: true waits for EmitConsolidationUsageTelemetryAsync to complete
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None, awaitTelemetry: true);
+
+        // Assert
+        outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget,
+            "pre-read guard must fire for a terminal request on an already-Cancelled item; " +
+            "EmitConsolidationUsageTelemetryAsync must return early at L321 for a non-Consolidation run type");
+        lifecycleManager.VerifyNoOtherCalls();
+        tokenMeasurements.Should().BeEmpty(
+            "L321 early return must prevent RecordRunUsageMetrics from emitting pipeline.run.tokens " +
+            "for a non-Consolidation run type; if this fails, the guard at L321 was removed or bypassed");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_AlreadyTerminal_ConsolidationTelemetryDbFactoryThrows_ExceptionNotPropagated()
+    {
+        // Arrange: same pre-read guard entry condition as the NonConsolidationRunType test, but
+        // ThrowingDbContextFactory is injected as _dbFactory so ResolveRunContextAsync throws
+        // inside the try block of EmitConsolidationUsageTelemetryAsync → L331–L335 catch fires.
+        // PhaseBreakdown must be non-empty to get past the first early-return inside that method;
+        // if it were empty the try block exits before ResolveRunContextAsync is called.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Cancelled,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new PhaseUsagePayload { Tokens = 500 }
+            }
+        };
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            Result = JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default)
+        };
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var svc = new WorkItemStatusTransitionService(
+            CreateTransitionService(opts),
+            lifecycleManager.Object,
+            NullLogger<WorkItemStatusTransitionService>.Instance,
+            new ThrowingDbContextFactory());
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None, awaitTelemetry: true);
+
+        // Assert — exception from ResolveRunContextAsync must be caught at L331–L335
+        outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget,
+            "exception inside EmitConsolidationUsageTelemetryAsync must be caught at L331–L335 " +
+            "and must not propagate to the caller");
+        lifecycleManager.VerifyNoOtherCalls();
+    }
+
     // ── pipeline.run.outcomes tests (Issue #2967) ──────────────────────────────
 
     [Fact]
@@ -1011,6 +1176,77 @@ public sealed class WorkItemStatusTransitionServiceTests
             "pipeline.run.outcomes must NOT be recorded for an AlreadyAtTarget no-op");
     }
 
+    // ── FailureCategory IsDefined null-assignment (Issue #3975) ───────────────
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithOutOfRangeNumericFailureCategoryInPayload_RecordsFallbackFailureReasonNone()
+    {
+        // Arrange: hand-crafted camelCase JSON with "failureCategory":99.
+        // PipelineJsonOptions.Default uses JsonNamingPolicy.CamelCase (no PropertyNameCaseInsensitive),
+        // so property keys must be camelCase. PascalCase keys would miss the [required] FinalStep
+        // property, causing JsonException and routing control to the catch block before L500.
+        //
+        // With camelCase: JsonStringEnumConverter (allowIntegerValues=true default) deserializes
+        // "failureCategory":99 as (FailureReason)99. The IsDefined guard at L500 then nulls it out.
+        // DeriveOutcome(Failed, payload, null) → ("failed", "none"), not ("failed", "99").
+        const string resultJson =
+            """{"finalStep":"Failed","completedAt":"2026-01-01T00:00:00+00:00","failureCategory":99}""";
+
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var dbFactory = CreateDbFactory(opts);
+
+        var outcomeRecordings = new System.Collections.Concurrent.ConcurrentBag<(string Outcome, string FailureReason)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return;
+            string outcome = "", failureReason = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome") outcome = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "failure_reason") failureReason = tag.Value?.ToString() ?? "";
+            }
+            outcomeRecordings.Add((outcome, failureReason));
+        });
+        listener.Start();
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunWithLabelAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>(),
+                It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var svc = new WorkItemStatusTransitionService(
+            CreateTransitionService(opts), lifecycleManager.Object,
+            NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
+
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, Result = resultJson };
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None, awaitTelemetry: true);
+
+        // Assert
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        outcomeRecordings.Should().Contain(r => r.Outcome == "failed" && r.FailureReason == "none",
+            "IsDefined guard at L500 must null out the undefined (FailureReason)99; " +
+            "DeriveOutcome must produce failure_reason='none', not '99' or any numeric string");
+        outcomeRecordings.Should().NotContain(r => r.FailureReason == "99",
+            "the IsDefined guard must prevent an undefined numeric FailureCategory from " +
+            "becoming a metric tag value");
+    }
+
     // ── ParseFailureReason and SanitizePodLogTail (Issue #3588) ───────────────
 
     // TODO: [WARNING] Neither Failed_WithTimeoutReason_PassesTimeoutCategory nor
@@ -1120,11 +1356,11 @@ public sealed class WorkItemStatusTransitionServiceTests
         var result = WorkItemStatusTransitionService.SanitizePodLogTail(lines);
 
         result.Should().NotBeNull();
-        result![0].Should().Be("GITHUB_TOKEN=***",      "token=value pattern must be masked");
-        result[1].Should().Be("Authorization: ***",     "Authorization: Bearer must be masked");
-        result[2].Should().Be("api-key: ***",           "api-key: value pattern must be masked");
-        result[3].Should().Be("sending Bearer ***",     "standalone Bearer token must be masked");
-        result[4].Should().Be("tokens used: 1200",      "keyword must be followed by separator to match");
+        result![0].Should().Be("GITHUB_TOKEN=***", "token=value pattern must be masked");
+        result[1].Should().Be("Authorization: ***", "Authorization: Bearer must be masked");
+        result[2].Should().Be("api-key: ***", "api-key: value pattern must be masked");
+        result[3].Should().Be("sending Bearer ***", "standalone Bearer token must be masked");
+        result[4].Should().Be("tokens used: 1200", "keyword must be followed by separator to match");
     }
 
     // ── RegexMatchTimeoutException paths (Issue #3941) ────────────────────────
@@ -1303,5 +1539,22 @@ public sealed class WorkItemStatusTransitionServiceTests
         public PipelineDbContext CreateDbContext() => new TestPipelineDbContext(_opts);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
             => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// A factory that always throws <see cref="InvalidOperationException"/> from
+    /// <see cref="CreateDbContextAsync"/>. Injected as <c>_dbFactory</c> into
+    /// <see cref="WorkItemStatusTransitionService"/> to exercise the telemetry exception catches
+    /// at L299–L303 (EmitTerminalStatusTelemetryAsync) and L331–L335
+    /// (EmitConsolidationUsageTelemetryAsync) without affecting the transition service's own factory.
+    /// </summary>
+    private sealed class ThrowingDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        public PipelineDbContext CreateDbContext()
+            => throw new InvalidOperationException("Simulated DB failure for telemetry coverage test");
+
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+            => Task.FromException<PipelineDbContext>(
+                new InvalidOperationException("Simulated DB failure for telemetry coverage test"));
     }
 }
