@@ -219,6 +219,39 @@ public sealed class AgentHubFacadeTests
         _mockHistory.Verify(h => h.AddRunToHistoryAsync(run, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task GetRunSummaryAsync_NonGuidRunId_ReturnsNullWithoutCallingHistoryService()
+    {
+        // A non-GUID runId must return null immediately; the history service must not be called.
+        var result = await _facade.GetRunSummaryAsync("not-a-guid");
+
+        result.Should().BeNull();
+        _mockHistory.Verify(h => h.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never,
+            "history service must not be queried when the runId is not a valid GUID");
+    }
+
+    [Fact]
+    public async Task GetRunSummaryAsync_ValidGuidRunId_DelegatesToHistoryService()
+    {
+        // A valid GUID runId must delegate to _historyService.GetRunAsync with the parsed Guid.
+        var runId = Guid.NewGuid();
+        var expected = new PipelineRunSummary
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+        };
+        _mockHistory.Setup(h => h.GetRunAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var result = await _facade.GetRunSummaryAsync(runId.ToString());
+
+        result.Should().BeSameAs(expected);
+        _mockHistory.Verify(h => h.GetRunAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     #endregion
 
     #region Issue provider delegation
