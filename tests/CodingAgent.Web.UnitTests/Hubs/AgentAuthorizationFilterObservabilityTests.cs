@@ -154,26 +154,32 @@ public class AgentAuthorizationFilterObservabilityTests
     }
 
     /// <summary>
-    /// The <c>agentId</c> query parameter is caller-controlled: CR/LF must be escaped before it
-    /// reaches the reconnect-race Debug entry, or a crafted value forges extra log lines
-    /// (CodeQL cs/log-forging).
+    /// The <c>agentId</c> query parameter is caller-controlled: CR/LF characters are now rejected
+    /// by the format validation guard before GetByAgentId or any reconnect-race log is reached,
+    /// making the log-forging concern structurally moot.
     /// </summary>
     [Fact]
-    public async Task ReconnectRace_AgentIdWithNewlines_LogsEscapedAgentIdAtDebug()
+    public async Task ReconnectRace_AgentIdWithNewlines_IsRejectedByValidation_WithoutCallingGetByAgentId()
     {
         _registryMock.Setup(r => r.GetByConnectionId(It.IsAny<string>())).Returns((AgentEntry?)null);
 
         var hub = CreateHub("conn-race");
+        // URL-encoded \r\n — decoded by ASP.NET Core query parsing to the raw control characters
         var ctx = MakeContextWithAgentIdQuery("conn-race", Uri.EscapeDataString("race-agent\r\n[ERR] forged entry"));
         hub.Context = ctx;
         var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
         var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
 
         var act = async () => await _filter.InvokeMethodAsync(invCtx, _ => ValueTask.FromResult((object?)null));
+        await act.Should().ThrowAsync<HubException>("an invalid-format agentId must still be rejected");
 
-        await act.Should().ThrowAsync<HubException>();
+        // The validation guard short-circuits before touching Redis
+        _registryMock.Verify(r => r.GetByAgentId(It.IsAny<AgentId>()), Times.Never,
+            "GetByAgentId must not be called for an agentId containing newlines");
+        // No Debug log with the crafted content is emitted — the log-forging concern is structurally moot
         _loggerMock.Verify(l => l.Debug(
-            It.IsAny<string>(), nameof(AgentHub.Heartbeat), "conn-race", "race-agent\\r\\n[ERR] forged entry"), Times.Once);
+            It.IsAny<string>(), nameof(AgentHub.Heartbeat), "conn-race", It.IsAny<string>()), Times.Never,
+            "no reconnect-race Debug log must be emitted for an invalid-format agentId");
     }
 
     [Fact]

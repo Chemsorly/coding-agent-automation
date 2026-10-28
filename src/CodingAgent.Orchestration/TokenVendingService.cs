@@ -46,12 +46,13 @@ public sealed partial class TokenVendingService : ITokenVendingService
     private static readonly TimeSpan _renewalBuffer = TokenRefreshConstants.RenewalBuffer;
 
     /// <summary>
-    /// Composite cache key that scopes a cached token to a specific installation,
+    /// Composite cache key that scopes a cached token to a specific GitHub App, installation,
     /// repository, permission set, and GitHub host.
-    /// All four dimensions must be included: missing any risks serving a token
-    /// with the wrong permission scope or to the wrong host.
+    /// All five dimensions must be included: missing any risks serving a token
+    /// with the wrong credentials, the wrong permission scope, or to the wrong host.
     /// </summary>
     private readonly record struct TokenCacheKey(
+        string ClientId,
         long InstallationId,
         string? RepoName,
         bool IncludeIssuePermission,
@@ -149,16 +150,10 @@ public sealed partial class TokenVendingService : ITokenVendingService
         var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : ProviderSettingKeys.DefaultApiUrl;
         settings.TryGetValue(ProviderSettingKeys.Repo, out var repoName);
 
-        var cacheKey = new TokenCacheKey(installationId, repoName, includeIssuePermission, readOnly, apiUrl);
+        var cacheKey = new TokenCacheKey(clientId, installationId, repoName, includeIssuePermission, readOnly, apiUrl);
         var now = _timeProvider.GetUtcNow();
 
         // ── Fast path: valid cached entry ────────────────────────────────
-        // TODO [WARNING]: The cache key does not include ClientId (GitHub App ID). Two different
-        // GitHub App registrations that share the same installationId, repoName, includeIssuePermission,
-        // and apiUrl would collide to the same cache entry, causing one app's token to be served to
-        // callers of the other. Installation IDs are globally unique in practice, but adding ClientId
-        // as a fifth key dimension would enforce this as a structural guarantee rather than relying on
-        // GitHub's global uniqueness constraint. (SecurityReviewer warning)
         // Expired TokenCacheEntry records are removed periodically by TokenCacheHousekeepingService,
         // which calls TrimExpiredCacheEntries() on a background timer.
         if (_tokenCache.TryGetValue(cacheKey, out var cached) && cached.ExpiresAt - now > _renewalBuffer)
