@@ -5,6 +5,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 using ILeaderGate = CodingAgent.Pipeline.Interfaces.ILeaderGate;
@@ -34,15 +35,25 @@ public sealed class FeedbackCommentRelayServiceTests
         _logger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>())).Returns(_logger.Object);
     }
 
-    private FeedbackCommentRelayService CreateSut(ILeaderGate? leaderGate = null) =>
-        new(
-            _outboxClient.Object,
+    private FeedbackCommentRelayService CreateSut(ILeaderGate? leaderGate = null)
+    {
+        // Build a scope factory backed by the test mocks so SweepAsync resolves the
+        // same mock objects when it creates a scope and calls GetRequiredService.
+        // TODO [WARNING]: Singleton registration means a cached-scope regression would not be
+        // detected. See LoopWatchdogServiceTests.CreateScopeFactory for details.
+        var services = new ServiceCollection();
+        services.AddSingleton(_outboxClient.Object);
+        services.AddSingleton(_configClient.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
+        return new(
+            scopeFactory,
             _providerFactory.Object,
-            _configClient.Object,
             leaderGate,
             _logger.Object,
             gracePeriod: TimeSpan.Zero,
             sweepInterval: TimeSpan.FromMilliseconds(10));
+    }
 
     // Old enough that the inline fast path has given up on the row and left it to the relay.
     private static DateTimeOffset AbandonedCreatedAt() =>
@@ -107,9 +118,14 @@ public sealed class FeedbackCommentRelayServiceTests
 
         await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
 
-        // TODO: Add a Verify on mockIssueProvider.PostCommentAsync to assert it was called with
-        // the correct IssueIdentifier ("GH-42") and a non-empty comment body. Without it, a change
-        // that marks entries completed without actually posting would not be caught by this test.
+        // Verify that the comment was actually posted (not just marked completed without posting).
+        mockIssueProvider.Verify(
+            p => p.PostCommentAsync(
+                It.Is<IssueIdentifier>(id => id.ToString() == "GH-42"),
+                It.Is<string>(body => body.Length > 0),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "the relay must post the comment before marking the entry completed");
         _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
     }
 

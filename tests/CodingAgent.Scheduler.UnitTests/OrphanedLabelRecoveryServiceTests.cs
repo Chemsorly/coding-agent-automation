@@ -4,6 +4,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Serilog;
 using Serilog.Core;
@@ -103,10 +104,27 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Builds an <see cref="IServiceScopeFactory"/> backed by a minimal ServiceCollection that
+    /// returns the test mocks when the API client types are resolved inside a scope.
+    /// Using <c>AddSingleton(instance)</c> means every scope resolution returns the same mock
+    /// object, keeping <c>Mock.Verify()</c> assertions working correctly.
+    /// </summary>
+    /// <remarks>
+    /// TODO [WARNING]: Singleton registration means a cached-scope regression would not be detected.
+    /// See the same TODO in <c>LoopWatchdogServiceTests.CreateScopeFactory</c> for details.
+    /// </remarks>
+    private IServiceScopeFactory CreateScopeFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_mockConfigClient.Object);
+        services.AddSingleton(_mockWorkItemClient.Object);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
     private OrphanedLabelRecoveryService CreateService() => new(
         _mockRunService.Object,
-        _mockConfigClient.Object,
-        _mockWorkItemClient.Object,
+        CreateScopeFactory(),
         _mockProviderFactory.Object,
         _mockLabelService.Object,
         leaderGate: null,           // null = run unconditionally (no leader election in unit tests)
@@ -197,8 +215,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
     private OrphanedLabelRecoveryService CreateServiceWithGate(ILeaderGate? leaderGate) => new(
         _mockRunService.Object,
-        _mockConfigClient.Object,
-        _mockWorkItemClient.Object,
+        CreateScopeFactory(),
         _mockProviderFactory.Object,
         _mockLabelService.Object,
         leaderGate,
@@ -2502,8 +2519,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         var service = new OrphanedLabelRecoveryService(
             _mockRunService.Object,
-            _mockConfigClient.Object,
-            _mockWorkItemClient.Object,
+            CreateScopeFactory(),
             _mockProviderFactory.Object,
             _mockLabelService.Object,
             leaderGate: null,

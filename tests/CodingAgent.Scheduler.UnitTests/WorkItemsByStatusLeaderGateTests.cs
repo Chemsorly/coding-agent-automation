@@ -5,6 +5,7 @@ using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 using ILogger = Serilog.ILogger;
@@ -102,8 +103,13 @@ public sealed class WorkItemsByStatusLeaderGateTests : IDisposable
                 [new WorkItemCountDto("Running", "dotnet", 5)],
                 null));
 
+        var scopeFactory = new ServiceCollection()
+            .AddSingleton(_mockClient.Object)
+            .BuildServiceProvider()
+            .GetRequiredService<IServiceScopeFactory>();
+
         var svc = new WorkItemCountsService(
-            _mockClient.Object,
+            scopeFactory,
             _mockLeaderGate.Object,
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(50));
