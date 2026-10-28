@@ -386,6 +386,22 @@ public class AttentionAggregatorTests
         };
     }
 
+    private static PipelineRunSummary MakeRunWithMcpMultiPhase(
+        string issueId,
+        DateTimeOffset startedAt,
+        IReadOnlyList<string>? mcpServers,
+        IReadOnlyDictionary<string, PhaseUsage> phaseBreakdown) => new()
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = issueId,
+            IssueTitle = $"Issue {issueId}",
+            RunType = PipelineRunType.Implementation,
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = startedAt,
+            McpServers = mcpServers,
+            PhaseBreakdown = phaseBreakdown,
+        };
+
     private static McpCallCounts Calls(int calls, int failedConnection = 0, int failedAuth = 0, int failedOther = 0, int failedUnknown = 0)
         => new() { Calls = calls, FailedConnection = failedConnection, FailedAuth = failedAuth, FailedOther = failedOther, FailedUnknown = failedUnknown };
 
@@ -666,5 +682,188 @@ public class AttentionAggregatorTests
         Assert.Equal(T2, result[0].LastProblemRun.StartedAtOffset);
         Assert.Equal("grafana", result[1].Server);
         Assert.Equal(T1, result[1].LastProblemRun.StartedAtOffset);
+    }
+
+    // ── Multi-phase characterization tests ────────────────────────────────
+
+    /// <summary>
+    /// A run with two phases where tool-call counts for the same server must be accumulated
+    /// across phases. Phase "analysis" has 1 failed call (Problem if evaluated alone);
+    /// phase "codegen" has 2 successful calls. Only the combined total — 3 calls, 1 failed —
+    /// produces a partial failure (not listed). If "codegen" were ignored, "analysis" alone
+    /// would be all-failed and the server would be listed as a Problem, failing the assertion.
+    /// This ensures the test catches a regression where any phase is skipped.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_MultiPhaseRun_ToolCallsAccumulatedAcrossPhases()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcpMultiPhase("owner/repo#1", T2, mcpServers: null,
+                phaseBreakdown: new Dictionary<string, PhaseUsage>
+                {
+                    ["analysis"] = new PhaseUsage(0, null)
+                    {
+                        ToolCalls = new Dictionary<string, McpCallCounts>
+                        {
+                            // 1 call, 1 failed → alone this is all-failed (Problem)
+                            ["sonarqube/search"] = Calls(calls: 1, failedConnection: 1),
+                        },
+                    },
+                    ["codegen"] = new PhaseUsage(0, null)
+                    {
+                        ToolCalls = new Dictionary<string, McpCallCounts>
+                        {
+                            // 2 calls, 0 failed → combined total is 3 calls, 1 failed = partial failure
+                            ["sonarqube/get_issues"] = Calls(calls: 2),
+                        },
+                    },
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        // Combined: 3 calls, 1 failed — partial failure → not listed.
+        // Without phase "codegen": 1 call, 1 failed, all-failed → Problem → would be listed → test would fail.
+        Assert.Empty(result);
+    }
+
+    /// <summary>
+    /// A run with two phases where all calls fail across phases (no partial success).
+    /// Phase "analysis" has 1 failed call; phase "codegen" has 2 failed calls.
+    /// Total: 3 calls, 3 failed, FailedOther=0 → listed with "all 3 calls failed (connection 3)".
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_MultiPhaseRun_AllCallsFailedAcrossPhases()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcpMultiPhase("owner/repo#1", T2, mcpServers: null,
+                phaseBreakdown: new Dictionary<string, PhaseUsage>
+                {
+                    ["analysis"] = new PhaseUsage(0, null)
+                    {
+                        ToolCalls = new Dictionary<string, McpCallCounts>
+                        {
+                            ["sonarqube/search"] = Calls(calls: 1, failedConnection: 1),
+                        },
+                    },
+                    ["codegen"] = new PhaseUsage(0, null)
+                    {
+                        ToolCalls = new Dictionary<string, McpCallCounts>
+                        {
+                            ["sonarqube/get_issues"] = Calls(calls: 2, failedConnection: 2),
+                        },
+                    },
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("sonarqube", problem.Server);
+        Assert.Equal("all 3 calls failed (connection 3)", problem.Reason);
+    }
+
+    /// <summary>
+    /// A run where the server is unavailable in one phase but has successful calls in another.
+    /// IsUnavailable must take precedence over HasCalls — server is listed as unavailable.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_MultiPhaseRun_UnavailabilityInOnePhase_CallsInAnother_IsUnavailable()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcpMultiPhase("owner/repo#1", T2, mcpServers: null,
+                phaseBreakdown: new Dictionary<string, PhaseUsage>
+                {
+                    ["analysis"] = new PhaseUsage(0, null)
+                    {
+                        UnavailableMcpServers = new Dictionary<string, string>
+                        {
+                            ["sonarqube"] = "needs-auth",
+                        },
+                    },
+                    ["codegen"] = new PhaseUsage(0, null)
+                    {
+                        ToolCalls = new Dictionary<string, McpCallCounts>
+                        {
+                            ["sonarqube/get_issues"] = Calls(calls: 1),
+                        },
+                    },
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("sonarqube", problem.Server);
+        Assert.Equal("unavailable (needs-auth)", problem.Reason);
+    }
+
+    /// <summary>
+    /// A run where the server is unavailable in two phases with different statuses.
+    /// The reason must reflect the FIRST-found status ("needs-auth" from phase "analysis"),
+    /// not the last ("failed" from phase "codegen"). This locks in the first-found semantics
+    /// that SummarizeForServer preserves via the if (!isUnavailable) guard.
+    ///
+    /// A <see cref="SortedDictionary{TKey,TValue}"/> with <see cref="StringComparer.Ordinal"/>
+    /// is used so that "analysis" (&lt; "codegen" alphabetically) is always iterated first,
+    /// making the test deterministic regardless of runtime dictionary implementation.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_MultiPhaseRun_UnavailabilityStatusFromFirstPhase()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcpMultiPhase("owner/repo#1", T2, mcpServers: null,
+                phaseBreakdown: new SortedDictionary<string, PhaseUsage>(StringComparer.Ordinal)
+                {
+                    ["analysis"] = new PhaseUsage(0, null)
+                    {
+                        UnavailableMcpServers = new Dictionary<string, string>
+                        {
+                            ["sonarqube"] = "needs-auth",
+                        },
+                    },
+                    ["codegen"] = new PhaseUsage(0, null)
+                    {
+                        UnavailableMcpServers = new Dictionary<string, string>
+                        {
+                            ["sonarqube"] = "failed",
+                        },
+                    },
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("sonarqube", problem.Server);
+        // First-found phase has "needs-auth"; second phase has "failed". First wins.
+        Assert.Equal("unavailable (needs-auth)", problem.Reason);
+    }
+
+    /// <summary>
+    /// All calls failed with the Unknown failure category.
+    /// Reason must include "unknown N" — exercises the FailedUnknown branch of BuildReason.
+    /// </summary>
+    [Fact]
+    public void FindMcpServerProblems_AllCallsFailedWithUnknownCategory_ReasonIncludesUnknown()
+    {
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRunWithMcp("owner/repo#1", T2,
+                toolCalls: new Dictionary<string, McpCallCounts>
+                {
+                    ["sonarqube/get_issues"] = Calls(calls: 2, failedUnknown: 2),
+                }),
+        };
+
+        var result = AttentionAggregator.FindMcpServerProblems(runs);
+
+        var problem = Assert.Single(result);
+        Assert.Equal("sonarqube", problem.Server);
+        Assert.Equal("all 2 calls failed (unknown 2)", problem.Reason);
     }
 }

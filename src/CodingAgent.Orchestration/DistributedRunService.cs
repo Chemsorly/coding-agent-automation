@@ -341,11 +341,7 @@ return 1
 
     private async Task<IReadOnlyList<string>> GetOutputBacklogInternalAsync(string runId, CancellationToken ct)
     {
-        // TODO: ct is not forwarded to _store.ListRangeAsync because IRedisStore.ListRangeAsync has
-        // no CancellationToken overload. The entry-point guard (ct.ThrowIfCancellationRequested)
-        // catches pre-cancelled tokens, but a cancellation that arrives after the Redis round-trip
-        // starts cannot interrupt it. Add a ct overload to IRedisStore when available.
-        var lines = await _store.ListRangeAsync(OutputKey(runId), 0, -1);
+        var lines = await _store.ListRangeAsync(OutputKey(runId), 0, -1, ct);
         return lines;
     }
 
@@ -377,11 +373,7 @@ return 1
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value, nameof(runId));
         ct.ThrowIfCancellationRequested();
-        // TODO: ct is not forwarded to _store.ListRangeAsync because IRedisStore.ListRangeAsync has no
-        // CancellationToken overload. A cancellation that arrives after the Redis round-trip begins cannot
-        // interrupt it. This is the same documented limitation as GetOutputBacklogAsync above. Fix when
-        // IRedisStore gains cancellation support.
-        var entries = await _store.ListRangeAsync(ChatKey(runId.Value), 0, -1);
+        var entries = await _store.ListRangeAsync(ChatKey(runId.Value), 0, -1, ct);
         var history = new BoundedConcurrentQueue<ChatEntry>(PipelineConstants.DefaultChatHistoryCapacity);
         EnqueueDeserialized(entries, history);
         return history.ToArray();
@@ -416,10 +408,7 @@ return 1
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value, nameof(runId));
         ct.ThrowIfCancellationRequested();
-        // TODO: ct is not forwarded to _store.ListRangeAsync because IRedisStore.ListRangeAsync has no
-        // CancellationToken overload. Same documented limitation as GetChatHistoryAsync above. Fix when
-        // IRedisStore gains cancellation support.
-        var entries = await _store.ListRangeAsync(QgKey(runId.Value), 0, -1);
+        var entries = await _store.ListRangeAsync(QgKey(runId.Value), 0, -1, ct);
         var history = new BoundedConcurrentQueue<QualityGateReport>(PipelineConstants.DefaultQualityGateHistoryCapacity);
         EnqueueDeserialized(entries, history);
         return history.ToArray();

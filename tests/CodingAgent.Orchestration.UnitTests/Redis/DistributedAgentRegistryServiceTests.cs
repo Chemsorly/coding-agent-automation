@@ -1797,7 +1797,7 @@ internal sealed class HashSetBlockingFakeRedisStore : IRedisStore
     public Task<long> SetCardinalityAsync(string key) => _inner.SetCardinalityAsync(key);
     public Task<long> ListRightPushAsync(string key, string[] values) => _inner.ListRightPushAsync(key, values);
     public Task ListTrimAsync(string key, long start, long stop) => _inner.ListTrimAsync(key, start, stop);
-    public Task<string[]> ListRangeAsync(string key, long start, long stop) => _inner.ListRangeAsync(key, start, stop);
+    public Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default) => _inner.ListRangeAsync(key, start, stop, ct);
     public Task<bool> ExistsAsync(string key) => _inner.ExistsAsync(key);
     public Task<bool> PingAsync() => _inner.PingAsync();
     public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => _inner.ScriptEvaluateAsync(script, keys, values);
@@ -1883,7 +1883,7 @@ internal sealed class HashGetAllBlockingFakeRedisStore : IRedisStore
     public Task<long> SetCardinalityAsync(string key) => _inner.SetCardinalityAsync(key);
     public Task<long> ListRightPushAsync(string key, string[] values) => _inner.ListRightPushAsync(key, values);
     public Task ListTrimAsync(string key, long start, long stop) => _inner.ListTrimAsync(key, start, stop);
-    public Task<string[]> ListRangeAsync(string key, long start, long stop) => _inner.ListRangeAsync(key, start, stop);
+    public Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default) => _inner.ListRangeAsync(key, start, stop, ct);
     public Task<bool> ExistsAsync(string key) => _inner.ExistsAsync(key);
     public Task<bool> PingAsync() => _inner.PingAsync();
     public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => _inner.ScriptEvaluateAsync(script, keys, values);
@@ -1919,7 +1919,7 @@ internal sealed class HashSetFieldFaultingFakeRedisStore : IRedisStore
     public Task<long> SetCardinalityAsync(string key) => _inner.SetCardinalityAsync(key);
     public Task<long> ListRightPushAsync(string key, string[] values) => _inner.ListRightPushAsync(key, values);
     public Task ListTrimAsync(string key, long start, long stop) => _inner.ListTrimAsync(key, start, stop);
-    public Task<string[]> ListRangeAsync(string key, long start, long stop) => _inner.ListRangeAsync(key, start, stop);
+    public Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default) => _inner.ListRangeAsync(key, start, stop, ct);
     public Task<bool> ExistsAsync(string key) => _inner.ExistsAsync(key);
     public Task<bool> PingAsync() => _inner.PingAsync();
     public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => _inner.ScriptEvaluateAsync(script, keys, values);
@@ -1965,7 +1965,7 @@ internal sealed class RegistrationWriteBlockingFakeRedisStore : IRedisStore
     public Task<long> SetCardinalityAsync(string key) => Inner.SetCardinalityAsync(key);
     public Task<long> ListRightPushAsync(string key, string[] values) => Inner.ListRightPushAsync(key, values);
     public Task ListTrimAsync(string key, long start, long stop) => Inner.ListTrimAsync(key, start, stop);
-    public Task<string[]> ListRangeAsync(string key, long start, long stop) => Inner.ListRangeAsync(key, start, stop);
+    public Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default) => Inner.ListRangeAsync(key, start, stop, ct);
     public Task<bool> ExistsAsync(string key) => Inner.ExistsAsync(key);
     public Task<bool> PingAsync() => Inner.PingAsync();
     public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => Inner.ScriptEvaluateAsync(script, keys, values);

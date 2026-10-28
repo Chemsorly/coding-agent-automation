@@ -2205,6 +2205,43 @@ public sealed class ExtractedHelperIsolationTests
     }
 
     /// <summary>
+    /// A 503 input with isKiroAgent=false and PVCs <em>available</em> must also take the
+    /// k8s_error branch — PVC pool availability is irrelevant for non-kiro agents.
+    ///
+    /// <para>
+    /// This test completes the coverage matrix for the <c>isKiroAgent=false</c> path by
+    /// exercising the fourth permutation of <c>(isKiroAgent, available)</c>:
+    /// <c>(false, &gt;0)</c> — <c>!Any()</c> is <see langword="false"/>, so the
+    /// <c>&amp;&amp;</c> short-circuits before evaluating <c>isKiroAgent</c>, and the method
+    /// falls through to <see cref="DispatchInterpretOutcome.K8sError503"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <strong>Regression-detection note:</strong> the existing companion test
+    /// <c>InterpretDispatchResult_503Input_NonKiroAgent_EmptyPool_Returns503_Unchanged</c>
+    /// (<c>available: 0</c>) is the stronger guard for the <c>isKiroAgent</c> guard removal:
+    /// with an empty pool <c>!Any()</c> is <see langword="true"/>, so <c>isKiroAgent</c> is
+    /// the decisive second operand — removing the guard produces <c>PvcExhausted503</c> and
+    /// breaks that test's assertion. This non-empty-pool test cannot detect that same regression
+    /// because <c>!Any()</c> is already <see langword="false"/> and the <c>&amp;&amp;</c>
+    /// short-circuits regardless of whether the <c>isKiroAgent</c> guard is present.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_503Input_NonKiroAgent_NonEmptyPool_Returns503_Unchanged()
+    {
+        var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var pvcResult = MakePvcResult(available: 2); // non-empty pool + non-kiro → k8s_error
+
+        var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: false);
+
+        result.Should().BeSameAs(rawResult, "503 must be returned unchanged for non-kiro agent");
+        outcome.Should().Be(DispatchInterpretOutcome.K8sError503,
+            "non-kiro agent must produce K8sError503 regardless of PVC pool availability");
+    }
+
+    /// <summary>
     /// A success result (200 Ok) must pass through unchanged with outcome
     /// <see cref="DispatchInterpretOutcome.PassThrough"/>.
     /// A success passes through.
