@@ -532,6 +532,110 @@ public sealed class DistributedRunServiceTests
             "and the run ID when the atomic script returns 0 (not a member)");
     }
 
+    // ── CancellationToken forwarding to ListRangeAsync ───────────────────────
+    // Regression guard for issue #3998 — GetOutputBacklogAsync / GetChatHistoryAsync /
+    // GetQualityGateHistoryAsync must forward the caller-supplied CancellationToken to
+    // IRedisStore.ListRangeAsync, not silently pass CancellationToken.None.
+    //
+    // Each test uses a Mock<IRedisStore> and verifies (via Verify) that ListRangeAsync is called
+    // with the specific token passed into the public method. The Setup uses It.IsAny<CancellationToken>()
+    // to ensure a safe empty array is always returned — scoping Setup to cts.Token would cause
+    // NullReferenceException (not a clean Verify failure) in the GetChatHistoryAsync /
+    // GetQualityGateHistoryAsync paths when the pre-fix code passes CancellationToken.None, because
+    // EnqueueDeserialized immediately dereferences the Moq default null result.
+
+    /// <summary>
+    /// GetOutputBacklogAsync must forward the caller's CancellationToken to
+    /// IRedisStore.ListRangeAsync (issue #3998).
+    /// </summary>
+    [Fact]
+    public async Task GetOutputBacklogAsync_ForwardsCancellationTokenToListRangeAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+
+        var mockStore = new Mock<IRedisStore>();
+        mockStore
+            .Setup(s => s.ListRangeAsync(It.IsAny<string>(), 0, -1, cts.Token))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var sut = new DistributedRunService(mockStore.Object, (_, _, _) => Task.FromResult(false), Log.Logger);
+
+        // Act
+        await sut.GetOutputBacklogAsync(new RunId("run-ct-test"), cts.Token);
+
+        // Assert: ListRangeAsync must have been called with the supplied token.
+        // Before the fix this Verify fails because CancellationToken.None was passed instead.
+        mockStore.Verify(
+            s => s.ListRangeAsync(It.IsAny<string>(), 0, -1, cts.Token),
+            Times.Once,
+            "GetOutputBacklogAsync must forward the caller's CancellationToken to IRedisStore.ListRangeAsync (issue #3998)");
+    }
+
+    /// <summary>
+    /// GetChatHistoryAsync must forward the caller's CancellationToken to
+    /// IRedisStore.ListRangeAsync (issue #3998).
+    /// </summary>
+    [Fact]
+    public async Task GetChatHistoryAsync_ForwardsCancellationTokenToListRangeAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+
+        var mockStore = new Mock<IRedisStore>();
+        // Setup uses It.IsAny<CancellationToken>() so the mock always returns a safe empty array
+        // regardless of which token is passed. The Verify below is the actual regression guard.
+        // (If we scoped the Setup to cts.Token, a pre-fix call with CancellationToken.None would
+        // receive null from Moq's loose default, causing NullReferenceException in EnqueueDeserialized
+        // before Verify is ever reached.)
+        mockStore
+            .Setup(s => s.ListRangeAsync(It.IsAny<string>(), 0, -1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var sut = new DistributedRunService(mockStore.Object, (_, _, _) => Task.FromResult(false), Log.Logger);
+
+        // Act
+        await sut.GetChatHistoryAsync(new RunId("run-ct-chat"), cts.Token);
+
+        // Assert: ListRangeAsync must have been called with the supplied token.
+        // Before the fix, CancellationToken.None is passed instead of cts.Token — Verify fails.
+        mockStore.Verify(
+            s => s.ListRangeAsync(It.IsAny<string>(), 0, -1, cts.Token),
+            Times.Once,
+            "GetChatHistoryAsync must forward the caller's CancellationToken to IRedisStore.ListRangeAsync (issue #3998)");
+    }
+
+    /// <summary>
+    /// GetQualityGateHistoryAsync must forward the caller's CancellationToken to
+    /// IRedisStore.ListRangeAsync (issue #3998).
+    /// </summary>
+    [Fact]
+    public async Task GetQualityGateHistoryAsync_ForwardsCancellationTokenToListRangeAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+
+        var mockStore = new Mock<IRedisStore>();
+        // Setup uses It.IsAny<CancellationToken>() for the same reason as GetChatHistoryAsync above:
+        // scoping Setup to cts.Token causes NullReferenceException in EnqueueDeserialized (not Verify)
+        // when the pre-fix code passes CancellationToken.None.
+        mockStore
+            .Setup(s => s.ListRangeAsync(It.IsAny<string>(), 0, -1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var sut = new DistributedRunService(mockStore.Object, (_, _, _) => Task.FromResult(false), Log.Logger);
+
+        // Act
+        await sut.GetQualityGateHistoryAsync(new RunId("run-ct-qg"), cts.Token);
+
+        // Assert: ListRangeAsync must have been called with the supplied token.
+        // Before the fix, CancellationToken.None is passed instead of cts.Token — Verify fails.
+        mockStore.Verify(
+            s => s.ListRangeAsync(It.IsAny<string>(), 0, -1, cts.Token),
+            Times.Once,
+            "GetQualityGateHistoryAsync must forward the caller's CancellationToken to IRedisStore.ListRangeAsync (issue #3998)");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
