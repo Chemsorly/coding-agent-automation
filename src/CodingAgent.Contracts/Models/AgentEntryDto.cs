@@ -48,11 +48,8 @@ public sealed record AgentEntryDto
 
     /// <summary>
     /// Web URL of the issue on the provider (e.g. GitHub issue URL), or null when not available.
-    /// <para>
-    /// TODO: Validate that this starts with <c>https://</c> before rendering as <c>href</c>.
-    /// Blazor HTML-encodes attribute values but does NOT strip <c>javascript:</c> URI schemes,
-    /// so a malicious/corrupted record could produce a clickable XSS link.
-    /// </para>
+    /// Only <c>https://</c> and <c>http://</c> schemes are accepted; any other scheme is replaced
+    /// with <c>null</c> by <see cref="AgentEntryDtoFactory"/> before this field is populated.
     /// </summary>
     public string? ActiveIssueUrl { get; init; }
 
@@ -64,10 +61,8 @@ public sealed record AgentEntryDto
 
     /// <summary>
     /// Pull request URL when a PR has been created for the active run, or null when no PR exists yet.
-    /// <para>
-    /// TODO: Validate that this starts with <c>https://</c> before rendering as <c>href</c>.
-    /// Same <c>javascript:</c> URI injection risk as <see cref="ActiveIssueUrl"/>.
-    /// </para>
+    /// Only <c>https://</c> and <c>http://</c> schemes are accepted; same scheme guard as
+    /// <see cref="ActiveIssueUrl"/>.
     /// </summary>
     public string? ActivePullRequestUrl { get; init; }
 }
