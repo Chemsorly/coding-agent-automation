@@ -191,6 +191,15 @@ public interface IAgentHubFacade
     /// </summary>
     Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Returns the completed pipeline run summary for the specified run ID,
+    /// or <see langword="null"/> when the run is not in history, the ID is not a valid GUID,
+    /// or the store is unavailable.
+    /// Use instead of <see cref="GetRunHistoryAsync"/> when only one run needs to be checked —
+    /// this is a point lookup (O(1) DB query) rather than a full-history fetch.
+    /// </summary>
+    Task<PipelineRunSummary?> GetRunSummaryAsync(string runId, CancellationToken ct = default);
+
     // ── Issue provider operations ───────────────────────────────────────
 
     /// <summary>
