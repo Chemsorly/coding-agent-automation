@@ -1,5 +1,6 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using ILogger = Serilog.ILogger;
@@ -13,18 +14,19 @@ namespace CodingAgent.Scheduler.Services;
 /// </summary>
 public sealed class RetentionSweepSchedulerService : BackgroundService
 {
-    private readonly ISchedulerApiClient _apiClient;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
     private readonly TimeSpan _interval;
 
     public RetentionSweepSchedulerService(
-        ISchedulerApiClient apiClient,
+        IServiceScopeFactory scopeFactory,
         ILeaderGate? leaderGate,
         ILogger logger,
         TimeSpan? interval = null)
     {
-        _apiClient = apiClient;
+        ArgumentNullException.ThrowIfNull(scopeFactory);
+        _scopeFactory = scopeFactory;
         _leaderGate = leaderGate;
         _logger = logger.ForContext<RetentionSweepSchedulerService>();
         _interval = interval ?? TimeSpan.FromMinutes(60);
@@ -57,7 +59,13 @@ public sealed class RetentionSweepSchedulerService : BackgroundService
 
             try
             {
-                var result = await _apiClient.TriggerRetentionSweepAsync(stoppingToken);
+                // Resolve ISchedulerApiClient from a short-lived scope for this tick so each tick
+                // gets a fresh HttpClient. The scope is disposed after the tick completes, returning
+                // the client to the IHttpClientFactory pool for connection recycling.
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var apiClient = scope.ServiceProvider.GetRequiredService<ISchedulerApiClient>();
+
+                var result = await apiClient.TriggerRetentionSweepAsync(stoppingToken);
                 _logger.Information(
                     "Retention sweep complete: staleWi={StaleWi}, staleRuns={StaleRuns}, " +
                     "retentionRuns={RetentionRuns}, retentionWi={RetentionWi}",

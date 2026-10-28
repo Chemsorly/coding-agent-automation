@@ -5,6 +5,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -41,8 +42,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private static readonly DispatchEligibilityEvaluator _eligibilityEvaluator = new();
 
     private readonly IRunActivityQuery _runService;
-    private readonly IPipelineApiConfigClient _configClient;
-    private readonly IPipelineApiWorkItemClient _workItemClient;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelService _labelService;
     private readonly ILeaderGate? _leaderGate;
@@ -51,13 +51,12 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
     public OrphanedLabelRecoveryService(
         IRunActivityQuery runService,
-        IPipelineApiConfigClient configClient,
-        IPipelineApiWorkItemClient workItemClient,
+        IServiceScopeFactory scopeFactory,
         IProviderFactory providerFactory,
         ILabelService labelService,
         ILeaderGate? leaderGate,
         ILogger logger)
-        : this(runService, configClient, workItemClient, providerFactory, labelService, leaderGate, logger, DefaultGracePeriod)
+        : this(runService, scopeFactory, providerFactory, labelService, leaderGate, logger, DefaultGracePeriod)
     {
     }
 
@@ -66,8 +65,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     /// </summary>
     internal OrphanedLabelRecoveryService(
         IRunActivityQuery runService,
-        IPipelineApiConfigClient configClient,
-        IPipelineApiWorkItemClient workItemClient,
+        IServiceScopeFactory scopeFactory,
         IProviderFactory providerFactory,
         ILabelService labelService,
         ILeaderGate? leaderGate,
@@ -75,8 +73,8 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         TimeSpan gracePeriod)
     {
         _runService = runService;
-        _configClient = configClient;
-        _workItemClient = workItemClient;
+        ArgumentNullException.ThrowIfNull(scopeFactory);
+        _scopeFactory = scopeFactory;
         _providerFactory = providerFactory;
         _labelService = labelService;
         _leaderGate = leaderGate;
@@ -134,12 +132,15 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     /// <summary>
     /// Loads the sweep interval from the pipeline config, clamping to the minimum.
     /// Falls back to 30 minutes on transient config load failure.
+    /// Creates its own short-lived scope so the HttpClient is released after the read.
     /// </summary>
     private async Task<int> LoadSweepIntervalAsync(CancellationToken stoppingToken)
     {
         try
         {
-            var config = await _configClient.GetPipelineConfigAsync(stoppingToken);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var configClient = scope.ServiceProvider.GetRequiredService<IPipelineApiConfigClient>();
+            var config = await configClient.GetPipelineConfigAsync(stoppingToken);
             var intervalMinutes = Math.Max(config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
             if (intervalMinutes != config.OrphanedLabelSweepIntervalMinutes)
             {
@@ -183,8 +184,16 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             : null;
         var sweepCt = linked?.Token ?? ct;
 
-        var templates = await _configClient.GetAllTemplatesAsync(sweepCt);
-        var projects = await _configClient.GetProjectsAsync(sweepCt);
+        // Resolve both API clients from a single short-lived scope for this sweep so each
+        // sweep gets fresh HttpClient instances. The scope is disposed after the sweep
+        // completes, returning the clients to the IHttpClientFactory pool for connection
+        // recycling (90s PooledConnectionLifetime).
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var configClient = scope.ServiceProvider.GetRequiredService<IPipelineApiConfigClient>();
+        var workItemClient = scope.ServiceProvider.GetRequiredService<IPipelineApiWorkItemClient>();
+
+        var templates = await configClient.GetAllTemplatesAsync(sweepCt);
+        var projects = await configClient.GetProjectsAsync(sweepCt);
 
         // The templates' trackers plus every enabled project's epic tracker, where project epics
         // carry their labels. Deduplicated: an epic tracker may also be a template's tracker.
@@ -220,7 +229,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderAsync(providerConfigId, resolvedIdentifiers, sweepCt);
+                recoveredCount += await ScanProviderAsync(providerConfigId, resolvedIdentifiers, configClient, workItemClient, sweepCt);
             }
             catch (Exception ex)
             {
@@ -229,7 +238,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.Done, sweepCt);
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.Done, configClient, workItemClient, sweepCt);
             }
             catch (Exception ex)
             {
@@ -238,7 +247,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.Error, sweepCt);
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.Error, configClient, workItemClient, sweepCt);
             }
             catch (Exception ex)
             {
@@ -247,7 +256,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.NeedsRefinement, sweepCt);
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.NeedsRefinement, configClient, workItemClient, sweepCt);
             }
             catch (Exception ex)
             {
@@ -262,9 +271,14 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         _logger.Information("Orphaned label recovery complete: {Count} issue(s) recovered", recoveredCount);
     }
 
-    private async Task<int> ScanProviderAsync(string providerConfigId, HashSet<string> resolvedIdentifiers, CancellationToken ct)
+    private async Task<int> ScanProviderAsync(
+        string providerConfigId,
+        HashSet<string> resolvedIdentifiers,
+        IPipelineApiConfigClient configClient,
+        IPipelineApiWorkItemClient workItemClient,
+        CancellationToken ct)
     {
-        var allProviders = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
+        var allProviders = await configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
         var providerConfig = allProviders.FirstOrDefault(p => p.Id == providerConfigId);
         if (providerConfig is null)
         {
@@ -293,7 +307,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
                 if (!activeResult.IsEligible)
                     continue;
 
-                if (await TryRecoverSingleIssueAsync(issue, issueProvider, providerConfigId, ct))
+                if (await TryRecoverSingleIssueAsync(issue, issueProvider, providerConfigId, workItemClient, ct))
                 {
                     recovered++;
                     // Record every issue resolved (either as orphan or dual-label) so that
@@ -312,7 +326,11 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     }
 
     private async Task<bool> TryRecoverSingleIssueAsync(
-        IssueSummary issue, IIssueProvider issueProvider, string providerConfigId, CancellationToken ct)
+        IssueSummary issue,
+        IIssueProvider issueProvider,
+        string providerConfigId,
+        IPipelineApiWorkItemClient workItemClient,
+        CancellationToken ct)
     {
         // Defense 2: cheap in-memory grace-period check before any API calls.
         if (_runService.WasRecentlyCompleted(issue.Identifier, providerConfigId))
@@ -324,7 +342,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         // Defense 3: authoritative WorkItem check — skip if a live agent is running.
         try
         {
-            if (await _workItemClient.IsIssueDistributedAsync(issue.Identifier, providerConfigId, ct))
+            if (await workItemClient.IsIssueDistributedAsync(issue.Identifier, providerConfigId, ct))
             {
                 _logger.Debug("Orphaned label recovery: issue {Identifier} has an active WorkItem, skipping", issue.Identifier);
                 return false;
@@ -404,9 +422,15 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     /// Issues already resolved in the same sweep are skipped via
     /// <paramref name="resolvedIdentifiers"/> to prevent double-swapping.
     /// </summary>
-    private async Task<int> ScanProviderForDualLabelIssuesAsync(string providerConfigId, HashSet<string> resolvedIdentifiers, string primaryLabel, CancellationToken ct)
+    private async Task<int> ScanProviderForDualLabelIssuesAsync(
+        string providerConfigId,
+        HashSet<string> resolvedIdentifiers,
+        string primaryLabel,
+        IPipelineApiConfigClient configClient,
+        IPipelineApiWorkItemClient workItemClient,
+        CancellationToken ct)
     {
-        var allProviders = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
+        var allProviders = await configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
         var providerConfig = allProviders.FirstOrDefault(p => p.Id == providerConfigId);
         if (providerConfig is null)
         {
@@ -449,7 +473,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
                 // pattern applied in Pass 1, consider adding the cheap in-memory WasRecentlyCompleted check
                 // here to avoid the GetIssueAsync round-trip for issues in the grace period.
 
-                if (await TryResolveSingleDualLabelIssueAsync(issue, issueProvider, providerConfigId, ct))
+                if (await TryResolveSingleDualLabelIssueAsync(issue, issueProvider, providerConfigId, workItemClient, ct))
                 {
                     resolved++;
                     // Record the resolved identifier so later passes (e.g. Pass 3 after Pass 2,
@@ -469,14 +493,18 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     }
 
     private async Task<bool> TryResolveSingleDualLabelIssueAsync(
-        IssueSummary issue, IIssueProvider issueProvider, string providerConfigId, CancellationToken ct)
+        IssueSummary issue,
+        IIssueProvider issueProvider,
+        string providerConfigId,
+        IPipelineApiWorkItemClient workItemClient,
+        CancellationToken ct)
     {
         // Skip if a live agent is actively processing this issue (Defense 3).
         // Fail-safe: skip on API error to avoid interfering with a legitimate run.
         bool isDistributed;
         try
         {
-            isDistributed = await _workItemClient.IsIssueDistributedAsync(issue.Identifier, providerConfigId, ct);
+            isDistributed = await workItemClient.IsIssueDistributedAsync(issue.Identifier, providerConfigId, ct);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
