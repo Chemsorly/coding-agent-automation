@@ -154,16 +154,29 @@ public sealed class BrainRepoFixture : IDisposable
         return provider;
     }
 
-    /// <summary>Returns all file paths and contents at the tip of <c>main</c> in the remote.</summary>
+    /// <summary>Returns all file paths and contents at the tip of <c>main</c> in the remote (recursively).</summary>
     public IReadOnlyDictionary<string, string> RemoteFiles()
     {
         using var repo = new Repository(RemotePath);
         var tip = repo.Branches["main"].Tip;
         var result = new Dictionary<string, string>();
-        foreach (var entry in tip.Tree)
-            if (entry.Target is Blob blob)
-                result[entry.Path] = blob.GetContentText();
+        CollectBlobs(tip.Tree, "", result);
         return result;
+    }
+
+    private static void CollectBlobs(Tree tree, string prefix, Dictionary<string, string> result)
+    {
+        foreach (var entry in tree)
+        {
+            if (entry.Target is Blob blob)
+            {
+                result[prefix + entry.Name] = blob.GetContentText();
+            }
+            else if (entry.Target is Tree subTree)
+            {
+                CollectBlobs(subTree, prefix + entry.Name + "/", result);
+            }
+        }
     }
 
     /// <summary>Returns commit messages on <c>main</c> from newest to oldest.</summary>
