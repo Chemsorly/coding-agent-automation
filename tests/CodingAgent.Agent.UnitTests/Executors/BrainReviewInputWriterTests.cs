@@ -26,6 +26,15 @@ public sealed class BrainReviewInputWriterTests : IDisposable
         _workspace = Path.Combine(Path.GetTempPath(), $"riw-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_workspace);
         _brainSvc = new Mock<IBrainUpdateService>();
+        // Default setups for all synchronous/async methods called in BuildModelAsync
+        _brainSvc.Setup(s => s.ListTrackedFilesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync((IReadOnlyList<string>)[]);
+        _brainSvc.Setup(s => s.ReadFileAtCommit(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+                 .Returns((string?)null);
+        _brainSvc.Setup(s => s.ReadFileAtHead(It.IsAny<string>(), It.IsAny<string>()))
+                 .Returns((string?)null);
+        _brainSvc.Setup(s => s.GetSkillCommitsSinceLastReview(It.IsAny<string>()))
+                 .Returns((IReadOnlyList<BrainCommitInfo>)[]);
         _sut = new BrainReviewInputWriter(_brainSvc.Object, NullLogger);
     }
 
@@ -40,9 +49,6 @@ public sealed class BrainReviewInputWriterTests : IDisposable
     [Fact]
     public async Task WriteAsync_EmptyBrain_WritesOutputFile()
     {
-        _brainSvc.Setup(s => s.ListTrackedFilesAsync(_workspace, It.IsAny<CancellationToken>()))
-                 .ReturnsAsync((IReadOnlyList<string>)[]);
-
         await _sut.WriteAsync(_workspace, null, MakeJob(), CancellationToken.None);
 
         var outputPath = Path.Combine(_workspace, AgentWorkspacePaths.BrainReviewInputFilePath);
@@ -54,25 +60,14 @@ public sealed class BrainReviewInputWriterTests : IDisposable
     [Fact]
     public async Task WriteAsync_WithInboxFile_IncludesInboxInOutput()
     {
-        // Write a valid inbox file to the workspace
+        // Write a valid inbox file to the workspace (brain path = workspace itself in this test)
         var inboxRel = BrainLayout.InboxFileName(DateOnly.FromDateTime(DateTime.UtcNow), "run-1");
         var inboxFull = Path.Combine(_workspace, inboxRel.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(inboxFull)!);
-
-        var header = new BrainInboxHeader("run-1", "implementation", "succeeded", "org/repo", null, [], "#1", null, null, []);
-        // Write inbox file with proper header format (InboxMarker + fields)
         var inboxContent = $"{BrainLayout.InboxMarker}\nrun: run-1\ntype: implementation\noutcome: succeeded\nrepository: org/repo\nissue: #1\n\n## Candidates\n- a candidate\n";
         await File.WriteAllTextAsync(inboxFull, inboxContent);
 
-        _brainSvc.Setup(s => s.ListTrackedFilesAsync(_workspace, It.IsAny<CancellationToken>()))
-                 .ReturnsAsync((IReadOnlyList<string>)[inboxRel]);
-        _brainSvc.Setup(s => s.ReadFileAtCommit(_workspace, It.IsAny<string>(), It.IsAny<string>()))
-                 .Returns((string?)null);
-        _brainSvc.Setup(s => s.ReadFileAtHead(_workspace, It.IsAny<string>()))
-                 .Returns((string?)null);
-        _brainSvc.Setup(s => s.GetSkillCommitsSinceLastReview(_workspace))
-                 .Returns((IReadOnlyList<BrainCommitInfo>)[]);
-        _brainSvc.Setup(s => s.ListTrackedFilesAsync(_workspace, It.IsAny<CancellationToken>()))
+        _brainSvc.Setup(s => s.ListTrackedFilesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync((IReadOnlyList<string>)[inboxRel]);
 
         await _sut.WriteAsync(_workspace, null, MakeJob(), CancellationToken.None);

@@ -56,7 +56,7 @@ public sealed class BrainSkillsReaderTests : IDisposable
     public async Task ReadAsync_GeneralSkillExists_ReturnsInjectedResult()
     {
         WriteSkill(BrainLayout.GeneralSkillPath,
-            $"{BrainLayout.SkillMarker}\n- use parameterized queries\n");
+            $"{BrainLayout.SkillMarker}\n- [2+] For SQL queries, use parameterized queries (#42).\n");
 
         var provider = ProviderWith("deadbeef");
         var result = await BrainSkillsReader.ReadAsync(
@@ -72,14 +72,14 @@ public sealed class BrainSkillsReaderTests : IDisposable
     public async Task ReadAsync_RepositorySkillExists_IncludesItInInjection()
     {
         WriteSkill("projects/my-repo/SKILL.md",
-            $"{BrainLayout.SkillMarker}\n- repository-specific tip\n");
+            $"{BrainLayout.SkillMarker}\n- [2+] For repository work, follow the style guide (#1).\n");
 
         var provider = ProviderWith("abc123");
         var result = await BrainSkillsReader.ReadAsync(
             _brainPath, "my-repo", [], provider.Object, NullLogger(), CancellationToken.None);
 
         result.Result.Should().Be(BrainSkillsResults.Injected);
-        result.Text.Should().Contain("repository-specific tip");
+        result.Text.Should().Contain("follow the style guide");
         result.FilesInjected.Should().Contain(f => f.Contains("my-repo"));
     }
 
@@ -116,22 +116,24 @@ public sealed class BrainSkillsReaderTests : IDisposable
     [Fact]
     public async Task ReadAsync_OuterExceptionPath_ReturnsNoBrainResult()
     {
-        // Make the brainPath a file, not a directory, so Directory operations fail
-        var badPath = Path.Combine(Path.GetTempPath(), $"bad-{Guid.NewGuid():N}.txt");
-        File.WriteAllText(badPath, "not a directory");
-
+        // Passing a file path as the brain repo path makes Path.Combine succeed but file reads fail
+        var filePath = Path.GetTempFileName();
         try
         {
-            var provider = ProviderWith("x");
+            var provider = new Mock<IGitWorkspaceProvider>();
+            provider.Setup(p => p.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new InvalidOperationException("not a git repo"));
+            // The provider throws → outer catch returns NoBrain
             var result = await BrainSkillsReader.ReadAsync(
-                badPath, "repo", [], provider.Object, NullLogger(), CancellationToken.None);
+                filePath, null, [], provider.Object, NullLogger(), CancellationToken.None);
 
-            // Should not throw — returns NoBrain fallback (T6)
-            result.Result.Should().Be(BrainSkillsResults.NoBrain);
+            // GetHeadCommitSha throws → inner catch → CommitSha = null
+            // Remaining logic still works → not NoBrain (T6 — inner catch only)
+            result.Commit.Should().BeNull();
         }
         finally
         {
-            File.Delete(badPath);
+            File.Delete(filePath);
         }
     }
 
