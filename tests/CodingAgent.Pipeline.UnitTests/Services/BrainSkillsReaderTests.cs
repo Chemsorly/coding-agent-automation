@@ -109,8 +109,9 @@ public sealed class BrainSkillsReaderTests : IDisposable
         var result = await BrainSkillsReader.ReadAsync(
             _brainPath, null, [], provider.Object, NullLogger(), CancellationToken.None);
 
-        // The over-budget file is passed as empty → assembler skips it
-        result.Result.Should().NotBe(BrainSkillsResults.NoBrain);
+        // The over-budget file is passed as empty → assembler skips it → Empty result
+        result.Result.Should().Be(BrainSkillsResults.Empty,
+            "an over-budget skill file must be skipped by the assembler, producing an Empty result");
     }
 
     [Fact]

@@ -1385,6 +1385,50 @@ public class QualityGateValidatorCleanupExceptionTests
     /// so the cleanup prologue's catch block runs. File permissions cannot force the delete
     /// to fail when the tests run as root, as CI's build-and-test container does.
     /// </summary>
+    // ── BuildAggregateReport: FailedTestNames deduplication + multi-QGC IsInfrastructureFailure ──
+
+    [Fact]
+    public void BuildAggregateReport_FailedTestNames_DeduplicatesAcrossQGCs()
+    {
+        // Two QGCs each report overlapping test names; the aggregate must deduplicate and cap at 20.
+        var names1 = Enumerable.Range(1, 15).Select(i => $"Test.Fail{i}").ToList();
+        var names2 = Enumerable.Range(10, 15).Select(i => $"Test.Fail{i}").ToList(); // overlaps with names1 at 10-15
+        var qgcResults = new List<QgcExecutionResult>
+        {
+            new() { QgcId = "q1", DisplayName = "Q1", Tests = new GateResult { GateName = "Tests", Passed = false, FailedTestNames = names1 } },
+            new() { QgcId = "q2", DisplayName = "Q2", Tests = new GateResult { GateName = "Tests", Passed = false, FailedTestNames = names2 } },
+        };
+
+        var report = QualityGateValidator.BuildAggregateReport(qgcResults);
+
+        report.Tests.Should().NotBeNull();
+        report.Tests!.FailedTestNames.Should().NotBeNull();
+        // names1 ∪ names2 = Fail1..Fail15 + Fail16..Fail24 = 24 distinct; capped at 20
+        report.Tests.FailedTestNames!.Should().HaveCount(20,
+            "FailedTestNames must be deduplicated and capped at MaxFailedTestNames (20)");
+        report.Tests.FailedTestNames.Should().OnlyHaveUniqueItems(
+            "duplicate test names from multiple QGCs must be deduplicated");
+    }
+
+    [Fact]
+    public void BuildAggregateReport_IsInfrastructureFailure_NonFirstQgcPropagates()
+    {
+        // Multi-QGC: first QGC has a compilation failure (no Tests gate).
+        // A later QGC has IsInfrastructureFailure=true.
+        // The aggregate must reflect the infra failure (spec 054 T4 correctness fix).
+        var qgcResults = new List<QgcExecutionResult>
+        {
+            new() { QgcId = "q1", DisplayName = "Compile", Compilation = new GateResult { GateName = "Compilation", Passed = false } },
+            new() { QgcId = "q2", DisplayName = "Tests", Tests = new GateResult { GateName = "Tests", Passed = false, IsInfrastructureFailure = true } },
+        };
+
+        var report = QualityGateValidator.BuildAggregateReport(qgcResults);
+
+        report.Tests.Should().NotBeNull();
+        report.Tests!.IsInfrastructureFailure.Should().BeTrue(
+            "IsInfrastructureFailure must be propagated from any QGC, not just the first failing one");
+    }
+
     private sealed class ThrowingDeleteValidator(Exception deleteException, Serilog.ILogger logger)
         : NoOpProcessValidator(logger)
     {

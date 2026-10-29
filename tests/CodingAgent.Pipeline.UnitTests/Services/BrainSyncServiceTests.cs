@@ -29,6 +29,91 @@ public class BrainSyncServiceTests : IDisposable
 
     public void Dispose() { }
 
+    // ── WriteInboxAsync — run field assignments (spec 054, req 6, T6) ────────
+
+    [Fact]
+    public async Task WriteInboxAsync_SuccessPath_SetsRunFields()
+    {
+        // Arrange
+        var workspace = Path.Combine(Path.GetTempPath(), $"bss-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(workspace, ".brain")); // brain path must exist
+        var run = CreateRun();
+        run.WorkspacePath = workspace;
+        var rel = "inbox/2026-01-01_test.md";
+
+        _brainUpdateService
+            .Setup(s => s.CommitInboxAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+            .ReturnsAsync(new BrainSyncResult { Success = true, FilesCommitted = 1 });
+        _brainProvider.Setup(p => p.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("deadbeef");
+        _brainProvider.Setup(p => p.GetCommitWebUrl(It.IsAny<string>())).Returns("https://github.com/org/brain/commit/deadbeef");
+
+        try
+        {
+            // Act
+            await _sut.WriteInboxAsync(run, _brainProvider.Object, rel, "text", CancellationToken.None);
+
+            // Assert: success path sets all fields
+            run.BrainInboxFile.Should().Be(rel, "BrainInboxFile must be set to the relative path on success");
+            run.BrainUpdatesPushed.Should().BeTrue("BrainUpdatesPushed must be true when push succeeds");
+            run.BrainPushFailed.Should().BeFalse("BrainPushFailed must be false when push succeeds");
+            run.BrainInboxFileUrl.Should().Be("https://github.com/org/brain/commit/deadbeef");
+        }
+        finally { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); }
+    }
+
+    [Fact]
+    public async Task WriteInboxAsync_PushFails_SetsFailureFields()
+    {
+        var workspace = Path.Combine(Path.GetTempPath(), $"bss-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(workspace, ".brain"));
+        var run = CreateRun();
+        run.WorkspacePath = workspace;
+        var rel = "inbox/2026-01-01_test.md";
+
+        _brainUpdateService
+            .Setup(s => s.CommitInboxAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+            .ReturnsAsync(new BrainSyncResult { Success = false, ErrorMessage = "conflict" });
+
+        try
+        {
+            await _sut.WriteInboxAsync(run, _brainProvider.Object, rel, "text", CancellationToken.None);
+
+            run.BrainInboxFile.Should().Be(rel, "BrainInboxFile must still be set even when push fails");
+            run.BrainUpdatesPushed.Should().BeFalse("BrainUpdatesPushed must be false when push fails");
+            run.BrainPushFailed.Should().BeTrue("BrainPushFailed must be true when push fails");
+        }
+        finally { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); }
+    }
+
+    [Fact]
+    public async Task WriteInboxAsync_CommitThrows_SetsFailureFieldsAndDoesNotThrow()
+    {
+        // T6: WriteInboxAsync is non-fatal — must catch exceptions and set failure flags.
+        var workspace = Path.Combine(Path.GetTempPath(), $"bss-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(workspace, ".brain"));
+        var run = CreateRun();
+        run.WorkspacePath = workspace;
+        var rel = "inbox/2026-01-01_test.md";
+
+        _brainUpdateService
+            .Setup(s => s.CommitInboxAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+            .ThrowsAsync(new InvalidOperationException("unexpected failure"));
+
+        try
+        {
+            var act = () => _sut.WriteInboxAsync(run, _brainProvider.Object, rel, "text", CancellationToken.None);
+            await act.Should().NotThrowAsync("WriteInboxAsync must be non-fatal (T6)");
+
+            run.BrainUpdatesPushed.Should().BeFalse();
+            run.BrainPushFailed.Should().BeTrue("BrainPushFailed must be true when an exception is caught");
+        }
+        finally { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); }
+    }
+
     private static PipelineRun CreateRun() => new()
     {
         RunId = Guid.NewGuid().ToString(),

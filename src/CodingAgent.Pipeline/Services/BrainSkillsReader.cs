@@ -83,18 +83,16 @@ public static class BrainSkillsReader
 
             try
             {
-                // T22: read with UTF-8 without BOM, throwOnInvalidBytes
-                var content = await File.ReadAllTextAsync(full, new System.Text.UTF8Encoding(false, true), ct);
+                // T22: stat first, skip if over budget, then read to avoid wasted allocation
                 if (new FileInfo(full).Length > BrainLayout.MaxSkillFileBytes)
                 {
                     logger.Warning("Brain skill file {SkillFile} skipped: over_budget (file too large)", rel);
-                    // Pass an intentionally invalid content so the assembler skips it
                     files[rel] = string.Empty;
+                    continue;
                 }
-                else
-                {
-                    files[rel] = content;
-                }
+                // Read with UTF-8 without BOM, throwOnInvalidBytes (T22)
+                var content = await File.ReadAllTextAsync(full, new System.Text.UTF8Encoding(false, true), ct);
+                files[rel] = content;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -67,7 +67,14 @@ internal static class JobCompletionMapper
         if (payload.BrainSkillsResult is not null) run.BrainSkillsResult = payload.BrainSkillsResult;
         if (payload.BrainSkillsBytes is not null) run.BrainSkillsBytes = payload.BrainSkillsBytes;
         if (payload.BrainSkillsCommit is not null) run.BrainSkillsCommit = payload.BrainSkillsCommit;
-        if (payload.BrainInboxFile is not null) run.BrainInboxFile = payload.BrainInboxFile;
+        if (payload.BrainInboxFile is not null)
+        {
+            // Validate path against the expected inbox pattern (req 12.8, security: path traversal prevention).
+            // Analogous to how BrainInboxFileUrl is gated through AgentLinkSanitizer.
+            run.BrainInboxFile = CodingAgent.Pipeline.Brain.BrainLayout.IsInboxPath(payload.BrainInboxFile)
+                ? payload.BrainInboxFile
+                : null;
+        }
         if (payload.BrainPushFailed is not null) run.BrainPushFailed = payload.BrainPushFailed;
         if (payload.BrainInboxFileUrl is not null)
         {

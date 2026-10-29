@@ -213,13 +213,19 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                     p => p,
                     p => _brainUpdateService.ReadFileAtHead(workspacePath, p),
                     StringComparer.Ordinal);
-                var newContents = changes.ToDictionary(
-                    c => c.Path,
-                    c => c.Kind == CodingAgent.Pipeline.Models.BrainPathChangeKind.Deleted ? (string?)null
-                        : File.Exists(Path.Combine(workspacePath, c.Path.Replace('/', Path.DirectorySeparatorChar)))
-                            ? File.ReadAllText(Path.Combine(workspacePath, c.Path.Replace('/', Path.DirectorySeparatorChar)))
-                            : null,
-                    StringComparer.Ordinal);
+                var newContents = new Dictionary<string, string?>(StringComparer.Ordinal);
+                foreach (var c in changes)
+                {
+                    if (c.Kind == CodingAgent.Pipeline.Models.BrainPathChangeKind.Deleted)
+                    {
+                        newContents[c.Path] = null;
+                        continue;
+                    }
+                    var fullChangedPath = Path.Combine(workspacePath, c.Path.Replace('/', Path.DirectorySeparatorChar));
+                    newContents[c.Path] = File.Exists(fullChangedPath)
+                        ? await File.ReadAllTextAsync(fullChangedPath, ct)
+                        : null;
+                }
 
                 var validationInput = new CodingAgent.Pipeline.Brain.BrainReviewValidationInput(
                     changes, headContents, newContents,
