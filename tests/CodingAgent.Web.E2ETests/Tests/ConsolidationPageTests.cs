@@ -311,8 +311,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
         Assert.True(await cardStatusLocator.CountAsync() > 0);
 
         // Assert: run page shows brain-review-lines to the admin (spec 054 10.3)
-        await Page.GotoAsync($"{BaseUrl}/runs/{jobId}");
-        await Page.WaitForSelectorAsync("[data-initialized='true']", new() { Timeout = 30_000 });
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/runs/{jobId}");
         var reviewLines = Page.Locator("[data-testid='brain-review-lines']");
         await reviewLines.WaitForAsync(new() { Timeout = 30_000 });
         Assert.True(await reviewLines.CountAsync() > 0, "brain-review-lines must be visible to the admin on the run page");
