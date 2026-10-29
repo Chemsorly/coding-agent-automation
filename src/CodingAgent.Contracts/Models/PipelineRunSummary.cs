@@ -259,7 +259,7 @@ public sealed class PipelineRunSummary
     /// What the brain consolidation changed and pushed, or null for non-brain-consolidation runs.
     /// Stored in the JSONB SummaryJson column; no DB migration needed.
     /// </summary>
-    public BrainConsolidationOutcome? BrainConsolidationOutcome { get; init; }
+    public BrainConsolidationOutcome? BrainConsolidationOutcome { get; set; }
 
     /// <summary>
     /// Work item ID associated with this run, or null for runs that were created before this field

@@ -31,6 +31,7 @@ public sealed class ConsolidationStalenessServiceTests
         PipelineRunType runType = PipelineRunType.Implementation,
         PipelineStep finalStep = PipelineStep.Completed,
         bool brainUpdatesPushed = false,
+        string? brainInboxFile = null,
         string? brainProviderConfigId = null,
         RunFeedback? feedback = null,
         string? issueIdentifier = "test-scope",
@@ -43,6 +44,7 @@ public sealed class ConsolidationStalenessServiceTests
             FinalStep = finalStep,
             RunType = runType,
             BrainUpdatesPushed = brainUpdatesPushed,
+            BrainInboxFile = brainInboxFile,
             BrainProviderConfigId = brainProviderConfigId,
             Feedback = feedback,
             StartedAtOffset = startedAt ?? DateTimeOffset.UtcNow.AddMinutes(-5),
@@ -60,8 +62,8 @@ public sealed class ConsolidationStalenessServiceTests
     [Fact]
     public async Task CountBrainRuns_CountsOnlyRunsThatPushedToThisBrain()
     {
-        // Arrange: runs pushed to bp-1, a run pushed to bp-2, and a consolidation run — only the
-        // first two are non-consolidation runs that pushed to bp-1.
+        // Arrange: runs with inbox file for bp-1, a run for bp-2, and a consolidation run — only the
+        // first two are non-consolidation runs with an inbox file for bp-1 (spec 054 8A.3).
         _history
             .Setup(h => h.GetRunHistoryAsync(
                 It.Is<RunHistoryQuery>(q => q.FinalStep == PipelineStep.Completed && q.RunType == PipelineRunType.Consolidation),
@@ -73,11 +75,15 @@ public sealed class ConsolidationStalenessServiceTests
                 It.Is<RunHistoryQuery>(q => q.FinalStep == null && q.RunType == null),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(PageOf([
-                MakeSummary(brainUpdatesPushed: true, brainProviderConfigId: "bp-1"),
-                MakeSummary(brainUpdatesPushed: true, brainProviderConfigId: "bp-1"),
-                MakeSummary(brainUpdatesPushed: true, brainProviderConfigId: "bp-2"),
-                MakeSummary(runType: PipelineRunType.Consolidation, brainUpdatesPushed: true, brainProviderConfigId: "bp-1"),
-                MakeSummary(brainUpdatesPushed: false, brainProviderConfigId: "bp-1"),
+                // Runs with inbox file → count
+                MakeSummary(brainInboxFile: "inbox/run1.md", brainProviderConfigId: "bp-1"),
+                MakeSummary(brainInboxFile: "inbox/run2.md", brainProviderConfigId: "bp-1"),
+                // Different brain → don't count
+                MakeSummary(brainInboxFile: "inbox/run3.md", brainProviderConfigId: "bp-2"),
+                // Consolidation run → don't count
+                MakeSummary(runType: PipelineRunType.Consolidation, brainInboxFile: "inbox/run4.md", brainProviderConfigId: "bp-1"),
+                // No inbox file → don't count
+                MakeSummary(brainProviderConfigId: "bp-1"),
             ]));
 
         var sut = CreateSut();
@@ -85,7 +91,7 @@ public sealed class ConsolidationStalenessServiceTests
         // Act
         var count = await sut.CountBrainRunsSinceLastConsolidationAsync("bp-1", CancellationToken.None);
 
-        // Assert: only the 2 non-consolidation runs that pushed to bp-1
+        // Assert: only the 2 non-consolidation runs with an inbox file for bp-1
         count.Should().Be(2);
     }
 

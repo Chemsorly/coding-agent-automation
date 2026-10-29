@@ -67,7 +67,7 @@ public static class PipelineTelemetry
 
     /// <summary>
     /// Counter: brain update result per run (pushed / none). Recorded once per non-consolidation run.
-    /// Tags: result (pushed / none).
+    /// Tags: result (pushed / none / failed). Recorded only for runs with a brain provider.
     /// </summary>
     // TODO: [WARNING] Unit is UnitRun = "{run}" (confirmed correct per OTel spec). If this constant is
     // ever changed (e.g. to "run" without braces), the Prometheus exporter will emit a non-standard unit
@@ -75,6 +75,30 @@ public static class PipelineTelemetry
     // intentional per the requirements table. See review findings [WARNING] DotNetSpecialist L87.
     public static readonly Counter<long> RunBrainUpdates = Meter.CreateCounter<long>(
         "pipeline.run.brain_updates", UnitRun, "Brain update results at run completion");
+
+    /// <summary>
+    /// Counter: brain skills injection result per run (injected / skipped / failed / unknown).
+    /// Recorded once per non-consolidation run with a brain provider. Recorded by: API.
+    /// Tags: result (injected / skipped / failed / unknown), run_type.
+    /// </summary>
+    public static readonly Counter<long> RunBrainSkills = Meter.CreateCounter<long>(
+        "pipeline.run.brain_skills", UnitRun, "Brain skills injection results per run");
+
+    /// <summary>
+    /// Counter: skill lines a brain review promoted, appended, retired or marked missed again.
+    /// Recorded once per skill line in each brain review. Recorded by: API.
+    /// Tags: action (promoted / appended / retired / missed-again), scope (repository / technology / general / other).
+    /// </summary>
+    public static readonly Counter<long> BrainReviewLines = Meter.CreateCounter<long>(
+        "pipeline.brain.review.lines", "{line}", "Skill lines a brain review promoted, appended, retired or marked missed again");
+
+    /// <summary>
+    /// Counter: brain reviews refused by validation per consolidation run.
+    /// Recorded once per refusal. Recorded by: API.
+    /// Tags: reason (the refusal reason string, or "other" for unknown values).
+    /// </summary>
+    public static readonly Counter<long> BrainReviewRefusals = Meter.CreateCounter<long>(
+        "pipeline.brain.review.refusals", UnitRun, "Brain reviews refused by validation");
 
     // ── LLM usage counters (API-side, recorded at terminal time) ────────────────────────────────
     // All four counters are tagged: run_type, phase, provider.

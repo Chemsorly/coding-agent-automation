@@ -4,6 +4,7 @@ using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -245,25 +246,21 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Consolidation runs skip bookkeeping — they have no associated issue labels or feedback comments.
         if (run is not null && !run.IsConsolidation())
         {
-            // Record brain update result once per non-consolidation run.
-            // BrainUpdatesPushed is set by JobCompletionMapper.Apply inside strategy.ExecuteAsync above.
-            // Recorded regardless of runWasAlive: even when another path terminated the run,
-            // the agent still ran and may have pushed (or not pushed) to the brain.
-            // Runs without a brain provider configured will always produce result=none.
-            // TODO: [WARNING] The issue requirements specify "runs with a brain provider only" but this
-            // records for ALL non-consolidation runs. Runs with no brain provider always produce
-            // result=none, making pipeline_run_brain_updates_total{result=none} indistinguishable between
-            // "brain provider present but nothing to push" and "no brain provider at all". The updated
-            // docs/observability.md documents "recorded once per non-consolidation run" (broader than
-            // the issue text), so this is a deliberate design choice. If the original "brain provider
-            // only" constraint is authoritative, gate on brain-provider presence (e.g. a run flag) before
-            // recording. See review findings [WARNING] Correctness L271.
-            // Record brain_updates with the proper result tag (spec 054, req 14)
-            var brainResult = payload.BrainUpdatesPushed == true ? "pushed"
-                : payload.BrainPushFailed == true ? "failed"
-                : "skipped";
-            PipelineTelemetry.RunBrainUpdates.Add(1,
-                new KeyValuePair<string, object?>("result", brainResult));
+            // Record brain telemetry for runs with a brain provider (spec 054, req 14).
+            // BrainUpdatesPushed and BrainSkillsResult are set by JobCompletionMapper.Apply
+            // inside strategy.ExecuteAsync above. Use payload.* for the push-result tag to avoid
+            // the race where ReplaceRun mutates the local run before we read it (#3897).
+            if (run.BrainProviderConfigId is not null)
+            {
+                var updates = payload.BrainUpdatesPushed == true ? "pushed"
+                    : payload.BrainPushFailed == true ? "failed"
+                    : "none";
+                PipelineTelemetry.RunBrainUpdates.Add(1,
+                    new KeyValuePair<string, object?>("result", updates));
+                PipelineTelemetry.RunBrainSkills.Add(1,
+                    new KeyValuePair<string, object?>("result", run.BrainSkillsResult ?? BrainSkillsResults.Unknown),
+                    PipelineTelemetry.RunTypeTag(run.RunType));
+            }
 
             // skipLabelSwap=true when another path (HTTP Failed POST) terminated the run first and the
             // work item kept that path's status. That path set the label (e.g. agent:needs-refinement,
