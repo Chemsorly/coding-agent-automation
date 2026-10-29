@@ -92,4 +92,12 @@ public interface IGitWorkspaceProvider : IAsyncDisposable
     /// auto-close is not supported.
     /// </summary>
     string? FormatCloseReference(IssueIdentifier issueIdentifier) => $"Closes #{issueIdentifier}";
+
+    /// <summary>
+    /// Returns a SHA-256 fingerprint for every changed or untracked path, excluding
+    /// <paramref name="excludedPaths"/>. Returns null when the provider cannot compute it (spec 054 DD5).
+    /// </summary>
+    Task<IReadOnlyDictionary<string, string>?> GetWorkingTreeFingerprintAsync(
+        WorkspacePath workspacePath, IReadOnlyList<string> excludedPaths, CancellationToken ct)
+        => Task.FromResult<IReadOnlyDictionary<string, string>?>(null);
 }

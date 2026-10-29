@@ -5,6 +5,7 @@ using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.Ui;
@@ -37,7 +38,10 @@ internal static class UiRunEndpoints
         IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
     {
         access.DemandList(query.ProjectId);
-        return await PipelineRunEndpoints.GetRunHistory(history, runService, dbFactory, query, ct);
+        var result = await PipelineRunEndpoints.GetRunHistory(history, runService, dbFactory, query, ct);
+        return result is Ok<PagedResult<PipelineRunSummary>> ok
+            ? TypedResults.Ok(BrainReviewVisibility.Apply(ok.Value!, access))
+            : result;
     }
 
     /// <summary>
@@ -53,7 +57,7 @@ internal static class UiRunEndpoints
             return TypedResults.NotFound();
         access.DemandRead(run.ProjectId);
 
-        return TypedResults.Ok(new UiRunDetail(run, new UiRunAgent(run.AgentProfileName, run.ModelName, run.AgentEffort)));
+        return TypedResults.Ok(new UiRunDetail(BrainReviewVisibility.Apply(run, access), new UiRunAgent(run.AgentProfileName, run.ModelName, run.AgentEffort)));
     }
 
     /// <summary>

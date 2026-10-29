@@ -1519,6 +1519,40 @@ public class LocalPipelineExecutorTests : IDisposable
         steps.Should().ContainItemsAssignableTo<DownloadIssueImagesStep>();
     }
 
+    /// <summary>
+    /// Req 5.4: WriteBrainSkillsStep must immediately follow SyncBrainPreRunStep in every pipeline.
+    /// </summary>
+    [Fact]
+    public async Task AllPipelines_WriteBrainSkillsStep_FollowsSyncBrainPreRunStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var pipelines = new[]
+        {
+            AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildTriageStepPipeline(job, proxy, repoConfig),
+        };
+
+        foreach (var steps in pipelines)
+        {
+            var syncIdx = steps
+                .Select((s, i) => (s, i))
+                .Where(t => t.s is SyncBrainPreRunStep)
+                .Select(t => t.i)
+                .FirstOrDefault(-1);
+
+            syncIdx.Should().NotBe(-1, "pipeline should contain SyncBrainPreRunStep");
+            steps[syncIdx + 1].Should().BeOfType<WriteBrainSkillsStep>(
+                "WriteBrainSkillsStep must immediately follow SyncBrainPreRunStep (spec 054, req 5.4)");
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static HubConnection CreateDisconnectedHubConnection()

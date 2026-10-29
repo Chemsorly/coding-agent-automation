@@ -201,4 +201,13 @@ public record JobDistributionRequest
     /// for hub method routing (token refresh, step transitions, etc.).
     /// </summary>
     public string? RunId { get; init; }
+
+    /// <summary>Stack labels from the pipeline job template (spec 054, req 10, task 3.6).</summary>
+    public IReadOnlyList<string>? StackLabels { get; init; }
+
+    /// <summary>Brain group for brain consolidation assignments (spec 054, req 10.2, task 3.6).</summary>
+    public IReadOnlyList<BrainGroupMember>? BrainGroup { get; init; }
 }
+
+// ── Brain v2 fields (spec 054, req 10, task 3.6) ──
+// Added here as extension properties (the record uses init properties).

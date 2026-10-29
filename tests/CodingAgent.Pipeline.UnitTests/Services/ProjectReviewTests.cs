@@ -63,7 +63,7 @@ public class ProjectReviewTests
 
         prompt.Should().Contain("Project repositories", "the repository list is appended under that heading")
             .And.Contain("may span several repositories", "a project can have a single repository")
-            .And.Contain("`.brain/`")
+            .And.Contain("brain skills in your steering", "brain skills are now delivered via steering")
             .And.Contain("One brain can serve several projects", "a lesson may be about another project")
             .And.Contain("MCP servers")
             .And.Contain("git log -1 --format=%cs")

@@ -22,6 +22,9 @@ public sealed class PipelineJobResult
     /// </summary>
     public string? LogContent { get; init; }
 
+    /// <summary>Names of the failed steps within this job (spec 054, req 4.1, DD7).</summary>
+    public IReadOnlyList<string> FailedSteps { get; init; } = [];
+
     /// <summary>
     /// True when the job finished without succeeding: it failed, or it was cancelled before it
     /// could finish. GitHub reports a job that exceeds its <c>timeout-minutes</c> as cancelled,

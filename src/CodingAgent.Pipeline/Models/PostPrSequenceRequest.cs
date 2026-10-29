@@ -20,4 +20,6 @@ public sealed record PostPrSequenceRequest
     public required IPipelineRunHistoryService? HistoryService { get; init; }
     public required Action<string> EmitOutputLine { get; init; }
     public required Func<PipelineStep, Task> TransitionCallback { get; init; }
+    /// <summary>Project + MCP secrets for masking in the inbox file (spec 054, req 12.4).</summary>
+    public IReadOnlyDictionary<string, string> Secrets { get; init; } = new Dictionary<string, string>();
 }

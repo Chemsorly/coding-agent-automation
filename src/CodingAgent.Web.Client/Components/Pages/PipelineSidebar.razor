@@ -785,6 +785,11 @@
             {
                 <span>Syncing...</span>
             }
+            else if (Run.BrainSkillsResult is { } _skillsResult)
+            {
+                var _skillsBytesText = Run.BrainSkillsBytes > 0 ? $", {Run.BrainSkillsBytes} bytes" : "";
+                <span><Icon Name="check-circle" /> skills: @_skillsResult@_skillsBytesText</span>
+            }
             else if (Run.BrainContextLoaded)
             {
                 <span><Icon Name="check-circle" /> @Run.BrainKnowledgeFileCount knowledge files loaded</span>
@@ -1079,11 +1084,22 @@
             }
             else if (Run.BrainUpdatesPushed)
             {
-                <span><Icon Name="check-circle" /> @Run.BrainFilesCommitted file(s) pushed</span>
+                @if (Run.BrainInboxFileUrl is not null)
+                {
+                    <span><Icon Name="check-circle" /> <a href="@Run.BrainInboxFileUrl" target="_blank" rel="noopener">Inbox pushed</a></span>
+                }
+                else
+                {
+                    <span><Icon Name="check-circle" /> Inbox pushed</span>
+                }
+            }
+            else if (Run.BrainPushFailed)
+            {
+                <span><Icon Name="alert-triangle" /> Inbox push failed</span>
             }
             else
             {
-                <span><Icon Name="alert-triangle" /> Brain updates not persisted</span>
+                <span>No inbox</span>
             }
         </div>
     };
@@ -1243,7 +1259,7 @@
 
     private RenderFragment RenderConsolidatingKnowledgeDetails() => __builder =>
     {
-        <div class="step-detail">@Run.BrainConsolidationOutcome!.FilesModified files modified</div>
+        <div class="step-detail">@(Run.BrainConsolidationOutcome!.Promoted) promoted, @(Run.BrainConsolidationOutcome!.Retired) retired</div>
     };
 
     private RenderFragment RenderPushingBrainChangesDetails() => __builder =>

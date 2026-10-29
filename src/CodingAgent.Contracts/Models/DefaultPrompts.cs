@@ -260,17 +260,14 @@ public static class DefaultPrompts
         "- The project's other repositories, if it has any, are checked out read-only, on their default branches, in the " +
         "folders listed under \"Project repositories\" below. Before you report anything about another repository, open " +
         "the code there and check it; never conclude from names alone.\n" +
-        "- The brain in `.brain/`, if the workspace has one, holds lessons learned in earlier runs; `.brain/AGENTS.md` " +
-        "describes its structure. One brain can serve several projects, so check that a lesson concerns this project " +
-        "before you rely on it. Only read the brain; never modify it or run git commands that change it.\n" +
+        "- The brain skills in your steering, when present, are lessons this pipeline learned from earlier runs. One brain can serve several projects, so check that a lesson concerns this project before you rely on it.\n" +
         "- The connected MCP servers reach more of the project, for example the ticketing system (related tickets and " +
         "epics) or the wiki (architecture decision records, specifications). Explore them for the decisions and " +
         "specifications that concern the changed code.\n" +
         "- The project steering, the issue, and the documentation in the repositories describe the project as well.\n\n" +
         "HOW CURRENT THE INFORMATION IS:\n" +
         "Documentation is often outdated, and sources can contradict each other. Before you rely on a document or a " +
-        "lesson, find out how old it is: `git log -1 --format=%cs -- <file>` in the repository the file belongs to (the " +
-        "brain is one too), the last-updated date of a wiki page or ticket. When a source is older than the code it " +
+        "lesson, find out how old it is: `git log -1 --format=%cs -- <file>` in the repository the file belongs to, " +
         "describes, or another source contradicts it, look for a more recent one. The code on the default branches and " +
         "recent decisions outweigh old documents. Report a contradiction between sources only when it affects the change, " +
         "and say which source you trusted and why.\n\n" +
@@ -283,8 +280,7 @@ public static class DefaultPrompts
         "- Rules, limits, enum values and error codes duplicated in another repository that now disagree.\n" +
         "- Project decisions: architecture decision records, specifications, domain terms and the names of product " +
         "concepts that hold across all repositories.\n" +
-        "- Lessons learned: the change repeats a mistake that a lesson in the brain warns about, where the lesson " +
-        "concerns this project.\n" +
+        "- Lessons learned: the change repeats a mistake that a line of the brain skills warns about, where the line concerns this project.\n" +
         "- Changes that only work if another repository changes too, when the issue does not say so.\n" +
         "- Project documentation in this or another repository (README, API docs, decision records) that the change " +
         "makes wrong.\n\n" +

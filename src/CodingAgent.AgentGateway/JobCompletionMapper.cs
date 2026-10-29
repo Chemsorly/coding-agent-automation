@@ -62,6 +62,27 @@ internal static class JobCompletionMapper
         }
         if (payload.McpServers is not null)
             run.McpServers = payload.McpServers;
+
+        // Brain v2 fields (spec 054, req 8.1): copy only when the payload carries a value
+        if (payload.BrainSkillsResult is not null) run.BrainSkillsResult = payload.BrainSkillsResult;
+        if (payload.BrainSkillsBytes is not null) run.BrainSkillsBytes = payload.BrainSkillsBytes;
+        if (payload.BrainSkillsCommit is not null) run.BrainSkillsCommit = payload.BrainSkillsCommit;
+        if (payload.BrainInboxFile is not null)
+        {
+            // Validate path against the expected inbox pattern (req 12.8, security: path traversal prevention).
+            // Analogous to how BrainInboxFileUrl is gated through AgentLinkSanitizer.
+            run.BrainInboxFile = CodingAgent.Pipeline.Brain.BrainLayout.IsInboxPath(payload.BrainInboxFile)
+                ? payload.BrainInboxFile
+                : null;
+        }
+        if (payload.BrainPushFailed is not null) run.BrainPushFailed = payload.BrainPushFailed;
+        if (payload.BrainInboxFileUrl is not null)
+        {
+            var sanitized = CodingAgent.Contracts.Services.AgentLinkSanitizer.HttpsOrNull(payload.BrainInboxFileUrl);
+            run.BrainInboxFileUrl = sanitized;
+            // Non-null values that don't pass the https check are dropped (req 12.8).
+            // The call site in RegularJobCompletionStrategy logs the warning.
+        }
     }
 
     private static PhaseUsage ToPhaseUsage(PhaseUsagePayload p) =>

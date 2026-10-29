@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Parsers;
@@ -162,7 +163,7 @@ public class QualityGateValidator : IQualityGateValidator
     /// <summary>
     /// Builds the aggregate <see cref="QualityGateReport"/> from individual QGC execution results.
     /// </summary>
-    private static QualityGateReport BuildAggregateReport(List<QgcExecutionResult> qgcResults)
+    internal static QualityGateReport BuildAggregateReport(List<QgcExecutionResult> qgcResults)
     {
         // Build aggregate flat fields for backward compatibility
         var allCompilationsPassed = qgcResults.All(r => r.Compilation?.Passed ?? true);
@@ -194,17 +195,12 @@ public class QualityGateValidator : IQualityGateValidator
             TestsPassed = totalTestsPassed,
             TestsFailed = totalTestsFailed,
             TestsSkipped = totalTestsSkipped,
-            // TODO [WARNING]: IsInfrastructureFailure is populated from firstFailingQgc?.Tests?.IsInfrastructureFailure,
-            // where firstFailingQgc is the first QGC whose overall Passed==false. If the first failing QGC has a
-            // compilation failure but no test command (Tests==null), the null-conditional resolves to null even when
-            // a later QGC has an infra-kill Tests result. The retry-loop call site compensates by also checking
-            // report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true), so the retry prompt is
-            // correct — but the aggregate Tests.IsInfrastructureFailure field itself is misleading to any consumer
-            // that reads it directly (e.g. history recording, future callers). Fix: align BuildAggregateReport
-            // to use Any() over QgcResults, matching the retry-loop derivation:
-            //   IsInfrastructureFailure = qgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true) ? true : null
-            // See review finding: Correctness WARNING — QualityGateValidator.cs BuildAggregateReport
-            IsInfrastructureFailure = firstFailingQgc?.Tests?.IsInfrastructureFailure
+            IsInfrastructureFailure = qgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true) ? true : null,
+            FailedTestNames = qgcResults
+                .SelectMany(r => r.Tests?.FailedTestNames ?? [])
+                .Distinct(StringComparer.Ordinal)
+                .Take(BrainLayout.MaxFailedTestNames)
+                .ToList() is { Count: > 0 } names ? names : null
         };
 
         return new QualityGateReport
@@ -410,7 +406,7 @@ public class QualityGateValidator : IQualityGateValidator
 
         WriteGateOutput(workspacePath, $"{qgc.DisplayName}-tests", stdout, stderr);
 
-        var (passed, failed, skipped) = ResolveTestCounts(isDotnet, resultsDir, qgc, stdout);
+        var (passed, failed, skipped, failedTestNames) = ResolveTestCounts(isDotnet, resultsDir, qgc, stdout);
 
         _logger.Information("QGC {QgcName} test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
             qgc.DisplayName, passed, failed, skipped);
@@ -458,7 +454,8 @@ public class QualityGateValidator : IQualityGateValidator
             TestsPassed = passed,
             TestsFailed = failed,
             TestsSkipped = skipped,
-            IsInfrastructureFailure = isInfraFailure ? true : null
+            IsInfrastructureFailure = isInfraFailure ? true : null,
+            FailedTestNames = failedTestNames.Count > 0 ? failedTestNames : null
         };
     }
 
@@ -469,20 +466,24 @@ public class QualityGateValidator : IQualityGateValidator
     /// A test with an empty TRX results directory should be added to assert stdout-based counts are returned,
     /// locking in the fallback behavior and preventing silent regression if the condition changes.
     /// </summary>
-    private (int Passed, int Failed, int Skipped) ResolveTestCounts(
+    private (int Passed, int Failed, int Skipped, IReadOnlyList<string> FailedTestNames) ResolveTestCounts(
         bool isDotnet, string? resultsDir, QualityGateConfiguration qgc, string stdout)
     {
         if (isDotnet && resultsDir != null)
         {
             var trxResult = TrxTestResultParser.ParseTestResults(resultsDir);
             if (trxResult.Passed != 0 || trxResult.Failed != 0 || trxResult.Skipped != 0)
-                return (trxResult.Passed, trxResult.Failed, trxResult.Skipped);
+            {
+                var names = trxResult.FailedTestNames.Take(BrainLayout.MaxFailedTestNames).ToList();
+                return (trxResult.Passed, trxResult.Failed, trxResult.Skipped, names);
+            }
 
             _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
                 resultsDir, qgc.DisplayName);
         }
 
-        return ParseTestCountsFromStdout(stdout);
+        var (p, f, s) = ParseTestCountsFromStdout(stdout);
+        return (p, f, s, []);
     }
 
     /// <summary>

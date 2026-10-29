@@ -173,9 +173,37 @@
                 {
                     <div class="cockpit-detail-item"><div class="k">Retries</div><div class="v">@run.RetryCount</div></div>
                 }
-                @if (run.BrainRepoUsed)
+                @if (run.BrainRepoUsed && run.RunType != PipelineRunType.Consolidation)
                 {
-                    <div class="cockpit-detail-item"><div class="k">Brain</div><div class="v">Used @(run.BrainUpdatesPushed ? "(updates pushed)" : "(read-only)")</div></div>
+                    var _inboxStatus = run.BrainUpdatesPushed ? "pushed" : run.BrainPushFailed == true ? "failed" : "none";
+                    var _skillsKb = run.BrainSkillsBytes is > 0 ? $", {run.BrainSkillsBytes.Value / 1024.0:F0} KB" : "";
+                    <div class="cockpit-detail-item">
+                        <div class="k">Brain</div>
+                        <div class="v">
+                            Skills @(run.BrainSkillsResult ?? "unknown")@_skillsKb · inbox @_inboxStatus
+                            @if (run.BrainSkillsCommit is not null || run.BrainInboxFile is not null)
+                            {
+                                <div style="margin-top:3px; font-size:13px;">
+                                    @if (run.BrainSkillsCommit is { } _skillsCommit)
+                                    {
+                                        <span class="mono">@_skillsCommit[..Math.Min(7, _skillsCommit.Length)]</span>
+                                        @if (run.BrainInboxFile is not null) { <span> · </span> }
+                                    }
+                                    @if (run.BrainInboxFile is { } _inboxPath)
+                                    {
+                                        @if (run.BrainInboxFileUrl is not null)
+                                        {
+                                            <a href="@run.BrainInboxFileUrl" target="_blank" rel="noopener"><code data-testid="brain-inbox-file">@_inboxPath</code></a>
+                                        }
+                                        else
+                                        {
+                                            <code data-testid="brain-inbox-file">@_inboxPath</code>
+                                        }
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
                 }
                 @if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition && run.DecompositionSubIssuesAttempted > 0)
                 {
@@ -318,13 +346,56 @@
             @if (run.BrainConsolidationOutcome is { } brain)
             {
                 <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);" data-testid="brain-changes">
-                    <div class="cockpit-detail-sub-label">Brain changes</div>
-                    <div class="cockpit-findings is-four">
-                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.FilesModified</span><span class="cockpit-finding-l">Files modified</span></div>
-                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.EntriesMerged</span><span class="cockpit-finding-l">Entries merged</span></div>
-                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.ContradictionsResolved</span><span class="cockpit-finding-l">Contradictions resolved</span></div>
-                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.EntriesPruned</span><span class="cockpit-finding-l">Entries pruned</span></div>
+                    <div class="cockpit-detail-sub-label">Brain review</div>
+                    <div class="cockpit-findings is-four" data-testid="brain-review-counts">
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.Promoted</span><span class="cockpit-finding-l">Promoted</span></div>
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.Appended</span><span class="cockpit-finding-l">Appended</span></div>
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.Retired</span><span class="cockpit-finding-l">Retired</span></div>
+                        <div class="cockpit-finding"><span class="cockpit-finding-v">@brain.MissedAgain</span><span class="cockpit-finding-l">Missed again</span></div>
                     </div>
+                    @if (brain.Lines.Count > 0)
+                    {
+                        <div data-testid="brain-review-lines" style="margin-top:10px; font-size:13px;">
+                            @foreach (var _group in brain.Lines.GroupBy(l => l.Action))
+                            {
+                                <div style="margin-top:6px; font-weight:600;">@_group.Key</div>
+                                @foreach (var _l in _group)
+                                {
+                                    <div style="margin-left:8px; margin-top:2px;"><span class="mono" style="font-size:12px;">@_l.File</span> — @_l.Text</div>
+                                }
+                            }
+                        </div>
+                    }
+                    @if (brain.Checks.Count > 0)
+                    {
+                        <div style="margin-top:10px; font-size:13px;">
+                            <div style="font-weight:600; margin-bottom:4px;">Recurring patterns</div>
+                            @foreach (var _check in brain.Checks)
+                            {
+                                <div style="margin-top:3px;">@_check.Cause — <span class="monitoring-muted">@_check.SuggestedHome</span></div>
+                            }
+                        </div>
+                    }
+                    @if (brain.FlakyTests.Count > 0)
+                    {
+                        <div style="margin-top:10px; font-size:13px;">
+                            <div style="font-weight:600; margin-bottom:4px;">Flaky tests</div>
+                            @foreach (var _ft in brain.FlakyTests)
+                            {
+                                <div style="margin-top:3px;">@_ft.Name (@_ft.Count)</div>
+                            }
+                        </div>
+                    }
+                    @if (brain.InfrastructureFailures > 0 || brain.CiStatusErrors > 0 || brain.Timeouts > 0)
+                    {
+                        <div style="margin-top:8px; font-size:13px; color:var(--text-muted);">
+                            Not the agent's fault: @brain.InfrastructureFailures infrastructure, @brain.CiStatusErrors CI status, @brain.Timeouts timeouts
+                        </div>
+                    }
+                    @if (brain.ArchivedV1)
+                    {
+                        <div style="margin-top:6px; font-size:12.5px; color:var(--text-muted);">v1 archived</div>
+                    }
                     @if (brain.PushedCommitSha is not null)
                     {
                         <div style="margin-top: 10px; font-size: 13.5px;">
@@ -982,6 +1053,12 @@
         model.BrainUpdatesPushed = summary.BrainUpdatesPushed;
         model.BrainContextLoaded = summary.BrainContextLoaded;
         model.BrainKnowledgeFileCount = summary.BrainKnowledgeFileCount;
+        model.BrainSkillsResult = summary.BrainSkillsResult;
+        model.BrainSkillsBytes = summary.BrainSkillsBytes ?? 0;
+        model.BrainSkillsCommit = summary.BrainSkillsCommit;
+        model.BrainInboxFile = summary.BrainInboxFile;
+        model.BrainInboxFileUrl = summary.BrainInboxFileUrl;
+        model.BrainPushFailed = summary.BrainPushFailed == true;
         model.CompletedAtOffset = summary.CompletedAtOffset;
         model.StartedAtOffset = summary.StartedAtOffset;
         model.RunMode = summary.RunMode;
@@ -1023,8 +1100,9 @@
         model.IsDraftPr = snapshot.IsDraftPr;
         model.BlacklistedFilesDetected = snapshot.BlacklistedFilesDetected;
         model.OpenIssuesDownloaded = snapshot.OpenIssuesDownloaded;
-        model.BrainFilesCommitted = snapshot.BrainFilesCommitted;
         model.BrainUpdatesPushed = snapshot.BrainUpdatesPushed;
+        model.BrainInboxFileUrl = snapshot.BrainInboxFileUrl;
+        model.BrainSkillsResult = snapshot.BrainSkillsResult;
         model.DecompositionSubIssuesCreated = snapshot.DecompositionSubIssuesCreated;
         model.DecompositionSubIssuesAttempted = snapshot.DecompositionSubIssuesAttempted;
         model.FailureReason = snapshot.FailureReason;

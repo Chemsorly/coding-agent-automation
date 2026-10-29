@@ -36,25 +36,6 @@ public class BrainSyncUnitTests
         brainPost.Should().BeLessThan(completed);
     }
 
-    [Fact]
-    public void BrainReadOnly_OmitsWriteInstructions()
-    {
-        var writeInstructions = PromptBuilder.BuildBrainWriteInstructions(
-            brainAvailable: true, runId: "run-1", issueIdentifier: "issue-1",
-            brainReadOnly: true);
-
-        writeInstructions.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void BrainReadOnly_StillProvidesReadContext()
-    {
-        var context = PromptBuilder.BuildBrainContextSection(brainAvailable: true);
-
-        context.Should().NotBeEmpty();
-        context.Should().Contain(".brain/AGENTS.md");
-    }
-
     // --- Task 13.2: Error handling and graceful degradation ---
 
     [Fact]
@@ -158,8 +139,7 @@ public class BrainSyncUnitTests
         run.BrainContextLoaded.Should().BeFalse();
         run.BrainKnowledgeFileCount.Should().Be(0);
         run.BrainUpdatesPushed.Should().BeFalse();
-        run.BrainFilesCommitted.Should().Be(0);
-        run.BrainValidation.Should().BeNull();
+        // BrainFilesCommitted and BrainValidation removed (spec 054, task 3.4)
     }
 
     [Fact]

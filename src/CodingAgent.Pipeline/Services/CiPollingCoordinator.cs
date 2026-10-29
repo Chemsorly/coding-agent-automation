@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
@@ -84,6 +85,9 @@ internal sealed class CiPollingCoordinator
                 if (!ciPassed)
                     classification = CiFailureClassifier.Classify(ciStatus);
             }
+
+            if (!ciPassed)
+                BrainEvidenceRecorder.RecordCiFailure(run, ciStatus, classification);
         }
 
         return (ciPassed, ciStatus, ciLogPaths);
@@ -749,6 +753,7 @@ internal sealed class CiPollingCoordinator
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            BrainEvidenceRecorder.RecordCiTimeout(run);
             ciGate = BuildCiTimeoutGateResult(config.ExternalCiTimeout, PostPrCiPrefix);
             callbacks.EmitOutputLine($"❌ {PostPrCiPrefix} timed out after {config.ExternalCiTimeout}");
         }
@@ -756,6 +761,7 @@ internal sealed class CiPollingCoordinator
         catch (Exception ex)
         {
             _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
+            BrainEvidenceRecorder.RecordCiStatusError(run, PostPrCiPrefix, ex.Message);
             ciGate = BuildCiErrorGateResult(PostPrCiPrefix, ex.Message);
         }
         finally

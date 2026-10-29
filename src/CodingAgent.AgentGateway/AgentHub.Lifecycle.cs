@@ -86,10 +86,10 @@ public sealed partial class AgentHub
 
     /// <summary>
     /// Reports the result of brain repository synchronization so the UI can display context status.
-    /// Also pushes <see cref="IUiHubClient.OnBrainSyncResult"/> to the run group.
+    /// The third parameter now carries the number of skill files injected (spec 054, task 3.4).
     /// </summary>
     [RequiresActiveJob]
-    public async Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount)
+    public Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount)
     {
         var run = _facade.GetRun(jobId);
         if (run is not null)
@@ -107,9 +107,7 @@ public sealed partial class AgentHub
                 jobId.Value);
         }
 
-        // Push brain sync result to subscribed UI circuits (Req 5.2)
-        await _uiContext.Clients.Group(UiHubGroups.Run(jobId.Value))
-            .SendAsync(HubMethodNames.OnBrainSyncResult, jobId.Value, contextLoaded, knowledgeFileCount);
+        return Task.CompletedTask;
     }
 
     /// <summary>

@@ -1,8 +1,11 @@
+using CodingAgent.Contracts.Services;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Health;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.AgentGateway;
@@ -146,10 +149,44 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
                 }
                 if (result.ScanOutcome is not null)
                     inMemoryRun.RefactoringScanOutcome = result.ScanOutcome;
-                if (result.BrainOutcome is not null)
+                if (result.BrainOutcome is { } rawOutcome)
                 {
-                    inMemoryRun.BrainConsolidationOutcome = result.BrainOutcome;
+                    var capped = BrainReviewSummaryParser.Cap(rawOutcome);
+                    if (capped.LinesTruncated && !rawOutcome.LinesTruncated)
+                        _logger.Warning(
+                            "Brain review outcome for run {RunId} over {MaxBytes} bytes; lines truncated",
+                            result.JobId, BrainLayout.MaxReviewSummaryBytes);
+                    inMemoryRun.BrainConsolidationOutcome = capped with
+                    {
+                        PushedCommitUrl = AgentLinkSanitizer.HttpsOrNull(capped.PushedCommitUrl)
+                    };
                     inMemoryRun.BrainUpdatesPushed = true;
+
+                    // Record BrainReviewLines once per line (action + scope tags, T18)
+                    foreach (var line in rawOutcome.Lines)
+                    {
+                        var scope = line.Scope switch
+                        {
+                            "repository" or "technology" or "general" => line.Scope,
+                            _ => "other"
+                        };
+                        PipelineTelemetry.BrainReviewLines.Add(1,
+                            new KeyValuePair<string, object?>("action", line.Action),
+                            new KeyValuePair<string, object?>("scope", scope));
+                    }
+                    _logger.Information(
+                        "Brain review recorded for run {RunId}: {Promoted} promoted, {Appended} appended, {Retired} retired, {MissedAgain} missed again",
+                        result.JobId, rawOutcome.Promoted, rawOutcome.Appended, rawOutcome.Retired, rawOutcome.MissedAgain);
+                }
+
+                // Record refusal independently of whether BrainOutcome was set (T18: known reason only)
+                if (!result.Success && result.BrainReviewRefusalReason is { } reason)
+                {
+                    var tag = BrainReviewRefusalReasons.All.Contains(reason) ? reason : "other";
+                    PipelineTelemetry.BrainReviewRefusals.Add(1,
+                        new KeyValuePair<string, object?>("reason", tag));
+                    _logger.Warning("Brain review refused for run {RunId}: {ValidationReason}",
+                        result.JobId, reason);
                 }
                 _runService.ReplaceRun(inMemoryRun);
             }

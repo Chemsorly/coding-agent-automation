@@ -27,7 +27,6 @@ public class PipelineStepFactoryTests
             "AnalyzeCode",
             "GenerateCode",
             "CheckDroppedIdentifiers",
-            "BrainPullBeforeWrite",
             "CloneProjectReviewRepositories",
             "ReviewCode",
             "RunQualityGates");
@@ -38,7 +37,7 @@ public class PipelineStepFactoryTests
     {
         var steps = PipelineStepFactory.CreateCoreImplementationSteps();
 
-        steps.Should().HaveCount(11);
+        steps.Should().HaveCount(10);
         steps[0].Should().BeOfType<DetectReworkStep>();
         steps[1].Should().BeOfType<WritePrConversationContextStep>();
         steps[2].Should().BeOfType<CreateBranchStep>();
@@ -46,10 +45,9 @@ public class PipelineStepFactoryTests
         steps[4].Should().BeOfType<AnalyzeCodeStep>();
         steps[5].Should().BeOfType<GenerateCodeStep>();
         steps[6].Should().BeOfType<CheckDroppedIdentifiersStep>();
-        steps[7].Should().BeOfType<BrainPullBeforeWriteStep>();
-        steps[8].Should().BeOfType<CloneProjectReviewRepositoriesStep>();
-        steps[9].Should().BeOfType<ReviewCodeStep>();
-        steps[10].Should().BeOfType<RunQualityGatesStep>();
+        steps[7].Should().BeOfType<CloneProjectReviewRepositoriesStep>();
+        steps[8].Should().BeOfType<ReviewCodeStep>();
+        steps[9].Should().BeOfType<RunQualityGatesStep>();
     }
 
     [Fact]

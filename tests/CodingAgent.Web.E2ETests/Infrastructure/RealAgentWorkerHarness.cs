@@ -265,9 +265,20 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
             IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(new BrainSyncResult());
 
+        public Task<BrainSyncResult> CommitInboxAndPushAsync(string brainPath, string relativePath, string message, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
+            => Task.FromResult(new BrainSyncResult { Success = true, FilesCommitted = 1 });
+
         public Task<int> PushConsolidationAsync(string brainPath, string commitMessage,
             IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(1);
+
+        public Task<IReadOnlyList<string>> ListTrackedFilesAsync(string brainPath, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<string>>([]);
+        public string? ReadFileAtCommit(string brainPath, string commitSha, string relativePath) => null;
+        public string? ReadFileAtHead(string brainPath, string relativePath) => null;
+        public IReadOnlyList<BrainPathChange> GetWorkingTreeChanges(string brainPath) => [];
+        public string GetReviewPatch(string brainPath) => string.Empty;
+        public IReadOnlyList<BrainCommitInfo> GetSkillCommitsSinceLastReview(string brainPath) => [];
     }
 }
 

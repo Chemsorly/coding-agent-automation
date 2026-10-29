@@ -66,6 +66,7 @@ public sealed class PipelineRunStepAndRunMetricsTests
             IssueTitle = "Test issue",
             IssueProviderConfigId = "github",
             RepoProviderConfigId = "github-repo",
+            BrainProviderConfigId = "brain-repo-1",  // spec 054: gate on non-null to record brain counters
             AgentId = "agent-1",
             AgentProviderConfigId = "kiro",
             InitiatedBy = "test",
@@ -515,7 +516,7 @@ public sealed class PipelineRunStepAndRunMetricsTests
     }
 
     [Fact]
-    public async Task HandleJobCompletedAsync_WithBrainNotPushed_RecordsNoneResult()
+    public async Task HandleJobCompletedAsync_WithBrainNotPushed_RecordsSkippedResult()
     {
         var run = MakeRun();
         run.BrainUpdatesPushed = false;
@@ -556,7 +557,7 @@ public sealed class PipelineRunStepAndRunMetricsTests
             await sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
 
             bag.Should().Contain(s => s.Result == "none",
-                "brain counter must record 'none' when BrainUpdatesPushed=false");
+                "brain counter must record 'none' when BrainUpdatesPushed=false and BrainPushFailed=null (spec 054 req 14)");
         }
         finally
         {
@@ -572,10 +573,9 @@ public sealed class PipelineRunStepAndRunMetricsTests
     /// The ReplaceRun callback resets run.BrainUpdatesPushed to false AFTER JobCompletionMapper.Apply
     /// has set it to true. This simulates the Redis scenario where the in-memory run object at the
     /// metric recording site does not reflect Apply's write, forcing the test to distinguish between:
-    ///   - payload.BrainUpdatesPushed (true at metric site) → result=pushed ← correct, post-fix
-    ///   - run.BrainUpdatesPushed (false at metric site after callback) → result=none ← wrong, pre-fix
-    /// Reverting AgentJobLifecycleService.cs line ~262 back to run.BrainUpdatesPushed causes this test
-    /// to fail, confirming it is a genuine regression guard.
+    ///   - payload.BrainUpdatesPushed (true at metric site) → result=pushed ← correct (spec 054)
+    ///   - run.BrainUpdatesPushed (false at metric site after callback) → result=none ← wrong
+    /// The production code uses payload.BrainUpdatesPushed to avoid this race (#3897).
     /// </summary>
     [Fact]
     public async Task HandleJobCompletedAsync_WithBrainPushed_RunWasAliveFalse_RecordsPushedResult()

@@ -83,6 +83,16 @@ public sealed class ScriptedAgentProvider : IAgentProvider
         return this;
     }
 
+    /// <summary>
+    /// Enqueues a brain reflection script that writes <c>.agent/brain-candidates.md</c>
+    /// with <paramref name="text"/> to the workspace path (spec 054, 10.1).
+    /// </summary>
+    public ScriptedAgentProvider EnqueueBrainCandidates(string text)
+    {
+        _scripts.Enqueue(new BrainCandidatesScript { CandidatesText = text });
+        return this;
+    }
+
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         if (PauseBeforeExecution is not null)
@@ -179,5 +189,21 @@ public sealed class DecompositionPlanScript : AgentScript
         File.WriteAllText(Path.Combine(agentDir, "decomposition-plan.md"), PlanContent);
         // Review agent output (adversarial review sub-step)
         File.WriteAllText(Path.Combine(agentDir, "decomposition-review.md"), "No blocking issues found.");
+    }
+}
+
+/// <summary>
+/// Writes brain-candidates.md to .agent/ so the reflection step can read it (spec 054, 10.1).
+/// </summary>
+public sealed class BrainCandidatesScript : AgentScript
+{
+    public string CandidatesText { get; init; } = "- a candidate lesson\n";
+
+    public override void Execute(string workspacePath)
+    {
+        var candidatesPath = Path.Combine(workspacePath,
+            CodingAgent.Pipeline.AgentWorkspacePaths.BrainCandidatesFilePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(candidatesPath)!);
+        File.WriteAllText(candidatesPath, CandidatesText);
     }
 }

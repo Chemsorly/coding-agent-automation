@@ -72,7 +72,9 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             TraceContext = assignment.TraceContext,
             AutoDispatch = assignment.AutoDispatch,
             RefactoringFocus = assignment.RefactoringFocus,
-            McpServers = assignment.McpServers
+            McpServers = assignment.McpServers,
+            StackLabels = assignment.StackLabels,
+            BrainGroup = assignment.BrainGroup
         };
 
         // Execute and report via the consolidation-specific hub method

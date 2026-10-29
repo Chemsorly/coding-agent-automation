@@ -382,50 +382,6 @@ public class PromptConstructionPropertyTests
         DefaultImpl.Should().Contain("4. **Verify**");
     }
 
-    /// <summary>
-    /// Prompts reference brain context file when brainContextWritten is true.
-    /// </summary>
-    [Fact]
-    public void Prompt_ReferencesBrainContextFile_WhenBrainContextWritten()
-    {
-        var issue = new IssueDetail
-        {
-            Identifier = "1",
-            Title = "Test",
-            Description = "Desc",
-            Labels = Array.Empty<string>()
-        };
-        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
-
-        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed, brainContextWritten: true);
-        var implPrompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed, brainContextWritten: true);
-
-        analysisPrompt.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
-        implPrompt.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
-    }
-
-    /// <summary>
-    /// Prompts omit brain context file reference when brainContextWritten is false.
-    /// </summary>
-    [Fact]
-    public void Prompt_OmitsBrainContextFileReference_WhenNotWritten()
-    {
-        var issue = new IssueDetail
-        {
-            Identifier = "1",
-            Title = "Test",
-            Description = "Desc",
-            Labels = Array.Empty<string>()
-        };
-        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
-
-        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed);
-        var implPrompt = PromptBuilder.BuildPrompt(DefaultImpl, issue, parsed);
-
-        analysisPrompt.Should().NotContain(AgentWorkspacePaths.BrainContextFilePath);
-        implPrompt.Should().NotContain(AgentWorkspacePaths.BrainContextFilePath);
-    }
-
     // --- BuildFixPrompt tests ---
 
     /// <summary>

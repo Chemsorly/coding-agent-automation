@@ -8,13 +8,13 @@
 @using CodingAgent.Web.Components.Shared
 @inject IUiRunClient RunHistory
 @inject CockpitState State
+@inject CurrentAccess Access
 
 @*
-    Knowledge — real aggregate brain usage across the fetched run window (see docs/frontend-redesign-handoff.md).
-    Uses per-run fields that ARE recorded: BrainRepoUsed, BrainContextLoaded, BrainKnowledgeFileCount,
-    BrainUpdatesPushed (the last two captured onto the summary at ToSummary). The per-FILE impact
-    ("which knowledge file lifts success") still needs agent-side instrumentation of the files that
-    enter each run's context — noted honestly below, not fabricated.
+    Knowledge — brain skills and inbox metrics across the fetched run window.
+    Uses per-run fields: BrainSkillsBytes, BrainInboxFile, BrainPushFailed, BrainUpdatesPushed.
+    For global readers: fetches the last brain consolidation run per brain provider and shows the
+    review summary card.
 *@
 
 <PageTitle>Knowledge - Coding Agent</PageTitle>
@@ -23,7 +23,7 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Knowledge</h1>
-            <span class="cockpit-page-sub">How the agent brain is used across recent runs</span>
+            <span class="cockpit-page-sub">Brain skills and inbox across recent runs</span>
         </div>
     </div>
 
@@ -43,43 +43,81 @@
     {
         <div class="cockpit-stat-strip">
             <div class="cockpit-stat"><span class="cockpit-stat-l">Runs · recent</span><span class="cockpit-stat-v">@_total</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Used brain</span><span class="cockpit-stat-v">@_withBrain</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Context loaded</span><span class="cockpit-stat-v">@_ctxLoaded</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg files loaded</span><span class="cockpit-stat-v">@_avgFiles.ToString("0.0")</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Updates pushed</span><span class="cockpit-stat-v">@_updatesPushed</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Skills injected</span><span class="cockpit-stat-v">@_skillsInjected</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg skills size</span><span class="cockpit-stat-v">@_avgSkillsKb.ToString("0.0") KB</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Inbox pushed</span><span class="cockpit-stat-v">@_inboxPushed</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Inbox push failures</span><span class="cockpit-stat-v">@_inboxFailed</span></div>
         </div>
 
         <div class="cockpit-card">
             <div class="cockpit-card-header"><h2>Does the brain help?</h2><span style="font-size: 12px; color: var(--text-muted);">completed-rate over the recent window</span></div>
             <div class="cockpit-card-pad">
-                @if (_brainRuns == 0 || _nonBrainRuns == 0)
+                @if (_withSkillsRuns == 0 || _withoutSkillsRuns == 0)
                 {
-                    <div style="font-size: 12.5px; color: var(--text-muted);">Needs runs both with and without the brain in this window to compare (@_brainRuns with · @_nonBrainRuns without).</div>
+                    <div style="font-size: 12.5px; color: var(--text-muted);">Needs runs both with and without skills in this window to compare (@_withSkillsRuns with · @_withoutSkillsRuns without).</div>
                 }
                 else
                 {
                     <div style="display: grid; grid-template-columns: 140px 1fr 120px; gap: 10px 14px; align-items: center;">
-                        <span style="font-size: 13px; font-weight: 600;">With brain</span>
-                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_brainSuccess%; background: var(--success);"></div></div>
-                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_brainSuccess% · @_brainRuns runs</span>
+                        <span style="font-size: 13px; font-weight: 600;">With skills</span>
+                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_withSkillsSuccess%; background: var(--success);"></div></div>
+                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_withSkillsSuccess% · @_withSkillsRuns runs</span>
 
-                        <span style="font-size: 13px; font-weight: 600;">Without brain</span>
-                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_nonBrainSuccess%; background: var(--text-faint);"></div></div>
-                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_nonBrainSuccess% · @_nonBrainRuns runs</span>
+                        <span style="font-size: 13px; font-weight: 600;">Without skills</span>
+                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_withoutSkillsSuccess%; background: var(--text-faint);"></div></div>
+                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_withoutSkillsSuccess% · @_withoutSkillsRuns runs</span>
                     </div>
                     <div style="margin-top: 12px; font-size: 12.5px;">
-                        @{ var lift = _brainSuccess - _nonBrainSuccess; }
-                        <span style="font-weight: 700; color: @(lift >= 0 ? "var(--success)" : "var(--error)");">@(lift >= 0 ? "+" : "")@lift pts</span>
-                        <span style="color: var(--text-muted);"> completed-rate on runs that used the brain — a correlation over a small recent window, not a causal measure.</span>
+                        @{ var _lift = _withSkillsSuccess - _withoutSkillsSuccess; }
+                        <span style="font-weight: 700; color: @(_lift >= 0 ? "var(--success)" : "var(--error)");">@(_lift >= 0 ? "+" : "")@_lift pts</span>
+                        <span style="color: var(--text-muted);"> completed-rate on runs that got brain skills — a correlation over a small recent window, not a causal measure.</span>
                     </div>
                 }
             </div>
         </div>
 
+        @if (Access.HasGlobalRead && _lastReviews is { Count: > 0 })
+        {
+            @foreach (var _review in _lastReviews)
+            {
+                @if (_review.BrainConsolidationOutcome is { } _brain)
+                {
+                    <div class="cockpit-card cockpit-card-pad" data-testid="last-brain-review">
+                        <div class="cockpit-card-header" style="margin-bottom:8px;"><h2>Last brain review</h2></div>
+                        <div style="font-size:13.5px; margin-bottom:6px;">
+                            @_review.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                            · @_brain.Promoted promoted · @_brain.Appended appended · @_brain.Retired retired · @_brain.MissedAgain missed again
+                        </div>
+                        @if (_brain.Checks.Count > 0)
+                        {
+                            <div style="margin-top:8px; font-size:13px;">
+                                @foreach (var _check in _brain.Checks)
+                                {
+                                    <div style="margin-top:3px;">@_check.Cause — <span class="monitoring-muted">@_check.SuggestedHome</span></div>
+                                }
+                            </div>
+                        }
+                        @if (_brain.FlakyTests.Count > 0)
+                        {
+                            <div style="margin-top:8px; font-size:13px;">
+                                @foreach (var _ft in _brain.FlakyTests)
+                                {
+                                    <div style="margin-top:2px;">@_ft.Name (@_ft.Count)</div>
+                                }
+                            </div>
+                        }
+                        <div style="margin-top:10px;">
+                            <a href="/runs/@_review.RunId" class="cockpit-link-chip">Open run →</a>
+                        </div>
+                    </div>
+                }
+            }
+        }
+
         <div class="cockpit-card cockpit-card-pad" style="display: flex; gap: 12px; align-items: flex-start; font-size: 12.5px; color: var(--text-muted); line-height: 1.55;">
             <span style="flex-shrink: 0; color: var(--accent);"><Icon Name="info" Size="15" /></span>
             <span>
-                <strong style="color: var(--text);">Per-file impact isn't shown</strong> — per-file attribution is not tracked; only overall run outcomes are compared. <a href="/consolidation">Consolidation</a> runs brain consolidation to keep the knowledge base up to date.
+                <a href="/consolidation">Consolidation</a> runs the brain review, which promotes recurring causes into skills.
             </span>
         </div>
     }
@@ -90,9 +128,10 @@
     private bool _loading = true;
     private string? _error;
 
-    private int _total, _withBrain, _ctxLoaded, _updatesPushed;
-    private double _avgFiles;
-    private int _brainRuns, _nonBrainRuns, _brainSuccess, _nonBrainSuccess;
+    private int _total, _skillsInjected, _inboxPushed, _inboxFailed;
+    private double _avgSkillsKb;
+    private int _withSkillsRuns, _withoutSkillsRuns, _withSkillsSuccess, _withoutSkillsSuccess;
+    private List<PipelineRunSummary>? _lastReviews;
 
     protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
 
@@ -108,30 +147,53 @@
     {
         _loading = true;
         _error = null;
-        _total = _withBrain = _ctxLoaded = _updatesPushed = 0;
-        _avgFiles = 0;
-        _brainRuns = _nonBrainRuns = _brainSuccess = _nonBrainSuccess = 0;
+        _total = _skillsInjected = _inboxPushed = _inboxFailed = 0;
+        _avgSkillsKb = 0;
+        _withSkillsRuns = _withoutSkillsRuns = _withSkillsSuccess = _withoutSkillsSuccess = 0;
+        _lastReviews = null;
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId), _cts.Token);
-            var items = runs.Items;
+            var runs = await RunHistory.GetRunHistoryAsync(
+                new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId),
+                _cts.Token);
+
+            // Exclude consolidation runs from the tiles and comparison (spec 054 8B.2).
+            var items = runs.Items.Where(r => r.RunType != PipelineRunType.Consolidation).ToList();
             _total = items.Count;
             if (_total == 0) { _loading = false; return; }
 
-            _withBrain = items.Count(r => r.BrainRepoUsed);
-            _ctxLoaded = items.Count(r => r.BrainContextLoaded);
-            _updatesPushed = items.Count(r => r.BrainUpdatesPushed);
+            _skillsInjected = items.Count(r => r.BrainSkillsBytes > 0);
+            var skillsRuns = items.Where(r => r.BrainSkillsBytes > 0).ToList();
+            _avgSkillsKb = skillsRuns.Count > 0 ? skillsRuns.Average(r => r.BrainSkillsBytes!.Value) / 1024.0 : 0.0;
+            _inboxPushed = items.Count(r => r.BrainUpdatesPushed && !string.IsNullOrEmpty(r.BrainInboxFile));
+            _inboxFailed = items.Count(r => r.BrainPushFailed == true);
 
-            var loaded = items.Where(r => r.BrainContextLoaded && r.BrainKnowledgeFileCount > 0).ToList();
-            _avgFiles = loaded.Count > 0 ? loaded.Average(r => r.BrainKnowledgeFileCount) : 0;
+            // "Does the brain help?": with skills = BrainSkillsBytes > 0.
+            var withSkills = items.Where(r => r.BrainSkillsBytes > 0).ToList();
+            var withoutSkills = items.Where(r => !(r.BrainSkillsBytes > 0)).ToList();
+            _withSkillsRuns = withSkills.Count;
+            _withoutSkillsRuns = withoutSkills.Count;
+            _withSkillsSuccess = _withSkillsRuns > 0
+                ? (int)Math.Round(100.0 * withSkills.Count(r => r.FinalStep == PipelineStep.Completed) / _withSkillsRuns)
+                : 0;
+            _withoutSkillsSuccess = _withoutSkillsRuns > 0
+                ? (int)Math.Round(100.0 * withoutSkills.Count(r => r.FinalStep == PipelineStep.Completed) / _withoutSkillsRuns)
+                : 0;
 
-            // Correlation: completed-rate of runs that used the brain vs. those that didn't.
-            var brain = items.Where(r => r.BrainRepoUsed).ToList();
-            var nonBrain = items.Where(r => !r.BrainRepoUsed).ToList();
-            _brainRuns = brain.Count;
-            _nonBrainRuns = nonBrain.Count;
-            _brainSuccess = _brainRuns > 0 ? (int)Math.Round(100.0 * brain.Count(r => r.FinalStep == PipelineStep.Completed) / _brainRuns) : 0;
-            _nonBrainSuccess = _nonBrainRuns > 0 ? (int)Math.Round(100.0 * nonBrain.Count(r => r.FinalStep == PipelineStep.Completed) / _nonBrainRuns) : 0;
+            // Last brain review card: global readers only, no project scope (would 403).
+            if (Access.HasGlobalRead)
+            {
+                var consolidationRuns = await RunHistory.GetRunHistoryAsync(
+                    new RunHistoryQuery(Page: 1, PageSize: 20, RunType: PipelineRunType.Consolidation),
+                    _cts.Token);
+
+                // Newest per BrainProviderConfigId, only brain consolidation runs.
+                _lastReviews = consolidationRuns.Items
+                    .Where(r => r.ConsolidationType == ConsolidationRunType.BrainConsolidation)
+                    .GroupBy(r => r.BrainProviderConfigId)
+                    .Select(g => g.MaxBy(r => r.StartedAtOffset)!)
+                    .ToList();
+            }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)

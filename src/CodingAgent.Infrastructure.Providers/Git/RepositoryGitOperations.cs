@@ -380,6 +380,41 @@ internal static class RepositoryGitOperations
         return repo.Head.Tip.Sha;
     }
 
+    /// <summary>
+    /// Returns a SHA-256 fingerprint for every changed or untracked file in the working tree,
+    /// excluding any path that starts with one of <paramref name="excludedPaths"/>. Spec 054 DD5.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> GetWorkingTreeFingerprint(
+        string repoPath, IReadOnlyList<string> excludedPaths)
+    {
+        using var repo = new Repository(repoPath);
+        var status = repo.RetrieveStatus(new StatusOptions
+        {
+            IncludeUntracked = true,
+            RecurseUntrackedDirs = true
+        });
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in status)
+        {
+            if (entry.State is FileStatus.Ignored or FileStatus.Unaltered) continue;
+            if (PathBlacklist.IsPathBlacklisted(entry.FilePath, excludedPaths)) continue;
+
+            var fullPath = Path.Combine(repoPath, entry.FilePath);
+            if (!File.Exists(fullPath))
+            {
+                result[entry.FilePath] = "<deleted>";
+                continue;
+            }
+
+            using var sha256 = System.Security.Cryptography.SHA256.Create();
+            using var stream = File.OpenRead(fullPath);
+            var hash = sha256.ComputeHash(stream);
+            result[entry.FilePath] = Convert.ToHexString(hash).ToLowerInvariant();
+        }
+        return result;
+    }
+
     public static async Task<bool> HasCommitsAhead(
         WorkspacePath workspacePath, BranchName baseBranch, ResiliencePipeline pipeline, CancellationToken ct)
     {

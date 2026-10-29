@@ -474,7 +474,8 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     var agentProvider = providerManager.ActiveAgentProvider;
                     if (agentProvider != null)
                     {
-                        var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
+                    var evidenceMd = CodingAgent.Pipeline.Brain.BrainInboxComposer.RenderEvidence(run.BrainEvidence ?? new());
+                        var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(run, evidenceMd, run.StackLabels, DateOnly.FromDateTime(DateTime.UtcNow), run.IssueTitle);
                         await agentProvider.ExecuteAsync(
                             new AgentRequest { Prompt = reflectionPrompt, WorkspacePath = run.WorkspacePath ?? "", UseResume = true },
                             ct);
@@ -486,8 +487,17 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
                 try
                 {
-                    await brainSync.SyncPostRunAsync(run, providerManager.ActiveBrainProvider, ct,
-                        line => lifecycle.EmitOutputLine(line), config?.BrainPushMaxRetries ?? 3);
+                    var relativePath = run.BrainInboxFile ?? CodingAgent.Pipeline.Brain.BrainLayout.InboxFileName(DateOnly.FromDateTime(DateTime.UtcNow), run.RunId);
+                    var header = new CodingAgent.Pipeline.Brain.BrainInboxHeader(
+                        RunId: run.RunId, RunType: run.RunType.ToString().ToLowerInvariant(),
+                        Outcome: "succeeded", RepositoryFullName: run.RepositoryName ?? "",
+                        ProjectName: run.ProjectName, StackLabels: run.StackLabels,
+                        Issue: $"#{run.IssueIdentifier}", PullRequestUrl: run.PullRequestUrl,
+                        SkillsCommit: null, SkillsFiles: []);
+                    var composition = CodingAgent.Pipeline.Brain.BrainInboxComposer.Compose(
+                        header, null, run.BrainEvidence ?? new(), null, new Dictionary<string, string>());
+                    await brainSync.WriteInboxAsync(run, providerManager.ActiveBrainProvider, relativePath, composition.Text, ct,
+                        config?.BrainPushMaxRetries ?? 3);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -553,12 +563,6 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
     /// <summary>No-op brain update service for tests that don't need brain functionality.</summary>
     private sealed class NullBrainUpdateService : IBrainUpdateService
     {
-        public Task<BrainSyncResult> SyncBrainPreRunAsync(string workspacePath, IRepositoryProvider brainProvider, PipelineConfiguration config, CancellationToken ct)
-            => Task.FromResult(new BrainSyncResult());
-        public Task PullBrainBeforeWriteAsync(string workspacePath, IRepositoryProvider brainProvider, CancellationToken ct)
-            => Task.CompletedTask;
-        public Task<bool> PushBrainUpdatesAsync(string workspacePath, IRepositoryProvider brainProvider, string issueIdentifier, PipelineConfiguration config, CancellationToken ct)
-            => Task.FromResult(false);
         public Task<IReadOnlyList<string>> DetectChangesAsync(string brainPath, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
         public BrainValidationResult Validate(string brainPath, RunId runId, IReadOnlyList<string> changedFiles)
@@ -567,7 +571,16 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             => Task.CompletedTask;
         public Task<BrainSyncResult> CommitAndPushAsync(string brainPath, RunId runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(new BrainSyncResult());
+        public Task<BrainSyncResult> CommitInboxAndPushAsync(string brainPath, string relativePath, string message, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
+            => Task.FromResult(new BrainSyncResult { Success = true, FilesCommitted = 1 });
         public Task<int> PushConsolidationAsync(string brainPath, string commitMessage, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(1);
+        public Task<IReadOnlyList<string>> ListTrackedFilesAsync(string brainPath, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<string>>([]);
+        public string? ReadFileAtCommit(string brainPath, string commitSha, string relativePath) => null;
+        public string? ReadFileAtHead(string brainPath, string relativePath) => null;
+        public IReadOnlyList<BrainPathChange> GetWorkingTreeChanges(string brainPath) => [];
+        public string GetReviewPatch(string brainPath) => string.Empty;
+        public IReadOnlyList<BrainCommitInfo> GetSkillCommitsSinceLastReview(string brainPath) => [];
     }
 }

@@ -14,17 +14,27 @@ public interface IBrainUpdateService
     Task<BrainSyncResult> CommitAndPushAsync(string brainPath, RunId runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
 
     /// <summary>
-    /// Pushes a committed brain consolidation to the brain's base branch. When other runs pushed to the
-    /// brain since the consolidation cloned it, the push is retried on top of their changes: the
-    /// consolidated files are kept, and the lines those runs added to them are appended, so nothing they
-    /// learned is lost; the next consolidation folds those lines in. Throws when the push still fails.
-    /// Returns the attempt on which the push succeeded: 1 when no other run pushed in the meantime, 2 or more when the consolidation was merged onto newer brain commits first.
+    /// Discards changes outside the inbox file, stages and commits it, then pushes with retry/rebase (spec 054, req 3.7).
+    /// Non-fatal (T6). Returns a <see cref="BrainSyncResult"/> with the discarded paths.
+    /// </summary>
+    Task<BrainSyncResult> CommitInboxAndPushAsync(string brainPath, string relativePath, string message, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
+
+    /// <summary>
+    /// Pushes a committed brain consolidation to the brain's base branch. Retries on non-fast-forward.
+    /// Returns the attempt number on success. Throws on failure.
     /// </summary>
     Task<int> PushConsolidationAsync(string brainPath, string commitMessage, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
 
-    /// <summary>
-    /// Ensures a .gitignore entry exists in the given content. Pure string manipulation.
-    /// </summary>
+    // ── Review git operations (spec 054 Task 7A.1) ─────────────────────────
+
+    Task<IReadOnlyList<string>> ListTrackedFilesAsync(string brainPath, CancellationToken ct);
+    string? ReadFileAtCommit(string brainPath, string commitSha, string relativePath);
+    string? ReadFileAtHead(string brainPath, string relativePath);
+    IReadOnlyList<BrainPathChange> GetWorkingTreeChanges(string brainPath);
+    string GetReviewPatch(string brainPath);
+    IReadOnlyList<BrainCommitInfo> GetSkillCommitsSinceLastReview(string brainPath);
+
+    /// <summary>Ensures a .gitignore entry exists in the given content. Pure string manipulation.</summary>
     static string EnsureGitignoreEntry(string gitignoreContent, string entry)
     {
         ArgumentNullException.ThrowIfNull(gitignoreContent);

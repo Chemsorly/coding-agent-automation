@@ -572,6 +572,8 @@ public class AssignmentEnricher
             ProjectSteeringContent = project.SteeringContent,
             RepoSteeringContent = providerConfigs.TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
             ConsolidationLastSuccessfulRunUtc = lastSuccessfulRunUtc,
+            // Brain v2 (spec 054, req 10, task 3.6)
+            StackLabels = claim.Template?.RequiredLabels,
         });
     }
 

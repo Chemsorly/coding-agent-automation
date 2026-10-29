@@ -24,32 +24,6 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     }
 
     /// <summary>
-    /// Builds the brain context section and writes it to the workspace if non-empty.
-    /// Always ensures the .agent directory exists before writing (fixing inconsistency
-    /// where Analysis previously skipped directory creation).
-    /// </summary>
-    /// <returns>True if brain context was written, false otherwise.</returns>
-    private async Task<bool> WriteBrainContextIfNeededAsync(PipelineRun run, CancellationToken ct)
-    {
-        if (run.WorkspacePath is null) return false;
-
-        var brainContext = PromptBuilder.BuildBrainContextSection(
-            run.BrainContextLoaded,
-            run.RepositoryName?.Split('/').LastOrDefault());
-
-        if (string.IsNullOrEmpty(brainContext)) return false;
-
-        var agentDir = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.MetadataDirectory);
-        Directory.CreateDirectory(agentDir);
-
-        var contextPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.BrainContextFilePath);
-        await File.WriteAllTextAsync(contextPath, brainContext, ct);
-        _logger.Debug("Pipeline {RunId} wrote brain context to {FilePath}", run.RunId, AgentWorkspacePaths.BrainContextFilePath);
-
-        return true;
-    }
-
-    /// <summary>
     /// Unified agent execution helper that encapsulates the standard pattern:
     /// build AgentRequest → execute with stall monitoring → enqueue output → record to ChatHistory → handle exceptions.
     /// </summary>

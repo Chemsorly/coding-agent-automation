@@ -1,3 +1,4 @@
+using CodingAgent.Contracts.Auth;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration.Registry;
@@ -241,22 +242,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
             else if (_transitionStore is not null && Guid.TryParse(jobId.Value, out var workItemId))
             {
                 // Fallback — K8s mode where the run may not be in this process's memory.
-                // NOTE (issue #3573): Guid.TryParse guard means a non-GUID job ID (e.g. a SignalR string
-                // ID that is not GUID-formatted) with no in-memory run will always fail closed
-                // (repoProviderId stays null → returns true) regardless of the actual BrainReadOnly
-                // setting. Legitimate jobs with non-GUID string IDs in K8s mode would be denied
-                // write access even for writable brains (Correctness finding).
-                var configIds = await _transitionStore.GetWorkItemProviderConfigIdsAsync(workItemId, ct);
-                repoProviderId = configIds?.RepoProviderConfigId;
-                // NOTE (issue #3573): ProjectId is not stored in the WorkItem payload, so project-level
-                // BrainReadOnly overrides are silently ignored in K8s mode during token refreshes.
-                // If a project sets BrainReadOnly = true (overriding global false), the token refresh
-                // will incorrectly issue a write token because PipelineConfigurationResolver is called
-                // with project = null (skipping ApplyProjectOverrides). This is a security gap for
-                // K8s-mode agents. Fix: store ProjectId in the WorkItem payload at dispatch time so
-                // it can be retrieved here (Correctness & DotNetSpecialist findings).
-                // ProjectId is not stored in the WorkItem payload, so we cannot resolve it here.
-                // Proceed with project = null; ApplyProjectOverrides is a no-op for null projects.
+                var record = await _transitionStore.GetWorkItemRunRecordAsync(workItemId, ct);
+                repoProviderId = record?.RepoProviderConfigId;
+                projectId = ProjectIds.Normalize(record?.ProjectId);
             }
 
             if (string.IsNullOrEmpty(repoProviderId))

@@ -63,4 +63,12 @@ public sealed class ConsolidationJobMessage
     /// </summary>
     [Key(12)]
     public RefactoringScanFocus RefactoringFocus { get; init; }
+
+    /// <summary>Stack labels from the dispatching template (spec 054, req 10). Wire-compat: additive.</summary>
+    [Key(13)]
+    public IReadOnlyList<string> StackLabels { get; init; } = [];
+
+    /// <summary>Brain group members assembled by preparation service (spec 054, req 10). Wire-compat: additive.</summary>
+    [Key(14)]
+    public IReadOnlyList<BrainGroupMember>? BrainGroup { get; init; }
 }

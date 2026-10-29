@@ -261,11 +261,38 @@ public sealed partial class PipelineRun
     /// <summary>Whether post-run brain updates were pushed successfully.</summary>
     public bool BrainUpdatesPushed { get; set; }
 
-    /// <summary>Number of brain files committed during post-run sync.</summary>
-    public int BrainFilesCommitted { get; set; }
+    // ── Brain v2 run-record fields (spec 054, req 8.1) ────────────────
+    // These travel via the completion payload (keys 30-35) and are copied to PipelineRunSummary.
 
-    /// <summary>Brain update validation result from BrainUpdateService.</summary>
-    public BrainValidationResult? BrainValidation { get; set; }
+    /// <summary>Skills injection result (injected/empty/truncated/skipped_invalid/no_brain).</summary>
+    public string? BrainSkillsResult { get; set; }
+
+    /// <summary>Number of bytes in the injected brain skills text.</summary>
+    public int? BrainSkillsBytes { get; set; }
+
+    /// <summary>Brain commit SHA from which skills were injected.</summary>
+    public string? BrainSkillsCommit { get; set; }
+
+    /// <summary>Relative inbox file path written for this run.</summary>
+    public string? BrainInboxFile { get; set; }
+
+    /// <summary>True when the brain inbox push was attempted and failed.</summary>
+    public bool? BrainPushFailed { get; set; }
+
+    /// <summary>Web link of the commit that added or last rewrote the inbox file (D22).</summary>
+    public string? BrainInboxFileUrl { get; set; }
+
+    // ── Brain v2 agent-only fields (spec 054, DD4, T3) ────────────────
+    // These are set only in the agent process and are never serialised to Redis or the API.
+
+    /// <summary>Brain evidence accumulated during the run. Agent-only — never leaves the pod.</summary>
+    public CodingAgent.Pipeline.Brain.BrainEvidence? BrainEvidence { get; set; }
+
+    /// <summary>Brain skills injected into this run. Agent-only — Text never leaves the pod.</summary>
+    public CodingAgent.Pipeline.Brain.BrainSkillsInjection? BrainSkills { get; set; }
+
+    /// <summary>Stack labels from the pipeline job template. Agent-only — set from the assignment.</summary>
+    public IReadOnlyList<string> StackLabels { get; set; } = [];
 
     /// <summary>
     /// UTC timestamp recorded immediately after <c>UpdatePullRequestAsync(markReady: true)</c>
@@ -483,6 +510,13 @@ public sealed partial class PipelineRun
         BrainUpdatesPushed = BrainUpdatesPushed,
         BrainContextLoaded = BrainContextLoaded,
         BrainKnowledgeFileCount = BrainKnowledgeFileCount,
+        // Brain v2 (spec 054)
+        BrainSkillsResult = BrainSkillsResult,
+        BrainSkillsBytes = BrainSkillsBytes,
+        BrainSkillsCommit = BrainSkillsCommit,
+        BrainInboxFile = BrainInboxFile,
+        BrainPushFailed = BrainPushFailed,
+        BrainInboxFileUrl = BrainInboxFileUrl,
         AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,

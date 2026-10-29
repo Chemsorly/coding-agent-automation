@@ -737,3 +737,17 @@ Decisions that no longer hold. Don't bring one back without asking the owner.
 - Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only (2026-07-25, retired 2026-10-10): superseded by [Refactoring scan issues are independent](#refactoring-scan-issues-are-independent-ordered-work-goes-through-epics).
 - admin is global-only; project bindings scope actions and visibility (2026-10-04, retired 2026-10-10): superseded by [Project admins edit their project's behaviour](#project-admins-edit-their-projects-behaviour-the-operator-owns-bindings-and-shared-resources).
 - Agent label routing: layered resolution from provider to global default (2026-07-04, retired 2026-10-21) and Agent profile names its job template; the closest fit picks the profile (2026-10-10, retired 2026-10-21): superseded by [Agents are routed per task type](#agents-are-routed-per-task-type-stack-labels-pick-quality-gates-and-reviewers).
+
+
+## Brain v2: inbox-based learning loop (2026-10-28)
+
+Spec 054. Each run proposes candidates and the pipeline records evidence into one inbox file per run. A review promotes causes that recur into short skill files. Every run reads the skills through a steering file.
+
+Reasons: by 2026-10-25 the brain held 770 lessons in 1 MB, 90% written about the agent itself. Half of runs never read it, 63% of lesson pushes failed, and the most frequent failure cause recurred in 8 issues despite existing lessons.
+
+Key decisions:
+- One inbox file per run (rewritten on post-PR retry, D21).
+- Skills injected via steering so they reach the agent without prompt construction changes (req 5, D15).
+- Review validates changes with `BrainReviewValidator` before committing (req 7.5).
+- MCP secrets masked in the inbox file (req 12.4).
+- `BrainInboxFileUrl` sanitized to https-only before storage (req 12.8).

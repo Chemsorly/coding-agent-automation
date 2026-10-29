@@ -51,7 +51,7 @@ public class ConsolidationStalenessService
     }
 
     /// <summary>
-    /// Returns the number of non-consolidation runs that pushed brain updates to
+    /// Returns the number of non-consolidation runs that pushed an inbox file to
     /// <paramref name="brainProviderId"/> since the last successful brain consolidation for that brain.
     /// </summary>
     public virtual async Task<int> CountBrainRunsSinceLastConsolidationAsync(
@@ -65,14 +65,27 @@ public class ConsolidationStalenessService
 
         var since = await ConsolidationRunHistoryContext.GetLastSuccessfulRunAsync(_history, scopeKey, ct);
 
-        var result = await _history.GetRunHistoryAsync(
-            new RunHistoryQuery(Page: 1, PageSize: 500, Since: since),
-            ct);
+        // Loop pages (up to 20 × 500) to count all runs with an inbox file since the last review.
+        // A single-page cap missed brain runs when inbox volume exceeded 500 since the last review.
+        int count = 0;
+        const int pageSize = 500;
+        const int maxPages = 20;
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var result = await _history.GetRunHistoryAsync(
+                new RunHistoryQuery(Page: page, PageSize: pageSize, Since: since),
+                ct);
 
-        return result.Items.Count(r =>
-            r.RunType != PipelineRunType.Consolidation &&
-            r.BrainUpdatesPushed &&
-            r.BrainProviderConfigId == brainProviderId);
+            count += result.Items.Count(r =>
+                r.RunType != PipelineRunType.Consolidation &&
+                !string.IsNullOrEmpty(r.BrainInboxFile) &&
+                r.BrainProviderConfigId == brainProviderId);
+
+            if (!result.HasMore)
+                break;
+        }
+
+        return count;
     }
 
     /// <summary>

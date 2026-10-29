@@ -11,12 +11,12 @@
                     <input type="checkbox" @bind="_brainReadOnly" />
                     Brain Read-Only
                 </label>
-                <span class="form-hint">Runs read the brain but never write to it, and brain consolidation does not run. A project or template can also turn this on.</span>
+                <span class="form-hint">Runs get the brain skills but write no inbox file, and the brain review does not run. A project or template can also turn this on.</span>
             </div>
             <div class="form-group" data-setting="@nameof(PipelineConfiguration.BrainPushMaxRetries)">
                 <div class="label-with-hint">
                     <label>Brain Push Max Retries</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Retry attempts when brain repo push fails with non-fast-forward (concurrent conflict). Each retry fetches, rebases, resolves conflicts. Default: 3">?</span>
+                    <span class="form-hint-icon" aria-hidden="true" title="Retry attempts when an inbox or review push is rejected because others pushed first. Each retry fetches and re-applies the commits. Default: 3">?</span>
                 </div>
                 <input type="number" @bind="_brainPushMaxRetries" min="@SettingLimits.Min(nameof(PipelineConfiguration.BrainPushMaxRetries))" max="@SettingLimits.Max(nameof(PipelineConfiguration.BrainPushMaxRetries))" />
             </div>

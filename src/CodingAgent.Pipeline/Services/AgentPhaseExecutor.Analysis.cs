@@ -217,8 +217,6 @@ public partial class AgentPhaseExecutor
             () => context.AgentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
             ct);
 
-        var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
-
         AnalysisReworkContext? reworkContext = null;
         if (run.LinkedPullRequest is not null)
         {
@@ -235,7 +233,6 @@ public partial class AgentPhaseExecutor
 
         var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(
             config.AnalysisPrompt, context.Issue, context.ParsedIssue,
-            brainContextWrittenForAnalysis,
             imageCount: context.DownloadedImages?.Count ?? 0,
             reworkContext: reworkContext);
         _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);

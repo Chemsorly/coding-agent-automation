@@ -50,6 +50,12 @@ public partial class GitHubRepositoryProvider
 
     /// <inheritdoc />
     [ExcludeFromCodeCoverage]
+    public Task<IReadOnlyDictionary<string, string>?> GetWorkingTreeFingerprintAsync(
+        WorkspacePath workspacePath, IReadOnlyList<string> excludedPaths, CancellationToken ct)
+        => SharedRepositoryOperations.GetWorkingTreeFingerprintAsync(workspacePath, excludedPaths, ct);
+
+    /// <inheritdoc />
+    [ExcludeFromCodeCoverage]
     public Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.HasCommitsAheadAsync(workspacePath, _baseBranch, _gitPipeline, ct);
 

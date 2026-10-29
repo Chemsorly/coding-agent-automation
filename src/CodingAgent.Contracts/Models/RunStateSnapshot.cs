@@ -101,8 +101,7 @@ public sealed record RunStateSnapshot
     [Key(27)]
     public int OpenIssuesDownloaded { get; init; }
 
-    [Key(28)]
-    public int BrainFilesCommitted { get; init; }
+    // Key(28) is retired (was BrainFilesCommitted). Do not reuse.
 
     [Key(29)]
     public bool BrainUpdatesPushed { get; init; }
@@ -148,4 +147,12 @@ public sealed record RunStateSnapshot
     /// </summary>
     [Key(41)]
     public IReadOnlyList<ChatEntry> ChatHistory { get; init; } = Array.Empty<ChatEntry>();
+
+    /// <summary>Web link to the brain inbox file committed for this run (spec 054, D22). Wire-compat: additive.</summary>
+    [Key(42)]
+    public string? BrainInboxFileUrl { get; init; }
+
+    /// <summary>Skills injection result for this run (spec 054, req 5.6). Wire-compat: additive.</summary>
+    [Key(43)]
+    public string? BrainSkillsResult { get; init; }
 }

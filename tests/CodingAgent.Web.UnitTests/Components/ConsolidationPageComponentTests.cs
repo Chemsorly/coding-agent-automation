@@ -1097,7 +1097,7 @@ public class ConsolidationPageComponentTests : BunitContext
         cut.WaitForAssertion(() =>
         {
             var counter = cut.Find("[data-testid='auto-counter-brain']");
-            counter.TextContent.Should().Contain("14 / 20 runs since the last run");
+            counter.TextContent.Should().Contain("14 / 20 runs with inbox since last review");
             counter.TextContent.Should().Contain("· auto");
         });
     }
@@ -1135,7 +1135,7 @@ public class ConsolidationPageComponentTests : BunitContext
         {
             var counters = cut.FindAll("[data-testid='auto-counter-brain']");
             counters.Should().HaveCount(2, "both templates sharing a brain should show a counter");
-            counters.Should().AllSatisfy(c => c.TextContent.Should().Contain("7 / 20 runs since the last run"));
+            counters.Should().AllSatisfy(c => c.TextContent.Should().Contain("7 / 20 runs with inbox since last review"));
         });
     }
 
@@ -1231,7 +1231,7 @@ public class ConsolidationPageComponentTests : BunitContext
         cut.WaitForAssertion(() =>
         {
             var brainCounter = cut.Find("[data-testid='auto-counter-brain']");
-            brainCounter.TextContent.Should().Contain("5 / 20 runs since the last run");
+            brainCounter.TextContent.Should().Contain("5 / 20 runs with inbox since last review");
         });
 
         // The refactoring counter is absent (entry missing from dictionary → not rendered).

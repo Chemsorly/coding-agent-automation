@@ -41,6 +41,10 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         // Update run with completion data
         JobCompletionMapper.Apply(run, payload);
 
+        // Log if agent provided a non-https BrainInboxFileUrl that was rejected (req 12.8)
+        if (payload.BrainInboxFileUrl is not null && run.BrainInboxFileUrl is null)
+            _logger.Warning("Pipeline {RunId} dropped agent link BrainInboxFileUrl: not an absolute https URL", run.RunId);
+
         // Persist Apply's mutations back to Redis so CompleteRunAsync's RemoveRun
         // deserializes the updated state. Without this, DistributedRunService.RemoveRun
         // re-reads the pre-Apply Redis snapshot and history is persisted with nulls/zeros.

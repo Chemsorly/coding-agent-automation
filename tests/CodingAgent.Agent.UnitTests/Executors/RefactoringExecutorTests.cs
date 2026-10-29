@@ -40,8 +40,10 @@ public class RefactoringExecutorTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        if (!Directory.Exists(_tempDir)) return;
+        foreach (var f in Directory.GetFiles(_tempDir, "*", SearchOption.AllDirectories))
+            try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+        Directory.Delete(_tempDir, recursive: true);
     }
 
     private RefactoringExecutor CreateExecutor() => new(_mockLogger.Object);

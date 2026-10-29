@@ -1,4 +1,5 @@
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Prompts;
 using CodingAgent.Pipeline.Telemetry;
@@ -196,6 +197,7 @@ public partial class QualityGateExecutor
             // is not tight.
             var prReadyFallback = DateTime.UtcNow;
             await callbacks.FinalizePullRequest(run, false, linkedCt);
+            BrainEvidenceRecorder.MarkPostPr(run);
 
             // Wait for post-PR CI and handle retry/draft if it fails.
             // Extracted to keep RunPostRetryCleanupAndFinalizeAsync within complexity threshold.
@@ -235,6 +237,7 @@ public partial class QualityGateExecutor
         // and is recorded as Failed/AgentError although its PR is ready and green (issue #3111).
         var finalizedStep = run.CurrentStep;
         report = await WaitForPostPrCiAsync(context, report, notBefore, linkedCt);
+        BrainEvidenceRecorder.RecordReport(context.Run, context.Run.QualityGateHistory.Count, report);
         if (run.CurrentStep.IsQualityGateExitState()) return;
 
         if (!report.AllPassed)
@@ -243,7 +246,10 @@ public partial class QualityGateExecutor
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
             if (report.AllPassed)
+            {
                 run.CurrentStep = finalizedStep;
+                await context.Callbacks.RewriteBrainInbox(run, linkedCt);
+            }
             else
                 await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
         }
@@ -430,8 +436,11 @@ public partial class QualityGateExecutor
 
             // Run the fix agent and classify the result; extracted to reduce cognitive complexity.
             // RetryDecision carries the control-flow intent and updated counters.
+            var before = await TryFingerprintAsync(context, ct);
             var decision = await RunFixAgentIterationAsync(
                 context, fixPrompt, retryAgentDescription, pendingAttemptNum, consecutiveTransientRetries, ct);
+            var after = await TryFingerprintAsync(context, ct);
+            BrainEvidenceRecorder.RecordFixFingerprints(run, before, after);
             consecutiveTransientRetries = decision.ConsecutiveTransientRetries;
 
             if (decision.ShouldContinue) continue;
@@ -457,6 +466,25 @@ public partial class QualityGateExecutor
     /// and the retry-count delta to apply. Extracted from <see cref="RunRetryLoopAsync"/> to
     /// reduce cognitive complexity.
     /// </summary>
+    /// <summary>Captures a working-tree fingerprint; returns null on any non-OCE exception (spec 054 DD5).</summary>
+    private async Task<IReadOnlyDictionary<string, string>?> TryFingerprintAsync(
+        QualityGateContext context, CancellationToken ct)
+    {
+        try
+        {
+            return await context.RepoProvider.GetWorkingTreeFingerprintAsync(
+                context.Run.WorkspacePath!,
+                [.. context.Config.BlacklistedPaths, .. context.Config.PipelineInjectedPaths],
+                ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Working-tree fingerprint failed for run {RunId}, continuing without it", context.Run.RunId);
+            return null;
+        }
+    }
+
     private async Task<RetryDecision> RunFixAgentIterationAsync(
         QualityGateContext context,
         string fixPrompt,
@@ -683,6 +711,9 @@ public partial class QualityGateExecutor
         run.LatestQualityReport = report;
         run.QualityGateHistory.Enqueue(report);
         callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
+
+        // Brain v2 evidence recording (spec 054, req 4)
+        CodingAgent.Pipeline.Brain.BrainEvidenceRecorder.RecordReport(run, run.QualityGateHistory.Count, report);
 
         _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, ExternalCi={ExternalCiResult}",
             run.RunId, phase, report.AllPassed, report.Compilation.Passed, FormatGateLogValue(report.Tests),

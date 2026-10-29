@@ -79,9 +79,55 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 await brainProvider.CloneAsync(workspacePath, ct);
             });
 
-            // 2. Build prompt
+            // 1b. Archive v1 content (spec 054, Task 7A.2)
+            try
+            {
+                var trackedFiles = (await _brainUpdateService.ListTrackedFilesAsync(workspacePath, ct))
+                    .Select(p =>
+                    {
+                        string? firstLine = null;
+                        var full = Path.Combine(workspacePath, p.Replace('/', Path.DirectorySeparatorChar));
+                        try
+                        {
+                            using var sr = new System.IO.StreamReader(full, new System.Text.UTF8Encoding(false, true));
+                            firstLine = sr.ReadLine();
+                        }
+                        catch { }
+                        return new CodingAgent.Pipeline.Brain.BrainTrackedFile(p, firstLine);
+                    }).ToList();
+
+                var moves = CodingAgent.Pipeline.Brain.BrainV1Archiver.Plan(trackedFiles);
+                foreach (var move in moves)
+                {
+                    var from = Path.Combine(workspacePath, move.From.Replace('/', Path.DirectorySeparatorChar));
+                    var to = Path.Combine(workspacePath, move.To.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                    File.Move(from, to, overwrite: true);
+                }
+
+                var readmePath = Path.Combine(workspacePath, "README.md");
+                var readmeContent = CodingAgent.Pipeline.Brain.BrainReadmeTemplate.Text;
+                if (!File.Exists(readmePath) || await File.ReadAllTextAsync(readmePath, ct) != readmeContent)
+                    await File.WriteAllTextAsync(readmePath, readmeContent, new System.Text.UTF8Encoding(false), ct);
+
+                if (moves.Count > 0)
+                {
+                    await brainProvider.CommitAllAsync(workspacePath, CodingAgent.Pipeline.Brain.BrainLayout.ArchiveCommitMessage, ct);
+                    Logger.Information("Brain consolidation archived {Count} v1 files for run {RunId}", moves.Count, job.JobId);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.Warning(ex, "Brain archive step failed for run {RunId}, continuing", job.JobId);
+            }
+
+            // 2. Write review input (spec 054, Task 7A.3)
+            var reviewInputWriter = new BrainReviewInputWriter(_brainUpdateService, Logger);
+            await reviewInputWriter.WriteAsync(workspacePath, job.BrainGroup, job, ct);
+
+            // 3. Build prompt
             TransitionTo(PipelineStep.ConsolidatingKnowledge);
-            var prompt = ConsolidationPromptBuilder.BuildBrainConsolidationPrompt(job.LastSuccessfulRunUtc);
+            var prompt = ConsolidationPromptBuilder.BuildBrainReviewPrompt();
 
             // 3. Execute agent
             Logger.Information("Executing brain consolidation agent for run {RunId}", job.JobId);
@@ -146,10 +192,65 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             var reviewTokenUsage = reviewResult?.ReviewTokenUsage;
             var refinementTokenUsage = reviewResult?.RefinementTokenUsage;
 
-            // 6. Commit all changes (AFTER review/refinement completes)
+            // 6. Validate and record review outcome (spec 054, Task 7B)
+            string? reviewRefusalReason = null;
+            BrainConsolidationOutcome? reviewOutcome = null;
+            try
+            {
+                var summaryPath = Path.Combine(workspacePath, CodingAgent.Pipeline.AgentWorkspacePaths.BrainReviewSummaryFilePath);
+                var summaryJson = File.Exists(summaryPath) ? await File.ReadAllTextAsync(summaryPath, ct) : null;
+                var parseResult = CodingAgent.Pipeline.Brain.BrainReviewSummaryParser.Parse(summaryJson);
+                if (parseResult.Summary is not null)
+                {
+                    reviewOutcome = CodingAgent.Pipeline.Brain.BrainReviewSummaryParser.ToOutcome(parseResult.Summary);
+                    reviewOutcome = CodingAgent.Pipeline.Brain.BrainReviewSummaryParser.Cap(reviewOutcome);
+                }
+
+                // Validate the working-tree changes
+                var changes = _brainUpdateService.GetWorkingTreeChanges(workspacePath);
+                var trackedFiles = await _brainUpdateService.ListTrackedFilesAsync(workspacePath, ct);
+                var headContents = trackedFiles.ToDictionary(
+                    p => p,
+                    p => _brainUpdateService.ReadFileAtHead(workspacePath, p),
+                    StringComparer.Ordinal);
+                var newContents = new Dictionary<string, string?>(StringComparer.Ordinal);
+                foreach (var c in changes)
+                {
+                    if (c.Kind == CodingAgent.Pipeline.Models.BrainPathChangeKind.Deleted)
+                    {
+                        newContents[c.Path] = null;
+                        continue;
+                    }
+                    var fullChangedPath = Path.Combine(workspacePath, c.Path.Replace('/', Path.DirectorySeparatorChar));
+                    newContents[c.Path] = File.Exists(fullChangedPath)
+                        ? await File.ReadAllTextAsync(fullChangedPath, ct)
+                        : null;
+                }
+
+                var validationInput = new CodingAgent.Pipeline.Brain.BrainReviewValidationInput(
+                    changes, headContents, newContents,
+                    GroupRepositoryNames: job.BrainGroup?.Select(m => m.RepositoryShortName).ToList() ?? [],
+                    SummaryJson: summaryJson);
+                var validation = CodingAgent.Pipeline.Brain.BrainReviewValidator.Validate(validationInput);
+                if (!validation.IsValid)
+                {
+                    reviewRefusalReason = validation.Reason;
+                    Logger.Warning("Brain review validation refused for run {RunId}: {Reason} ({Detail})",
+                        job.JobId, validation.Reason, validation.Detail);
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Brain review validation failed for run {RunId}, continuing", job.JobId);
+            }
+
+            // 7. Commit all changes (AFTER review/refinement completes)
             TransitionTo(PipelineStep.PushingBrainChanges);
             Logger.Information("Committing brain consolidation changes for run {RunId}", job.JobId);
-            var commitMessage = $"Brain consolidation run {job.JobId}";
+            var commitMessage = reviewRefusalReason is null
+                ? CodingAgent.Pipeline.Brain.BrainLayout.ReviewCommitMessage(job.JobId)
+                : $"brain: review run {job.JobId} (refused: {reviewRefusalReason})";
             using (var commitActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Commit"))
             {
                 commitActivity?.SetTag("pipeline.run_id", job.JobId);
@@ -220,8 +321,10 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             var (filesModified, entriesMerged, contradictionsResolved, entriesPruned) = ParseMetrics(responseText);
 
             // 9. Format summary and return
-            var summary = ConsolidationPromptBuilder.FormatBrainConsolidationSummary(
-                filesModified, entriesMerged, contradictionsResolved, entriesPruned);
+            var summary = reviewOutcome is not null
+                ? ConsolidationPromptBuilder.FormatBrainReviewSummary(reviewOutcome)
+                : ConsolidationPromptBuilder.FormatBrainConsolidationSummary(
+                    filesModified, entriesMerged, contradictionsResolved, entriesPruned);
 
             Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
 
@@ -233,7 +336,8 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 DiffSummaryTokenUsage = diffSummaryTokenUsage,
                 ReviewTokenUsage = reviewTokenUsage,
                 RefinementTokenUsage = refinementTokenUsage,
-                BrainOutcome = new BrainConsolidationOutcome
+                BrainReviewRefusalReason = reviewRefusalReason,
+                BrainOutcome = reviewOutcome ?? new BrainConsolidationOutcome
                 {
                     FilesModified = filesModified,
                     EntriesMerged = entriesMerged,

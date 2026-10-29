@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Prompts;
@@ -228,14 +229,19 @@ public sealed class PullRequestFinalizationService
         if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
         {
             await transitionCallback(PipelineStep.ReflectingOnRun);
-            await RunReflectionAsync(run, agentProvider, config, emitOutputLine, ct);
+            var candidates = await RunReflectionAsync(run, agentProvider, config, emitOutputLine, ct);
 
             await transitionCallback(PipelineStep.SyncingBrainRepoPostRun);
-            await SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
+            await WriteBrainInboxAsync(run, brainSync, brainProvider, config, isDraft: false, candidates, request.Secrets, emitOutputLine, ct);
+        }
+        else if (brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
+        {
+            // Draft: evidence only, no agent call (D13, D18)
+            await transitionCallback(PipelineStep.SyncingBrainRepoPostRun);
+            await WriteBrainInboxAsync(run, brainSync, brainProvider, config, isDraft: true, null, request.Secrets, emitOutputLine, ct);
         }
         else
         {
-            // The brain post-run sync was skipped — log the reason.
             _logger.Information(
                 "Pipeline {RunId} skipping brain post-run sync: isDraft={IsDraft}, brainProvider={HasProvider}, brainSync={HasSync}, brainReadOnly={ReadOnly}",
                 run.RunId, isDraft, brainProvider is not null, brainSync is not null, config.BrainReadOnly);
@@ -424,22 +430,28 @@ public sealed class PullRequestFinalizationService
     }
 
     /// <summary>
-    /// Executes the reflection step: builds a reflection prompt and asks the agent to review
-    /// the run and enrich .brain/ knowledge. Accumulates token usage on the run.
-    /// Does not throw on failure — logs a warning and returns.
+    /// Executes the reflection step v2 (spec 054, req 3.3): deletes stale candidates file,
+    /// asks the agent to propose brain lessons, reads and validates the output.
+    /// Returns the candidates text, or null if nothing was written or the step failed.
     /// </summary>
-    public async Task RunReflectionAsync(
+    public async Task<string?> RunReflectionAsync(
         PipelineRun run, IAgentProvider agentProvider, PipelineConfiguration config,
         Action<string> emitOutputLine, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Reflection");
         activity?.SetTag(PipelineRunIdTag, run.RunId);
 
-        emitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
+        emitOutputLine("🧠 Writing brain candidates...");
         try
         {
+            // Delete stale candidates file
+            var candidatesPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainCandidatesFilePath);
+            if (File.Exists(candidatesPath))
+                File.Delete(candidatesPath);
+
+            var evidenceMd = Brain.BrainInboxComposer.RenderEvidence(run.BrainEvidence ?? new());
             var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
+                run, evidenceMd, run.StackLabels, DateOnly.FromDateTime(DateTime.UtcNow), run.IssueTitle);
             _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
             var reflectionResult = await agentProvider.ExecuteAsync(
@@ -454,40 +466,113 @@ public sealed class PullRequestFinalizationService
                 line => emitOutputLine(line));
 
             run.AccumulateTokenUsage(reflectionResult, phase: "reflection");
-            _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
+
+            // Read the candidates file
+            if (!File.Exists(candidatesPath))
+                return null;
+
+            var info = new FileInfo(candidatesPath);
+            if (info.Length > Brain.BrainLayout.MaxInboxBytes)
+            {
+                _logger.Warning("Brain candidates file over {MaxBytes} bytes for run {RunId}, ignored",
+                    Brain.BrainLayout.MaxInboxBytes, run.RunId);
+                return null;
+            }
+
+            try
+            {
+                var text = await File.ReadAllTextAsync(candidatesPath,
+                    new System.Text.UTF8Encoding(false, true), ct);
+
+                var validation = Brain.BrainInboxComposer.ValidateCandidates(text, run.StackLabels);
+                activity?.SetTag("pipeline.brain.candidates_kept", validation.Kept.Count);
+                activity?.SetTag("pipeline.brain.candidates_dropped", validation.Dropped);
+
+                _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
+                return text;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} could not read brain candidates file: {Error}", run.RunId, ex.Message);
+                return null;
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
-            _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
+            _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing", run.RunId);
+            return null;
         }
     }
 
     /// <summary>
-    /// Syncs the brain repository after the run. Delegates to brainSync.SyncPostRunAsync.
-    /// Does not throw on failure — logs a warning and sets run.BrainUpdatesPushed = false.
+    /// Composes the inbox file and writes it to the brain repo (spec 054, req 3, D13, D18).
     /// </summary>
-    public async Task SyncBrainPostRunAsync(
+    public async Task WriteBrainInboxAsync(
         PipelineRun run, IBrainSyncService brainSync, IRepositoryProvider brainProvider,
-        PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
+        PipelineConfiguration config, bool isDraft, string? candidatesText,
+        IReadOnlyDictionary<string, string> secrets, Action<string> emitOutputLine, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("BrainSyncPostRun");
         activity?.SetTag(PipelineRunIdTag, run.RunId);
 
         try
         {
-            await brainSync.SyncPostRunAsync(run, brainProvider, ct, emitOutputLine, config.BrainPushMaxRetries);
+            var relativePath = run.BrainInboxFile
+                ?? Brain.BrainLayout.InboxFileName(DateOnly.FromDateTime(DateTime.UtcNow), run.RunId);
+
+            // Read existing text for rewrite support (DD8)
+            string? existingText = null;
+            if (run.BrainInboxFile is not null)
+            {
+                var existing = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory,
+                    run.BrainInboxFile.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(existing))
+                {
+                    try { existingText = await File.ReadAllTextAsync(existing, new System.Text.UTF8Encoding(false, true), ct); }
+                    catch { /* non-fatal */ }
+                }
+            }
+
+            var header = new Brain.BrainInboxHeader(
+                RunId: run.RunId,
+                RunType: run.RunType.ToString().ToLowerInvariant(),
+                Outcome: isDraft ? "draft" : "succeeded",
+                RepositoryFullName: run.RepositoryName ?? "",
+                ProjectName: run.ProjectName,
+                StackLabels: run.StackLabels,
+                Issue: $"#{run.IssueIdentifier}",
+                PullRequestUrl: run.PullRequestUrl,
+                SkillsCommit: run.BrainSkillsCommit,
+                SkillsFiles: run.BrainSkills?.FilesInjected ?? []);
+
+            var composition = Brain.BrainInboxComposer.Compose(
+                header, candidatesText, run.BrainEvidence ?? new(), existingText, secrets);
+
+            await brainSync.WriteInboxAsync(run, brainProvider, relativePath, composition.Text, ct,
+                config.BrainPushMaxRetries);
+
+            activity?.SetTag("pipeline.brain.inbox_bytes", composition.Text.Length);
+            activity?.SetTag("pipeline.brain.evidence_attempts", run.BrainEvidence?.Attempts.Count ?? 0);
+            activity?.SetTag("pipeline.brain.push_result", run.BrainUpdatesPushed == true ? "pushed" : "failed");
+
+            _logger.Information(
+                "Pipeline {RunId} wrote brain inbox {InboxFile}: {BrainCandidatesKept} candidates kept, {BrainCandidatesDropped} dropped, {EvidenceAttempts} attempts",
+                run.RunId, relativePath, composition.KeptCandidates.Count, composition.DroppedCandidates,
+                run.BrainEvidence?.Attempts.Count ?? 0);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
-            _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId);
+            _logger.Warning(ex, "Pipeline {RunId} WriteBrainInboxAsync failed: {Error}", run.RunId, ex.Message);
             run.BrainUpdatesPushed = false;
+            run.BrainPushFailed = true;
         }
     }
-
     /// <summary>
     /// Collects structured feedback from the agent about the run.
     /// Delegates to <see cref="FeedbackService.CollectFeedbackCoreAsync"/> for the shared

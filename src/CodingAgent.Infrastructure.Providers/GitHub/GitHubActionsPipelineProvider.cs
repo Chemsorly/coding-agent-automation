@@ -107,7 +107,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
                         ? $"Job '{job.Name}' failed"
                         : null,
                     LogUrl = job.HtmlUrl,
-                    JobId = job.Id
+                    JobId = job.Id,
+                    FailedSteps = job.Steps?
+                        .Where(s => s.Conclusion?.Value == WorkflowJobConclusion.Failure)
+                        .Select(s => s.Name)
+                        .ToList() ?? []
                 });
             }
         }

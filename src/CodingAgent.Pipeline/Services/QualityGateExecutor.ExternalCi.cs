@@ -1,4 +1,5 @@
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 
@@ -151,6 +152,7 @@ public partial class QualityGateExecutor
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            BrainEvidenceRecorder.RecordCiTimeout(context.Run);
             ciGate = CiPollingCoordinator.BuildCiTimeoutGateResult(context.Config.ExternalCiTimeout, ExternalCiName);
         }
         catch (OperationCanceledException) { throw; }
@@ -165,6 +167,7 @@ public partial class QualityGateExecutor
         catch (Exception ex)
         {
             _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", context.Run.RunId);
+            BrainEvidenceRecorder.RecordCiStatusError(context.Run, ExternalCiName, ex.Message);
             ciGate = CiPollingCoordinator.BuildCiErrorGateResult(ExternalCiName, ex.Message);
         }
 
@@ -315,6 +318,7 @@ public partial class QualityGateExecutor
         var callbacks = context.Callbacks;
 
         string? commitSha = await _ciPollingCoordinator.TryReadHeadShaAsync(context, "could not read HEAD commit SHA", ct);
+        BrainEvidenceRecorder.RecordCommit(run, commitSha);
         callbacks.EmitOutputLine("⏳ Waiting for external CI...");
         var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -464,6 +468,7 @@ public partial class QualityGateExecutor
                     $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
                     config.BlacklistedPaths, allowEmpty: true, ct,
                     config.PipelineInjectedPaths);
+                BrainEvidenceRecorder.RecordNoCodeChange(run);
             }
             else if (!await context.RepoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
             {

@@ -1,3 +1,5 @@
+using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
 using LibGit2Sharp;
 
 namespace CodingAgent.Infrastructure.Git;
@@ -163,5 +165,235 @@ public sealed class LibGit2SharpGitOperations : IGitOperations
     {
         if (File.Exists(fullPath))
             File.Delete(fullPath);
+    }
+
+    // ── Inbox push operations (spec 054 Task 6.1) ─────────────────────────
+
+    public IReadOnlyList<string> DiscardChangesExcept(string repoPath, string keepRelativePath)
+    {
+        using var repo = new Repository(repoPath);
+        var discarded = new List<string>();
+        var status = repo.RetrieveStatus(new StatusOptions
+        {
+            IncludeUntracked = true,
+            RecurseUntrackedDirs = true
+        });
+
+        // Restore modified/deleted tracked files
+        foreach (var entry in status)
+        {
+            var path = entry.FilePath.Replace('\\', '/');
+            if (path == keepRelativePath) continue;
+            if (entry.State.HasFlag(FileStatus.ModifiedInWorkdir)
+                || entry.State.HasFlag(FileStatus.DeletedFromWorkdir))
+            {
+                repo.CheckoutPaths("HEAD", [entry.FilePath], new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
+                discarded.Add(path);
+            }
+        }
+
+        // Delete untracked files (except kept path)
+        foreach (var entry in status)
+        {
+            var path = entry.FilePath.Replace('\\', '/');
+            if (path == keepRelativePath) continue;
+            if (!entry.State.HasFlag(FileStatus.NewInWorkdir)) continue;
+            var fullPath = Path.Combine(repoPath, entry.FilePath);
+            if (File.Exists(fullPath))
+            {
+                File.Delete(fullPath);
+                discarded.Add(path);
+            }
+        }
+
+        // Remove then-empty directories
+        TryDeleteEmptyDirectories(repoPath, keepRelativePath);
+
+        return discarded;
+    }
+
+    private static void TryDeleteEmptyDirectories(string repoPath, string keepRelativePath)
+    {
+        foreach (var dir in Directory.GetDirectories(repoPath, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
+        {
+            // Skip .git directory and all its subdirectories
+            var relative = dir.Substring(repoPath.Length).TrimStart(Path.DirectorySeparatorChar, '/');
+            if (relative.StartsWith(".git", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!Directory.Exists(dir)) continue;
+            if (!Directory.EnumerateFileSystemEntries(dir).Any())
+            {
+                try { Directory.Delete(dir); } catch { }
+            }
+        }
+    }
+
+    public void StageAndCommit(string repoPath, IReadOnlyList<string> relativePaths, string message)
+    {
+        using var repo = new Repository(repoPath);
+        foreach (var path in relativePaths)
+            Commands.Stage(repo, path);
+
+        var sig = new Signature(
+            GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
+        try
+        {
+            repo.Commit(message, sig, sig);
+        }
+        catch (LibGit2Sharp.EmptyCommitException ex)
+        {
+            throw new EmptyCommitException(ex.Message, ex);
+        }
+    }
+
+    public IReadOnlyList<LocalCommit> GetCommitsAheadOfRemote(string repoPath, string remoteBranch)
+    {
+        using var repo = new Repository(repoPath);
+        var remote = repo.Branches[$"origin/{remoteBranch}"];
+        if (remote is null) return [];
+
+        var filter = new CommitFilter
+        {
+            IncludeReachableFrom = repo.Head.Tip,
+            ExcludeReachableFrom = remote.Tip
+        };
+
+        var commits = new List<LocalCommit>();
+        foreach (var commit in repo.Commits.QueryBy(filter).Reverse())
+        {
+            var files = new List<CommitFileContent>();
+            var parent = commit.Parents.FirstOrDefault();
+            foreach (var diff in repo.Diff.Compare<TreeChanges>(parent?.Tree, commit.Tree))
+            {
+                var content = diff.Status != ChangeKind.Deleted
+                    ? GetBlobContent(commit.Tree, diff.Path)
+                    : null;
+                var parentContent = parent is not null && diff.Status != ChangeKind.Added
+                    ? GetBlobContent(parent.Tree, diff.OldPath)
+                    : null;
+                files.Add(new CommitFileContent(diff.Path, content, parentContent));
+            }
+            commits.Add(new LocalCommit(commit.Sha, commit.Message.Trim(), files));
+        }
+        return commits;
+    }
+
+    public string? GetFileContentAtRemote(string repoPath, string remoteBranch, string relativePath)
+    {
+        using var repo = new Repository(repoPath);
+        var remote = repo.Branches[$"origin/{remoteBranch}"];
+        if (remote is null) return null;
+        return GetBlobContent(remote.Tip.Tree, relativePath);
+    }
+
+    private static string? GetBlobContent(Tree tree, string path)
+    {
+        var entry = tree[path];
+        if (entry is null || entry.TargetType != TreeEntryTargetType.Blob) return null;
+        var blob = (Blob)entry.Target;
+        return blob.GetContentText();
+    }
+
+    // ── Review git operations (spec 054 Task 7A.1) ─────────────────────────
+
+    public IReadOnlyList<string> ListTrackedFiles(string repoPath)
+    {
+        using var repo = new Repository(repoPath);
+        return repo.Index.Select(e => e.Path.Replace('\\', '/')).ToList();
+    }
+
+    public string? ReadFileAtCommit(string repoPath, string commitSha, string relativePath)
+    {
+        using var repo = new Repository(repoPath);
+        try
+        {
+            var commit = repo.Lookup<Commit>(commitSha);
+            if (commit is null) return null;
+            return GetBlobContent(commit.Tree, relativePath);
+        }
+        catch { return null; }
+    }
+
+    public string? ReadFileAtHead(string repoPath, string relativePath)
+    {
+        using var repo = new Repository(repoPath);
+        var head = repo.Head.Tip;
+        if (head is null) return null;
+        return GetBlobContent(head.Tree, relativePath);
+    }
+
+    public IReadOnlyList<BrainPathChange> GetWorkingTreeChanges(string repoPath)
+    {
+        using var repo = new Repository(repoPath);
+        var status = repo.RetrieveStatus(new StatusOptions
+        {
+            IncludeUntracked = true,
+            RecurseUntrackedDirs = true
+        });
+        var changes = new List<BrainPathChange>();
+        foreach (var entry in status)
+        {
+            if (entry.State is FileStatus.Ignored or FileStatus.Unaltered) continue;
+            var path = entry.FilePath.Replace('\\', '/');
+            var kind = entry.State.HasFlag(FileStatus.NewInWorkdir) || entry.State.HasFlag(FileStatus.NewInIndex)
+                ? BrainPathChangeKind.Added
+                : entry.State.HasFlag(FileStatus.DeletedFromWorkdir) || entry.State.HasFlag(FileStatus.DeletedFromIndex)
+                    ? BrainPathChangeKind.Deleted
+                    : BrainPathChangeKind.Modified;
+            changes.Add(new BrainPathChange(path, kind));
+        }
+        return changes;
+    }
+
+    public string GetReviewPatch(string repoPath)
+    {
+        using var repo = new Repository(repoPath);
+        // Stage skill dirs and README
+        foreach (var pattern in new[] { "projects", "technology", "general", "review", "README.md" })
+            try { Commands.Stage(repo, pattern); } catch { /* missing paths are ok */ }
+
+        using var patch = repo.Diff.Compare<Patch>(repo.Head.Tip?.Tree, DiffTargets.Index);
+        return patch.Content;
+    }
+
+    public IReadOnlyList<BrainCommitInfo> GetSkillCommitsSinceLastReview(string repoPath)
+    {
+        using var repo = new Repository(repoPath);
+        var commits = new List<Commit>();
+
+        // Find the newest review commit
+        Commit? latestReview = null;
+        foreach (var commit in repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Topological }))
+        {
+            if (commit.Message.TrimStart().StartsWith("brain: review run", StringComparison.Ordinal))
+            {
+                latestReview = commit;
+                break;
+            }
+        }
+
+        // Collect skill commits newer than the review commit
+        foreach (var commit in repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Topological }))
+        {
+            if (latestReview is not null && commit.Sha == latestReview.Sha) break;
+
+            var msg = commit.Message.TrimStart();
+            if (msg.StartsWith("brain: review run", StringComparison.Ordinal)
+                || msg.StartsWith("brain: archive v1 content", StringComparison.Ordinal))
+                continue;
+
+            // Check if it touches skill paths
+            var parent = commit.Parents.FirstOrDefault();
+            var touched = repo.Diff.Compare<TreeChanges>(parent?.Tree, commit.Tree)
+                .Any(c => c.Path.StartsWith("projects/", StringComparison.Ordinal)
+                    || c.Path.StartsWith("technology/", StringComparison.Ordinal)
+                    || c.Path.StartsWith("general/", StringComparison.Ordinal));
+            if (!touched) continue;
+
+            commits.Add(commit);
+            if (commits.Count >= 50) break;
+        }
+
+        commits.Reverse(); // oldest first
+        return commits.Select(c => new BrainCommitInfo(c.Sha, c.Message.TrimEnd())).ToList();
     }
 }

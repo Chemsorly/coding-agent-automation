@@ -178,11 +178,12 @@ else
                         </div>
                         @if (!string.IsNullOrEmpty(_bindingForm.BrainProviderId))
                         {
+                            <span class="form-hint" data-testid="brain-sharing-hint">Every repository that uses this brain can read its inbox files and skills. Repositories that must not share this must use separate brains.</span>
                             <div class="form-group form-checkbox">
                                 <label>
                                     <input type="checkbox" @bind="_bindingForm.BrainReadOnly" />
                                     Brain Repository Read-Only
-                                    <span class="form-hint-icon" aria-hidden="true" title="When enabled, the brain repo is cloned and read by the agent but no changes are written back.">?</span>
+                                    <span class="form-hint-icon" aria-hidden="true" title="When enabled, runs get the brain skills but write no inbox file.">?</span>
                                 </label>
                             </div>
                         }

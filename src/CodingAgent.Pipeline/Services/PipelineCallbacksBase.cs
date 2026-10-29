@@ -109,4 +109,7 @@ public abstract class PipelineCallbacksBase : IPipelineCallbacks
 
     /// <inheritdoc />
     public abstract Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);
+
+    /// <inheritdoc />
+    public virtual Task RewriteBrainInbox(PipelineRun run, CancellationToken ct) => Task.CompletedTask;
 }

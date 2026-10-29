@@ -11,4 +11,7 @@ public sealed class BrainSyncResult
 
     /// <summary>True when no changes were detected and the commit was skipped.</summary>
     public bool WasSkipped { get; init; }
+
+    /// <summary>Paths discarded by <c>DiscardChangesExcept</c> before staging the inbox file (spec 054, req 3.7).</summary>
+    public IReadOnlyList<string> DiscardedPaths { get; init; } = [];
 }

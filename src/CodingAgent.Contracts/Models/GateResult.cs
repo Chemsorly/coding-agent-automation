@@ -36,4 +36,8 @@ public sealed class GateResult
     /// </summary>
     [Key(9)]
     public bool? IsInfrastructureFailure { get; init; }
+
+    /// <summary>Names of failed tests from the TRX output (at most 20). Wire-compat: additive.</summary>
+    [Key(10)]
+    public IReadOnlyList<string>? FailedTestNames { get; init; }
 }

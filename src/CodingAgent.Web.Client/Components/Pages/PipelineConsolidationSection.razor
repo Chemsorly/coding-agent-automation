@@ -33,6 +33,7 @@
                     <input type="checkbox" @bind="_brainConsolidationReviewEnabled" />
                     Brain Consolidation Review
                 </label>
+                <span class="form-hint">An isolated agent checks the review's promotions against the evidence before they are pushed.</span>
             </div>
         </div>
         <div class="form-group" data-setting="@nameof(PipelineConfiguration.HotspotAnalysisLookback)">
@@ -55,7 +56,7 @@
             <div class="form-group" data-setting="@nameof(PipelineConfiguration.AutoBrainConsolidationAfterRuns)">
                 <div class="label-with-hint">
                     <label>Brain consolidation after N runs</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Start brain consolidation once this many runs have added lessons to the brain since its last consolidation. 0 = off.">?</span>
+                    <span class="form-hint-icon" aria-hidden="true" title="Start a brain review once this many runs have pushed an inbox file since the last review. 0 = off.">?</span>
                 </div>
                 <input type="number" @bind="_autoBrainConsolidationAfterRuns" min="@SettingLimits.Min(nameof(PipelineConfiguration.AutoBrainConsolidationAfterRuns))" max="@SettingLimits.Max(nameof(PipelineConfiguration.AutoBrainConsolidationAfterRuns))" />
             </div>

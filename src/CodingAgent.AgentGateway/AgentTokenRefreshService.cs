@@ -182,22 +182,17 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
                 var readOnlySet = new HashSet<string>(StringComparer.Ordinal) { targetConfig.Id };
                 var prepared = await _tokenVending.PrepareAgentConfigsAsync(
                     [targetConfig], targetConfig.Id, ct, readOnlyConfigIds: readOnlySet);
-                // NOTE (issue #3573): if PrepareAgentConfigsAsync returns an empty list (e.g. because
-                // TokenVendingService degrades gracefully and strips the config without throwing),
-                // prepared[0] below will throw ArgumentOutOfRangeException. Add an empty-list guard
-                // before the index access. Additionally, the fallback to GenerateAgentTokenAsync when
-                // the Token key is absent violates the fail-closed requirement — a misbehaving agent
-                // could engineer a transient token-generation failure to obtain a write-capable token
-                // for a read-only brain. The fallback should throw rather than silently degrade to a
-                // write token (SecurityReviewer & DotNetSpecialist findings).
+                if (prepared.Count == 0)
+                {
+                    _logger.Warning("Read-only brain token vending produced no token for job {JobId}; refusing the refresh", jobId);
+                    throw new HubException("read-only brain token unavailable");
+                }
                 var prepared0 = prepared[0];
                 if (!prepared0.Settings.TryGetValue(ProviderSettingKeys.Token, out var roToken)
                     || string.IsNullOrEmpty(roToken))
                 {
-                    _logger.Warning(
-                        "Read-only brain token vending produced no token for job {JobId} — falling back to write token",
-                        jobId);
-                    vendResult = await _tokenVending.GenerateAgentTokenAsync(targetConfig, ct, includeIssuePermission);
+                    _logger.Warning("Read-only brain token vending produced no token for job {JobId}; refusing the refresh", jobId);
+                    throw new HubException("read-only brain token unavailable");
                 }
                 else
                 {

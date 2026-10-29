@@ -1,4 +1,5 @@
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Prompts;
 using CodingAgent.Pipeline.Telemetry;
@@ -156,6 +157,7 @@ public partial class AgentPhaseExecutor
 
         var orchestrator = new CodeReviewOrchestrator(_logger);
         await orchestrator.RunReviewLoopAsync(context, agents, maxIterations, skipFixPrompt, useParallel, ct);
+        BrainEvidenceRecorder.RecordReview(context.Run);
 
         run.CodeReviewIterationInProgress = 0;
 

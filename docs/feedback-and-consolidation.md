@@ -162,3 +162,29 @@ Consolidation run history is automatically pruned by `DatabaseMaintenanceService
 
 - **PipelineRun records:** Consolidation runs are recorded as `PipelineRuns` when they are dispatched (`PipelineRunFactory.CreateFromWorkItem`) and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps. The last successful run of a scope is read from these records, so what is pruned no longer counts.
 - **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).
+
+## Brain Knowledge Base v2 (spec 054)
+
+The brain is a central git repository of curated lessons shared across pipeline runs.
+
+### How it works
+
+Every successful implementation run proposes up to 5 candidate lessons by writing `.agent/brain-candidates.md` (spec 054, req 3.3). The pipeline then composes an **inbox file** (`inbox/YYYY-MM-DD_<runId>.md`) from the candidates and the recorded evidence (gate failures, CI logs, review findings, human comments) and pushes it to the brain repository.
+
+Draft runs (post-PR CI failure) still write evidence-only inbox files (no candidates).
+
+After enough runs have contributed inbox files, a brain review (brain consolidation run of type `BrainConsolidation`) reads them and promotes causes that recur across multiple runs or repositories into short, curated **skill files** (`projects/<name>/SKILL.md`, `technology/<label>/SKILL.md`, `general/SKILL.md`).
+
+### Skills injection
+
+Before each run starts, `SyncBrainPreRunStep` clones the brain and reads up to three skill files (general + technology matching stack labels + repository-specific). The assembled text is written to the agent's steering directory (`pipeline-brain.md`) via `WriteBrainSkillsStep`, so the agent sees it as part of its always-on instructions without any extra prompt construction.
+
+### Brain consolidation v2 review prompt
+
+The review agent reads `.agent/brain-review-input.md` (which lists up to 100 recent inbox files and the current skill file contents), edits skill files directly, and writes `.agent/brain-review-summary.json` with the changes it made. The pipeline validates the changes with `BrainReviewValidator` before committing and pushing.
+
+### Observability
+
+- `pipeline_run_brain_updates_total{result=pushed|failed|skipped}` — incremented per non-consolidation run.
+- `pipeline.brain.skills_result`, `pipeline.brain.skills_bytes`, `pipeline.brain.stack_labels` — span tags on the `SyncBrainPreRun` span.
+- `pipeline.brain.inbox_bytes`, `pipeline.brain.evidence_attempts`, `pipeline.brain.push_result` — span tags on the `BrainSyncPostRun` span.

@@ -207,6 +207,52 @@ public sealed partial class AccessControlTests : IAsyncLifetime
     }
 
 
+    /// <summary>
+    /// Spec 054 req 12.5 / DD13: a project-scoped user sees the brain review aggregate counts
+    /// but NOT the individual lines, checks, or commit details on the run page.
+    /// </summary>
+    [Fact]
+    public async Task BrainReview_SummaryHiddenFromProjectScopedUser()
+    {
+        // Seed a brain consolidation run for the team project with a v2 outcome
+        var runId = Guid.NewGuid().ToString();
+        await _fixture.HistoryService.AddRunSummaryAsync(new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = new IssueIdentifier("BrainConsolidation:global"),
+            IssueTitle = "Brain Consolidation",
+            FinalStep = PipelineStep.Completed,
+            RunType = PipelineRunType.Consolidation,
+            ConsolidationType = ConsolidationRunType.BrainConsolidation,
+            ProjectId = E2ETestSignIn.TeamProjectId,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            BrainConsolidationOutcome = new BrainConsolidationOutcome
+            {
+                Promoted = 2,
+                Appended = 1,
+                Retired = 0,
+                MissedAgain = 0,
+                Lines = [new BrainReviewLine { Action = "promoted", Scope = "general", File = "general/SKILL.md", Text = "a sensitive lesson" }],
+                PushedCommitSha = "abc123def",
+            }
+        });
+
+        // Sign in as alice (project-scoped reader) and navigate to the run page
+        await _page.GotoAsync(E2ETestSignIn.SignInUrl(BaseUrl, "alice", E2ETestSignIn.TeamGroup));
+        await _page.GotoAsync($"{BaseUrl}/runs/{runId}");
+        await _page.WaitForSelectorAsync("[data-initialized='true']", new() { Timeout = 30_000 });
+
+        // The aggregate counts (brain-review-counts) must be visible for a project reader
+        await Assertions.Expect(_page.Locator("[data-testid='brain-review-counts']"))
+            .ToBeVisibleAsync(new() { Timeout = 10_000 });
+
+        // The individual review lines (brain-review-lines) must be absent for a project reader
+        // (redacted by BrainReviewVisibility — spec 054 DD13, req 12.5)
+        await Assertions.Expect(_page.Locator("[data-testid='brain-review-lines']"))
+            .ToHaveCountAsync(0, new() { Timeout = 5_000 });
+    }
+
     [GeneratedRegex(@"/login\?returnUrl=")]
     private static partial Regex LoginRedirect();
 }
