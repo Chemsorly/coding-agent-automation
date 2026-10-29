@@ -48,6 +48,10 @@ public sealed class RunSidebarModel
     public bool BrainUpdatesPushed { get; set; }
     public string? BrainInboxFileUrl { get; set; }
     public string? BrainSkillsResult { get; set; }
+    public int BrainSkillsBytes { get; set; }
+    public string? BrainSkillsCommit { get; set; }
+    public string? BrainInboxFile { get; set; }
+    public bool BrainPushFailed { get; set; }
     public int DecompositionSubIssuesCreated { get; set; }
     public int DecompositionSubIssuesAttempted { get; set; }
     public string? FailureReason { get; set; }

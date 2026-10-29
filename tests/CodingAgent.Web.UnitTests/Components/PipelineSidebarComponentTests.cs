@@ -350,7 +350,7 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
-        Assert.Contains("Brain updates not persisted", cut.Find("#step-SyncingBrainRepoPostRun").TextContent);
+        Assert.Contains("No inbox", cut.Find("#step-SyncingBrainRepoPostRun").TextContent);
     }
 
     [Fact]
@@ -823,9 +823,9 @@ public class PipelineSidebarComponentTests : BunitContext
     }
 
     /// <summary>
-    /// A completed brain consolidation with an outcome must show "N files modified" under
+    /// A completed brain consolidation with an outcome must show promoted/retired counts under
     /// ConsolidatingKnowledge and the pushed SHA with "merged onto newer commits" under
-    /// PushingBrainChanges.
+    /// PushingBrainChanges (spec 054, 8B.3).
     /// </summary>
     [Fact]
     public void BrainOutcome_ShowsPushDetails()
@@ -837,10 +837,8 @@ public class PipelineSidebarComponentTests : BunitContext
 
         run.BrainConsolidationOutcome = new BrainConsolidationOutcome
         {
-            FilesModified = 14,
-            EntriesMerged = 5,
-            ContradictionsResolved = 1,
-            EntriesPruned = 3,
+            Promoted = 5,
+            Retired = 3,
             PushedCommitSha = "3f9b2c1d0e",
             PushedCommitUrl = "https://github.com/org/brain/commit/3f9b2c1d0e",
             PushAttempts = 2,
@@ -849,7 +847,8 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
 
-        cut.Find("#step-ConsolidatingKnowledge").TextContent.Should().Contain("14 files modified");
+        // v2: shows promoted and retired counts (spec 054 8B.3)
+        cut.Find("#step-ConsolidatingKnowledge").TextContent.Should().Contain("5 promoted, 3 retired");
 
         var pushingStep = cut.Find("#step-PushingBrainChanges");
         pushingStep.TextContent.Should().Contain("pushed 3f9b2c1");

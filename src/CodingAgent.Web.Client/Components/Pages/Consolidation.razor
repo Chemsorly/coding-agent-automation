@@ -76,9 +76,10 @@
                                 {
                                     <span class="consolidation-card-value consolidation-muted">— read-only for this template</span>
                                 }
+                                <span class="consolidation-card-value consolidation-muted" data-testid="brain-review-hint">Reviews the inbox and updates the skills</span>
                                 @if (brainCounter is not null)
                                 {
-                                    <span class="consolidation-auto-counter" data-testid="auto-counter-brain">@brainCounter.Count / @brainCounter.Threshold runs since the last run@(brainCounter.Blocked is null ? " · auto" : "")</span>
+                                    <span class="consolidation-auto-counter" data-testid="auto-counter-brain">@brainCounter.Count / @brainCounter.Threshold runs with inbox since last review@(brainCounter.Blocked is null ? " · auto" : "")</span>
                                     @if (brainCounter.Blocked is not null)
                                     {
                                         <span class="consolidation-auto-blocked" data-testid="auto-blocked-brain">@brainCounter.Blocked</span>

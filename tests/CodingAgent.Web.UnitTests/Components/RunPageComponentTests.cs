@@ -1267,9 +1267,9 @@ public class RunPageComponentTests : BunitContext
     }
 
     /// <summary>
-    /// A finished brain consolidation must render the four count tiles, the pushed commit
-    /// line with "merged onto newer brain commits" when PushAttempts > 1, and the
-    /// "Brain commit ↗" chip in the links rail.
+    /// A finished brain consolidation must render the four v2 count tiles (Promoted/Appended/Retired/Missed again),
+    /// the pushed commit line, and the "Brain commit ↗" chip in the links rail.
+    /// Spec 054, 8B.3.
     /// </summary>
     [Fact]
     public void BrainOutcome_RendersTilesAndCommitLink()
@@ -1287,10 +1287,10 @@ public class RunPageComponentTests : BunitContext
             CompletedAtOffset = DateTimeOffset.UtcNow,
             BrainConsolidationOutcome = new BrainConsolidationOutcome
             {
-                FilesModified = 14,
-                EntriesMerged = 9,
-                ContradictionsResolved = 2,
-                EntriesPruned = 17,
+                Promoted = 7,
+                Appended = 3,
+                Retired = 2,
+                MissedAgain = 1,
                 PushedCommitSha = "3f9b2c1d0e",
                 PushedCommitUrl = "https://github.com/org/brain/commit/3f9b2c1d0e",
                 PushAttempts = 2,
@@ -1301,16 +1301,17 @@ public class RunPageComponentTests : BunitContext
 
         var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
 
-        // brain-changes section with four tiles
+        // brain-changes section with v2 count tiles (brain-review-counts)
         var brainSection = cut.Find("[data-testid='brain-changes']");
-        brainSection.TextContent.Should().Contain("14");
-        brainSection.TextContent.Should().Contain("Files modified");
-        brainSection.TextContent.Should().Contain("9");
-        brainSection.TextContent.Should().Contain("Entries merged");
-        brainSection.TextContent.Should().Contain("2");
-        brainSection.TextContent.Should().Contain("Contradictions resolved");
-        brainSection.TextContent.Should().Contain("17");
-        brainSection.TextContent.Should().Contain("Entries pruned");
+        var countsDiv = cut.Find("[data-testid='brain-review-counts']");
+        countsDiv.TextContent.Should().Contain("7");
+        countsDiv.TextContent.Should().Contain("Promoted");
+        countsDiv.TextContent.Should().Contain("3");
+        countsDiv.TextContent.Should().Contain("Appended");
+        countsDiv.TextContent.Should().Contain("2");
+        countsDiv.TextContent.Should().Contain("Retired");
+        countsDiv.TextContent.Should().Contain("1");
+        countsDiv.TextContent.Should().Contain("Missed again");
         brainSection.TextContent.Should().Contain("merged onto newer brain commits (attempt 2)");
         // Pushed commit line inside the brain-changes card
         brainSection.TextContent.Should().Contain("Pushed 3f9b2c1");
