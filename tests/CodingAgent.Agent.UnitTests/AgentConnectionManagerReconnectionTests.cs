@@ -179,6 +179,58 @@ public sealed class AgentConnectionManagerReconnectionTests
     // ── IAgentConnectionManager interface compliance ──────────────────────
     // (tested in AgentConnectionManagerTests.cs — not duplicated here)
 
+    // ── UnwireEventHandlers after successful reconnect ────────────────────
+
+    /// <summary>
+    /// Verifies that after a successful terminal-close reconnect, the initial (old) hub manager
+    /// is unwired so its events no longer reach the AgentConnectionManager's subscribers.
+    /// AgentConnectionManager wires its initial hub in the constructor, so the initial hub IS
+    /// wired even without calling ConnectAndRegisterAsync first.
+    /// </summary>
+    [Fact]
+    public async Task TerminalClose_AfterSuccessfulReconnect_OldHubNoLongerForwardsEvents()
+    {
+        var newHub = new FakeHubConnectionManager(new RecordingHubConnection());
+        var factory = new FakeHubConnectionManagerFactory(() => newHub);
+
+        var initialHub = new FakeHubConnectionManager();
+        var manager = new AgentConnectionManager(
+            initialHub, factory, new AgentId("agent-recon"),
+            Mock.Of<Serilog.ILogger>());
+
+        var cancelJobsReceived = new List<string>();
+        manager.OnCancelJobReceived += jobId => { cancelJobsReceived.Add(jobId); return Task.CompletedTask; };
+
+        // Confirm initial hub is wired (constructor wires it).
+        // SimulateCancelJobAsync returns the Task from HandleCancelJobAsync, so awaiting it
+        // already completes the full chain through to OnCancelJobReceived — no Task.Delay needed.
+        await initialHub.SimulateCancelJobAsync("pre-reconnect");
+        cancelJobsReceived.Should().Contain("pre-reconnect",
+            "initial hub must be wired at construction and forward events before reconnect");
+        cancelJobsReceived.Clear();
+
+        // Successful terminal-close reconnect: newHub is created (RecordingHubConnection makes
+        // RegisterAgent InvokeAsync succeed), initial hub is unwired and disposed
+        await manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero);
+
+        // Negative: old hub must NOT forward events after being unwired
+        await initialHub.SimulateCancelJobAsync("post-reconnect-old");
+        cancelJobsReceived.Should().NotContain("post-reconnect-old",
+            "after UnwireEventHandlers, the old hub must not forward events to the manager");
+
+        // Positive: new (current) hub must still forward events
+        await newHub.SimulateCancelJobAsync("post-reconnect-new");
+        cancelJobsReceived.Should().Contain("post-reconnect-new",
+            "the newly wired hub must still forward events to the manager");
+
+        // TODO: Add assertion for OnClosed unwiring — SimulateClosedAsync on the old hub should
+        // not trigger a new HandleTerminalClosedAsync cycle on the coordinator.
+        // OnClosed is the specific anonymous lambda that was converted to _onClosedHandler;
+        // a direct test would confirm that -=  on a named field removes the right delegate instance.
+
+        await manager.DisposeAsync();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static (AgentConnectionManager Manager, FakeHubConnectionManager Hub) CreateManager()

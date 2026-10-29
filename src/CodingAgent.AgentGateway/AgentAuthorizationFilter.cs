@@ -148,11 +148,6 @@ public sealed class AgentAuthorizationFilter : IHubFilter
     /// the current connection — meaning <c>Register()</c> has completed on some replica and written
     /// the new <c>connectionId</c>. If Redis still holds a previous connection's ID the entry is
     /// rejected; the Polly retry pipeline on the agent side covers that residual window.
-    ///
-    /// TODO: No format/length validation is applied to <c>queryAgentId</c> before the Redis lookup.
-    /// Any caller with a valid API key can probe Redis for arbitrary agent keys on a cold pod.
-    /// Add a max-length and character allowlist check here if Redis key enumeration is a concern.
-    /// (WARNING — Security Review)
     /// </remarks>
     private AgentLookupResult TryResolveAgent(HubInvocationContext ctx)
     {
@@ -170,8 +165,9 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].FirstOrDefault();
             if (!string.IsNullOrEmpty(queryAgentId))
             {
-                // TODO: No format/length validation is applied to queryAgentId before this lookup;
-                // see the Security Review TODO in the XML doc-comment above for context. (WARNING — Security Review)
+                if (queryAgentId.Length > 128 || !IsValidAgentIdFormat(queryAgentId))
+                    return new AgentLookupResult(null, IsReconnectRace: false, QueryAgentId: null);
+
                 var candidate = _registry.GetByAgentId(new AgentId(queryAgentId));
                 if (candidate?.ConnectionId == ctx.Context.ConnectionId)
                     return new AgentLookupResult(candidate, IsReconnectRace: false, QueryAgentId: null);
@@ -194,6 +190,20 @@ public sealed class AgentAuthorizationFilter : IHubFilter
     /// caller before writing to logs.
     /// </param>
     private sealed record AgentLookupResult(AgentEntry? Agent, bool IsReconnectRace, string? QueryAgentId);
+
+    /// <summary>
+    /// Returns <c>true</c> if <paramref name="value"/> consists entirely of ASCII letters,
+    /// digits, and hyphens — the allowed character set for agent IDs.
+    /// </summary>
+    private static bool IsValidAgentIdFormat(string value)
+    {
+        foreach (var c in value)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c != '-')
+                return false;
+        }
+        return true;
+    }
 
     /// <summary>
     /// Validates the <c>jobId</c> first parameter against the agent's <c>ActiveJobId</c>.

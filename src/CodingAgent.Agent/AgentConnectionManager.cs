@@ -38,6 +38,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     private CancellationTokenSource? _heartbeatCts;
     private Task? _heartbeatTask;
 
+    // Named delegate field so that -= in UnwireEventHandlers references the same instance as +=.
+    private readonly Func<Exception?, Task> _onClosedHandler;
+
     private const int NullStep = -1;
 
     /// <inheritdoc />
@@ -67,6 +70,10 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         _lifetime = lifetime;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
 
+        // Initialise named delegate field before constructing the coordinator so that
+        // WireEventHandlers and UnwireEventHandlers both reference the same instance.
+        _onClosedHandler = e => HandleTerminalClosedAsync(e);
+
         _coordinator = new ConnectionReconnectCoordinator(
             initialHubManager: hubManager,
             agentId: agentId.Value,
@@ -82,7 +89,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                     return _signalRPipeline.ExecuteAsync(async token =>
                         await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, _currentRegistration, token), ct).AsTask();
                 },
-                AfterSuccessfulReconnect: null));
+                AfterSuccessfulReconnect: null,
+                UnwireHandlers: UnwireEventHandlers));
 
         WireEventHandlers(hubManager);
     }
@@ -250,7 +258,15 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         hubManager.OnCancelJob += HandleCancelJobAsync;
         hubManager.OnForceDisconnect += HandleForceDisconnectAsync;
         hubManager.OnReconnected += HandleReconnectedAsync;
-        hubManager.OnClosed += e => HandleTerminalClosedAsync(e);
+        hubManager.OnClosed += _onClosedHandler;
+    }
+
+    private void UnwireEventHandlers(IHubConnectionManager hubManager)
+    {
+        hubManager.OnCancelJob -= HandleCancelJobAsync;
+        hubManager.OnForceDisconnect -= HandleForceDisconnectAsync;
+        hubManager.OnReconnected -= HandleReconnectedAsync;
+        hubManager.OnClosed -= _onClosedHandler;
     }
 
     private async Task HandleCancelJobAsync(string jobId)

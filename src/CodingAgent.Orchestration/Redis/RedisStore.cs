@@ -92,9 +92,16 @@ public sealed class RedisStore : IRedisStore
     public async Task ListTrimAsync(string key, long start, long stop)
         => await _db.ListTrimAsync(key, start, stop);
 
-    public async Task<string[]> ListRangeAsync(string key, long start, long stop)
+    public async Task<string[]> ListRangeAsync(string key, long start, long stop, CancellationToken ct = default)
     {
-        var items = await _db.ListRangeAsync(key, start, stop);
+        ct.ThrowIfCancellationRequested();
+        // TODO (WARNING): WaitAsync(ct) provides "observe and abandon" cancellation, not true abort.
+        // If ct fires after the Redis command has been sent, WaitAsync throws OperationCanceledException
+        // and discards the Task, but StackExchange.Redis continues the in-flight read on its multiplexer
+        // thread until completion. The result is silently discarded and the connection is not freed early.
+        // This is the correct pattern for a driver that has no native cancellation support — do not
+        // replace WaitAsync with a custom abort mechanism, as none exists for this driver.
+        var items = await _db.ListRangeAsync(key, start, stop).WaitAsync(ct);
         return items.Where(i => !i.IsNull).Select(i => (string)i!).ToArray();
     }
 

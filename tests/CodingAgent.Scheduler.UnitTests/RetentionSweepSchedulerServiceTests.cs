@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Scheduler.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 using ILogger = Serilog.ILogger;
@@ -31,9 +32,24 @@ public sealed class RetentionSweepSchedulerServiceTests
             .Returns(_mockLogger.Object);
     }
 
+    /// <summary>
+    /// Builds an <see cref="IServiceScopeFactory"/> backed by a minimal ServiceCollection that
+    /// returns the test mock when <see cref="ISchedulerApiClient"/> is resolved inside a scope.
+    /// </summary>
+    /// <remarks>
+    /// TODO [WARNING]: Singleton registration means a cached-scope regression would not be detected.
+    /// See the same TODO in <c>LoopWatchdogServiceTests.CreateScopeFactory</c> for details.
+    /// </remarks>
+    private IServiceScopeFactory CreateScopeFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_mockClient.Object);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
     private RetentionSweepSchedulerService CreateService()
         => new RetentionSweepSchedulerService(
-            _mockClient.Object,
+            CreateScopeFactory(),
             _mockLeaderGate.Object,
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
