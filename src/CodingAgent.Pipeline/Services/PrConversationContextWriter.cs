@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Steps;
 using CodingAgent.Pipeline.Telemetry;
@@ -19,7 +20,7 @@ public static class PrConversationContextWriter
     /// On any non-cancellation exception the error is recorded and a warning is logged —
     /// the pipeline continues without the file (best-effort policy).
     /// </summary>
-    public static async Task WriteAsync(PipelineStepContext context, int prNumber, CancellationToken ct)
+    public static async Task<IReadOnlyList<PrConversationComment>> WriteAsync(PipelineStepContext context, int prNumber, CancellationToken ct)
     {
         try
         {
@@ -37,6 +38,8 @@ public static class PrConversationContextWriter
             context.Logger.Information(
                 "Wrote PR conversation context ({CommentCount} comments) to {FilePath} for PR #{PrNumber}",
                 comments.Count, AgentWorkspacePaths.PrConversationContextFilePath, prNumber);
+
+            return comments;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -44,6 +47,7 @@ public static class PrConversationContextWriter
             context.Logger.Warning(ex,
                 "Failed to write PR conversation context for PR #{PrNumber}, review will proceed without it",
                 prNumber);
+            return [];
         }
     }
 }

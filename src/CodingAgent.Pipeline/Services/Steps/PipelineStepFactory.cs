@@ -28,7 +28,6 @@ public static class PipelineStepFactory
             new AnalyzeCodeStep(),
             new GenerateCodeStep(),
             new CheckDroppedIdentifiersStep(),
-            new BrainPullBeforeWriteStep(),
             new CloneProjectReviewRepositoriesStep(),
             new ReviewCodeStep(),
             new RunQualityGatesStep()

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Serilog;
@@ -587,4 +588,109 @@ public partial class BrainUpdateService : IBrainUpdateService
 
     [GeneratedRegex(@"###\s+\d{4}-\d{2}-\d{2}")]
     private static partial Regex DateHeaderRegex();
+
+    // ── Review git operations (spec 054 Task 7A.1) ─────────────────────────
+
+    public Task<IReadOnlyList<string>> ListTrackedFilesAsync(string brainPath, CancellationToken ct)
+        => Task.Run(() => _git.ListTrackedFiles(brainPath), ct);
+
+    public string? ReadFileAtCommit(string brainPath, string commitSha, string relativePath)
+        => _git.ReadFileAtCommit(brainPath, commitSha, relativePath);
+
+    public string? ReadFileAtHead(string brainPath, string relativePath)
+        => _git.ReadFileAtHead(brainPath, relativePath);
+
+    public IReadOnlyList<BrainPathChange> GetWorkingTreeChanges(string brainPath)
+        => _git.GetWorkingTreeChanges(brainPath);
+
+    public string GetReviewPatch(string brainPath)
+        => _git.GetReviewPatch(brainPath);
+
+    public IReadOnlyList<BrainCommitInfo> GetSkillCommitsSinceLastReview(string brainPath)
+        => _git.GetSkillCommitsSinceLastReview(brainPath);
+
+    // ── Inbox push (spec 054, Task 6.1) ──────────────────────────────────────    /// <summary>
+    /// Discards brain changes outside the inbox file, stages and commits it, then
+    /// pushes with retry/rebase. Non-fatal (T6).
+    /// </summary>
+    public async Task<BrainSyncResult> CommitInboxAndPushAsync(
+        string brainPath, string relativePath, string message,
+        IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
+    {
+        ArgumentNullException.ThrowIfNull(brainPath);
+        ArgumentNullException.ThrowIfNull(relativePath);
+        ArgumentNullException.ThrowIfNull(brainProvider);
+
+        try
+        {
+            var discarded = _git.DiscardChangesExcept(brainPath, relativePath);
+            if (discarded.Count > 0)
+                _logger.Warning("Discarded brain changes outside the inbox for {InboxFile}: {DiscardedBrainPaths}",
+                    relativePath, string.Join(", ", discarded));
+
+            // Stage and commit (EmptyCommitException is non-fatal — an earlier push may be pending)
+            try { _git.StageAndCommit(brainPath, [relativePath], message); }
+            catch (EmptyCommitException) { /* file may already be committed; push anyway */ }
+
+            var commits = _git.GetCommitsAheadOfRemote(brainPath, brainProvider.BaseBranch);
+
+            await PushWithRetryRebaseAsync(
+                brainPath,
+                brainProvider,
+                maxPushRetries,
+                () => ReplayLocalCommitsOntoRemoteAsync(brainPath, brainProvider, commits, null, ct),
+                ct);
+
+            return new BrainSyncResult { Success = true, FilesCommitted = 1, DiscardedPaths = discarded };
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "CommitInboxAndPushAsync failed for {InboxFile}: {Error}", relativePath, ex.Message);
+            return new BrainSyncResult { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
+    private async Task ReplayLocalCommitsOntoRemoteAsync(
+        string brainPath, IRepositoryProvider provider,
+        IReadOnlyList<LocalCommit> commits, Func<string, bool>? isProtectedPath, CancellationToken ct)
+    {
+        try { await provider.PullAsync(brainPath, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Brain fetch during replay failed, continuing with reset");
+        }
+
+        _git.ResetHardToRemote(brainPath, provider.BaseBranch);
+
+        foreach (var commit in commits)
+        {
+            ct.ThrowIfCancellationRequested();
+            foreach (var file in commit.Files)
+            {
+                if (isProtectedPath is not null && isProtectedPath(file.Path))
+                {
+                    var remoteContent = _git.GetFileContentAtRemote(brainPath, provider.BaseBranch, file.Path);
+                    if (remoteContent != file.ParentContent)
+                        throw new BrainReviewPushRefusedException(
+                            BrainReviewPushRefusedException.SkillFileChangedRemotely, file.Path);
+                }
+
+                var fullPath = Path.Combine(brainPath, file.Path.Replace('/', Path.DirectorySeparatorChar));
+                if (file.Content is null)
+                {
+                    if (File.Exists(fullPath)) File.Delete(fullPath);
+                }
+                else
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                    File.WriteAllText(fullPath, file.Content,
+                        new System.Text.UTF8Encoding(false));
+                }
+            }
+
+            try { _git.StageAndCommit(brainPath, commit.Files.Select(f => f.Path).ToList(), commit.Message); }
+            catch (EmptyCommitException) { /* nothing changed after reset — skip */ }
+        }
+    }
 }

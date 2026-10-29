@@ -65,4 +65,10 @@ public interface IPipelineCallbacks
 
     /// <summary>Reports brain sync result immediately after the brain sync step completes.</summary>
     Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);
+
+    /// <summary>
+    /// Called after a passing post-PR CI retry to rewrite the brain inbox with the final outcome.
+    /// Default is a no-op (spec 054 D21). Overridden on the agent path.
+    /// </summary>
+    Task RewriteBrainInbox(PipelineRun run, CancellationToken ct) => Task.CompletedTask;
 }

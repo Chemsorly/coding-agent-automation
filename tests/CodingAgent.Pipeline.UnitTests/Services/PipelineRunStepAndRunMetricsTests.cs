@@ -515,7 +515,7 @@ public sealed class PipelineRunStepAndRunMetricsTests
     }
 
     [Fact]
-    public async Task HandleJobCompletedAsync_WithBrainNotPushed_RecordsNoneResult()
+    public async Task HandleJobCompletedAsync_WithBrainNotPushed_RecordsSkippedResult()
     {
         var run = MakeRun();
         run.BrainUpdatesPushed = false;
@@ -555,8 +555,8 @@ public sealed class PipelineRunStepAndRunMetricsTests
 
             await sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
 
-            bag.Should().Contain(s => s.Result == "none",
-                "brain counter must record 'none' when BrainUpdatesPushed=false");
+            bag.Should().Contain(s => s.Result == "skipped",
+                "brain counter must record 'skipped' when BrainUpdatesPushed=false and BrainPushFailed=null");
         }
         finally
         {

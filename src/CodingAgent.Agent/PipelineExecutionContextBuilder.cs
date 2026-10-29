@@ -228,7 +228,24 @@ internal sealed class PipelineExecutionContextBuilder
                 (r, isDraft, token) => CreatePullRequestAsync(r, isDraft, inputs.PrContext, token)),
             inputs.TransitionTo,
             inputs.EmitOutputLine,
-            async (contextLoaded, fileCount) => await reporter.ReportBrainSyncResultAsync(contextLoaded, fileCount, ct));
+            async (contextLoaded, fileCount) => await reporter.ReportBrainSyncResultAsync(contextLoaded, fileCount, ct),
+            rewriteBrainInbox: inputs.BrainSync is not null && inputs.BrainProvider is not null
+                ? async (run, token) =>
+                {
+                    if (run.BrainInboxFile is null || inputs.Config.BrainReadOnly) return;
+                    try
+                    {
+                        var finalizationService = new PullRequestFinalizationService(_logger);
+                        await finalizationService.WriteBrainInboxAsync(
+                            run, inputs.BrainSync, inputs.BrainProvider, inputs.Config,
+                            isDraft: false, candidatesText: null,
+                            new Dictionary<string, string>(),
+                            inputs.EmitOutputLine, token);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) { _logger.Warning(ex, "RewriteBrainInbox failed for {RunId}", run.RunId); }
+                }
+                : null);
 
         var ctx = PipelineStepContext.ForAgent(
             services: new PipelineStepContextServices
@@ -324,7 +341,8 @@ internal sealed class PipelineExecutionContextBuilder
         AgentCallbacksContext context,
         Action<PipelineStep> transitionTo,
         Action<string> emitOutputLine,
-        Func<bool, int, Task> reportBrainSyncResult) : PipelineCallbacksBase
+        Func<bool, int, Task> reportBrainSyncResult,
+        Func<PipelineRun, CancellationToken, Task>? rewriteBrainInbox = null) : PipelineCallbacksBase
     {
         protected override PipelineRun Run => context.Run;
         public override void TransitionTo(PipelineStep step) => transitionTo(step);
@@ -353,6 +371,9 @@ internal sealed class PipelineExecutionContextBuilder
             => CreatePullRequest(run, isDraft, ct);
         public override Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
             => reportBrainSyncResult(contextLoaded, knowledgeFileCount);
+
+        public override Task RewriteBrainInbox(PipelineRun run, CancellationToken ct)
+            => rewriteBrainInbox?.Invoke(run, ct) ?? Task.CompletedTask;
     }
 }
 

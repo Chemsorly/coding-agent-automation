@@ -235,4 +235,9 @@ public static class AgentWorkspacePaths
     /// <summary>Agent candidates file written during the reflection phase (spec 054).</summary>
     public const string BrainCandidatesFilePath = ".agent/brain-candidates.md";
 
+    /// <summary>Review input file written before the brain review agent runs (spec 054, Task 7A.3).</summary>
+    public const string BrainReviewInputFilePath = ".agent/brain-review-input.md";
+
+    /// <summary>Review summary JSON written by the brain review agent (spec 054, Task 7B).</summary>
+    public const string BrainReviewSummaryFilePath = ".agent/brain-review-summary.json";
 }

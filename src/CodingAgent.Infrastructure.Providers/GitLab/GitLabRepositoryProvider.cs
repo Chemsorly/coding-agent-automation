@@ -189,6 +189,10 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     public Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.GetHeadCommitShaAsync(workspacePath, ct);
 
+    public Task<IReadOnlyDictionary<string, string>?> GetWorkingTreeFingerprintAsync(
+        WorkspacePath workspacePath, IReadOnlyList<string> excludedPaths, CancellationToken ct)
+        => SharedRepositoryOperations.GetWorkingTreeFingerprintAsync(workspacePath, excludedPaths, ct);
+
     /// <inheritdoc />
     public string? GetCommitWebUrl(string commitSha)
     {

@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 
@@ -25,7 +26,8 @@ public sealed class WritePrConversationContextStep : IPipelineStep
 
         var prNumber = context.Run.LinkedPullRequest.Number;
 
-        await PrConversationContextWriter.WriteAsync(context, prNumber, ct);
+        var comments = await PrConversationContextWriter.WriteAsync(context, prNumber, ct);
+        BrainEvidenceRecorder.RecordHumanComments(context.Run, comments);
 
         return StepResult.Continue;
     }

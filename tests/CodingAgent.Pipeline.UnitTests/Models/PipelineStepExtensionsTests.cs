@@ -18,7 +18,7 @@ public class PipelineStepExtensionsTests
     [InlineData(PipelineStep.Created, "Pipeline Created")]
     [InlineData(PipelineStep.CloningRepository, "Cloning Repository")]
     [InlineData(PipelineStep.RunningEnvironmentSetup, "Environment Setup")]
-    [InlineData(PipelineStep.SyncingBrainRepoPreRun, "Loading Brain Context")]
+    [InlineData(PipelineStep.SyncingBrainRepoPreRun, "Loading Brain Skills")]
     [InlineData(PipelineStep.CreatingBranch, "Creating Branch")]
     [InlineData(PipelineStep.VerifyingBaseline, "Verifying Baseline")]
     [InlineData(PipelineStep.AnalyzingCode, "Analyzing Code")]
@@ -35,7 +35,7 @@ public class PipelineStepExtensionsTests
     [InlineData(PipelineStep.AggregatingProposals, "Aggregating Proposals")]
     [InlineData(PipelineStep.ReviewingProposals, "Reviewing Proposals")]
     [InlineData(PipelineStep.CreatingRefactoringIssues, "Creating Issues")]
-    [InlineData(PipelineStep.ConsolidatingKnowledge, "Consolidating Knowledge")]
+    [InlineData(PipelineStep.ConsolidatingKnowledge, "Reviewing Inbox")]
     [InlineData(PipelineStep.ReviewingBrainChanges, "Reviewing Changes")]
     [InlineData(PipelineStep.PushingBrainChanges, "Pushing to Brain")]
     public void ToDisplayName_KnownValues_ReturnExpectedLabel(PipelineStep step, string expected)

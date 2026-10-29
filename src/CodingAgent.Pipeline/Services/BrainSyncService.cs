@@ -5,9 +5,8 @@ using CodingAgent.Pipeline.Telemetry;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
-/// Handles brain repository synchronization: pre-run clone/pull, post-run
-/// change detection, validation, commit, and push. Extracted from
-/// PipelineOrchestrationService to reduce file size.
+/// Handles brain repository synchronization: pre-run clone/pull, post-run inbox write.
+/// Spec 054.
 /// </summary>
 public sealed class BrainSyncService : IBrainSyncService
 {
@@ -24,7 +23,7 @@ public sealed class BrainSyncService : IBrainSyncService
 
     /// <summary>
     /// Clones or pulls the brain repository into the workspace .brain/ directory,
-    /// ensures .gitignore entry, and counts knowledge files.
+    /// ensures .gitignore entry, and marks the run as brain-context loaded.
     /// </summary>
     public async Task SyncPreRunAsync(
         PipelineRun run, IRepositoryProvider brainProvider, WorkspacePath workspacePath,
@@ -32,7 +31,7 @@ public sealed class BrainSyncService : IBrainSyncService
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(brainProvider);
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath)); // NOSONAR S3236 — names the parameter, not the .Value expression
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
         onOutputLine?.Invoke("🧠 Syncing brain repository...");
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainDirectory);
@@ -62,7 +61,6 @@ public sealed class BrainSyncService : IBrainSyncService
             _logger.Information("Pipeline {RunId} added .brain/ to .gitignore", run.RunId);
         }
 
-        // Count knowledge files (lazy enumeration avoids string[] allocation)
         run.BrainKnowledgeFileCount = Directory.Exists(brainPath)
             ? Directory.EnumerateFiles(brainPath, "*.md", SearchOption.AllDirectories).Count()
             : 0;
@@ -71,59 +69,62 @@ public sealed class BrainSyncService : IBrainSyncService
         _logger.Information(
             "Pipeline {RunId} brain sync complete: {BrainFileCount} knowledge files in {Duration}ms",
             run.RunId, run.BrainKnowledgeFileCount, brainSw.ElapsedMilliseconds);
-        onOutputLine?.Invoke($"🧠 Brain context loaded: {run.BrainKnowledgeFileCount} knowledge files");
+        onOutputLine?.Invoke("🧠 Brain synced");
     }
 
     /// <summary>
-    /// Pulls the brain repo before the agent writes lessons (minimizes merge conflicts).
+    /// Writes the inbox text to .brain/&lt;relativePath&gt;, commits and pushes.
+    /// Sets run.BrainInboxFile, BrainUpdatesPushed, BrainPushFailed, BrainInboxFileUrl.
+    /// Non-fatal (T6).
     /// </summary>
-    public async Task PullBeforeWriteAsync(
-        PipelineRun run, IRepositoryProvider brainProvider, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(run);
-        ArgumentNullException.ThrowIfNull(brainProvider);
-        var brainPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory);
-        await brainProvider.PullAsync(brainPath, ct);
-        _logger.Information("Pipeline {RunId} brain repo pulled before write phase", run.RunId);
-    }
-
-    /// <summary>
-    /// Detects brain changes, validates, appends fallback log if needed, commits and pushes.
-    /// </summary>
-    public async Task SyncPostRunAsync(
+    public async Task WriteInboxAsync(
         PipelineRun run, IRepositoryProvider brainProvider,
-        CancellationToken ct, Action<string>? onOutputLine = null, int maxPushRetries = 3)
+        string relativePath, string text,
+        CancellationToken ct, int maxPushRetries = 3)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(brainProvider);
-        var brainSw = System.Diagnostics.Stopwatch.StartNew();
-        var brainPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory);
-        var changedFiles = await _brainUpdateService.DetectChangesAsync(brainPath, ct);
 
-        if (changedFiles.Count > 0)
+        try
         {
-            var validation = _brainUpdateService.Validate(brainPath, run.RunId, changedFiles);
+            var brainPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory);
+            var fullPath = Path.Combine(brainPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
 
-            if (!validation.OperationLogUpdated)
+            // Write inbox file with UTF-8 without BOM (T22)
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            await File.WriteAllTextAsync(fullPath, text,
+                new System.Text.UTF8Encoding(false), ct);
+
+            var result = await _brainUpdateService.CommitInboxAndPushAsync(
+                brainPath, relativePath,
+                Brain.BrainLayout.InboxCommitMessage(run.RunId, $"#{run.IssueIdentifier}"),
+                brainProvider, ct, maxPushRetries);
+
+            run.BrainInboxFile = relativePath;
+            run.BrainUpdatesPushed = result.Success;
+            run.BrainPushFailed = !result.Success;
+
+            // D22: web link of the commit that added the inbox file
+            if (result.Success)
             {
-                await _brainUpdateService.AppendFallbackLogEntryAsync(
-                    brainPath, run.RunId, changedFiles, ct);
+                try
+                {
+                    var sha = await brainProvider.GetHeadCommitShaAsync(brainPath, ct);
+                    run.BrainInboxFileUrl = brainProvider.GetCommitWebUrl(sha);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} could not read brain commit URL after inbox push: {Error}",
+                        run.RunId, ex.Message);
+                }
             }
-
-            var syncResult = await _brainUpdateService.CommitAndPushAsync(
-                brainPath, run.RunId, run.IssueIdentifier, brainProvider, ct, maxPushRetries);
-            run.BrainUpdatesPushed = syncResult.Success;
-
-            _logger.Information(
-                "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",
-                run.RunId, syncResult.Success, syncResult.FilesCommitted, brainSw.ElapsedMilliseconds);
-            onOutputLine?.Invoke($"🧠 Brain updates pushed: {syncResult.FilesCommitted} files committed");
         }
-        else
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
         {
+            _logger.Warning(ex, "Pipeline {RunId} WriteInboxAsync failed: {Error}", run.RunId, ex.Message);
             run.BrainUpdatesPushed = false;
-            _logger.Information("Pipeline {RunId} no brain changes detected, skipping commit", run.RunId);
-            onOutputLine?.Invoke("🧠 No brain changes detected");
+            run.BrainPushFailed = true;
         }
     }
 }

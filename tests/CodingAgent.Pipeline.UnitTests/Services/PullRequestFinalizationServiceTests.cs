@@ -45,7 +45,7 @@ public class PullRequestFinalizationServiceTests
 
         agentProvider.Verify(a => a.ExecuteAsync(It.Is<AgentRequest>(r => r.UseResume && r.WorkspacePath == run.WorkspacePath), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Once);
         run.TotalTokens.Should().BeGreaterThan(0);
-        emitted.Should().Contain("🧠 Reflecting on run and updating brain knowledge...");
+        emitted.Should().Contain("🧠 Writing brain candidates...");
     }
 
     [Fact]
@@ -62,38 +62,6 @@ public class PullRequestFinalizationServiceTests
 
         // Should not throw — just logs warning
         run.TotalTokens.Should().Be(0);
-    }
-
-    // ── SyncBrainPostRunAsync ──
-
-    [Fact]
-    public async Task SyncBrainPostRunAsync_DelegatesToBrainSync()
-    {
-        var run = CreateRun();
-        var brainSync = new Mock<IBrainSyncService>();
-        var brainProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { BrainPushMaxRetries = 2 };
-
-        await _sut.SyncBrainPostRunAsync(run, brainSync.Object, brainProvider.Object, config, _ => { }, CancellationToken.None);
-
-        brainSync.Verify(b => b.SyncPostRunAsync(run, brainProvider.Object, It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), 2), Times.Once);
-    }
-
-    [Fact]
-    public async Task SyncBrainPostRunAsync_OnFailure_SetsBrainUpdatesPushedFalse()
-    {
-        var run = CreateRun();
-        run.BrainUpdatesPushed = true;
-        var brainSync = new Mock<IBrainSyncService>();
-        var brainProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { BrainPushMaxRetries = 2 };
-
-        brainSync.Setup(b => b.SyncPostRunAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()))
-            .ThrowsAsync(new InvalidOperationException("push failed"));
-
-        await _sut.SyncBrainPostRunAsync(run, brainSync.Object, brainProvider.Object, config, _ => { }, CancellationToken.None);
-
-        run.BrainUpdatesPushed.Should().BeFalse();
     }
 
     // ── CollectFeedbackAsync ──
@@ -283,7 +251,7 @@ public class PullRequestFinalizationServiceTests
         // TODO: Verify which specific AgentRequest was made for each step (PR description vs reflection vs feedback) rather than just counting calls.
         // TODO: Assert observable side-effects (e.g., run.Feedback populated, repoProvider.UpdatePullRequestAsync invoked) to validate each step executed correctly.
         agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Exactly(3));
-        brainSync.Verify(b => b.SyncPostRunAsync(run, brainProvider.Object, It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()), Times.Once);
+        brainSync.Verify(b => b.WriteInboxAsync(run, It.IsAny<IRepositoryProvider>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<int>()), Times.Once);
     }
 
     [Fact]
@@ -491,8 +459,8 @@ public class PullRequestFinalizationServiceTests
             },
             CancellationToken.None);
 
-        transitions.Should().BeEmpty();
-        agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Never);
+        transitions.Should().BeEquivalentTo([PipelineStep.SyncingBrainRepoPostRun]);
+        brainSync.Verify(b => b.WriteInboxAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<int>()), Times.Once);
     }
 
     [Fact]
@@ -574,7 +542,7 @@ public class PullRequestFinalizationServiceTests
         // The explicit mark-ready call fires after description.
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
         transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
-        brainSync.Verify(b => b.SyncPostRunAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()), Times.Never);
+        brainSync.Verify(b => b.WriteInboxAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
@@ -663,7 +631,7 @@ public class PullRequestFinalizationServiceTests
 
         transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
         transitions.Should().NotContain(PipelineStep.SyncingBrainRepoPostRun);
-        brainSync.Verify(b => b.SyncPostRunAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()), Times.Never);
+        brainSync.Verify(b => b.WriteInboxAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<int>()), Times.Never);
         // Serilog ILogger.Information only has generic overloads up to 3 type params; a 5-arg call
         // (RunId, isDraft, hasProvider, hasSync, readOnly) resolves to Information(string, params object[]).
         // Moq must match the params-array overload — using individual typed matchers would target a

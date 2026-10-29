@@ -36,6 +36,15 @@ internal static class SharedRepositoryOperations
         return Task.Run(() => RepositoryGitOperations.GetHeadCommitSha(workspacePath), ct);
     }
 
+    /// <summary>Returns the working-tree fingerprint (spec 054 DD5). Null on any non-OCE exception.</summary>
+    [ExcludeFromCodeCoverage]
+    internal static Task<IReadOnlyDictionary<string, string>?> GetWorkingTreeFingerprintAsync(
+        WorkspacePath workspacePath, IReadOnlyList<string> excludedPaths, CancellationToken ct)
+    {
+        return Task.Run<IReadOnlyDictionary<string, string>?>(() =>
+            RepositoryGitOperations.GetWorkingTreeFingerprint(workspacePath, excludedPaths), ct);
+    }
+
     [ExcludeFromCodeCoverage]
     internal static async Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, BranchName baseBranch, ResiliencePipeline gitPipeline, CancellationToken ct)
     {

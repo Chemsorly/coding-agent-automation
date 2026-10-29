@@ -147,4 +147,12 @@ public sealed record RunStateSnapshot
     /// </summary>
     [Key(41)]
     public IReadOnlyList<ChatEntry> ChatHistory { get; init; } = Array.Empty<ChatEntry>();
+
+    /// <summary>Web link to the brain inbox file committed for this run (spec 054, D22). Wire-compat: additive.</summary>
+    [Key(42)]
+    public string? BrainInboxFileUrl { get; init; }
+
+    /// <summary>Skills injection result for this run (spec 054, req 5.6). Wire-compat: additive.</summary>
+    [Key(43)]
+    public string? BrainSkillsResult { get; init; }
 }

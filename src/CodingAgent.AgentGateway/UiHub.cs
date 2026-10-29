@@ -136,5 +136,7 @@ public sealed class UiHub(IUiHubAuthorizer authorizer, IAgentHubFacade facade, I
         StartedAtOffset = run.StartedAtOffset,
         BrainProviderConfigId = run.BrainProviderConfigId,
         ChatHistory = chatHistory,
+        BrainInboxFileUrl = run.BrainInboxFileUrl,
+        BrainSkillsResult = run.BrainSkillsResult,
     };
 }

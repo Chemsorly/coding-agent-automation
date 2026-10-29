@@ -2333,7 +2333,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         ctx.MockBrainProvider.Verify(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()), Times.Once);
         ctx.MockAgentProvider.Verify(p => p.ExecuteAsync(
-            It.Is<AgentRequest>(r => r.Prompt.Contains("Reflect on This Run") && r.UseResume),
+            It.Is<AgentRequest>(r => r.Prompt.Contains("brain lessons from this run") && r.UseResume),
             It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
 
         ctx.MockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
@@ -2479,7 +2479,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                     WriteAssessmentFile(req.WorkspacePath, "ready");
                     return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
                 }
-                if (req.Prompt.Contains("Reflect on This Run"))
+                if (req.Prompt.Contains("brain lessons from this run"))
                     throw new InvalidOperationException("Reflection crashed");
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });

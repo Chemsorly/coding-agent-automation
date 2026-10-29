@@ -71,7 +71,7 @@ public class ConsolidationStalenessService
 
         return result.Items.Count(r =>
             r.RunType != PipelineRunType.Consolidation &&
-            r.BrainUpdatesPushed &&
+            !string.IsNullOrEmpty(r.BrainInboxFile) &&  // spec 054: ran that pushed an inbox file
             r.BrainProviderConfigId == brainProviderId);
     }
 

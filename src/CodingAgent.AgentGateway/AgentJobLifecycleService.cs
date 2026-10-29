@@ -258,8 +258,12 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // the issue text), so this is a deliberate design choice. If the original "brain provider
             // only" constraint is authoritative, gate on brain-provider presence (e.g. a run flag) before
             // recording. See review findings [WARNING] Correctness L271.
+            // Record brain_updates with the proper result tag (spec 054, req 14)
+            var brainResult = payload.BrainUpdatesPushed == true ? "pushed"
+                : payload.BrainPushFailed == true ? "failed"
+                : "skipped";
             PipelineTelemetry.RunBrainUpdates.Add(1,
-                new KeyValuePair<string, object?>("result", payload.BrainUpdatesPushed ? "pushed" : "none"));
+                new KeyValuePair<string, object?>("result", brainResult));
 
             // skipLabelSwap=true when another path (HTTP Failed POST) terminated the run first and the
             // work item kept that path's status. That path set the label (e.g. agent:needs-refinement,

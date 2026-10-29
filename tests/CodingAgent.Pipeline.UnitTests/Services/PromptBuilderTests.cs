@@ -628,78 +628,59 @@ public class PromptBuilderTests
 
     #region BuildReflectionPrompt
 
+    private static PipelineRun CreateReflectionRun(string runId = "run-1", string issueId = "42")
+    {
+        var run = CreatePipelineRun(runId, issueId);
+        run.StackLabels = ["dotnet"];
+        run.RepositoryName = "owner/repo";
+        return run;
+    }
+
     [Fact]
     public void BuildReflectionPrompt_ContainsRunId()
     {
-        var run = CreatePipelineRun("run-123");
-        var result = PromptBuilder.BuildReflectionPrompt(run);
+        var run = CreateReflectionRun("run-123");
+        var result = PromptBuilder.BuildReflectionPrompt(run, "No failures.", run.StackLabels, DateOnly.Parse("2026-01-01"), run.IssueTitle);
         result.Should().Contain("run-123");
     }
 
     [Fact]
     public void BuildReflectionPrompt_ContainsIssueIdentifier()
     {
-        var run = CreatePipelineRun(issueId: "55");
-        var result = PromptBuilder.BuildReflectionPrompt(run);
+        var run = CreateReflectionRun(issueId: "55");
+        var result = PromptBuilder.BuildReflectionPrompt(run, "No failures.", run.StackLabels, DateOnly.Parse("2026-01-01"));
         result.Should().Contain("#55");
     }
 
     [Fact]
     public void BuildReflectionPrompt_WithIssueTitle_ContainsTitle()
     {
-        var run = CreatePipelineRun();
-        var result = PromptBuilder.BuildReflectionPrompt(run, issueTitle: "Fix auth bug");
+        var run = CreateReflectionRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run, "No failures.", run.StackLabels, DateOnly.Parse("2026-01-01"), "Fix auth bug");
         result.Should().Contain("Fix auth bug");
-    }
-
-    [Fact]
-    public void BuildReflectionPrompt_WithProjectName_ContainsProject()
-    {
-        var run = CreatePipelineRun();
-        var result = PromptBuilder.BuildReflectionPrompt(run, projectName: "my-service");
-        result.Should().Contain("my-service");
-    }
-
-    [Fact]
-    public void BuildReflectionPrompt_WithRetries_ShowsRetryCount()
-    {
-        var run = CreatePipelineRun();
-        run.RetryCount = 3;
-        var result = PromptBuilder.BuildReflectionPrompt(run);
-        result.Should().Contain("3");
-    }
-
-    [Fact]
-    public void BuildReflectionPrompt_WithRetryErrors_ShowsErrors()
-    {
-        var run = CreatePipelineRun();
-        run.RetryErrors.Enqueue("Build failed: missing reference");
-        var result = PromptBuilder.BuildReflectionPrompt(run);
-        result.Should().Contain("Build failed: missing reference");
     }
 
     [Fact]
     public void BuildReflectionPrompt_NullRun_Throws()
     {
-        var act = () => PromptBuilder.BuildReflectionPrompt(null!);
+        var act = () => PromptBuilder.BuildReflectionPrompt(null!, "No failures.", [], DateOnly.Parse("2026-01-01"));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
-    public void BuildReflectionPrompt_ContainsNoSourceCodeWarning()
+    public void BuildReflectionPrompt_ContainsBrainCandidatesPath()
     {
-        var run = CreatePipelineRun();
-        var result = PromptBuilder.BuildReflectionPrompt(run);
-        result.Should().Contain("Do NOT modify any source code files");
+        var run = CreateReflectionRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run, "No failures.", run.StackLabels, DateOnly.Parse("2026-01-01"));
+        result.Should().Contain(AgentWorkspacePaths.BrainCandidatesFilePath);
     }
 
     [Fact]
-    public void BuildReflectionPrompt_DoesNotContainFeedbackSection()
+    public void BuildReflectionPrompt_ContainsEvidenceMarkdown()
     {
-        var run = CreatePipelineRun();
-        var result = PromptBuilder.BuildReflectionPrompt(run);
-        result.Should().NotContain("Feedback Collection");
-        result.Should().NotContain("Feedback Questions");
+        var run = CreateReflectionRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run, "## Evidence\n\nSome evidence.", run.StackLabels, DateOnly.Parse("2026-01-01"));
+        result.Should().Contain("## Evidence");
     }
 
     #endregion

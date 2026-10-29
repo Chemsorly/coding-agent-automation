@@ -1079,7 +1079,14 @@
             }
             else if (Run.BrainUpdatesPushed)
             {
-                <span><Icon Name="check-circle" /> Inbox pushed</span>
+                @if (Run.BrainInboxFileUrl is not null)
+                {
+                    <span><Icon Name="check-circle" /> <a href="@Run.BrainInboxFileUrl" target="_blank" rel="noopener">Inbox pushed</a></span>
+                }
+                else
+                {
+                    <span><Icon Name="check-circle" /> Inbox pushed</span>
+                }
             }
             else
             {

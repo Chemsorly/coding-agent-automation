@@ -1,3 +1,4 @@
+using CodingAgent.Contracts.Services;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Pipeline.Interfaces;
@@ -148,8 +149,15 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
                     inMemoryRun.RefactoringScanOutcome = result.ScanOutcome;
                 if (result.BrainOutcome is not null)
                 {
-                    inMemoryRun.BrainConsolidationOutcome = result.BrainOutcome;
+                    inMemoryRun.BrainConsolidationOutcome = result.BrainOutcome is { } bo
+                        ? bo with { PushedCommitUrl = AgentLinkSanitizer.HttpsOrNull(bo.PushedCommitUrl) }
+                        : result.BrainOutcome;
                     inMemoryRun.BrainUpdatesPushed = true;
+                    // Record review refusal reason (T18: only when it's a known reason)
+                    if (result.BrainReviewRefusalReason is not null)
+                    {
+                        _logger.Information("Brain review refused for {JobId}: {Reason}", result.JobId, result.BrainReviewRefusalReason);
+                    }
                 }
                 _runService.ReplaceRun(inMemoryRun);
             }

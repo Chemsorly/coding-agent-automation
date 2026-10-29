@@ -108,7 +108,7 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
         }
 
         // --- Phase 3: Write PR conversation context (non-fatal) ---
-        await PrConversationContextWriter.WriteAsync(context, prNumber, ct);
+        _ = await PrConversationContextWriter.WriteAsync(context, prNumber, ct);
 
         return StepResult.Continue;
     }

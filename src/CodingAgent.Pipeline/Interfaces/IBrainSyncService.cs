@@ -3,8 +3,8 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
-/// Handles brain repository synchronization: pre-run clone/pull, pre-write pull,
-/// and post-run change detection/commit/push.
+/// Handles brain repository synchronization: pre-run clone/pull and post-run inbox write.
+/// Spec 054.
 /// </summary>
 public interface IBrainSyncService
 {
@@ -16,15 +16,12 @@ public interface IBrainSyncService
         CancellationToken ct, Action<string>? onOutputLine = null);
 
     /// <summary>
-    /// Pulls the brain repo before the agent writes lessons (minimizes merge conflicts).
+    /// Writes the inbox file to the brain repo, commits and pushes (spec 054, req 3, D13).
+    /// Sets run.BrainInboxFile, run.BrainUpdatesPushed, run.BrainPushFailed, run.BrainInboxFileUrl.
+    /// Non-fatal (T6).
     /// </summary>
-    Task PullBeforeWriteAsync(
-        PipelineRun run, IRepositoryProvider brainProvider, CancellationToken ct);
-
-    /// <summary>
-    /// Detects brain changes, validates, commits and pushes.
-    /// </summary>
-    Task SyncPostRunAsync(
+    Task WriteInboxAsync(
         PipelineRun run, IRepositoryProvider brainProvider,
-        CancellationToken ct, Action<string>? onOutputLine = null, int maxPushRetries = 3);
+        string relativePath, string text,
+        CancellationToken ct, int maxPushRetries = 3);
 }

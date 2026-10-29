@@ -601,29 +601,7 @@ public class PipelineStepTests
 
     // â”€â”€ BrainPullBeforeWriteStep â”€â”€
 
-    [Fact]
-    public async Task BrainPullBeforeWriteStep_NoBrain_Skips()
-    {
-        var step = new BrainPullBeforeWriteStep();
-        var context = BuildContext(brainProvider: null, brainSync: null);
-        var result = await step.ExecuteAsync(context, CancellationToken.None);
-
-        Assert.Equal(StepResult.Continue, result);
-    }
-
-    [Fact]
-    public async Task BrainPullBeforeWriteStep_BrainNotLoaded_Skips()
-    {
-        _run.BrainContextLoaded = false;
-        var brainProvider = Mock.Of<IRepositoryProvider>();
-        var brainSync = new BrainSyncService(Mock.Of<IBrainUpdateService>(), _logger);
-
-        var step = new BrainPullBeforeWriteStep();
-        var context = BuildContext(brainProvider: brainProvider, brainSync: brainSync);
-        var result = await step.ExecuteAsync(context, CancellationToken.None);
-
-        Assert.Equal(StepResult.Continue, result);
-    }
+    // BrainPullBeforeWriteStep deleted (spec 054, task 6.3)
 
     // â”€â”€ PipelineStepRunner â”€â”€
 
