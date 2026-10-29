@@ -251,12 +251,21 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(25));
         var jobId = assignment.JobId;
 
-        // Agent reports success
+        // Agent reports success with v2 BrainOutcome (one promoted line) — spec 054 10.3
         await agent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
         {
             JobId = jobId,
             Success = true,
-            Summary = "Consolidated 3 files"
+            Summary = "Consolidated 3 files",
+            BrainOutcome = new BrainConsolidationOutcome
+            {
+                Promoted = 1,
+                Appended = 0,
+                Retired = 0,
+                MissedAgain = 0,
+                Lines = [new BrainReviewLine { Action = "promoted", Scope = "general", File = "general/SKILL.md", Text = "use parameterized queries" }],
+                InboxFilesRead = 1,
+            }
         });
 
         // Wait for server-side state to reflect completion.
@@ -300,6 +309,13 @@ public sealed class ConsolidationPageTests : E2ETestBase
             ".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded");
         await cardStatusLocator.WaitForAsync(new() { Timeout = 30_000 });
         Assert.True(await cardStatusLocator.CountAsync() > 0);
+
+        // Assert: run page shows brain-review-lines to the admin (spec 054 10.3)
+        await Page.GotoAsync($"{BaseUrl}/runs/{jobId}");
+        await Page.WaitForSelectorAsync("[data-initialized='true']", new() { Timeout = 30_000 });
+        var reviewLines = Page.Locator("[data-testid='brain-review-lines']");
+        await reviewLines.WaitForAsync(new() { Timeout = 30_000 });
+        Assert.True(await reviewLines.CountAsync() > 0, "brain-review-lines must be visible to the admin on the run page");
     }
 
     [Fact]

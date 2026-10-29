@@ -33,6 +33,8 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         bool brainContextLoaded = false,
         int brainKnowledgeFileCount = 0,
         bool brainUpdatesPushed = false,
+        int? brainSkillsBytes = null,
+        string? brainInboxFile = null,
         DateTimeOffset? startedAt = null) => new PipelineRunSummary
         {
             RunId = Guid.NewGuid().ToString(),
@@ -48,6 +50,8 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             BrainContextLoaded = brainContextLoaded,
             BrainKnowledgeFileCount = brainKnowledgeFileCount,
             BrainUpdatesPushed = brainUpdatesPushed,
+            BrainSkillsBytes = brainSkillsBytes,
+            BrainInboxFile = brainInboxFile,
         };
 
     // ── Scenario 1: Prompt reset ──────────────────────────────────────────
@@ -495,60 +499,51 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         // Isolation guard: E2ETestBase.InitializeAsync calls Fixture.ResetAllAsync() before every
         // test, which invokes HistoryService.Reset() (clears _history). Assert the store is empty
         // so that if the reset contract ever changes (e.g. Reset() is made conditional), the count
-        // assertions below ("5", "3", "3", "4.0", "3") fail here with a clear message rather than
-        // with an opaque tile-value mismatch.
+        // assertions below fail here with a clear message rather than with an opaque tile-value mismatch.
         var preexisting = await Fixture.HistoryService.GetRunHistoryAsync();
         Assert.Empty(preexisting);
 
-        // Seed: 3 brain runs (Completed) + 2 non-brain runs (Failed)
-        // All terminal — the API endpoint filters by IsTerminal()
+        // Seed: 3 brain runs with skills injected + inbox pushed, 2 non-brain runs (failed)
+        // v2 tiles: Skills injected = BrainSkillsBytes > 0, Inbox pushed = BrainUpdatesPushed && BrainInboxFile set
         await Fixture.HistoryService.AddRunSummaryAsync(MakeRun(PipelineStep.Completed, "3112-k1",
-            brainRepoUsed: true, brainContextLoaded: true,
-            brainKnowledgeFileCount: 4, brainUpdatesPushed: true));
+            brainRepoUsed: true, brainSkillsBytes: 4096, brainUpdatesPushed: true, brainInboxFile: "inbox/2026-10-29_k1.md"));
         await Fixture.HistoryService.AddRunSummaryAsync(MakeRun(PipelineStep.Completed, "3112-k2",
-            brainRepoUsed: true, brainContextLoaded: true,
-            brainKnowledgeFileCount: 4, brainUpdatesPushed: true));
+            brainRepoUsed: true, brainSkillsBytes: 4096, brainUpdatesPushed: true, brainInboxFile: "inbox/2026-10-29_k2.md"));
         await Fixture.HistoryService.AddRunSummaryAsync(MakeRun(PipelineStep.Completed, "3112-k3",
-            brainRepoUsed: true, brainContextLoaded: true,
-            brainKnowledgeFileCount: 4, brainUpdatesPushed: true));
+            brainRepoUsed: true, brainSkillsBytes: 4096, brainUpdatesPushed: true, brainInboxFile: "inbox/2026-10-29_k3.md"));
         await Fixture.HistoryService.AddRunSummaryAsync(MakeRun(PipelineStep.Failed, "3112-k4",
-            brainRepoUsed: false, brainContextLoaded: false));
+            brainRepoUsed: false));
         await Fixture.HistoryService.AddRunSummaryAsync(MakeRun(PipelineStep.Failed, "3112-k5",
-            brainRepoUsed: false, brainContextLoaded: false));
+            brainRepoUsed: false));
 
         var knowledge = new KnowledgePage(Page, BaseUrl);
         await knowledge.NavigateAsync();
 
-        // ── Stat tiles ──
+        // ── Stat tiles (spec 054 8B.2) ──
 
         var total = await knowledge.GetStatTileValueAsync("Runs · recent");
         Assert.Equal("5", total);
 
-        var withBrain = await knowledge.GetStatTileValueAsync("Used brain");
-        Assert.Equal("3", withBrain);
+        var skillsInjected = await knowledge.GetStatTileValueAsync("Skills injected");
+        Assert.Equal("3", skillsInjected);
 
-        var ctxLoaded = await knowledge.GetStatTileValueAsync("Context loaded");
-        Assert.Equal("3", ctxLoaded);
+        // avgSkillsKb: 3 runs × 4096 bytes = 4 KB avg, formatted as "4.0 KB"
+        var avgSkillsSize = await knowledge.GetStatTileValueAsync("Avg skills size");
+        Assert.Equal("4.0 KB", avgSkillsSize);
 
-        // avgFiles: 3 brain runs × 4 files = avg 4.0, formatted by "0.0" → "4.0"
-        var avgFiles = await knowledge.GetStatTileValueAsync("Avg files loaded");
-        Assert.Equal("4.0", avgFiles);
+        var inboxPushed = await knowledge.GetStatTileValueAsync("Inbox pushed");
+        Assert.Equal("3", inboxPushed);
 
-        var updatesPushed = await knowledge.GetStatTileValueAsync("Updates pushed");
-        Assert.Equal("3", updatesPushed);
+        var inboxFailures = await knowledge.GetStatTileValueAsync("Inbox push failures");
+        Assert.Equal("0", inboxFailures);
 
-        // ── Brain comparison section ──
-        // Visible only when _brainRuns > 0 AND _nonBrainRuns > 0
+        // ── Brain comparison section (spec 054 8B.2) ──
+        // Visible only when both "with skills" and "without skills" groups are non-empty
         Assert.True(await knowledge.IsBrainComparisonVisibleAsync(),
-            "Brain comparison section should be visible with both brain and non-brain runs");
+            "Brain comparison section should be visible with both skilled and unskilled runs");
 
+        // 3 Completed brain runs → 100%, 2 Failed non-brain runs → 0% → delta = +100 pts
         var delta = await knowledge.GetBrainComparisonDeltaTextAsync();
-        Assert.NotNull(delta);
-        // TODO [WARNING]: Assert.Contains("pts", delta) is an extremely weak assertion — any
-        // string containing "pts" would pass, including error strings or loading text. Given the
-        // deterministic seed (3 Completed brain runs → 100%, 2 Failed non-brain runs → 0%), the
-        // delta is computable and should be asserted exactly (e.g. Assert.Equal("+100 pts", delta))
-        // to verify the comparison math, not just the presence of a label.
-        Assert.Contains("pts", delta);
+        Assert.Equal("+100 pts", delta);
     }
 }

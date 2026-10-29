@@ -83,6 +83,12 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     /// </summary>
     public Dictionary<int, bool?> PrMergedState { get; } = new();
 
+    /// <summary>
+    /// Brain seed files written to the .brain directory when CloneAsync is called
+    /// with a path ending in ".brain" (spec 054 10.1). Cleared in Reset().
+    /// </summary>
+    public Dictionary<string, string> BrainSeedFiles { get; } = [];
+
     public void Reset()
     {
         MethodCalls.Clear();
@@ -99,6 +105,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         DeletedBranches.Clear();
         BranchUpdateCalls.Clear();
         PrMergedState.Clear();
+        BrainSeedFiles.Clear();
     }
 
     public Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct)
@@ -106,6 +113,18 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         MethodCalls.Add(nameof(CloneAsync));
         if (ShouldFail) throw new InvalidOperationException("Fake clone failure");
         Directory.CreateDirectory(workspacePath);
+
+        // Write brain seed files only when cloning the brain directory (spec 054 10.1).
+        if (string.Equals(Path.GetFileName(workspacePath.Value.TrimEnd('/', '\\')), ".brain",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var (path, content) in BrainSeedFiles)
+            {
+                var fullPath = Path.Combine(workspacePath, path);
+                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                File.WriteAllText(fullPath, content);
+            }
+        }
         return Task.CompletedTask;
     }
 
