@@ -63,6 +63,7 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     private const string AggregationPromptMarker = "Produce the final proposals at";
+    private const string Phase2aScoringPromptMarker = "Phase 2a scoring for";
 
     private ConsolidationJobMessage CreateJobWithoutReview()
     {
@@ -461,9 +462,10 @@ public class RefactoringExecutorTests : IDisposable
         // and Usage set on every agent response.
         //
         // With RefactoringFocus = All (default) and RefactoringReviewEnabled = false:
-        //   Phase 0 (refactoring_conventions), Phase 1 ×4 (structural/correctness/design/test-gaps
-        //   all get named phases), Phase 2 (refactoring_aggregation) → 6 agent calls total.
-        //   All 6 named-phase calls accumulate tokens: 6 × 100 InputTokens = TotalTokens 600.
+        //   Phase 0 (refactoring_conventions), Phase 1 ×4 (structural/correctness/design/test-gaps),
+        //   Phase 2a ×4 (refactoring_phase2a_structural/_correctness/_design/_test_gaps),
+        //   Phase 2b (refactoring_aggregation) → 10 agent calls total.
+        //   All 10 named-phase calls accumulate tokens: 10 × 100 InputTokens = TotalTokens 1000.
         var job = CreateJob();
         job = new ConsolidationJobMessage
         {
@@ -521,9 +523,8 @@ public class RefactoringExecutorTests : IDisposable
 
         // Assert
         result.Success.Should().BeTrue();
-        progress.Run.TotalTokens.Should().Be(600,
-            "Phase 0 + 4 Phase 1 agents (structural/correctness/design/test-gaps) + Phase 2 = 6 calls × 100 tokens; " +
-            "all Phase 1 agents now have named usage phases (refactoring_test_gaps fixed in issue #3860)");
+        progress.Run.TotalTokens.Should().Be(1000,
+            "Phase 0 + 4 Phase 1 agents + 4 Phase 2a agents + Phase 2b = 10 calls × 100 tokens");
     }
 
     [Fact]
@@ -2907,11 +2908,11 @@ public class RefactoringExecutorTests : IDisposable
                 It.IsAny<string>()),   // jobId
             Times.Once);
 
-        // Phase 2 was reached: Phase 0 (1) + Phase 1 × 4 (4) + Phase 2 (1) = 6 calls
+        // Phase 2b was reached: Phase 0 (1) + Phase 1 × 4 (4) + Phase 2a × 4 (4) + Phase 2b (1) = 10 calls
         // If the executor aborted after brain failure it would have 0 agent calls
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(6));
+            Times.Exactly(10));
     }
 
     /// <summary>
@@ -2959,10 +2960,10 @@ public class RefactoringExecutorTests : IDisposable
                 It.IsAny<string>()),   // jobId
             Times.Once);
 
-        // Phase 2 was reached: Phase 0 (1) + Phase 1 × 4 (4) + Phase 2 (1) = 6 calls
+        // Phase 2b was reached: Phase 0 (1) + Phase 1 × 4 (4) + Phase 2a × 4 (4) + Phase 2b (1) = 10 calls
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(6));
+            Times.Exactly(10));
     }
 
     // ── AC2: Phase 1 partial failure ─────────────────────────────────────────────────────────────
@@ -2986,10 +2987,10 @@ public class RefactoringExecutorTests : IDisposable
             .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
             .Returns(Task.CompletedTask);
 
-        // Phase 0 (call 1) + Phase 1 × 4 (calls 2–5, one fails) + Phase 2 (call 6).
+        // Phase 0 (call 1) + Phase 1 × 4 (calls 2–5, one fails) + Phase 2a × 4 (calls 6–9) + Phase 2b (call 10).
         // Phase 1 calls run via Task.WhenAll; SetupSequence is monitor-protected so concurrent
         // consumption is safe. The failure lands on one of calls 2–5 — not Phase 0 (awaited
-        // first) or Phase 2 (awaited after Task.WhenAll).
+        // first) or Phase 2a/2b (awaited after Task.WhenAll).
         _mockAgentProvider
             .SetupSequence(x => x.ExecuteAsync(
                 It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
@@ -2998,7 +2999,11 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 1 (fail)
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });  // Phase 2
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 2a (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 2a (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 2a (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 2a (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });  // Phase 2b
 
         // Act
         await executor.ExecuteAsync(
@@ -3018,10 +3023,10 @@ public class RefactoringExecutorTests : IDisposable
                 It.IsAny<string>()), // jobId
             Times.Once);
 
-        // Phase 2 was reached: the abort path (all Phase 1 failed) would produce only 5 calls
+        // Phase 2b was reached: the abort path (all Phase 1 failed) would produce only 5 calls
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(6));
+            Times.Exactly(10));
     }
 
     // ── AC3: Issue context file write failure ─────────────────────────────────────────────────────

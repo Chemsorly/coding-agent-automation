@@ -594,11 +594,10 @@ Each proposal MUST be achievable by a single agent in one run:
 ## Also Produce
 
 Write a brief analysis log at `.agent/refactoring-analysis.md` containing:
-- Total findings received from agents A, B, C, D, and any agent whose findings file was missing or invalid
-- How many were dropped (duplicates, convention-filtered, evidence gate, scope-exceeded)
+- Total candidates received from Phase 2a agents (structural, correctness, design, test-gaps), and any Phase 2a agent whose file was missing or invalid
+- How many were dropped (duplicates, scope-exceeded)
 - The ranking scores for the top candidates
-- Which findings were dropped and why (one line each)
-- The `notChecked` areas the agents reported
+- Which candidates were dropped and why (one line each)
 
 """;
 

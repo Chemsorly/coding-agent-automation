@@ -127,6 +127,26 @@ public static class AgentWorkspacePaths
     public const string RefactoringTestGapFindingsFilePath = ".agent/refactoring-test-gap-findings.json";
 
     /// <summary>
+    /// The file path (relative to workspace) where Phase 2a structural scoring agent writes its compact candidates.
+    /// </summary>
+    public const string RefactoringPhase2aStructuralFilePath = ".agent/refactoring-phase2a-structural.json";
+
+    /// <summary>
+    /// The file path (relative to workspace) where Phase 2a correctness scoring agent writes its compact candidates.
+    /// </summary>
+    public const string RefactoringPhase2aCorrectnessFilePath = ".agent/refactoring-phase2a-correctness.json";
+
+    /// <summary>
+    /// The file path (relative to workspace) where Phase 2a design scoring agent writes its compact candidates.
+    /// </summary>
+    public const string RefactoringPhase2aDesignFilePath = ".agent/refactoring-phase2a-design.json";
+
+    /// <summary>
+    /// The file path (relative to workspace) where Phase 2a test-gaps scoring agent writes its compact candidates.
+    /// </summary>
+    public const string RefactoringPhase2aTestGapsFilePath = ".agent/refactoring-phase2a-test_gaps.json";
+
+    /// <summary>
     /// The file path (relative to workspace) where the refactoring aggregation step writes its analysis log
     /// (findings received, dropped and why, ranking scores) for the review step to read.
     /// </summary>
