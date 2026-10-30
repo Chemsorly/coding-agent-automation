@@ -38,18 +38,27 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
             .WriteTo.Sink(sink)
             .CreateLogger();
 
+        // Use an injected failing probe and zero startup delay so the test is deterministic:
+        // no real network call is made, and no timing assumptions about 127.0.0.2 reachability
+        // or the TCP connect timeout are needed. The original test relied on 127.0.0.2:5432
+        // failing within the poll window, which was not guaranteed on all CI environments
+        // (e.g. when PostgreSQL happens to listen on 0.0.0.0:5432 on the runner, 127.0.0.2
+        // is within the Linux loopback range and the probe would succeed).
         var sut = new DatabaseReadinessMonitor(
             healthState,
             AlwaysFailConnectionString,
             logger,
-            checkInterval: TimeSpan.FromMilliseconds(50));
+            checkInterval: TimeSpan.FromMilliseconds(50),
+            startupDelay: TimeSpan.Zero,
+            probeOverride: _ => Task.FromException(new Exception("Simulated DB probe failure")));
 
-        // Overall guard: if the state never flips in 15 s something is very wrong.
+        // Overall guard: if the state never flips something is very wrong.
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await sut.StartAsync(cts.Token);
 
-        // Poll until the monitor marks the state unhealthy (startup delay ~2 s + probe ~1 s).
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        // Poll until the monitor marks the state unhealthy.
+        // With startupDelay=Zero and an instantly-failing probe, this completes within milliseconds.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (healthState.IsDatabaseHealthy && DateTimeOffset.UtcNow < deadline)
             await Task.Delay(50, CancellationToken.None);
 
