@@ -3000,6 +3000,83 @@ public class RefactoringExecutorTests : IDisposable
             Times.Exactly(10));
     }
 
+    /// <summary>
+    /// When the brain clone succeeds and the <c>.brain</c> directory exists on disk,
+    /// the executor enters the <c>if (Directory.Exists(brainPath))</c> block, calls
+    /// <see cref="CodingAgent.Pipeline.Services.BrainSkillsReader.ReadAsync"/> (L108), and then
+    /// <see cref="BrainSkillsWriter.Write"/> (L115), which writes the Kiro steering file at
+    /// <see cref="CodingAgent.Contracts.Models.AgentWorkspacePaths.KiroSteeringBrainFilePath"/>.
+    /// <para>
+    /// Covers the <c>Directory.Exists(brainPath)</c> branch at L106–L116 of
+    /// <c>RefactoringExecutor.ExecuteAsync</c> — previously unreachable in tests because all brain
+    /// provider mocks returned <c>Task.CompletedTask</c> without creating the directory.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_BrainDirectoryExists_BrainSkillsInjectedIntoSteeringFile()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var workspacePath = Path.Combine(_tempDir, job.JobId);
+        var brainProviderMock = new Mock<IRepositoryProvider>();
+
+        // RepositoryFullName is read at L110 inside the Directory.Exists block:
+        //   repoProvider.RepositoryFullName.Split('/')[^1]
+        // The default Moq value for string is null; null.Split('/') → NullReferenceException.
+        _mockRepoProvider.SetupGet(x => x.RepositoryFullName).Returns("owner/test-repo");
+
+        // Explicitly set KiroCli so BrainSkillsWriter.Write routes to WriteKiro and creates
+        // the .kiro/steering/pipeline-brain.md file. Without this setup, the test relies on
+        // Moq returning the default enum value (0 = KiroCli today), which would silently
+        // use a different write path if the enum order ever changed.
+        _mockAgentProvider.SetupGet(x => x.ProviderType).Returns(AgentProviderType.KiroCli);
+
+        // Code-repo clone writes an empty proposals array so Phase 2 completes normally.
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
+            .Returns(Task.CompletedTask);
+
+        // Brain clone creates .brain/general/SKILL.md with a valid brain v2 skill line.
+        // TryCloneBrainRepoAsync passes brainPath (= workspacePath/.brain) to CloneAsync,
+        // so the Callback's `path` argument resolves to workspacePath/.brain.
+        // After this runs, Directory.Exists(brainPath) is true and L108 is entered.
+        brainProviderMock
+            .Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                var generalDir = Path.Combine(path, "general");
+                Directory.CreateDirectory(generalDir);
+                File.WriteAllText(
+                    Path.Combine(generalDir, "SKILL.md"),
+                    $"{CodingAgent.Pipeline.Brain.BrainLayout.SkillMarker}\n- [2+] For database access, use parameterized queries (#42).\n");
+            })
+            .Returns(Task.CompletedTask);
+
+        // All agent calls succeed so the full Phase 0 → Phase 1 × 4 → Phase 2 pipeline runs.
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, brainProviderMock.Object,
+            _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — execution succeeded (no NullReferenceException or other failure)
+        result.Success.Should().BeTrue("the brain-skills injection path must not throw");
+
+        // The Kiro steering file must have been created by BrainSkillsWriter.WriteKiro.
+        // ProviderType is set to KiroCli above, so BrainSkillsWriter.Write routes through
+        // WriteKiro and writes to workspacePath/.kiro/steering/pipeline-brain.md.
+        var brainSteering = Path.Combine(workspacePath, AgentWorkspacePaths.KiroSteeringBrainFilePath);
+        File.Exists(brainSteering).Should().BeTrue(
+            "BrainSkillsWriter.Write must be called with KiroCli providerType and produce the steering file");
+        File.ReadAllText(brainSteering).Should().Contain("use parameterized queries",
+            "the skill text from general/SKILL.md must appear verbatim in the written steering file");
+    }
+
     // ── AC2: Phase 1 partial failure ─────────────────────────────────────────────────────────────
 
     /// <summary>
