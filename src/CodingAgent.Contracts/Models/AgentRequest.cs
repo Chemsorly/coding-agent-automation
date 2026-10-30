@@ -20,4 +20,10 @@ public sealed class AgentRequest
     /// Null or empty means the child inherits the parent environment unchanged.
     /// </summary>
     public IReadOnlyDictionary<string, string>? EnvironmentVariables { get; init; }
+
+    /// <summary>
+    /// Per-request effort override. When set, takes precedence over the provider's configured effort.
+    /// Null means use the provider default. Supported by KiroCli (isolated calls) and ClaudeCode.
+    /// </summary>
+    public AgentEffortLevel? EffortOverride { get; init; }
 }

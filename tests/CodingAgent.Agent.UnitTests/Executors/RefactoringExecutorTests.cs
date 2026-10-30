@@ -221,6 +221,39 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_Phase2AggregationRequest_HasHighEffortOverride()
+    {
+        // Phase 2 applies deterministic rules (dedup, rank, filter) — max thinking budget
+        // exhausts at the ceiling (~295 s) without writing proposals.json.
+        // Both the initial attempt and the retry must use EffortOverride = High.
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutReview();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        AgentRequest? capturedAggregationRequest = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains(AggregationPromptMarker)), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedAggregationRequest = req;
+                RefactoringTestWorkspace.WriteProposals(req.WorkspacePath!, "[]");
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Aggregation done."] });
+
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        capturedAggregationRequest.Should().NotBeNull("aggregation agent must be called");
+        capturedAggregationRequest!.EffortOverride.Should().Be(AgentEffortLevel.High,
+            "Phase 2 ranks/filters deterministically; max effort exhausts the thinking budget at the ceiling");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_AggregationExitsNonZero_DoesNotRetry()
     {
         var executor = CreateExecutor();
