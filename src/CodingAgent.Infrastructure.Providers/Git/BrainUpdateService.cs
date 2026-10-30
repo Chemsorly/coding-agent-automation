@@ -683,9 +683,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 }
                 else
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                    File.WriteAllText(fullPath, file.Content,
-                        new System.Text.UTF8Encoding(false));
+                    await _git.WriteAllTextAsync(fullPath, file.Content, new System.Text.UTF8Encoding(false), ct);
                 }
             }
 
