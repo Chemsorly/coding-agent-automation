@@ -20,7 +20,7 @@ public partial class BrainUpdateService : IBrainUpdateService
     private readonly IGitOperations _git;
 
     public BrainUpdateService(ILogger logger)
-        : this(logger, new LibGit2SharpGitOperations())
+        : this(logger, new LibGit2SharpGitOperations(logger))
     {
     }
 

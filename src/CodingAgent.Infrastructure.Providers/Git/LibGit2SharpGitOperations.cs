@@ -1,6 +1,8 @@
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using LibGit2Sharp;
+using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Infrastructure.Git;
 
@@ -10,6 +12,17 @@ namespace CodingAgent.Infrastructure.Git;
 /// </summary>
 public sealed class LibGit2SharpGitOperations : IGitOperations
 {
+    private readonly ILogger _logger;
+
+    /// <summary>Initialises the instance using the current global <see cref="Serilog.Log.Logger"/>.</summary>
+    public LibGit2SharpGitOperations() : this(Log.Logger) { }
+
+    /// <summary>Initialises the instance with an explicitly provided logger (facilitates testing).</summary>
+    public LibGit2SharpGitOperations(ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        _logger = logger;
+    }
     public IReadOnlyList<string> GetChangedFiles(string repoPath)
     {
         using var repo = new Repository(repoPath);
@@ -212,7 +225,7 @@ public sealed class LibGit2SharpGitOperations : IGitOperations
         return discarded;
     }
 
-    private static void TryDeleteEmptyDirectories(string repoPath, string keepRelativePath)
+    private void TryDeleteEmptyDirectories(string repoPath, string keepRelativePath)
     {
         foreach (var dir in Directory.GetDirectories(repoPath, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
         {
@@ -222,7 +235,11 @@ public sealed class LibGit2SharpGitOperations : IGitOperations
             if (!Directory.Exists(dir)) continue;
             if (!Directory.EnumerateFileSystemEntries(dir).Any())
             {
-                try { Directory.Delete(dir); } catch { }
+                try { Directory.Delete(dir); }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Could not remove empty directory {Dir} — skipping", dir);
+                }
             }
         }
     }
