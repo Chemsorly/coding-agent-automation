@@ -63,6 +63,9 @@ public class RefactoringExecutorReviewTests : IDisposable
         }
     };
 
+    private const string AggregationPromptMarker = "Produce the final proposals at";
+    private const string Phase2aScoringPromptMarker = "Phase 2a scoring for";
+
     private static readonly string ValidProposalsJson = """
         [
             {
@@ -128,9 +131,9 @@ public class RefactoringExecutorReviewTests : IDisposable
                 // Replace with Interlocked.Increment(ref callCount) to prevent non-deterministic test failures.
                 // See issue #3582 review finding (TestQualityReviewer).
                 callCount++;
-                if (callCount <= 6)
+                if (callCount <= 10)
                 {
-                    // Phased detection calls (Phase 0 + 4× Phase 1 + Phase 2)
+                    // Phased detection calls (Phase 0 + 4× Phase 1 + 4× Phase 2a + Phase 2b)
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
                 // Discriminator call — write review file with only suggestions (no refinement triggered)
@@ -144,11 +147,11 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — at least 7 agent calls (6 phased + discriminator)
+        // Assert — at least 11 agent calls (10 phased + discriminator)
         result.Success.Should().BeTrue();
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.AtLeast(7));
+            Times.AtLeast(11));
     }
 
     /// <summary>
@@ -170,12 +173,12 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — only phased calls (6), no discriminator since proposals are empty
+        // Assert — only phased calls (10), no discriminator since proposals are empty
         result.Success.Should().BeTrue();
         result.Summary.Should().Contain("No refactoring opportunities identified");
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(6));
+            Times.Exactly(10));
     }
 
     /// <summary>
@@ -198,11 +201,42 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — only phased calls (6), no discriminator or refinement since review is disabled
+        // Assert — only phased calls (10), no discriminator or refinement since review is disabled
         result.Success.Should().BeTrue();
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(6));
+            Times.Exactly(10));
+    }
+
+    /// <summary>
+    /// Phase 2a agent calls receive prompts containing the Phase 2a scoring header,
+    /// not Phase 1 or Phase 2b prompts. Uses <see cref="Phase2aScoringPromptMarker"/> to distinguish them.
+    /// </summary>
+    [Fact]
+    public async Task Phase2aAgents_ReceivePhase2aScoringPrompt()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob(reviewEnabled: false);
+        SetupCloneWritesProposals(ValidProposalsJson);
+        SetupIssueCreation();
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — exactly 4 Phase 2a agent calls (one per focus: Structure, Correctness, Design, Tests)
+        // each carrying the Phase 2a prompt header, not a Phase 1 or Phase 2b prompt.
+        _mockAgentProvider.Verify(
+            x => x.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains(Phase2aScoringPromptMarker)),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Exactly(4));
     }
 
     /// <summary>
@@ -227,12 +261,12 @@ public class RefactoringExecutorReviewTests : IDisposable
                 // Replace with Interlocked.Increment(ref callCount) to prevent non-deterministic test failures.
                 // See issue #3582 review finding (TestQualityReviewer).
                 callCount++;
-                if (callCount <= 6)
+                if (callCount <= 10)
                 {
-                    // Phased detection calls (Phase 0 + 4× Phase 1 + Phase 2)
+                    // Phased detection calls (Phase 0 + 4× Phase 1 + 4× Phase 2a + Phase 2b)
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
-                if (callCount == 7)
+                if (callCount == 11)
                 {
                     // Discriminator call — write CRITICAL finding to trigger refinement
                     var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
@@ -260,11 +294,11 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — 8 agent calls (6 phased + discriminator + refinement)
+        // Assert — 12 agent calls (10 phased + discriminator + refinement)
         result.Success.Should().BeTrue();
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(8));
+            Times.Exactly(12));
 
         // Issue should be created with the refined title
         _mockIssueProvider.Verify(
@@ -298,12 +332,12 @@ public class RefactoringExecutorReviewTests : IDisposable
                 // Replace with Interlocked.Increment(ref callCount) to prevent non-deterministic test failures.
                 // See issue #3582 review finding (TestQualityReviewer).
                 callCount++;
-                if (callCount <= 6)
+                if (callCount <= 10)
                 {
-                    // Phased detection calls
+                    // Phased detection calls (Phase 0 + 4× Phase 1 + 4× Phase 2a + Phase 2b)
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
-                if (callCount == 7)
+                if (callCount == 11)
                 {
                     // Discriminator call — write CRITICAL finding to trigger refinement
                     var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
@@ -359,12 +393,12 @@ public class RefactoringExecutorReviewTests : IDisposable
                 // Replace with Interlocked.Increment(ref callCount) to prevent non-deterministic test failures.
                 // See issue #3582 review finding (TestQualityReviewer).
                 callCount++;
-                if (callCount <= 6)
+                if (callCount <= 10)
                 {
-                    // Phased detection calls
+                    // Phased detection calls (Phase 0 + 4× Phase 1 + 4× Phase 2a + Phase 2b)
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
-                if (callCount == 7)
+                if (callCount == 11)
                 {
                     // Discriminator call — write CRITICAL finding to trigger refinement
                     var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
@@ -410,12 +444,12 @@ public class RefactoringExecutorReviewTests : IDisposable
                 // Interlocked.Increment avoids the race condition that arises with callCount++
                 // when the 4 Phase 1 tasks run concurrently via Task.WhenAll.
                 var call = Interlocked.Increment(ref callCount);
-                if (call <= 6)
+                if (call <= 10)
                 {
-                    // Phased detection calls (Phase 0 + 4× Phase 1 + Phase 2)
+                    // Phased detection calls (Phase 0 + 4× Phase 1 + 4× Phase 2a + Phase 2b)
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
-                if (call == 7)
+                if (call == 11)
                 {
                     // Discriminator call — write a CRITICAL finding to trigger refinement
                     var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
@@ -465,9 +499,9 @@ public class RefactoringExecutorReviewTests : IDisposable
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // Assert — 8 agent calls: 6 phased + discriminator + refinement
+        // Assert — 12 agent calls: 10 phased + discriminator + refinement
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(8));
+            Times.Exactly(12));
     }
 }

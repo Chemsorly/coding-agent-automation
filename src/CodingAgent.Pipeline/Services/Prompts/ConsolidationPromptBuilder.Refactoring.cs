@@ -560,17 +560,140 @@ $"""
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Phase 2: Aggregation & Prioritization
+    //  Phase 2a: Per-Agent Scoring
     // ─────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Phase 2 prompt: aggregates findings from the detection sub-agents, deduplicates,
-    /// filters against project conventions, and produces final ranked proposals.
+    /// Phase 2a prompt: one per detection agent. Each instance reads its own findings file,
+    /// applies the convention filter and evidence quality gate from the combined Phase 2,
+    /// scores surviving findings on the three axes, and writes a compact candidates file.
+    /// </summary>
+    /// <param name="focus">
+    /// Which detection agent to score. Must be <see cref="RefactoringScanFocus.Structure"/>,
+    /// <see cref="RefactoringScanFocus.Correctness"/>, <see cref="RefactoringScanFocus.Design"/>,
+    /// or <see cref="RefactoringScanFocus.Tests"/>.
+    /// <see cref="RefactoringScanFocus.All"/> is not valid — each Phase 2a instance handles exactly one agent.
+    /// </param>
+    public static string BuildRefactoringPhase2aPrompt(RefactoringScanFocus focus)
+    {
+        var (findingsFile, outputFile, agentLabel) = focus switch
+        {
+            RefactoringScanFocus.Structure => (AgentWorkspacePaths.RefactoringStructuralFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aStructuralFilePath, "Agent A: structural debt"),
+            RefactoringScanFocus.Correctness => (AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath, "Agent B: correctness & hygiene"),
+            RefactoringScanFocus.Design => (AgentWorkspacePaths.RefactoringDesignFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aDesignFilePath, "Agent C: design consistency"),
+            RefactoringScanFocus.Tests => (AgentWorkspacePaths.RefactoringTestGapFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath, "Agent D: test gaps"),
+            _ => throw new ArgumentOutOfRangeException(nameof(focus), focus, "Phase 2a requires a specific focus (Structure, Correctness, Design, or Tests)")
+        };
+
+        var categories = RefactoringCategories.ForFocus(focus);
+        var categoryList = string.Join(", ", categories.Select(c => $"`{c}`"));
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine($"# Phase 2a scoring for {focus}");
+        sb.AppendLine();
+        sb.AppendLine($"You are the Phase 2a scoring agent for {agentLabel}. Your job: apply the quality gate,");
+        sb.AppendLine("filter against project conventions, score surviving findings, and write a compact candidates file.");
+        sb.AppendLine("The final aggregator (Phase 2b) will combine your output with the other agents' outputs.");
+        sb.AppendLine("Do NOT add new findings; only evaluate what the detection agent produced.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Inputs");
+        sb.AppendLine();
+        sb.AppendLine("Read ALL of the following files:");
+        sb.AppendLine($"1. `{findingsFile}` — {agentLabel} findings");
+        sb.AppendLine($"2. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
+        sb.AppendLine($"3. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
+        sb.AppendLine();
+        sb.AppendLine($"The findings file holds a `findings` array and a `notChecked` list. Categories in scope: {categoryList}.");
+        sb.AppendLine("If the findings file is missing or is not valid JSON, write an empty array `[]` to the output file and stop.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Step 1: Filter Against Conventions");
+        sb.AppendLine();
+        sb.AppendLine($"For each finding in `{findingsFile}`, check against `{AgentWorkspacePaths.RefactoringConventionsFilePath}`:");
+        sb.AppendLine("- Does it flag something listed in `intentionalPatterns`? → **DROP IT**");
+        sb.AppendLine($"- Does it flag something listed in `knownDebt`? → **DROP IT** (team already knows). This does not apply to `{RefactoringCategories.Todo}` findings: they come from inline comments, which knownDebt does not cover.");
+        sb.AppendLine("- Does it contradict `abstractionPhilosophy`? (e.g., flagging missing interface when philosophy says \"minimal interfaces\") → **DROP IT**");
+        sb.AppendLine("- Does it contradict `testingPhilosophy`? → **DROP IT**");
+        sb.AppendLine($"- Does it target `{AgentWorkspacePaths.MetadataDirectory}/`, `{AgentWorkspacePaths.BrainDirectory}/`, generated code, or files ignored by git? → **DROP IT**");
+        sb.AppendLine();
+
+        sb.AppendLine("## Step 2: Evidence Quality Gate");
+        sb.AppendLine();
+        sb.AppendLine("Reject findings whose evidence does not meet the bar for their category:");
+        sb.AppendLine($"- `{RefactoringCategories.Bug}`: `evidence` MUST show a concrete failure scenario — the input or state, the line that goes wrong, and the wrong outcome. Otherwise DROP.");
+        sb.AppendLine($"- `{RefactoringCategories.DeadCode}`: MUST have a `usage-search:` or `tool:` source showing zero references. Otherwise DROP.");
+        sb.AppendLine($"- `{RefactoringCategories.Duplication}`: `crossReference` MUST name the other copy. Otherwise DROP.");
+        sb.AppendLine($"- `{RefactoringCategories.NamingInconsistency}`: MUST cite the convention rule it violates. Otherwise DROP.");
+        sb.AppendLine($"- `{RefactoringCategories.PrimitiveObsession}`: MUST show 3+ occurrences with a `grep:` or `usage-search:` source. Otherwise DROP.");
+        sb.AppendLine($"- `{RefactoringCategories.TestGap}`: MUST have a `tool:coverage:` source naming the uncovered lines, or a `grep:` source showing that no test file references the code. Otherwise DROP.");
+        sb.AppendLine($"- `{RefactoringCategories.StructuralDrift}`, `{RefactoringCategories.Complexity}`, `{RefactoringCategories.OverEngineering}`, `{RefactoringCategories.Todo}`, `{RefactoringCategories.StaleDocumentation}`:");
+        sb.AppendLine("  may use \"code-reading:\" alone but receive a capped evidence score of 1 unless a `tool:`, `grep:` or `usage-search:` source corroborates them.");
+        sb.AppendLine("- `hotspot:` is a priority signal, not evidence. It never satisfies this gate and never raises the evidence score.");
+        sb.AppendLine("- A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool and its rule or query. A search or a file read tagged `tool:` counts as `grep:` or `code-reading:`.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Step 3: Score Surviving Findings");
+        sb.AppendLine();
+        sb.AppendLine($"Bugs (category `{RefactoringCategories.Bug}`) are not scored on these axes — they always rank above other findings.");
+        sb.AppendLine($"Set `is_bug = true` and use the evidence quality (1-3) as `evidence_score` for ordering bugs.");
+        sb.AppendLine();
+        sb.AppendLine("Score every non-bug surviving finding on three axes (each 1-3):");
+        sb.AppendLine();
+        sb.AppendLine("| Axis | 3 (high) | 2 (medium) | 1 (low) |");
+        sb.AppendLine("|------|----------|------------|---------|");
+        sb.AppendLine($"| **Hotspot frequency** | File in top 10 hotspots | File in top 11-20 | Not in hotspot list |");
+        sb.AppendLine($"| **Evidence strength** | Tool-confirmed or multi-source | Code reading with crossReference | Single observation |");
+        sb.AppendLine($"| **Scope feasibility** | <10 files affected | 10-20 files | 20-30 files |");
+        sb.AppendLine();
+        sb.AppendLine("Final score = hotspot_score × evidence_score × scope_score.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Output Format");
+        sb.AppendLine();
+        sb.AppendLine($"Write compact candidates to `{outputFile}` as a JSON array:");
+        sb.AppendLine();
+        sb.AppendLine(JsonCodeFence);
+        sb.AppendLine("[");
+        sb.AppendLine("  {");
+        sb.AppendLine("    \"title\": \"Short descriptive title\",");
+        sb.AppendLine($"    \"category\": \"{RefactoringCategories.ToSchemaList(categories)}\",");
+        sb.AppendLine("    \"is_bug\": false,");
+        sb.AppendLine("    \"total_score\": 9,");
+        sb.AppendLine("    \"hotspot_score\": 3,");
+        sb.AppendLine("    \"evidence_score\": 3,");
+        sb.AppendLine("    \"scope_score\": 3,");
+        sb.AppendLine("    \"primary_file\": \"src/path/File.cs\",");
+        sb.AppendLine("    \"rationale\": \"One sentence: what goes wrong and why it matters\",");
+        sb.AppendLine("    \"finding\": { }");
+        sb.AppendLine("  }");
+        sb.AppendLine("]");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Field notes:");
+        sb.AppendLine("- `primary_file`: the first entry of the finding's `affectedFiles`.");
+        sb.AppendLine("- `finding`: the full original finding object verbatim from the findings file — do not modify it.");
+        sb.AppendLine("- `total_score`: for bugs, set to 0 (ordering by `evidence_score`); for others, hotspot × evidence × scope.");
+        sb.AppendLine("- Write an empty array `[]` when all findings are dropped.");
+        sb.AppendLine("- A missing output file means this sub-agent failed.");
+
+        return sb.ToString();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Phase 2b: Final Aggregation & Prioritization
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Phase 2b prompt: aggregates the pre-scored compact candidates from the Phase 2a
+    /// per-agent scoring agents, deduplicates cross-file, ranks, and produces final proposals.
+    /// Convention filtering and evidence quality gating are already done by Phase 2a.
     /// </summary>
     /// <param name="maxProposals">Maximum number of proposals to select.</param>
     /// <param name="issueContext">Open issues context to avoid duplicating.</param>
     /// <param name="outcomeContext">Past implemented/rejected proposals for feedback.</param>
-    /// <param name="focus">Which detection agent ran. <see cref="RefactoringScanFocus.All"/> (default) lists all four findings files and produces the same output as before this parameter existed.</param>
+    /// <param name="focus">Which detection agent ran. <see cref="RefactoringScanFocus.All"/> (default) lists all four candidates files and produces the same output as before this parameter existed.</param>
     public static string BuildRefactoringAggregationPrompt(
         int maxProposals = 3,
         string? issueContext = null,
@@ -579,43 +702,35 @@ $"""
     {
         var sb = new StringBuilder();
 
-        sb.AppendLine("# Phase 2: Aggregation & Prioritization");
+        sb.AppendLine("# Phase 2b: Aggregation & Prioritization");
         sb.AppendLine();
-        sb.AppendLine("You are the orchestrator synthesizing findings from the parallel analysis agents");
-        sb.AppendLine("into final, actionable refactoring proposals. Your job is quality control and ranking —");
-        sb.AppendLine("not discovery. Do NOT add new findings; only curate what the agents produced.");
+        sb.AppendLine("You are the final aggregator combining pre-scored candidates from the Phase 2a per-agent scoring agents");
+        sb.AppendLine("into final, actionable refactoring proposals. Convention filtering and evidence quality gating are already");
+        sb.AppendLine("done — your job is cross-file deduplication, ranking, and converting to the final proposal format.");
+        sb.AppendLine("Do NOT add new findings; only curate what the Phase 2a agents produced.");
         sb.AppendLine();
 
         sb.AppendLine("## Inputs");
         sb.AppendLine();
         sb.AppendLine("Read ALL of the following files:");
 
-        // List only the findings files of the agents that ran, numbered from 1.
+        // List only the Phase 2a candidates files of the agents that ran, numbered from 1.
         var inputNumber = 1;
         if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Structure)
-            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` — Agent A: structural debt");
+            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringPhase2aStructuralFilePath}` — Phase 2a candidates: structural debt");
         if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Correctness)
-            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` — Agent B: correctness & hygiene");
+            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath}` — Phase 2a candidates: correctness & hygiene");
         if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Design)
-            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` — Agent C: design consistency");
+            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringPhase2aDesignFilePath}` — Phase 2a candidates: design consistency");
         if (focus is RefactoringScanFocus.All or RefactoringScanFocus.Tests)
-            sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringTestGapFindingsFilePath}` — Agent D: test gaps");
-        sb.AppendLine($"{inputNumber++}. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
-        sb.AppendLine($"{inputNumber}. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
+            sb.AppendLine($"{inputNumber}. `{AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath}` — Phase 2a candidates: test gaps");
 
         sb.AppendLine();
-        sb.AppendLine("Each findings file holds a `findings` array and a `notChecked` list.");
-        sb.AppendLine("If a findings file is missing or is not valid JSON, that agent failed. Continue with the other files");
+        sb.AppendLine("Each candidates file is a JSON array of pre-scored candidate objects (or an empty array when Phase 2a dropped all findings).");
+        sb.AppendLine("If a candidates file is missing or is not valid JSON, that Phase 2a agent failed. Continue with the other files");
         sb.AppendLine("and record the failure in the analysis log.");
         sb.AppendLine();
 
-        // TODO [WARNING]: The acceptance criterion for issue #3583 specifies that the focus-constraint
-        // sentence should appear "directly after the inputs list" (i.e. immediately after the numbered
-        // file lines, before the "Each findings file holds…" paragraph). The current placement puts it
-        // after that paragraph instead. For LLM prompts, proximity to the inputs list can affect how
-        // strongly the model applies the category constraint. Consider moving this block to directly
-        // after the numbered inputs list and before "Each findings file holds a `findings` array…".
-        // For focused scans: state which categories are in scope so the agent constrains its output.
         if (focus != RefactoringScanFocus.All)
         {
             var categories = RefactoringCategories.ForFocus(focus);
@@ -628,53 +743,23 @@ $"""
         sb.AppendLine();
         sb.AppendLine("### Step 1: Deduplicate");
         sb.AppendLine();
-        sb.AppendLine("Multiple agents may flag the same file or overlapping concerns:");
-        sb.AppendLine("- If two findings reference the same file with related issues → merge into one proposal");
-        sb.AppendLine("- If a structural finding and a correctness finding describe the same root cause → keep the one with stronger evidence");
-        sb.AppendLine("- Preserve the best `evidence`, `crossReference` and `scopeQuery` from both when merging");
+        sb.AppendLine("Multiple Phase 2a agents may have candidates for the same file or overlapping concerns:");
+        sb.AppendLine("- If two candidates reference the same `primary_file` with related issues → merge into one candidate");
+        sb.AppendLine("- If a structural candidate and a correctness candidate describe the same root cause → keep the one with the higher `total_score`");
+        sb.AppendLine("- Preserve the best `evidence`, `crossReference` and `scopeQuery` from both when merging (from the `finding` field)");
         sb.AppendLine();
-        sb.AppendLine("### Step 2: Filter Against Conventions");
+        sb.AppendLine("### Step 2: Rank by Score");
         sb.AppendLine();
-        sb.AppendLine("For each remaining finding, check against `refactoring-conventions.json`:");
-        sb.AppendLine("- Does it flag something listed in `intentionalPatterns`? → **DROP IT**");
-        sb.AppendLine($"- Does it flag something listed in `knownDebt`? → **DROP IT** (team already knows). This does not apply to `{RefactoringCategories.Todo}` findings: they come from inline comments, which knownDebt does not cover.");
-        sb.AppendLine("- Does it contradict `abstractionPhilosophy`? (e.g., flagging missing interface when philosophy says \"minimal interfaces\") → **DROP IT**");
-        sb.AppendLine("- Does it contradict `testingPhilosophy`? → **DROP IT**");
-        sb.AppendLine($"- Does it target `{AgentWorkspacePaths.MetadataDirectory}/`, `{AgentWorkspacePaths.BrainDirectory}/`, generated code, or files ignored by git? → **DROP IT**");
+        sb.AppendLine("Rank all surviving candidates in this order:");
+        sb.AppendLine("1. **Bugs first.** All candidates with `is_bug = true` rank above all non-bugs. Order bugs by `evidence_score` descending.");
+        sb.AppendLine("2. **Non-bugs by total_score.** Order all non-bug candidates by `total_score` descending.");
         sb.AppendLine();
-        sb.AppendLine("### Step 3: Evidence Quality Gate");
+        sb.AppendLine("3. **Spread the work.** Select at most one proposal per `primary_file`.");
+        sb.AppendLine("   Skip a candidate whose `primary_file` is the main subject of an open issue listed below — that file already has work queued.");
         sb.AppendLine();
-        sb.AppendLine("Reject findings whose evidence does not meet the bar for their category:");
-        sb.AppendLine($"- `{RefactoringCategories.Bug}`: `evidence` MUST show a concrete failure scenario — the input or state, the line that goes wrong, and the wrong outcome. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.DeadCode}`: MUST have a `usage-search:` or `tool:` source showing zero references. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.Duplication}`: `crossReference` MUST name the other copy. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.NamingInconsistency}`: MUST cite the convention rule it violates. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.PrimitiveObsession}`: MUST show 3+ occurrences with a `grep:` or `usage-search:` source. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.TestGap}`: MUST have a `tool:coverage:` source naming the uncovered lines, or a `grep:` source showing that no test file references the code. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.StructuralDrift}`, `{RefactoringCategories.Complexity}`, `{RefactoringCategories.OverEngineering}`, `{RefactoringCategories.Todo}`, `{RefactoringCategories.StaleDocumentation}`:");
-        sb.AppendLine("  may use \"code-reading:\" alone but receive a capped evidence score of 1 unless a `tool:`, `grep:` or `usage-search:` source corroborates them.");
-        sb.AppendLine("- `hotspot:` is a priority signal, not evidence. It never satisfies this gate and never raises the evidence score.");
-        sb.AppendLine("- A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool and its rule or query. A search or a file read tagged `tool:` counts as `grep:` or `code-reading:`.");
+        sb.AppendLine("### Step 3: Format as Proposals");
         sb.AppendLine();
-        sb.AppendLine("### Step 4: Rank by Impact");
-        sb.AppendLine();
-        sb.AppendLine($"1. **Bugs first.** Every `{RefactoringCategories.Bug}` finding that passed the gate ranks above all other findings —");
-        sb.AppendLine("   wrong behavior today matters more than any cleanup. Order bugs by evidence strength.");
-        sb.AppendLine("2. Score every other surviving finding on three axes (each 1-3):");
-        sb.AppendLine();
-        sb.AppendLine("| Axis | 3 (high) | 2 (medium) | 1 (low) |");
-        sb.AppendLine("|------|----------|------------|---------|");
-        sb.AppendLine("| **Hotspot frequency** | File in top 10 hotspots | File in top 11-20 | Not in hotspot list |");
-        sb.AppendLine("| **Evidence strength** | Tool-confirmed or multi-source | Code reading with crossReference | Single observation |");
-        sb.AppendLine("| **Scope feasibility** | <10 files affected | 10-20 files | 20-30 files |");
-        sb.AppendLine();
-        sb.AppendLine("   Final score = hotspot × evidence × scope. Rank descending.");
-        sb.AppendLine("3. **Spread the work.** Select at most one proposal per primary file (the first entry of `affectedFiles`).");
-        sb.AppendLine("   Skip a finding whose primary file is the main subject of an open issue listed below — that file already has work queued.");
-        sb.AppendLine();
-        sb.AppendLine("### Step 5: Format as Proposals");
-        sb.AppendLine();
-        sb.AppendLine($"Select the top **{maxProposals}** findings by rank and convert them into the final proposal format.");
+        sb.AppendLine($"Select the top **{maxProposals}** candidates by rank and convert them into the final proposal format.");
         sb.AppendLine();
 
         // Insert issue context (open issues to avoid duplicating)
@@ -788,11 +873,10 @@ $"""
         sb.AppendLine("## Also Produce");
         sb.AppendLine();
         sb.AppendLine($"Write a brief analysis log at `{AgentWorkspacePaths.RefactoringAnalysisFilePath}` containing:");
-        sb.AppendLine("- Total findings received from agents A, B, C, D, and any agent whose findings file was missing or invalid");
-        sb.AppendLine("- How many were dropped (duplicates, convention-filtered, evidence gate, scope-exceeded)");
+        sb.AppendLine("- Total candidates received from Phase 2a agents (structural, correctness, design, test-gaps), and any Phase 2a agent whose file was missing or invalid");
+        sb.AppendLine("- How many were dropped (duplicates, scope-exceeded)");
         sb.AppendLine("- The ranking scores for the top candidates");
-        sb.AppendLine("- Which findings were dropped and why (one line each)");
-        sb.AppendLine("- The `notChecked` areas the agents reported");
+        sb.AppendLine("- Which candidates were dropped and why (one line each)");
 
         return sb.ToString();
     }

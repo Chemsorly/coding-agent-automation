@@ -482,9 +482,60 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 phase1Failures.Count, phase1Results.Length, job.JobId);
         }
 
-        // Phase 2: Aggregation & Prioritization
+        // Phase 2a: Parallel per-file scoring — same Task.WhenAll pattern as Phase 1
         TransitionTo(PipelineStep.AggregatingProposals);
-        Logger.Information("Phase 2: Aggregating and prioritizing findings for run {RunId}", job.JobId);
+        var phase2aAgents = new (string SpanName, RefactoringScanFocus Focus, string? OutputPrefix, string UsagePhase)[]
+        {
+            ("RefactoringDetection.Phase2a.Structural", RefactoringScanFocus.Structure, "[2a-A] ", "refactoring_phase2a_structural"),
+            ("RefactoringDetection.Phase2a.Correctness", RefactoringScanFocus.Correctness, "[2a-B] ", "refactoring_phase2a_correctness"),
+            ("RefactoringDetection.Phase2a.Design", RefactoringScanFocus.Design, "[2a-C] ", "refactoring_phase2a_design"),
+            ("RefactoringDetection.Phase2a.TestGaps", RefactoringScanFocus.Tests, null, "refactoring_phase2a_test_gaps"),
+        };
+
+        var selected2a = phase2aAgents
+            .Where(a => job.RefactoringFocus == RefactoringScanFocus.All || a.Focus == job.RefactoringFocus)
+            .ToArray();
+
+        Logger.Information("Phase 2a: Dispatching {AgentCount} parallel scoring agents for run {RunId} (focus {Focus})",
+            selected2a.Length, job.JobId, job.RefactoringFocus);
+
+        var phase2aTasks = selected2a.Select(a =>
+            RunWithTracingAsync(a.SpanName, job.JobId, async _ =>
+            {
+                var agentOnOutputLine = a.OutputPrefix is null
+                    ? onOutputLine
+                    : (onOutputLine is null ? null : (Action<string>)(line => onOutputLine($"{a.OutputPrefix}{line}")));
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(a.Focus),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout,
+                        EffortOverride = AgentEffortLevel.High
+                    },
+                    job.JobId,
+                    ct,
+                    agentOnOutputLine,
+                    a.UsagePhase);
+            })).ToArray();
+
+        var phase2aResults = await Task.WhenAll(phase2aTasks);
+
+        var phase2aFailures = phase2aResults.Where(r => r.Failure is not null).ToList();
+        if (phase2aFailures.Count == phase2aResults.Length)
+        {
+            return (CreateFailureResult(job.JobId, "All Phase 2a scoring agents failed"), detectors);
+        }
+
+        if (phase2aFailures.Count > 0)
+        {
+            Logger.Warning("{FailCount}/{TotalCount} Phase 2a scoring agents failed in run {RunId}, continuing with partial results",
+                phase2aFailures.Count, phase2aResults.Length, job.JobId);
+        }
+
+        // Phase 2b: Final aggregation
+        Logger.Information("Phase 2b: Aggregating and prioritizing findings for run {RunId}", job.JobId);
 
         var aggregationPrompt = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(
             job.PipelineConfiguration.MaxRefactoringProposals,
@@ -494,7 +545,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
         async Task<ConsolidationJobResult?> RunAggregationAsync()
         {
-            var (_, aggregationFailure) = await RunWithTracingAsync("RefactoringDetection.Phase2.Aggregation", job.JobId, async _ =>
+            var (_, aggregationFailure) = await RunWithTracingAsync("RefactoringDetection.Phase2b.Aggregation", job.JobId, async _ =>
             {
                 return await ExecuteAgentAndCheckAsync(
                     agentProvider,
@@ -503,7 +554,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                         Prompt = aggregationPrompt,
                         WorkspacePath = workspacePath,
                         Timeout = job.PipelineConfiguration.AgentTimeout,
-                        EffortOverride = AgentEffortLevel.High  // Phase 2 ranks/QA-filters; max exhausts thinking budget (issue #3XXX)
+                        EffortOverride = AgentEffortLevel.High
                     },
                     job.JobId,
                     ct,

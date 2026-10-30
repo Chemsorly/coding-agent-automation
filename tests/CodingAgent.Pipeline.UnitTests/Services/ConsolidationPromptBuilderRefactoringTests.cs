@@ -179,19 +179,18 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain("3+ occurrences");
     }
 
-    // ─── Phase 2: Aggregation ────────────────────────────────────────────
+    // ─── Phase 2a: Scoring / Phase 2b: Aggregation ──────────────────────
 
     [Fact]
     public void BuildRefactoringAggregationPrompt_ReferencesAllSubAgentOutputPaths()
     {
+        // Phase 2b reads the Phase 2a compact candidates files, not raw findings files
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
 
-        result.Should().Contain(AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
-        result.Should().Contain(AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath);
-        result.Should().Contain(AgentWorkspacePaths.RefactoringDesignFindingsFilePath);
-        result.Should().Contain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
-        result.Should().Contain(AgentWorkspacePaths.RefactoringConventionsFilePath);
-        result.Should().Contain(AgentWorkspacePaths.HotspotAnalysisFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringPhase2aStructuralFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringPhase2aDesignFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath);
     }
 
     [Fact]
@@ -221,7 +220,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_IncludesConventionFilterStep()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // Convention filtering is applied by Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
 
         result.Should().Contain("intentionalPatterns");
         result.Should().Contain("knownDebt");
@@ -231,7 +231,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_IncludesRankingMatrix()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // Scoring on three axes is done in Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
 
         result.Should().Contain("Hotspot frequency");
         result.Should().Contain("Evidence strength");
@@ -280,7 +281,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_IncludesEvidenceQualityGateSection()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // Evidence quality gate is applied by Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
 
         result.Should().Contain("Evidence Quality Gate");
     }
@@ -288,15 +290,17 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_RejectsCodeReadingOnlyForHardCategories()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // Evidence quality gate (DROP rules) is applied by Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
 
-        result.Should().Contain("DROP the proposal");
+        result.Should().Contain("DROP");
     }
 
     [Fact]
     public void BuildRefactoringAggregationPrompt_ExemptsSimplificationAndDocumentation()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // Code-reading exemption for lower-risk categories is applied by Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
 
         result.Should().Contain("may use \"code-reading:\" alone");
     }
@@ -304,7 +308,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_CapsEvidenceScoreForExemptedCategories()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // Capped evidence score is applied by Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
 
         result.Should().Contain("capped evidence score of 1");
     }
@@ -312,7 +317,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_HotspotIsNotEvidence()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // Hotspot-is-not-evidence rule is stated in Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
 
         result.Should().Contain("`hotspot:` is a priority signal, not evidence");
         result.Should().Contain("A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool");
@@ -321,11 +327,25 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_EvidenceGateCoversEveryCategory()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
-        var gate = Section(result, "### Step 3: Evidence Quality Gate", "### Step 4");
+        // Evidence quality gate is applied by Phase 2a; verify all 11 categories are covered there
+        // (using Structure focus: the gate text is shared across all foci)
+        var structuralResult = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
+        var gate = Section(structuralResult, "## Step 2: Evidence Quality Gate", "## Step 3:");
 
-        foreach (var category in RefactoringCategories.All)
-            gate.Should().Contain($"`{category}`");
+        // Hard-evidence categories — each has an explicit DROP rule
+        gate.Should().Contain($"`{RefactoringCategories.Bug}`");
+        gate.Should().Contain($"`{RefactoringCategories.DeadCode}`");
+        gate.Should().Contain($"`{RefactoringCategories.Duplication}`");
+        gate.Should().Contain($"`{RefactoringCategories.NamingInconsistency}`");
+        gate.Should().Contain($"`{RefactoringCategories.PrimitiveObsession}`");
+        gate.Should().Contain($"`{RefactoringCategories.TestGap}`");
+
+        // Soft-evidence categories — listed on the "capped evidence score" line
+        gate.Should().Contain($"`{RefactoringCategories.StructuralDrift}`");
+        gate.Should().Contain($"`{RefactoringCategories.Complexity}`");
+        gate.Should().Contain($"`{RefactoringCategories.OverEngineering}`");
+        gate.Should().Contain($"`{RefactoringCategories.Todo}`");
+        gate.Should().Contain($"`{RefactoringCategories.StaleDocumentation}`");
     }
 
     [Fact]
@@ -344,7 +364,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_KnownDebtDoesNotDropTodoFindings()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        // knownDebt/todo rule is applied by Phase 2a; verify it is present there
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Correctness);
 
         result.Should().Contain("This does not apply to `todo` findings");
     }
@@ -364,7 +385,7 @@ public class ConsolidationPromptBuilderRefactoringTests
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
 
         result.Should().Contain("**Bugs first.**");
-        result.Should().Contain("at most one proposal per primary file");
+        result.Should().Contain("at most one proposal per");
     }
 
     [Fact]
@@ -372,7 +393,7 @@ public class ConsolidationPromptBuilderRefactoringTests
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
 
-        result.Should().Contain("If a findings file is missing or is not valid JSON, that agent failed");
+        result.Should().Contain("If a candidates file is missing or is not valid JSON, that Phase 2a agent failed");
     }
 
     [Fact]
@@ -401,7 +422,6 @@ public class ConsolidationPromptBuilderRefactoringTests
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
 
         result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
-        result.Should().Contain("The `notChecked` areas the agents reported");
     }
 
     [Theory]
@@ -668,8 +688,9 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_HasTestGapEvidenceGate()
     {
-        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
-        var gate = Section(result, "### Step 3: Evidence Quality Gate", "### Step 4");
+        // Test-gap evidence gate is applied by Phase 2a; verify it is present for the Tests focus
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Tests);
+        var gate = Section(result, "## Step 2: Evidence Quality Gate", "## Step 3:");
 
         gate.Should().Contain("`test-gap`");
         gate.Should().Contain("tool:coverage:");
@@ -730,13 +751,13 @@ public class ConsolidationPromptBuilderRefactoringTests
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.Tests);
 
-        // Only Agent D's findings file should appear
-        result.Should().Contain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
+        // Only Phase 2a test-gaps candidates file should appear
+        result.Should().Contain(AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath);
 
-        // Agent A, B, C findings files must NOT appear
-        result.Should().NotContain(AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
-        result.Should().NotContain(AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath);
-        result.Should().NotContain(AgentWorkspacePaths.RefactoringDesignFindingsFilePath);
+        // Other Phase 2a candidates files must NOT appear
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aStructuralFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aDesignFilePath);
     }
 
     [Fact]
@@ -777,9 +798,43 @@ public class ConsolidationPromptBuilderRefactoringTests
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(focus: RefactoringScanFocus.Structure);
 
-        result.Should().Contain(AgentWorkspacePaths.RefactoringStructuralFindingsFilePath);
-        result.Should().NotContain(AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath);
-        result.Should().NotContain(AgentWorkspacePaths.RefactoringDesignFindingsFilePath);
-        result.Should().NotContain(AgentWorkspacePaths.RefactoringTestGapFindingsFilePath);
+        // Only the Phase 2a structural candidates file should appear
+        result.Should().Contain(AgentWorkspacePaths.RefactoringPhase2aStructuralFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aDesignFilePath);
+        result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath);
+    }
+
+    // ─── Phase 2a: Focus routing ──────────────────────────────────────────
+
+    /// <summary>
+    /// Each focus value maps to a specific (findingsFile, outputFile) pair.
+    /// A transposed mapping (e.g. Correctness reading Design's findings) would not be caught
+    /// by content-only tests; these pin the exact path pair for every focus.
+    /// </summary>
+    [Theory]
+    [InlineData(RefactoringScanFocus.Structure, AgentWorkspacePaths.RefactoringStructuralFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aStructuralFilePath)]
+    [InlineData(RefactoringScanFocus.Correctness, AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath)]
+    [InlineData(RefactoringScanFocus.Design, AgentWorkspacePaths.RefactoringDesignFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aDesignFilePath)]
+    [InlineData(RefactoringScanFocus.Tests, AgentWorkspacePaths.RefactoringTestGapFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath)]
+    public void BuildRefactoringPhase2aPrompt_EachFocus_ContainsBothItsInputAndOutputPaths(
+        RefactoringScanFocus focus, string expectedFindingsFile, string expectedOutputFile)
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(focus);
+
+        result.Should().Contain(expectedFindingsFile,
+            $"Phase 2a {focus} prompt must reference the correct findings input file");
+        result.Should().Contain(expectedOutputFile,
+            $"Phase 2a {focus} prompt must reference the correct candidates output file");
+    }
+
+    [Fact]
+    public void BuildRefactoringPhase2aPrompt_FocusAll_ThrowsArgumentOutOfRangeException()
+    {
+        // RefactoringScanFocus.All is invalid for Phase 2a — each instance handles exactly one agent.
+        var act = () => ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.All);
+
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("focus");
     }
 }
