@@ -177,7 +177,9 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
             healthState,
             AlwaysFailConnectionString,
             logger,
-            checkInterval: TimeSpan.FromMilliseconds(50));
+            checkInterval: TimeSpan.FromMilliseconds(50),
+            startupDelay: TimeSpan.Zero,
+            probeOverride: _ => Task.FromException(new Exception("Simulated DB probe failure")));
 
         // Overall guard against indefinite hang.
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
