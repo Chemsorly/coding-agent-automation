@@ -123,7 +123,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
             // 2. Write review input (spec 054, Task 7A.3)
             var reviewInputWriter = new BrainReviewInputWriter(_brainUpdateService, Logger);
-            await reviewInputWriter.WriteAsync(workspacePath, job.BrainGroup, job, ct);
+            await reviewInputWriter.WriteAsync(workspacePath, job.BrainGroup, ct);
 
             // 3. Build prompt
             TransitionTo(PipelineStep.ConsolidatingKnowledge);
