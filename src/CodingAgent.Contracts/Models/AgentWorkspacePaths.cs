@@ -144,7 +144,7 @@ public static class AgentWorkspacePaths
     /// <summary>
     /// The file path (relative to workspace) where Phase 2a test-gaps scoring agent writes its compact candidates.
     /// </summary>
-    public const string RefactoringPhase2aTestGapsFilePath = ".agent/refactoring-phase2a-test_gaps.json";
+    public const string RefactoringPhase2aTestGapsFilePath = ".agent/refactoring-phase2a-test-gaps.json";
 
     /// <summary>
     /// The file path (relative to workspace) where the refactoring aggregation step writes its analysis log

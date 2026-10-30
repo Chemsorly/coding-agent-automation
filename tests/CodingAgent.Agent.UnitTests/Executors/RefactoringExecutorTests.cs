@@ -255,6 +255,40 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_Phase2aRequest_HasHighEffortOverride()
+    {
+        // Phase 2a applies evidence quality gates and scoring — max thinking budget required.
+        // Also verifies that Phase 2a agent calls carry the Phase 2a scoring prompt (not another phase's prompt).
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutReview();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
+            .Returns(Task.CompletedTask);
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        AgentRequest? capturedPhase2aRequest = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains(Phase2aScoringPromptMarker)),
+                It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPhase2aRequest ??= req;
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Scoring done."] });
+
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        capturedPhase2aRequest.Should().NotBeNull("Phase 2a scoring agents must be called");
+        capturedPhase2aRequest!.EffortOverride.Should().Be(AgentEffortLevel.High,
+            "Phase 2a applies evidence quality gates; max effort is required");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_AggregationExitsNonZero_DoesNotRetry()
     {
         var executor = CreateExecutor();
@@ -3318,6 +3352,100 @@ public class RefactoringExecutorTests : IDisposable
         // Settings from the job must be present on the outcome
         outcome.MaxIssues.Should().Be(job.PipelineConfiguration.MaxRefactoringProposals);
         outcome.HotspotLookbackDays.Should().Be((int)job.PipelineConfiguration.HotspotAnalysisLookback.TotalDays);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllPhase2aAgentsFail_ReturnsFailureResult()
+    {
+        // Arrange: Phase 0 succeeds; Phase 1 × 4 succeed; all 4 Phase 2a agents fail; Phase 2b is never reached.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Phase 0 (call 1): success; Phase 1 × 4 (calls 2–5): success; Phase 2a × 4 (calls 6–9): all fail.
+        // Phase 2b is never dispatched — the all-fail guard aborts at call 9.
+        _mockAgentProvider
+            .SetupSequence(x => x.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 0
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 2a (fail)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 2a (fail)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 2a (fail)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] });  // Phase 2a (fail)
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse("all Phase 2a scoring agents failed");
+        result.ErrorMessage.Should().Contain("All Phase 2a scoring agents failed");
+        result.ScanOutcome.Should().NotBeNull("ScanOutcome must be set on the phased-failure early-exit path");
+
+        // Phase 2b (call 10) was never dispatched — total is 9 calls
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(9));
+    }
+
+    /// <summary>
+    /// When one Phase 2a scoring agent fails, a Warning is logged and Phase 2b still runs.
+    /// Covers the <c>if (phase2aFailures.Count &gt; 0)</c> partial-failure branch.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_OnePhase2aAgentFails_WarningLoggedAndPhase2bReached()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
+            .Returns(Task.CompletedTask);
+
+        // Phase 0 (call 1) + Phase 1 × 4 (calls 2–5) + Phase 2a × 4 (calls 6–9, one fails) + Phase 2b (call 10).
+        _mockAgentProvider
+            .SetupSequence(x => x.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 0
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 2a (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] })   // Phase 2a (fail)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 2a (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 2a (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });  // Phase 2b
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null,
+            _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — Warning noting partial Phase 2a failure was logged.
+        // Production call: Logger.Warning("{FailCount}/{TotalCount} Phase 2a scoring agents failed in run {RunId}, ...",
+        //     phase2aFailures.Count, phase2aResults.Length, job.JobId)
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("Phase 2a scoring agents failed")),
+                It.IsAny<int>(),       // FailCount
+                It.IsAny<int>(),       // TotalCount
+                It.IsAny<string>()),   // jobId
+            Times.Once);
+
+        // Phase 2b was reached: all 10 calls dispatched
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(10));
     }
 
     [Fact]

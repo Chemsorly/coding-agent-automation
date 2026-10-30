@@ -209,6 +209,37 @@ public class RefactoringExecutorReviewTests : IDisposable
     }
 
     /// <summary>
+    /// Phase 2a agent calls receive prompts containing the Phase 2a scoring header,
+    /// not Phase 1 or Phase 2b prompts. Uses <see cref="Phase2aScoringPromptMarker"/> to distinguish them.
+    /// </summary>
+    [Fact]
+    public async Task Phase2aAgents_ReceivePhase2aScoringPrompt()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob(reviewEnabled: false);
+        SetupCloneWritesProposals(ValidProposalsJson);
+        SetupIssueCreation();
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — exactly 4 Phase 2a agent calls (one per focus: Structure, Correctness, Design, Tests)
+        // each carrying the Phase 2a prompt header, not a Phase 1 or Phase 2b prompt.
+        _mockAgentProvider.Verify(
+            x => x.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains(Phase2aScoringPromptMarker)),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()),
+            Times.Exactly(4));
+    }
+
+    /// <summary>
     /// When refinement runs, the executor re-reads the proposals file and uses the refined version.
     /// </summary>
     [Fact]

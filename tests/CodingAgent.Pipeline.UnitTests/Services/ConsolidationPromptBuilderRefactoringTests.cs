@@ -327,18 +327,25 @@ public class ConsolidationPromptBuilderRefactoringTests
     [Fact]
     public void BuildRefactoringAggregationPrompt_EvidenceGateCoversEveryCategory()
     {
-        // Evidence quality gate is applied by Phase 2a; verify all categories are covered there
-        // (using Structure focus: has all the gate categories from the full set via RefactoringCategories.All coverage)
+        // Evidence quality gate is applied by Phase 2a; verify all 11 categories are covered there
+        // (using Structure focus: the gate text is shared across all foci)
         var structuralResult = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure);
         var gate = Section(structuralResult, "## Step 2: Evidence Quality Gate", "## Step 3:");
 
-        // Gate must cover every category that has hard evidence rules
+        // Hard-evidence categories — each has an explicit DROP rule
         gate.Should().Contain($"`{RefactoringCategories.Bug}`");
         gate.Should().Contain($"`{RefactoringCategories.DeadCode}`");
         gate.Should().Contain($"`{RefactoringCategories.Duplication}`");
         gate.Should().Contain($"`{RefactoringCategories.NamingInconsistency}`");
         gate.Should().Contain($"`{RefactoringCategories.PrimitiveObsession}`");
         gate.Should().Contain($"`{RefactoringCategories.TestGap}`");
+
+        // Soft-evidence categories — listed on the "capped evidence score" line
+        gate.Should().Contain($"`{RefactoringCategories.StructuralDrift}`");
+        gate.Should().Contain($"`{RefactoringCategories.Complexity}`");
+        gate.Should().Contain($"`{RefactoringCategories.OverEngineering}`");
+        gate.Should().Contain($"`{RefactoringCategories.Todo}`");
+        gate.Should().Contain($"`{RefactoringCategories.StaleDocumentation}`");
     }
 
     [Fact]
@@ -796,5 +803,38 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath);
         result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aDesignFilePath);
         result.Should().NotContain(AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath);
+    }
+
+    // ─── Phase 2a: Focus routing ──────────────────────────────────────────
+
+    /// <summary>
+    /// Each focus value maps to a specific (findingsFile, outputFile) pair.
+    /// A transposed mapping (e.g. Correctness reading Design's findings) would not be caught
+    /// by content-only tests; these pin the exact path pair for every focus.
+    /// </summary>
+    [Theory]
+    [InlineData(RefactoringScanFocus.Structure, AgentWorkspacePaths.RefactoringStructuralFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aStructuralFilePath)]
+    [InlineData(RefactoringScanFocus.Correctness, AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aCorrectnessFilePath)]
+    [InlineData(RefactoringScanFocus.Design, AgentWorkspacePaths.RefactoringDesignFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aDesignFilePath)]
+    [InlineData(RefactoringScanFocus.Tests, AgentWorkspacePaths.RefactoringTestGapFindingsFilePath, AgentWorkspacePaths.RefactoringPhase2aTestGapsFilePath)]
+    public void BuildRefactoringPhase2aPrompt_EachFocus_ContainsBothItsInputAndOutputPaths(
+        RefactoringScanFocus focus, string expectedFindingsFile, string expectedOutputFile)
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(focus);
+
+        result.Should().Contain(expectedFindingsFile,
+            $"Phase 2a {focus} prompt must reference the correct findings input file");
+        result.Should().Contain(expectedOutputFile,
+            $"Phase 2a {focus} prompt must reference the correct candidates output file");
+    }
+
+    [Fact]
+    public void BuildRefactoringPhase2aPrompt_FocusAll_ThrowsArgumentOutOfRangeException()
+    {
+        // RefactoringScanFocus.All is invalid for Phase 2a — each instance handles exactly one agent.
+        var act = () => ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.All);
+
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("focus");
     }
 }
