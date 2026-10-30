@@ -207,7 +207,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
         // _activeProcess field. Resume calls must use the shared orchestrator to maintain
         // session continuity.
         var isIsolatedCall = !request.UseResume && request.ResumeSessionId is null;
-        var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator() : _orchestrator;
+        var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator(request.EffortOverride) : _orchestrator;
         _activeOrchestrators[orchestrator] = 0;
 
         try
@@ -322,9 +322,10 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// Creates a lightweight orchestrator instance with its own process slot.
     /// Used for isolated (non-resume) calls to enable parallel execution.
     /// </summary>
-    private IKiroCliOrchestrator CreateEphemeralOrchestrator()
+    private IKiroCliOrchestrator CreateEphemeralOrchestrator(AgentEffortLevel? effortOverride = null)
     {
-        var config = CreateRunConfiguration(_executablePath, _model, _agentName, _effort);
+        var effectiveEffort = effortOverride ?? _effort;
+        var config = CreateRunConfiguration(_executablePath, _model, _agentName, effectiveEffort);
         _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
         return CreateEphemeralOrchestratorWith(config);
     }

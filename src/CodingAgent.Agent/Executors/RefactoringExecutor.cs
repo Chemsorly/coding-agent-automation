@@ -502,7 +502,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                     {
                         Prompt = aggregationPrompt,
                         WorkspacePath = workspacePath,
-                        Timeout = job.PipelineConfiguration.AgentTimeout
+                        Timeout = job.PipelineConfiguration.AgentTimeout,
+                        EffortOverride = AgentEffortLevel.High  // Phase 2 ranks/QA-filters; max exhausts thinking budget (issue #3XXX)
                     },
                     job.JobId,
                     ct,

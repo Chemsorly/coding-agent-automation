@@ -422,6 +422,51 @@ public class KiroCliAgentProviderTests
             .AgentName.Should().Be(expected);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WithEffortOverride_EphemeralOrchestratorUsesOverrideEffort()
+    {
+        // Provider is configured with Max; Phase 2 request carries EffortOverride = High.
+        // The ephemeral orchestrator must be constructed with High, not Max.
+        KiroCliLib.Configuration.Configuration? capturedConfig = null;
+        var ephemeralMock = new Mock<IKiroCliOrchestrator>();
+        ephemeralMock
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(0);
+
+        var providerWithMax = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, null,
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.Max, _mockProcessStarter.Object)
+        {
+            CreateEphemeralOrchestratorWith = config =>
+            {
+                capturedConfig = config;
+                return ephemeralMock.Object;
+            }
+        };
+
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"kiro-effort-override-{Guid.NewGuid():N}");
+        try
+        {
+            var request = new AgentRequest
+            {
+                Prompt = "aggregate",
+                WorkspacePath = tempWorkspace,
+                EffortOverride = AgentEffortLevel.High
+            };
+            await providerWithMax.ExecuteAsync(request, CancellationToken.None);
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, recursive: true); } catch { }
+        }
+
+        capturedConfig.Should().NotBeNull("ephemeral orchestrator must be created for an isolated call");
+        capturedConfig!.Effort.Should().Be("high",
+            "EffortOverride = High must override the provider's Max effort for this call");
+    }
+
     // --- ExecuteAsync: configuration the CLI refuses ---
 
     [Theory]

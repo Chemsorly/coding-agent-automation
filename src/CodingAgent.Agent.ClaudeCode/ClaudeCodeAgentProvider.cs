@@ -367,7 +367,8 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     {
         var startInfo = CreateStartInfo(workspacePath);
         var mcpConfigPath = File.Exists(_mcpConfigPath) ? _mcpConfigPath : null;
-        foreach (var arg in BuildArguments(_model, _effort, resumeSessionId, mcpConfigPath))
+        var effectiveEffort = request.EffortOverride ?? _effort;
+        foreach (var arg in BuildArguments(_model, effectiveEffort, resumeSessionId, mcpConfigPath))
             startInfo.ArgumentList.Add(arg);
 
         if (request.EnvironmentVariables is { Count: > 0 } secrets)
