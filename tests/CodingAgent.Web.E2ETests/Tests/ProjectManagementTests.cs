@@ -127,17 +127,31 @@ public sealed class ProjectManagementTests : E2ETestBase
             TemplateIds = new List<string>()
         }, CancellationToken.None);
 
+        // Use a const so the JS wait condition and the assertion below always refer to the same
+        // string. If the value changes, both sides break together rather than the wait silently
+        // timing out while the assertion reports a different error.
+        const string editedDescription = "Edited by E2E";
+
         var detailPage = new ProjectDetailPage(Page, BaseUrl);
         await detailPage.NavigateAsync(EditProjectId);
-        await detailPage.FillDescriptionAsync("Edited by E2E");
+        await detailPage.FillDescriptionAsync(editedDescription);
         await detailPage.SaveOverviewAsync();
 
         // Reload the same page
         await detailPage.NavigateAsync(EditProjectId);
 
+        // Wait until the async LoadDataAsync has populated the description with the saved value.
+        // NavigateAsync's fixed 500ms wait is insufficient on slow CI runners where the
+        // Blazor Server round-trip takes longer. Polling the DOM value is deterministic: the
+        // assertion fires only when the actual persisted value is visible to the user.
+        await Page.WaitForFunctionAsync(
+            $"() => document.querySelector('[data-testid=\"project-description-input\"]')?.value === '{editedDescription}'",
+            null,
+            new() { Timeout = 5_000 });
+
         // The persisted value must appear in the description input
         var value = await Page.Locator("[data-testid='project-description-input']").InputValueAsync();
-        Assert.Equal("Edited by E2E", value);
+        Assert.Equal(editedDescription, value);
     }
 
     // ── Test 3 ────────────────────────────────────────────────────────────
@@ -317,6 +331,11 @@ public sealed class ProjectManagementTests : E2ETestBase
     {
         var managePage = new ProjectsManagePage(Page, BaseUrl);
         await managePage.NavigateAsync();
+        // NavigateAsync waits for the Add button but the project list renders asynchronously.
+        // Without this wait, the Default project row may not exist yet and deleteBtn.GetAttributeAsync
+        // returns null — causing "Assert.Equal() Failure: Values differ".
+        await managePage.Row(WellKnownIds.DefaultProjectId).WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         // Delete button for Default is disabled and has the correct title
         var deleteBtn = managePage.DeleteButton(WellKnownIds.DefaultProjectId);
@@ -358,10 +377,24 @@ public sealed class ProjectManagementTests : E2ETestBase
         }, CancellationToken.None);
         await SeedTemplateAsync(EpicProjectId, "e2e-epic-tpl", "E2E Epic Template");
 
+        // Seed the issue provider used as the epic issue provider explicitly — this test must
+        // not rely on a provider created by another test that may run in a different order.
+        // Using "issue-e2e" (the previous value) was fragile: that ID did not belong to any
+        // provider seeded in this test and the select option was only available when a specific
+        // other test had run before this one in the same shard.
+        const string epicProviderSeedId = "issue-epic-e2e-seed-7";
+        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = epicProviderSeedId,
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "E2E Epic Issue Provider"
+        }, CancellationToken.None);
+
         // Open the project Overview and set the epic issue provider
         var detailPage = new ProjectDetailPage(Page, BaseUrl);
         await detailPage.NavigateAsync(EpicProjectId);
-        await detailPage.SelectEpicIssueProviderAsync("issue-e2e");
+        await detailPage.SelectEpicIssueProviderAsync(epicProviderSeedId);
         await detailPage.SaveOverviewAsync();
 
         // Pipelines page must show the epic indicator in the project group header

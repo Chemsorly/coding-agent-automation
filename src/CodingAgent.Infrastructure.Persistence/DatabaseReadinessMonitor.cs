@@ -15,29 +15,35 @@ public sealed class DatabaseReadinessMonitor : BackgroundService
     private readonly string _healthCheckConnectionString;
     private readonly Serilog.ILogger _logger;
     private readonly TimeSpan _checkInterval;
+    private readonly TimeSpan _startupDelay;
+    private readonly Func<CancellationToken, Task> _probeFunc;
 
     public DatabaseReadinessMonitor(
         DatabaseHealthState healthState,
         string connectionString,
         Serilog.ILogger logger,
-        TimeSpan? checkInterval = null)
+        TimeSpan? checkInterval = null,
+        TimeSpan? startupDelay = null,
+        Func<CancellationToken, Task>? probeOverride = null)
     {
         _healthState = healthState;
         _healthCheckConnectionString = BuildHealthCheckConnectionString(connectionString);
         _logger = logger;
         _checkInterval = checkInterval ?? TimeSpan.FromSeconds(5);
+        _startupDelay = startupDelay ?? TimeSpan.FromSeconds(2);
+        _probeFunc = probeOverride ?? ProbeDatabaseAsync;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Brief startup delay so the main DB pool is established first
-        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+        await Task.Delay(_startupDelay, stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await ProbeDatabaseAsync(stoppingToken);
+                await _probeFunc(stoppingToken);
 
                 if (!_healthState.IsDatabaseHealthy)
                 {

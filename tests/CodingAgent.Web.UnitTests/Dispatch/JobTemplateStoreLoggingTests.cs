@@ -126,12 +126,23 @@ public class JobTemplateStoreLoggingTests
         var store = JobTemplateStore.LoadFromConfiguration(config, level, msg);
 
         store.GetAllTemplates().Should().BeEmpty();
-        // Filter by both level and the Path property so that unrelated Warning events emitted by
-        // concurrently-running test classes (which share the global Log.Logger) don't cause a
-        // false ContainSingle failure.
-        capture.Events.Should().ContainSingle(e => e.Level == level && e.Properties.ContainsKey("Path"));
-        var ev = capture.Events.Single(e => e.Level == level && e.Properties.ContainsKey("Path"));
-        ev.Properties["Path"].ToString().Should().Contain("job-templates.yaml");
+        // Filter by level AND the specific path value so that Warning events emitted by other
+        // parallel test classes that also write to the global Log.Logger (e.g. with a {Path}
+        // property for a different path) cannot cause a false ContainSingle failure.
+        // The path "/nonexistent/path/job-templates.yaml" is unique to this test call.
+        capture.Events.Should().ContainSingle(
+            e => e.Level == level
+                 && e.Properties.ContainsKey("Path")
+                 && e.Properties["Path"].ToString().Contains("nonexistent/path/job-templates.yaml"),
+            $"exactly one {level} event with the expected path must be emitted");
+        var ev = capture.Events.Single(
+            e => e.Level == level
+                 && e.Properties.ContainsKey("Path")
+                 && e.Properties["Path"].ToString().Contains("nonexistent/path/job-templates.yaml"));
+        // Verify the exact Serilog-rendered value; a Serilog ScalarValue wraps strings in double
+        // quotes (e.g. "\"/nonexistent/path/…\""). This goes beyond the Contains predicate above
+        // and would catch a value-type or formatting regression that the filter cannot catch.
+        ev.Properties["Path"].ToString().Should().Be("\"/nonexistent/path/job-templates.yaml\"");
     }
 
     [Fact]
