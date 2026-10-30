@@ -88,7 +88,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -119,7 +119,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(WorkItemStatus.Running);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -151,7 +151,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(WorkItemStatus.Dispatched);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -178,7 +178,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ThrowsAsync(new HttpRequestException("network error"));
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -204,7 +204,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -230,7 +230,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Dispatched);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -287,7 +287,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -314,7 +314,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -727,7 +727,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(new V1JobList { Items = [] });
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         // Verify GetActiveAsync was called with the correct timeout parameter.
         // Without this, a wrong parameter would cause the mock to return empty, PostStatusAsync
@@ -775,7 +775,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         var loop = CreateLoop();
 
         // Act — must not throw; the catch block swallows the exception
-        var act = async () => await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        var act = async () => await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
         await act.Should().NotThrowAsync(
             "PostStatusAsync exception in the orphaned-Dispatched catch block must be swallowed");
 
@@ -885,7 +885,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Error message must be the condition message (no failed pod suffix appended)
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -912,7 +912,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [orphanJob] }, CancellationToken.None);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(
             "caa-agent-orphan000000", _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
@@ -940,7 +940,7 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         var loop = CreateLoop();
         // Reconcile detects no active work item for a terminal job — should just delete it
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [staleJob] }, CancellationToken.None);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -970,8 +970,8 @@ public sealed class ReconciliationLoopTests : IDisposable
         var loop = CreateLoop();
 
         // Act: two consecutive reconciliation cycles
-        await loop.ReconcileOnceAsync(CancellationToken.None);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Assert: PostStatusAsync called exactly once across both cycles
         // TODO: ReconcileOnceAsync calls ListJobsAsync twice internally (once for the job watch loop
@@ -1003,8 +1003,8 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         var loop = CreateLoop();
 
-        await loop.ReconcileOnceAsync(CancellationToken.None);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // TODO: Same caveat as TwoConsecutiveReconcileCycles_SameCompletedJob_PostStatusCalledOnce:
         // ListJobsAsync is called twice per ReconcileOnceAsync (job watch + orphan cleanup), so the
@@ -1037,12 +1037,12 @@ public sealed class ReconciliationLoopTests : IDisposable
         var loop = CreateLoop();
 
         // First leadership term — item reconciled once
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         _workItemClient.Verify(c => c.PostStatusAsync(ItemId, It.IsAny<WorkItemStatusUpdate>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         // A second cycle in the same term must not re-post
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         _workItemClient.Verify(c => c.PostStatusAsync(ItemId, It.IsAny<WorkItemStatusUpdate>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
@@ -1050,7 +1050,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         loop.OnLeadershipAcquired();
 
         // New leadership term — same job still present, must post once more
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
@@ -1076,7 +1076,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Status must still be posted
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -1161,7 +1161,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [chatJob] }, CancellationToken.None);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -1183,7 +1183,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [chatJob, orphanJob] }, CancellationToken.None);
 
         // Only the orphan impl job should be deleted
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1241,7 +1241,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [freshJob] }, CancellationToken.None);
 
         // Must NOT be deleted — the CreationTimestamp protects it within the 600s window
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1268,7 +1268,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [stuckJob] }, CancellationToken.None);
 
         // Must be deleted — older than the retention window and has no timestamps
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1298,7 +1298,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [noTimestampJob] }, CancellationToken.None);
 
         // Must be deleted — no anchor available
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1326,7 +1326,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [recentlyCompletedJob] }, CancellationToken.None);
 
         // CompletionTime is recent — must not be deleted yet
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1354,7 +1354,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [oldCompletedJob] }, CancellationToken.None);
 
         // CompletionTime is old enough — must be deleted
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1383,7 +1383,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [staleRunningJob] }, CancellationToken.None);
 
         // StartTime is old enough and WorkItem is gone — must be deleted (PVC release)
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1410,7 +1410,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [modelFetchJob] }, CancellationToken.None);
 
         // Fresh model-fetch job — must not be deleted
         _k8sClient.Verify(c => c.DeleteJobAsync(
@@ -1449,8 +1449,8 @@ public sealed class ReconciliationLoopTests : IDisposable
             ]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None); // sweep 1 — protected by CreationTimestamp
-        await loop.CleanupOrphansAsync(CancellationToken.None); // sweep 2 — protected by active set
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [freshJob] }, CancellationToken.None); // sweep 1 — protected by CreationTimestamp
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [freshJob] }, CancellationToken.None); // sweep 2 — protected by active set
         // TODO: the second sweep is also protected by the 600s CreationTimestamp window (job is only
         // ~5s old), so this test does not isolate the active-set protection path. To truly exercise
         // sweep-2-via-active-set, a variant is needed where the job's CreationTimestamp is old enough
@@ -1491,7 +1491,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         // Must use "Timeout" (nameof(FailureReason.Timeout)), NOT "DispatchTimeout"
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -1520,7 +1520,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync([]); // API-side threshold not exceeded — item not returned
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -1717,7 +1717,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(new V1JobList { Items = [MakeJob(apiJobName, id, active: true)] });
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [MakeJob(apiJobName, id, active: true)] }, CancellationToken.None);
 
         // Must NOT post Failed — the job was found via label, item is NOT orphaned
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -1753,7 +1753,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(new V1JobList { Items = [] });
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         // Item is genuinely orphaned — must be marked Failed/Timeout
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -1895,7 +1895,7 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         _capturedActivities.Clear();
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.JobFailed");
         span.Should().NotBeNull("Reconcile.JobFailed must be emitted when a K8s Job fails");
@@ -1922,7 +1922,7 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         _capturedActivities.Clear();
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _capturedActivities
             .Where(a => a.OperationName == "Reconcile.JobFailed")
@@ -2031,7 +2031,7 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         _capturedActivities.Clear();
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.DispatchedTimeout");
         span.Should().NotBeNull("Reconcile.DispatchedTimeout must be emitted when a Dispatched item has no live K8s Job");
@@ -2077,7 +2077,7 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         _capturedActivities.Clear();
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [orphanJob] }, CancellationToken.None);
 
         var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.OrphanCleanup");
         span.Should().NotBeNull("Reconcile.OrphanCleanup must be emitted when an orphaned job is deleted");
@@ -2101,7 +2101,7 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         _capturedActivities.Clear();
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         _capturedActivities
             .Where(a => a.OperationName == "Reconcile.OrphanCleanup")
@@ -2150,7 +2150,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .Returns(Task.CompletedTask);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [orphanJob] }, CancellationToken.None);
 
         // TODO [WARNING]: This assertion relies on the class-level ActivityListener being active and
         // PipelineTelemetry.SourceName matching correctly. If StartActivity returns null (e.g. because
@@ -2190,7 +2190,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // TODO [WARNING]: If the PostStatusAsync mock setup were accidentally omitted or mis-matched,
         // spanWasActiveAtCompletion would remain false and the test would fail with a misleading message
@@ -2252,7 +2252,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
@@ -2313,7 +2313,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // PostStatusAsync must still be called without PodLogTail
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -2342,7 +2342,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
-        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // ReadPodLogTailAsync must never be called for Timeout path
         _k8sClient.Verify(c => c.ReadPodLogTailAsync(
@@ -2379,7 +2379,7 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // Should not throw — exception is caught and reconciliation is skipped
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2400,7 +2400,7 @@ public sealed class ReconciliationLoopErrorTests
 
         // Reconciliation must not propagate the exception from PostStatusAsync
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         // The DB error is swallowed — verify the status call was attempted (once, for the succeeded job)
         // but no further status calls were made (the item is not cached, so the next cycle will retry).
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -2430,10 +2430,10 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // First cycle — PostStatusAsync throws
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Second cycle — item was NOT cached on failure, so the post must be retried
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
@@ -2464,7 +2464,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(new V1JobList { Items = [job] });
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2492,7 +2492,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(new V1JobList { Items = [job] });
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2526,7 +2526,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2563,7 +2563,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2609,7 +2609,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
@@ -2640,7 +2640,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(new V1JobList { Items = [job] });
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2745,20 +2745,33 @@ public sealed class ReconciliationLoopErrorTests
             .ThrowsAsync(new Exception("DB unavailable"));
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    /// <summary>
+    /// Issue #4020: the ListJobsAsync call was removed from <c>EnforceDispatchedTimeoutAsync</c>
+    /// and moved to <c>ReconciliationService.OnPollCycleAsync</c> via <c>FetchManagedJobsAsync</c>.
+    /// When a Dispatched item's job IS present in the caller-provided snapshot, the item must NOT
+    /// be timed out — even if it has exceeded the connect timeout. The job existence check now uses
+    /// the pre-fetched list passed as a parameter rather than an independent K8s API call.
+    /// </summary>
     [Fact]
     public async Task EnforceDispatchedTimeout_WhenListJobsThrows_DoesNotPropagate()
     {
+        // Renamed from "WhenListJobsThrows" because ListJobsAsync is no longer called by this method.
+        // The tested invariant: when a Dispatched item's job is present in the provided V1JobList,
+        // it must not be timed out regardless of how old it is.
         var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+
         var dispatchedItem = new ActiveWorkItemDto
         {
             Id = id,
             Status = WorkItemStatus.Dispatched,
+            K8sJobName = jobName,
             DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
             IssueIdentifier = "owner/repo#1"
@@ -2768,11 +2781,11 @@ public sealed class ReconciliationLoopErrorTests
                 It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
-        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("k8s unavailable"));
-
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        // The job exists in the pre-fetched list → item must NOT be marked Failed
+        await loop.EnforceDispatchedTimeoutAsync(
+            new V1JobList { Items = [new V1Job { Metadata = new V1ObjectMeta { Name = jobName } }] },
+            CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2809,7 +2822,10 @@ public sealed class ReconciliationLoopErrorTests
             });
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList
+            {
+                Items = [new V1Job { Metadata = new V1ObjectMeta { Name = expectedJobName } }]
+            }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2853,7 +2869,10 @@ public sealed class ReconciliationLoopErrorTests
             });
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList
+            {
+                Items = [new V1Job { Metadata = new V1ObjectMeta { Name = apiGeneratedJobName } }]
+            }, CancellationToken.None);
 
         // Must NOT post Failed — the job exists under its stored name
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -2885,7 +2904,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(new V1JobList { Items = [] });
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         // Job is genuinely missing — should still mark Failed
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -2897,7 +2916,10 @@ public sealed class ReconciliationLoopErrorTests
     [Fact]
     public async Task EnforceDispatchedTimeout_NoDispatchedItems_NoJobListQuery()
     {
-        // If no items are Dispatched after filtering, skip the ListJobsAsync call entirely
+        // After Issue #4020, ListJobsAsync is no longer called by EnforceDispatchedTimeoutAsync —
+        // the job list is fetched once by ReconciliationService.FetchManagedJobsAsync and passed in.
+        // The invariant this test guards is: when all active items are Running (not Dispatched),
+        // the method returns early and never calls PostStatusAsync (no spurious timeout transitions).
         var id = Guid.NewGuid();
         var runningItem = new ActiveWorkItemDto
         {
@@ -2913,10 +2935,13 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync([runningItem]);
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
-        _k8sClient.Verify(c => c.ListJobsAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Running items must never be timed out by EnforceDispatchedTimeoutAsync
+        // (that is EnforceTimeoutsAsync's domain). The original Times.Never on ListJobsAsync
+        // was vacuously true after Issue #4020 — this assertion validates the observable behaviour.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── CleanupOrphansAsync error paths ──────────────────────────────────
@@ -2924,11 +2949,17 @@ public sealed class ReconciliationLoopErrorTests
     [Fact]
     public async Task CleanupOrphans_WhenListJobsThrows_DoesNotPropagate()
     {
-        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("k8s unavailable"));
+        // After Issue #4020, ListJobsAsync is no longer called by CleanupOrphansAsync —
+        // the job list is fetched once by ReconciliationService.FetchManagedJobsAsync and passed in.
+        // This test now verifies the base-case resilience: CleanupOrphansAsync with an empty
+        // job list completes without throwing and calls DeleteJobAsync zero times.
+        // The resilience of the K8s-fetch path (FetchManagedJobsAsync throws) is covered by
+        // ReconciliationServiceTests.OnPollCycle_WhenFetchManagedJobsThrows_EnforceTimeoutsStillRuns.
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2943,7 +2974,7 @@ public sealed class ReconciliationLoopErrorTests
             .ThrowsAsync(new Exception("DB unavailable"));
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2966,7 +2997,7 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // Should not throw — delete exception is swallowed
-        var act = async () => await loop.CleanupOrphansAsync(CancellationToken.None);
+        var act = async () => await loop.CleanupOrphansAsync(new V1JobList { Items = [orphanJob] }, CancellationToken.None);
         await act.Should().NotThrowAsync("delete exceptions must be swallowed per the resilience contract");
     }
 
@@ -2995,7 +3026,7 @@ public sealed class ReconciliationLoopErrorTests
             ]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(
             jobName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -3022,7 +3053,7 @@ public sealed class ReconciliationLoopErrorTests
             .Callback(() => cts.Cancel());
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(cts.Token);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job1, job2] }, cts.Token);
 
         // Only first item processed before cancellation
         _workItemClient.Verify(c => c.PostStatusAsync(id1, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -3205,7 +3236,25 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList
+            {
+                Items =
+                [
+                    new V1Job
+                    {
+                        Metadata = new V1ObjectMeta
+                        {
+                            Name = apiJobName,
+                            Labels = new Dictionary<string, string>
+                            {
+                                ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                                ["caa/work-item-id"] = id.ToString()
+                            }
+                        },
+                        Status = new V1JobStatus { Active = 1 }
+                    }
+                ]
+            }, CancellationToken.None);
 
         // Job was found via label — item must NOT be marked Failed (was the bug: it WAS marked Failed)
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -3252,7 +3301,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(true);
 
         var loop = CreateLoop();
-        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = null }, CancellationToken.None);
 
         // null Items treated as empty → no live job found → item is orphaned → must be marked Failed
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -3341,15 +3390,11 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(new V1JobList { Items = null });
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = null }, CancellationToken.None);
 
         // null Items treated as empty → no jobs to process → no status updates
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
-
-        // Confirm ListJobsAsync was actually called (guards against vacuous Times.Never pass)
-        _k8sClient.Verify(c => c.ListJobsAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -3368,15 +3413,11 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        await loop.CleanupOrphansAsync(new V1JobList { Items = null }, CancellationToken.None);
 
         // null Items treated as empty → no orphans to delete
         _k8sClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-
-        // Confirm ListJobsAsync was actually called (guards against vacuous Times.Never pass)
-        _k8sClient.Verify(c => c.ListJobsAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ─── 400-rejection caching (Issue #2673) ──────────────────────────────
@@ -3419,11 +3460,11 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // First cycle — receives 400, GetStatusAsync returns Succeeded → must cache the ID
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Second cycle — same job is still visible in the K8s list (proven by SetupSequence above),
         // but the ID is in _reconciledTerminalIds so PostStatusAsync must NOT be called again.
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // PostStatusAsync must have been called exactly once: the 400 response caused the ID
         // to be cached (terminal status confirmed), suppressing the retry on the second cycle
@@ -3469,7 +3510,7 @@ public sealed class ReconciliationLoopErrorTests
         mockLogger.Setup(l => l.ForContext<ReconciliationLoop>()).Returns(mockLogger.Object);
 
         var loop = CreateLoop(mockLogger.Object);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // The 400-catch emits Warning<Guid, WorkItemStatus?> — the two-parameter overload used
         // by the "terminal or not found" branch. Verify the correct WorkItem ID is present.
@@ -3520,9 +3561,9 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // First cycle receives 400 — must cache (null status → terminal branch)
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         // Second cycle — ID must be cached, no retry
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
@@ -3563,9 +3604,9 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // First cycle — 400 received, Pending status confirmed, ID must NOT be cached
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         // Second cycle — ID was not cached, retry fires and succeeds
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // PostStatusAsync called twice: once for the rejected 400, once for the successful retry
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -3602,8 +3643,8 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(WorkItemStatus.Dispatched);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
@@ -3642,8 +3683,8 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(WorkItemStatus.Running);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
@@ -3681,8 +3722,8 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(WorkItemStatus.Succeeded);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // PostStatusAsync called exactly once — ID was cached after terminal-status confirmed
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -3716,8 +3757,8 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync((WorkItemStatus?)null);
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
@@ -3751,8 +3792,8 @@ public sealed class ReconciliationLoopErrorTests
             .ThrowsAsync(new HttpRequestException("network error"));
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // PostStatusAsync called twice: first cycle (400 → GetStatus throws → not cached),
         // second cycle (retry succeeds)
@@ -3793,7 +3834,7 @@ public sealed class ReconciliationLoopErrorTests
         mockLogger.Setup(l => l.ForContext<ReconciliationLoop>()).Returns(mockLogger.Object);
 
         var loop = CreateLoop(mockLogger.Object);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Warning<Guid, WorkItemStatus?> is emitted for the non-caching branch with the specific ID
         mockLogger.Verify(
@@ -3835,7 +3876,7 @@ public sealed class ReconciliationLoopErrorTests
         mockLogger.Setup(l => l.ForContext<ReconciliationLoop>()).Returns(mockLogger.Object);
 
         var loop = CreateLoop(mockLogger.Object);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Warning<Guid, WorkItemStatus?> is emitted for the caching branch with the specific ID
         mockLogger.Verify(
@@ -3882,8 +3923,8 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(WorkItemStatus.Succeeded);    // #2 400-catch → terminal → cache
 
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);   // 400 → two GetStatus calls → cached
-        await loop.ReconcileOnceAsync(CancellationToken.None);   // second cycle → ID cached → skip
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);   // 400 → two GetStatus calls → cached
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);   // second cycle → ID cached → skip
 
         // PostStatusAsync once: 400 on first cycle; second cycle is skipped because ID is cached
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -3919,9 +3960,9 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // First cycle — 5xx is not cached, item must be retried next cycle
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         // Second cycle — ID was NOT cached after the 5xx, so the POST is retried and succeeds
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // PostStatusAsync called twice: once for the 5xx (not cached), once for the success
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -3944,11 +3985,14 @@ public sealed class ReconciliationLoopErrorTests
     // (Review finding: DotNetSpecialist [WARNING] and TestQualityReviewer [WARNING])
 
     /// <summary>
-    /// Issue #3236: When ListJobsAsync throws OperationCanceledException, ReconcileOnceAsync
-    /// must propagate it rather than swallowing it with the bare catch block.
+    /// <summary>
+    /// Issue #3236 / Issue #4020: <see cref="ReconciliationLoop.FetchManagedJobsAsync"/> is now the
+    /// single point where the managed-by label selector calls <c>ListJobsAsync</c>.
+    /// An OperationCanceledException from that call must propagate to the caller
+    /// (ReconciliationService.OnPollCycleAsync) so the leadership cycle can be aborted cleanly.
     /// </summary>
     [Fact]
-    public async Task ReconcileOnce_WhenListJobsThrowsOce_PropagatesOperationCanceledException()
+    public async Task FetchManagedJobsAsync_WhenListJobsThrowsOce_PropagatesOperationCanceledException()
     {
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
@@ -3956,7 +4000,7 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // OCE must propagate — must NOT be swallowed and silently skipped
-        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        var act = async () => await loop.FetchManagedJobsAsync(CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
@@ -3988,44 +4032,32 @@ public sealed class ReconciliationLoopErrorTests
 
         var loop = CreateLoop();
 
-        var act = async () => await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        var act = async () => await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     /// <summary>
-    /// Issue #3236: When ListJobsAsync throws OperationCanceledException,
-    /// EnforceDispatchedTimeoutAsync must propagate it (second catch, line 300).
-    /// The GetActiveAsync mock must return a Dispatched item so the method proceeds past
-    /// the early-return guard (if dispatched.Count == 0 return) and reaches ListJobsAsync.
+    /// Issue #3236 / Issue #4020: <see cref="ReconciliationLoop.FetchManagedJobsAsync"/> is now the
+    /// single point where the managed-by selector calls <c>ListJobsAsync</c> — previously it was also
+    /// called inside <c>EnforceDispatchedTimeoutAsync</c>. A non-OCE exception from <c>GetActiveAsync</c>
+    /// is swallowed; verify that <c>EnforceDispatchedTimeoutAsync</c> remains resilient when
+    /// <c>GetActiveAsync</c> throws a transient non-OCE exception.
     /// </summary>
     [Fact]
-    public async Task EnforceDispatchedTimeout_WhenListJobsThrowsOce_PropagatesOperationCanceledException()
+    public async Task EnforceDispatchedTimeout_WhenGetActiveThrows_DoesNotPropagateNonOce()
     {
-        // Must return at least one Dispatched item to reach the ListJobsAsync call.
-        // If the list is empty the method returns early before the second await.
-        var dispatchedItem = new ActiveWorkItemDto
-        {
-            Id = Guid.NewGuid(),
-            Status = WorkItemStatus.Dispatched,
-            // TODO: [WARNING] Using _options.ChatPodConnectTimeoutSeconds here makes the test brittle:
-            // if the fixture ever initialises ChatPodConnectTimeoutSeconds to a very large value,
-            // the AddSeconds arithmetic can overflow DateTimeOffset. Consider replacing with a hardcoded
-            // offset (e.g. AddSeconds(-3600)) that is guaranteed to exceed any reasonable timeout.
-            // (Review finding: TestQualityReviewer [WARNING])
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
-            AgentSelector = "dotnet",
-            IssueIdentifier = "owner/repo#1"
-        };
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([dispatchedItem]);
-
-        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new OperationCanceledException());
+            .ThrowsAsync(new HttpRequestException("DB unavailable"));
 
         var loop = CreateLoop();
 
-        var act = async () => await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        // Non-OCE from GetActiveAsync must be swallowed — the method must not propagate it
+        var act = async () => await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "non-OCE exceptions from GetActiveAsync must be swallowed so a DB blip does not abort the leadership cycle");
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
@@ -4058,7 +4090,7 @@ public sealed class ReconciliationLoopErrorTests
 
         var loop = CreateLoop();
 
-        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        var act = async () => await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
@@ -4092,7 +4124,7 @@ public sealed class ReconciliationLoopErrorTests
 
         var loop = CreateLoop();
 
-        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        var act = async () => await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
@@ -4130,7 +4162,7 @@ public sealed class ReconciliationLoopErrorTests
 
         var loop = CreateLoop();
 
-        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        var act = async () => await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
@@ -4670,7 +4702,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
 
         // Act
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Assert: pipeline.jobs.* must NOT be incremented (issue #2967)
         var completedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
@@ -4718,7 +4750,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
 
         // Act
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
         (failedCountAfter - failedCountBefore).Should().Be(0,
@@ -4882,7 +4914,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
 
         // Act
         var loop = CreateLoop();
-        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
 
         // Assert 1: anti-vacuity — PostStatusAsync was called once (the no-op path was reached)
         _workItemClient.Verify(c => c.PostStatusAsync(

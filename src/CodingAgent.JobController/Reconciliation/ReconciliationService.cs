@@ -1,5 +1,6 @@
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.LeaderElection;
+using k8s.Models;
 using Serilog;
 
 namespace CodingAgent.JobController.Reconciliation;
@@ -169,7 +170,28 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
     {
         _log.Debug("ReconciliationService: starting reconciliation cycle");
 
-        // Run all reconciliation tasks concurrently within the same poll cycle
+        // Fetch the managed job list once and share it across the three job-dependent tasks.
+        // This reduces K8s API calls from three identical list queries per cycle to one, and
+        // eliminates intra-cycle snapshot divergence (e.g. ReconcileOnce and CleanupOrphans
+        // seeing different states for the same job when it completes mid-cycle).
+        // EnforceTimeoutsAsync does not use the job list and always runs regardless.
+        V1JobList jobs;
+        try
+        {
+            jobs = await _loop.FetchManagedJobsAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "ReconciliationService: failed to fetch managed Job list — skipping job-dependent tasks this cycle");
+            await RunSafe(_loop.EnforceTimeoutsAsync(ct), "EnforceTimeouts", ct);
+            return;
+        }
+
+        // Run all reconciliation tasks concurrently within the same poll cycle.
         // NOTE: ReconcileOnceAsync reads and writes _reconciledTerminalIds (a plain HashSet<Guid>
         // in ReconciliationLoop) sequentially within its own iteration, so the Task.WhenAll here
         // is safe under the confirmed single-threaded invariant: only one ReconcileOnceAsync runs
@@ -177,11 +199,12 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
         // CleanupOrphansAsync) do not access that field. If ReconcileOnceAsync is ever invoked
         // concurrently with itself or with OnLeadershipAcquired, replace the HashSet with
         // ConcurrentDictionary<Guid, byte> or add a lock in ReconciliationLoop.
+        // The shared V1JobList snapshot is read-only across all three tasks — no locking needed.
         await Task.WhenAll(
-            RunSafe(_loop.ReconcileOnceAsync(ct), "ReconcileOnce", ct),
+            RunSafe(_loop.ReconcileOnceAsync(jobs, ct), "ReconcileOnce", ct),
             RunSafe(_loop.EnforceTimeoutsAsync(ct), "EnforceTimeouts", ct),
-            RunSafe(_loop.EnforceDispatchedTimeoutAsync(ct), "EnforceDispatchedTimeout", ct),
-            RunSafe(_loop.CleanupOrphansAsync(ct), "CleanupOrphans", ct));
+            RunSafe(_loop.EnforceDispatchedTimeoutAsync(jobs, ct), "EnforceDispatchedTimeout", ct),
+            RunSafe(_loop.CleanupOrphansAsync(jobs, ct), "CleanupOrphans", ct));
     }
 
     private async Task RunSafe(Task task, string name, CancellationToken ct)

@@ -156,26 +156,25 @@ public sealed class ReconciliationLoop
     }
 
     /// <summary>
-    /// Full reconciliation cycle:
-    /// 1. List all managed K8s Jobs
-    /// 2. For each completed/failed job: post status update and release PVC
+    /// Fetches the list of all K8s Jobs managed by this orchestrator.
+    /// Called once per poll cycle by <see cref="ReconciliationService"/> before passing
+    /// the shared snapshot to <see cref="ReconcileOnceAsync"/>,
+    /// <see cref="EnforceDispatchedTimeoutAsync"/>, and <see cref="CleanupOrphansAsync"/>.
     /// </summary>
-    public async Task ReconcileOnceAsync(CancellationToken ct)
-    {
-        V1JobList jobs;
-        try
-        {
-            jobs = await _k8sClient.ListJobsAsync(
-                _options.Namespace,
-                "app.kubernetes.io/managed-by=caa-orchestrator",
-                ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.Warning(ex, "Failed to list K8s Jobs; skipping reconciliation cycle");
-            return;
-        }
+    public Task<V1JobList> FetchManagedJobsAsync(CancellationToken ct) =>
+        _k8sClient.ListJobsAsync(_options.Namespace, "app.kubernetes.io/managed-by=caa-orchestrator", ct);
 
+    /// <summary>
+    /// Full reconciliation cycle:
+    /// 1. For each completed/failed job in the pre-fetched <paramref name="jobs"/> snapshot:
+    ///    post status update and release PVC.
+    /// The job list is fetched once per poll cycle by <see cref="ReconciliationService"/> and
+    /// shared across this method, <see cref="EnforceDispatchedTimeoutAsync"/>, and
+    /// <see cref="CleanupOrphansAsync"/> to avoid redundant Kubernetes API calls.
+    /// </summary>
+    public async Task ReconcileOnceAsync(V1JobList jobs, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(jobs);
         foreach (var job in jobs.Items ?? [])
         {
             if (ct.IsCancellationRequested) break;
@@ -230,9 +229,13 @@ public sealed class ReconciliationLoop
     /// <see cref="DispatchServiceOptions.ChatPodConnectTimeoutSeconds"/> as Failed
     /// when no K8s Job exists for them. This recovers items that the dispatch moved to Dispatched
     /// but whose Job was never created.
+    /// The job list is fetched once per poll cycle by <see cref="ReconciliationService"/> and
+    /// shared across this method, <see cref="ReconcileOnceAsync"/>, and
+    /// <see cref="CleanupOrphansAsync"/> to avoid redundant Kubernetes API calls.
     /// </summary>
-    public async Task EnforceDispatchedTimeoutAsync(CancellationToken ct)
+    public async Task EnforceDispatchedTimeoutAsync(V1JobList jobs, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(jobs);
         IReadOnlyList<ActiveWorkItemDto> items;
         try
         {
@@ -248,29 +251,11 @@ public sealed class ReconciliationLoop
         var dispatched = items.Where(i => i.Status == WorkItemStatus.Dispatched).ToList();
         if (dispatched.Count == 0) return;
 
-        // Build the live job list. Hoist V1JobList outside the try block so it is accessible
-        // in the foreach loop for label-based resolution when K8sJobName is null (Issue #2474).
-        V1JobList liveJobs;
-        HashSet<string> liveJobNames;
-        try
-        {
-            liveJobs = await _k8sClient.ListJobsAsync(
-                _options.Namespace,
-                "app.kubernetes.io/managed-by=caa-orchestrator",
-                ct);
-            // V1JobList.Items can be null when the K8s API omits the "items" field for an
-            // empty result set. Use (liveJobs.Items ?? []).Select(...) here to guard against a
-            // NullReferenceException on a successful API call that returns null Items. If Items is
-            // null the NRE was previously caught by the catch below, which returned early — a spurious
-            // skip on an otherwise-successful API call. (Same null-guard is applied at the liveJobs.Items
-            // dereference further below in the foreach for the label-based null-K8sJobName branch.)
-            liveJobNames = (liveJobs.Items ?? []).Select(j => j.Metadata?.Name ?? "").ToHashSet(StringComparer.Ordinal);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.Warning(ex, "Failed to list Jobs for dispatched timeout check; skipping");
-            return;
-        }
+        // Build lookup structures from the pre-fetched job list (shared snapshot from
+        // ReconciliationService.OnPollCycleAsync via FetchManagedJobsAsync).
+        // V1JobList.Items can be null when the K8s API omits the "items" field for an
+        // empty result set — guard with (jobs.Items ?? []) throughout.
+        var liveJobNames = (jobs.Items ?? []).Select(j => j.Metadata?.Name ?? "").ToHashSet(StringComparer.Ordinal);
 
         foreach (var item in dispatched)
         {
@@ -283,7 +268,7 @@ public sealed class ReconciliationLoop
             // job-controller path used "caa-agent-{first11hex}" (ForWorkItem, removed in #2322).
             //
             // When K8sJobName is null (legacy WorkItems created before the field was persisted),
-            // resolve via caa/work-item-id label from the already-fetched liveJobs list — no extra
+            // resolve via caa/work-item-id label from the pre-fetched jobs list — no extra
             // API call. JobNameFactory.ForWorkItem would produce the wrong name for API-path items
             // and was the root cause of false DispatchTimeout transitions (Issue #2474).
             bool isLive;
@@ -293,12 +278,10 @@ public sealed class ReconciliationLoop
             }
             else
             {
-                // The null-guard (liveJobs.Items ?? []).Select(...) applied above ensures
-                // liveJobNames is always a valid empty set rather than causing an NRE when
-                // Items is null. Apply the same null-guard here for consistency:
-                // (liveJobs.Items ?? []).FirstOrDefault(j => ...) covers the case where Items
-                // is null on a successful K8s API call (Items null → empty → no match → isLive=false).
-                var resolvedJob = (liveJobs.Items ?? []).FirstOrDefault(j =>
+                // Apply the same null-guard (jobs.Items ?? []) for consistency:
+                // covers the case where Items is null on a successful K8s API call
+                // (Items null → empty → no match → isLive=false).
+                var resolvedJob = (jobs.Items ?? []).FirstOrDefault(j =>
                 {
                     var labels = j.Metadata?.Labels;
                     return labels is not null
@@ -340,18 +323,17 @@ public sealed class ReconciliationLoop
     /// Orphan cleanup: deletes K8s Jobs that have no matching active WorkItem.
     /// This handles stale terminal jobs and any other orphaned jobs.
     /// Does NOT post a status update (work item is already in terminal state or never existed).
+    /// The job list is fetched once per poll cycle by <see cref="ReconciliationService"/> and
+    /// shared across this method, <see cref="ReconcileOnceAsync"/>, and
+    /// <see cref="EnforceDispatchedTimeoutAsync"/> to avoid redundant Kubernetes API calls.
     /// </summary>
-    public async Task CleanupOrphansAsync(CancellationToken ct)
+    public async Task CleanupOrphansAsync(V1JobList jobs, CancellationToken ct)
     {
-        V1JobList jobs;
+        ArgumentNullException.ThrowIfNull(jobs);
         IReadOnlyList<ActiveWorkItemDto> activeItems;
 
         try
         {
-            jobs = await _k8sClient.ListJobsAsync(
-                _options.Namespace,
-                "app.kubernetes.io/managed-by=caa-orchestrator",
-                ct);
             // Pass olderThanSeconds=0 to get ALL active (Dispatched+Running) work items regardless of age.
             // This builds the "active" set used to exclude Jobs from orphan deletion — we never want to
             // delete a Job that has a corresponding active WorkItem, even a brand-new one.

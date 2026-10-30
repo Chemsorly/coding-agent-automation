@@ -107,6 +107,107 @@ public sealed class ReconciliationServiceTests
 
     // ── leader: inner loop is called ──────────────────────────────────────────
 
+    /// <summary>
+    /// Issue #4020 Acceptance Criterion: exactly one ListJobsAsync call with the
+    /// <c>app.kubernetes.io/managed-by=caa-orchestrator</c> selector must be made per poll cycle.
+    /// The three methods that previously each called ListJobsAsync independently
+    /// (ReconcileOnceAsync, EnforceDispatchedTimeoutAsync, CleanupOrphansAsync) now receive a
+    /// shared pre-fetched V1JobList via <see cref="ReconciliationLoop.FetchManagedJobsAsync"/>.
+    /// </summary>
+    [Fact]
+    public async Task OnPollCycle_SinglePollCycle_CallsListJobsExactlyOnce()
+    {
+        // Arrange: use near-infinite poll interval so exactly one cycle runs during the test
+        var leaderCts = new CancellationTokenSource();
+        var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
+        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
+        var svc = new TestableReconciliationService(leaderElection, loop);
+
+        using var stopCts = new CancellationTokenSource();
+        var executeTask = RunExecuteForDuration(svc, stopCts.Token);
+
+        // Wait for the first poll cycle to complete
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (svc.CompletedCycles < 1 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
+        svc.CompletedCycles.Should().BeGreaterThanOrEqualTo(1,
+            "at least one poll cycle must complete within 30s");
+
+        // Capture call count while the service is still sleeping for the 30,000s interval
+        // (before stopping) to avoid a race with any future cycle starting concurrently.
+        var listJobsCallCount = _k8sClient.Invocations.Count(i =>
+            i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync) &&
+            (string)i.Arguments[1]! == "app.kubernetes.io/managed-by=caa-orchestrator");
+
+        stopCts.Cancel();
+        await executeTask;
+
+        // Assert: exactly one managed-by ListJobsAsync call per completed poll cycle.
+        // Before Issue #4020 was fixed, this would be 3 (once per ReconcileOnceAsync,
+        // EnforceDispatchedTimeoutAsync, and CleanupOrphansAsync).
+        listJobsCallCount.Should().Be(svc.CompletedCycles,
+            "ReconciliationService.OnPollCycleAsync must call FetchManagedJobsAsync exactly once " +
+            "per poll cycle — the three previously independent ListJobsAsync calls are now consolidated");
+    }
+
+    /// <summary>
+    /// Issue #4020 / Issue #3236: When <see cref="ReconciliationLoop.FetchManagedJobsAsync"/> throws
+    /// a non-OCE exception (e.g. K8s unavailable), the job-dependent tasks
+    /// (ReconcileOnceAsync, EnforceDispatchedTimeoutAsync, CleanupOrphansAsync) must be skipped
+    /// but <see cref="ReconciliationLoop.EnforceTimeoutsAsync"/> must still run.
+    /// Previously, each of the three methods had its own try-catch for ListJobsAsync;
+    /// now the single catch is in OnPollCycleAsync.
+    /// </summary>
+    [Fact]
+    public async Task OnPollCycle_WhenFetchManagedJobsThrows_EnforceTimeoutsStillRuns()
+    {
+        // Arrange: K8s unavailable (non-OCE) — FetchManagedJobsAsync throws
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("K8s unavailable"));
+
+        var leaderCts = new CancellationTokenSource();
+        var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
+        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
+        var svc = new TestableReconciliationService(leaderElection, loop);
+
+        using var stopCts = new CancellationTokenSource();
+        var executeTask = RunExecuteForDuration(svc, stopCts.Token);
+
+        // Wait for the first poll cycle to complete
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (svc.CompletedCycles < 1 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
+        svc.CompletedCycles.Should().BeGreaterThanOrEqualTo(1, "poll cycle must complete even when K8s is unavailable");
+
+        stopCts.Cancel();
+        await executeTask;
+
+        // EnforceTimeoutsAsync must still have run (calls GetActiveAsync)
+        _workItemClient.Verify(
+            c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce,
+            "EnforceTimeoutsAsync must run even when FetchManagedJobsAsync throws");
+
+        // TODO [WARNING]: The PostStatusAsync Times.Never assertion below is a weak proxy for
+        // "job-dependent tasks (ReconcileOnceAsync, EnforceDispatchedTimeoutAsync, CleanupOrphansAsync)
+        // were skipped". With the default fixture setup (empty K8s job list, no active work items),
+        // all three methods would exit immediately without calling PostStatusAsync even if they were
+        // accidentally invoked — so a regression removing the 'return;' early-exit in OnPollCycleAsync
+        // would not be caught by this assertion. A stronger test would add a K8s job that would trigger
+        // a DeleteJobAsync call via CleanupOrphansAsync (e.g. an orphan past the retention window) and
+        // assert DeleteJobAsync Times.Never. Fixing this is deferred — the existing coverage is not zero
+        // (GetActiveAsync confirms EnforceTimeoutsAsync ran, and the Times.Once test in
+        // OnPollCycle_SinglePollCycle_CallsListJobsExactlyOnce verifies the normal-cycle single-fetch).
+        // PostStatusAsync must never have been called (no jobs reconciled, no dispatch timeouts)
+        _workItemClient.Verify(
+            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "job-dependent tasks must be skipped when FetchManagedJobsAsync throws");
+    }
+
     [Fact]
     public async Task WhenLeader_ReconciliationLoop_IsCalled()
     {

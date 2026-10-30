@@ -192,7 +192,9 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         // condition on createdJob (mirroring SimulateWorkItemJobFailedAsync) before this call
         // and assert the resulting behaviour (e.g. _reconciledTerminalIds populated, no
         // spurious status transition).
-        await Fixture.RealReconciliationLoop.ReconcileOnceAsync(CancellationToken.None);
+        await Fixture.RealReconciliationLoop.ReconcileOnceAsync(
+            await Fixture.RealReconciliationLoop.FetchManagedJobsAsync(CancellationToken.None),
+            CancellationToken.None);
 
         // Age the job past the 600s retention window so CleanupOrphansAsync deletes it.
         // (In production this is handled by K8s TTL; in the test we set CompletionTime manually.)
@@ -200,7 +202,9 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         createdJob.Status.CompletionTime = DateTime.UtcNow.AddSeconds(-700);
 
         // ── Act: orphan cleanup ───────────────────────────────────────────────────────
-        await Fixture.RealReconciliationLoop.CleanupOrphansAsync(CancellationToken.None);
+        await Fixture.RealReconciliationLoop.CleanupOrphansAsync(
+            await Fixture.RealReconciliationLoop.FetchManagedJobsAsync(CancellationToken.None),
+            CancellationToken.None);
 
         // ── Assert: job was deleted ───────────────────────────────────────────────────
         Assert.Contains(jobName, Fixture.K8sClient.DeletedJobs);
@@ -259,7 +263,9 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         // ── Act: run orphan cleanup directly while the WorkItem is still Pending ──────
         // Do NOT call ReconcileOnceAsync or OnPollCycleAsync — those also invoke
         // EnforceDispatchedTimeoutAsync, which could race and fail the WorkItem.
-        await Fixture.RealReconciliationLoop.CleanupOrphansAsync(CancellationToken.None);
+        await Fixture.RealReconciliationLoop.CleanupOrphansAsync(
+            await Fixture.RealReconciliationLoop.FetchManagedJobsAsync(CancellationToken.None),
+            CancellationToken.None);
 
         // ── Assert: job was NOT deleted (CreationTimestamp is within the 600s window) ──
         Assert.DoesNotContain(jobName, Fixture.K8sClient.DeletedJobs);
@@ -325,7 +331,9 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         }
 
         // ── Act: run orphan cleanup ───────────────────────────────────────────────────
-        await Fixture.RealReconciliationLoop.CleanupOrphansAsync(CancellationToken.None);
+        await Fixture.RealReconciliationLoop.CleanupOrphansAsync(
+            await Fixture.RealReconciliationLoop.FetchManagedJobsAsync(CancellationToken.None),
+            CancellationToken.None);
 
         // ── Assert: job WAS deleted (no timestamp anchor → no retention window) ───────
         Assert.Contains(jobName, Fixture.K8sClient.DeletedJobs);
@@ -427,7 +435,9 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         //   → failureReason = "InfrastructureFailure"
         // HandleJobCompletedAsync calls PostStatusAsync(Failed, InfrastructureFailure)
         // WorkItemStatusTransitionService triggers label-swap via InMemoryIssueProvider.
-        await Fixture.RealReconciliationLoop.ReconcileOnceAsync(CancellationToken.None);
+        await Fixture.RealReconciliationLoop.ReconcileOnceAsync(
+            await Fixture.RealReconciliationLoop.FetchManagedJobsAsync(CancellationToken.None),
+            CancellationToken.None);
 
         // ── Assert: WorkItem is Failed with InfrastructureFailure ────────────────────
         await using var db = Fixture.DbContextFactory.CreateDbContext();
