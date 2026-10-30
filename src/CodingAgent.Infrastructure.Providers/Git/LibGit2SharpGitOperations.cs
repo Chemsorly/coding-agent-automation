@@ -161,6 +161,15 @@ public sealed class LibGit2SharpGitOperations : IGitOperations
         File.WriteAllText(fullPath, content);
     }
 
+    public async Task WriteAllTextAsync(string fullPath, string content, System.Text.Encoding encoding, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(fullPath);
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(encoding);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        await File.WriteAllTextAsync(fullPath, content, encoding, ct);
+    }
+
     public void DeleteFile(string fullPath)
     {
         if (File.Exists(fullPath))
