@@ -127,9 +127,14 @@ public sealed class ProjectManagementTests : E2ETestBase
             TemplateIds = new List<string>()
         }, CancellationToken.None);
 
+        // Use a const so the JS wait condition and the assertion below always refer to the same
+        // string. If the value changes, both sides break together rather than the wait silently
+        // timing out while the assertion reports a different error.
+        const string editedDescription = "Edited by E2E";
+
         var detailPage = new ProjectDetailPage(Page, BaseUrl);
         await detailPage.NavigateAsync(EditProjectId);
-        await detailPage.FillDescriptionAsync("Edited by E2E");
+        await detailPage.FillDescriptionAsync(editedDescription);
         await detailPage.SaveOverviewAsync();
 
         // Reload the same page
@@ -140,13 +145,13 @@ public sealed class ProjectManagementTests : E2ETestBase
         // Blazor Server round-trip takes longer. Polling the DOM value is deterministic: the
         // assertion fires only when the actual persisted value is visible to the user.
         await Page.WaitForFunctionAsync(
-            "() => document.querySelector('[data-testid=\"project-description-input\"]')?.value === 'Edited by E2E'",
+            $"() => document.querySelector('[data-testid=\"project-description-input\"]')?.value === '{editedDescription}'",
             null,
             new() { Timeout = 5_000 });
 
         // The persisted value must appear in the description input
         var value = await Page.Locator("[data-testid='project-description-input']").InputValueAsync();
-        Assert.Equal("Edited by E2E", value);
+        Assert.Equal(editedDescription, value);
     }
 
     // ── Test 3 ────────────────────────────────────────────────────────────

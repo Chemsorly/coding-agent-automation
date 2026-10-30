@@ -139,7 +139,10 @@ public class JobTemplateStoreLoggingTests
             e => e.Level == level
                  && e.Properties.ContainsKey("Path")
                  && e.Properties["Path"].ToString().Contains("nonexistent/path/job-templates.yaml"));
-        ev.Properties["Path"].ToString().Should().Contain("job-templates.yaml");
+        // Verify the exact Serilog-rendered value; a Serilog ScalarValue wraps strings in double
+        // quotes (e.g. "\"/nonexistent/path/…\""). This goes beyond the Contains predicate above
+        // and would catch a value-type or formatting regression that the filter cannot catch.
+        ev.Properties["Path"].ToString().Should().Be("\"/nonexistent/path/job-templates.yaml\"");
     }
 
     [Fact]
