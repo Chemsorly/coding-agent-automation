@@ -424,20 +424,14 @@ public class BrainConsolidationExecutorTests
     [Fact]
     public async Task ExecuteAsync_CancelledBeforeBrainFileScan_ReturnsCancelledResult()
     {
-        // Regression for issue #4014: OCE thrown during the brain file scan (archive step) must not be
-        // swallowed by the bare catch {} — it must propagate through the outer archive-step catch
-        // (which explicitly excludes OCE via `when (ex is not OperationCanceledException)`) and be
-        // handled by WrapWithCancellationHandlingAsync, which returns a cancelled result.
+        // Regression for issue #4014: when the CancellationToken is cancelled and the brain file scan
+        // starts iterating, ct.ThrowIfCancellationRequested() inside the try block throws OCE. The
+        // catch (OperationCanceledException) { throw; } re-throws it, it propagates through the outer
+        // archive-step catch (which excludes OCE via `when (ex is not OperationCanceledException)`),
+        // and WrapWithCancellationHandlingAsync converts it to a cancelled result.
         //
-        // Note: ListTrackedFilesAsync is awaited *before* the .Select() lambda, so the OCE here is
-        // thrown outside the inner catch being fixed. This test validates the overall cancellation
-        // chain through the archive step.
-        //
-        // TODO: The `catch (OperationCanceledException) { throw; }` branch added inside the lambda
-        // is defensive dead code: StreamReader(string, Encoding) and ReadLine() are synchronous and
-        // cannot throw OperationCanceledException, so that specific line cannot be exercised without
-        // replacing the StreamReader usage with a CT-aware abstraction. It is retained for consistency
-        // with the project-wide convention that OCE is never swallowed.
+        // This also exercises the `catch (OperationCanceledException) { throw; }` branch added by the
+        // fix — the branch is now reachable via ct.ThrowIfCancellationRequested() on each file.
 
         // Arrange
         var executor = CreateExecutor();
@@ -448,9 +442,11 @@ public class BrainConsolidationExecutorTests
         _mockBrainProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        // Return paths successfully (CT is not checked by the mock); the OCE is thrown by
+        // ct.ThrowIfCancellationRequested() inside the lambda on the first iteration.
         _mockBrainUpdateService
             .Setup(x => x.ListTrackedFilesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new OperationCanceledException(cts.Token));
+            .ReturnsAsync(new List<string> { "general/SKILL.md" }.AsReadOnly());
 
         // Act
         var result = await executor.ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, cts.Token);
