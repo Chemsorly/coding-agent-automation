@@ -2965,6 +2965,132 @@ public class ChatJobDispatcherTests
             "CleanupSession must have removed the session entry after the grace period expired");
     }
 
+    // ─── TrySendCancelChatAsync — agent entry exists but has no chat-session-id label ─────────
+
+    /// <summary>
+    /// When <see cref="IAgentRegistryService.GetByAgentIdAsync"/> returns a non-null
+    /// <see cref="AgentEntry"/> whose <c>Labels</c> list does not contain a
+    /// <c>chat-session-id=</c> entry, <c>TrySendCancelChatAsync</c> must return early at the
+    /// <c>if (string.IsNullOrEmpty(sessionId)) return;</c> guard without making any SignalR hub call.
+    /// Covers L641–642 of <c>TrySendCancelChatAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task TrySendCancelChatAsync_WhenAgentEntryHasNoChatSessionIdLabel_NoCancelChatCallIsMade()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registryMock = new Mock<IAgentRegistryService>();
+        string? createdJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var capturedDispatchId = j.Metadata.Labels["caa/chat-session-id"];
+
+                // AgentId MUST equal createdJobName: RegisterWatcher uses connected.AgentId.Value as the
+                // _activeWatchers key. A mismatched AgentId causes TerminateChatSessionAsync to take the
+                // not_found_direct_delete path and never reach TrySendCancelChatAsync, making the
+                // hub-not-called assertion vacuously true without exercising the session-ID guard.
+                //
+                // The mock setup (not the label contents) determines what GetAgentsByLabel returns.
+                // The entry must have AgentId = createdJobName and Status = AgentStatus.Idle so
+                // PollForAgentConnectionAsync's .FirstOrDefault(a => a.Status == AgentStatus.Idle) picks it up.
+                var dispatchAgentEntry = new AgentEntry
+                {
+                    AgentId = createdJobName!,
+                    ConnectionId = "conn-no-session-id",
+                    Hostname = "test-host",
+                    Labels = [$"chat-session-id={capturedDispatchId}"],
+                    Status = AgentStatus.Idle,
+                    RegisteredAt = DateTimeOffset.UtcNow
+                };
+
+                // PollForAgentConnectionAsync uses GetAgentsByLabel — must return a valid idle entry so
+                // dispatch succeeds and the session is registered in _activeWatchers.
+                registryMock.Setup(r => r.GetAgentsByLabel("chat-session-id", capturedDispatchId))
+                    .Returns(new List<AgentEntry> { dispatchAgentEntry });
+
+                // GetByAgentIdAsync returns a non-null entry whose Labels do NOT contain a
+                // "chat-session-id=" entry. TrySendCancelChatAsync will pass the `if (agentEntry is null)`
+                // guard, find no matching label, get sessionId = null, and return early at
+                // `if (string.IsNullOrEmpty(sessionId)) return;` — the guard being exercised here.
+                var noSessionIdEntry = new AgentEntry
+                {
+                    AgentId = createdJobName!,
+                    ConnectionId = "conn-no-session-id",
+                    Hostname = "test-host",
+                    Labels = ["some-label=value"],
+                    Status = AgentStatus.Idle,
+                    RegisteredAt = DateTimeOffset.UtcNow
+                };
+                registryMock.Setup(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(noSessionIdEntry);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Deregister is called by CleanupSession after the grace period expires.
+        registryMock.Setup(r => r.Deregister(It.IsAny<AgentId>())).Returns(true);
+
+        // Hub client whose CancelChat is tracked — must never be called when the entry has no chat-session-id label.
+        var mockClient = new Mock<IAgentHubClient>();
+        mockClient.Setup(c => c.CancelChat(It.IsAny<string>())).Returns(Task.CompletedTask);
+        var mockClients = new Mock<IHubClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client(It.IsAny<string>())).Returns(mockClient.Object);
+        var hubContextMock = new Mock<IHubContext<AgentHub, IAgentHubClient>>();
+        hubContextMock.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        // Stalled watcher — blocks until its CancellationToken fires; never calls cleanupCallback.
+        // Required so TerminateChatSessionAsync blocks predictably on the grace period, ensuring
+        // TrySendCancelChatAsync completes before ForceDeleteAndCleanupAsync runs.
+        var stalledWatcher = new Mock<IChatSessionWatcher>();
+        stalledWatcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, _, _, _, ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(
+                    _ => Task.CompletedTask, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnCanceled, TaskScheduler.Default).Unwrap());
+
+        await using var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            hubContextMock.Object,
+            CreateTemplateStore(),
+            registryMock.Object,
+            CreateOptions(gracePeriod: 1),
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: stalledWatcher.Object);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var act = async () => await dispatcher.TerminateChatSessionAsync(createdJobName!, CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "TerminateChatSessionAsync must not throw when the agent entry has no chat-session-id label");
+
+        // Verify GetByAgentIdAsync was called exactly once — confirms TrySendCancelChatAsync reached
+        // the label-extraction guard (L641-642) rather than exiting via an earlier return path.
+        // Without this, Times.Never on CancelChat could pass vacuously if TerminateChatSessionAsync
+        // took the not_found_direct_delete path and never entered TrySendCancelChatAsync at all.
+        registryMock.Verify(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "GetByAgentIdAsync must be called once — confirms TrySendCancelChatAsync reached the session-ID guard");
+
+        // The entry had no chat-session-id label so TrySendCancelChatAsync must not have called the hub.
+        mockClient.Verify(c => c.CancelChat(It.IsAny<string>()), Times.Never,
+            "no SignalR hub call must be made when the agent entry has no chat-session-id label");
+
+        // Confirm ForceDeleteAndCleanupAsync → CleanupSession ran after the grace period expired.
+        dispatcher.HasActiveSession(createdJobName!).Should().BeFalse(
+            "CleanupSession must have removed the session entry after the grace period expired");
+    }
+
     // ─── AC3: DispatchChatPodAsync — invalid K8s label selector throws ArgumentException ──────
 
     /// <summary>
