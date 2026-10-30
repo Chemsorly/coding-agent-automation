@@ -51,6 +51,8 @@ public interface IGitOperations
     bool FileExists(string fullPath);
     string ReadAllText(string fullPath);
     void WriteAllText(string fullPath, string content);
+    /// <summary>Writes all text to a file asynchronously with the given encoding.</summary>
+    Task WriteAllTextAsync(string fullPath, string content, System.Text.Encoding encoding, CancellationToken ct);
     void DeleteFile(string fullPath);
 
     // ── Inbox push operations (spec 054 Task 6.1) ─────────────────────────
