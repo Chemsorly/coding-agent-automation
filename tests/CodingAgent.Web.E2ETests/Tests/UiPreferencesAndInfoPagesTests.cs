@@ -524,6 +524,14 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         var total = await knowledge.GetStatTileValueAsync("Runs · recent");
         Assert.Equal("5", total);
 
+        // Explicit wait for the brain-specific "Skills injected" tile before reading its value.
+        // This tile only renders when brain runs with BrainSkillsBytes > 0 exist. The stat strip
+        // may show "Runs · recent" before brain tiles are computed, so GetStatTileValueAsync could
+        // time out on "Skills injected" even though the page is "loaded". Waiting for the selector
+        // here is deterministic: it blocks until the element is in the DOM.
+        await Page.WaitForSelectorAsync(
+            ".cockpit-stat:has(.cockpit-stat-l:has-text('Skills injected'))",
+            new() { Timeout = 15_000 });
         var skillsInjected = await knowledge.GetStatTileValueAsync("Skills injected");
         Assert.Equal("3", skillsInjected);
 

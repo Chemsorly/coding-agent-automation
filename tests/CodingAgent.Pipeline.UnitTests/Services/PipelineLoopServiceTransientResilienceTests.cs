@@ -604,16 +604,26 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
     [Fact]
     public async Task WhenBareTaskCanceledEscapesExecuteCycle_LoopStops_NotRetried()
     {
+        // Deterministic synchronization: the TCS is signalled inside the mock the instant the loop
+        // reaches housekeeping, guaranteeing the loop has started before we poll for it stopping.
+        // The previous approach polled svc.IsLoopActive with a 5s timeout, but because
+        // StartLoopAsync sets IsLoopActive=true and the loop can throw and call CleanupAsync
+        // (setting IsLoopActive=false) before the first poll iteration, the poll could observe
+        // IsLoopActive=false on every check and time out with "loop must start".
+        var loopStartedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
             .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => loopStartedTcs.TrySetResult(true))
             .Throws(new TaskCanceledException("provider internal timeout — no inner TimeoutRejectedException"));
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
         using var hostCts = new CancellationTokenSource();
         _ = InvokeExecuteAsync(svc, hostCts.Token);
         (await svc.StartLoopAsync()).Should().BeTrue();
-        await WaitUntilAsync(() => svc.IsLoopActive, TimeSpan.FromSeconds(5), "loop must start");
+        // Await the TCS instead of polling IsLoopActive: fires when the mock is first called,
+        // confirming the loop has entered ExecuteCycleAsync and reached housekeeping.
+        await loopStartedTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Post-fix: bare TaskCanceledException propagates out of RunMultiTemplateLoopAsync
         // to ExecuteAsync's catch(Exception ex) → Error logged → CleanupAsync(false) → loop stops.
@@ -647,9 +657,18 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
     [Fact]
     public async Task WhenBareTaskCanceledDuringSnapshot_LoopStops_NotRetried()
     {
+        // Deterministic synchronization: the TCS is signalled inside the mock the instant the loop
+        // calls LoadPipelineConfigAsync (the first call in SnapshotCycleConfigAsync), confirming
+        // the loop has entered RunMultiTemplateLoopAsync before we poll for it stopping.
+        // The previous approach polled svc.IsLoopActive with a 5s timeout, but because
+        // StartLoopAsync sets IsLoopActive=true and the loop can throw and call CleanupAsync
+        // (setting IsLoopActive=false) before the first poll iteration, the poll could observe
+        // IsLoopActive=false on every check and time out with "loop must start".
+        var loopStartedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         // Override default LoadPipelineConfigAsync to throw a bare TaskCanceledException.
         // _mockStore is wired into CreateServiceWithHousekeeping as PipelineConfigStore.
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Callback<CancellationToken>(_ => loopStartedTcs.TrySetResult(true))
             .ThrowsAsync(new TaskCanceledException("provider internal timeout — no inner TimeoutRejectedException"));
 
         // CreateServiceWithHousekeeping(null): HousekeepingService is IHousekeepingService?
@@ -658,7 +677,9 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
         using var hostCts = new CancellationTokenSource();
         _ = InvokeExecuteAsync(svc, hostCts.Token);
         (await svc.StartLoopAsync()).Should().BeTrue();
-        await WaitUntilAsync(() => svc.IsLoopActive, TimeSpan.FromSeconds(5), "loop must start");
+        // Await the TCS instead of polling IsLoopActive: fires when LoadPipelineConfigAsync is
+        // first called inside SnapshotCycleConfigAsync, confirming the loop has started.
+        await loopStartedTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         await WaitUntilAsync(() => !svc.IsLoopActive, TimeSpan.FromSeconds(30),
             "bare TaskCanceledException from SnapshotCycleConfigAsync must propagate and stop the loop");
