@@ -23,6 +23,7 @@ public sealed class LibGit2SharpGitOperations : IGitOperations
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
     }
+
     public IReadOnlyList<string> GetChangedFiles(string repoPath)
     {
         using var repo = new Repository(repoPath);
