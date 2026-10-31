@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
@@ -711,6 +712,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     /// <summary>Deserializes one entry from the GET /mcp response object.</summary>
     private sealed record McpServerStatusEntry
     {
+        [JsonPropertyName("status")]
         public string? Status { get; init; }
     }
 
