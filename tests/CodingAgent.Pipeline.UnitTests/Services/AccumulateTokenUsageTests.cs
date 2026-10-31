@@ -328,4 +328,36 @@ public class AccumulateTokenUsageTests
 
         run.Metrics.PhaseBreakdown.Should().BeEmpty("null phase means tool calls are not recorded to any phase");
     }
+
+    [Fact]
+    public void AccumulateTokenUsage_NonNullResultWithToolCalls_RecordsPhaseBreakdown()
+    {
+        // The pattern-match guard `result is { ToolCalls.Count: > 0 }` at the call site already
+        // proves result is non-null inside the if body. The null-forgiving ! operators that were
+        // previously on those calls have been removed; this test verifies the branch compiles and
+        // functions correctly without them.
+        // TODO: This test validates the runtime behaviour of the branch but cannot detect regression
+        // to `result!` in PipelineRunExtensions.cs: null-forgiving operators are a compile-time
+        // suppressor with no runtime effect, so reverting to result! would leave this test passing
+        // unchanged. The canonical guard against that regression is the scopeQuery in the issue
+        // (`git grep -n 'result!' -- src/CodingAgent.Pipeline/Models/PipelineRunExtensions.cs`
+        // returning zero matches), which is enforced at code-review time rather than in a unit test.
+        var run = CreateRun();
+        var result = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = null,
+            ToolCalls = new Dictionary<string, McpCallCounts>
+            {
+                ["github/list_issues"] = new McpCallCounts { Calls = 4 }
+            }
+        };
+
+        run.AccumulateTokenUsage(result, "analysis");
+
+        run.Metrics.PhaseBreakdown.Should().ContainKey("analysis");
+        run.Metrics.PhaseBreakdown["analysis"].ToolCalls.Should().NotBeNull();
+        run.Metrics.PhaseBreakdown["analysis"].ToolCalls!["github/list_issues"].Calls.Should().Be(4);
+    }
 }

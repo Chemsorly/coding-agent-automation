@@ -147,7 +147,39 @@ public class PipelineFormattingTests
         result.Should().Contain("(#123)");
     }
 
+    [Fact]
+    public void GeneratePrTitle_WhenCommitTypeGiven_ShouldUseIt()
+    {
+        var result = PipelineFormatting.GeneratePrTitle("Extract helper", "#42", ConventionalCommitTypes.Refactor);
+
+        result.Should().Be("refactor: Extract helper (#42)");
+    }
+
+    [Fact]
+    public void GeneratePrTitle_WhenCommitTypeIsNull_ShouldThrowArgumentNullException()
+    {
+        var act = () => PipelineFormatting.GeneratePrTitle("Extract helper", "#42", null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("commitType");
+    }
+
     // --- GenerateCommitMessage ---
+
+    [Fact]
+    public void GenerateCommitMessage_WhenCommitTypeGiven_ShouldUseIt()
+    {
+        var result = PipelineFormatting.GenerateCommitMessage("Extract helper", "#42", ConventionalCommitTypes.Refactor);
+
+        result.Should().StartWith("refactor: Extract helper (#42)\n\n");
+    }
+
+    [Fact]
+    public void GenerateCommitMessage_WhenCommitTypeIsNull_ShouldThrowArgumentNullException()
+    {
+        var act = () => PipelineFormatting.GenerateCommitMessage("Extract helper", "#42", null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("commitType");
+    }
 
     [Fact]
     public void GenerateCommitMessage_BasicInput_ReturnsMultiLineMessage()
@@ -306,6 +338,33 @@ public class PipelineFormattingTests
             });
 
         result.Should().Contain("*Automated implementation via pipeline*");
+    }
+
+    [Fact]
+    public void GeneratePrBody_WithCost_ShouldShowCostBetweenModelAndSuffix()
+    {
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                IssueTitle = "Test",
+                ModelName = "claude-opus-5-5",
+                CostText = "≈ $17.36",
+            });
+
+        result.Should().Contain("*Model: claude-opus-5-5 · Cost so far: ≈ $17.36 · Automated implementation via pipeline*");
+    }
+
+    [Fact]
+    public void GeneratePrBody_WithCostAndNoModel_ShouldShowCostAndSuffix()
+    {
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                IssueTitle = "Test",
+                CostText = "$0.42",
+            });
+
+        result.Should().Contain("*Cost so far: $0.42 · Automated implementation via pipeline*");
     }
 
     [Fact]

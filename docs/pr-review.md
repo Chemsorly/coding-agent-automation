@@ -131,6 +131,10 @@ The compliance report appears in the PR body (implementation runs) or in the rev
 | ⚠️ | Criterion text | Not applicable reasoning |
 ```
 
+### Cost Line
+
+When the provider reports a cost (Claude Code, OpenCode), the review body ends with `*Cost: $1.23*` and the PR body footer shows `Cost so far: $1.23`. Subscription-billed runs show `≈ $1.23`, because that figure is the API-price equivalent and not money spent. Kiro reports no cost, so neither line appears for it. The PR footer is written when the PR is created or finalized, so agent calls after that (PR description, reflection, CI fixes) are not in the figure; the run page shows the final cost.
+
 ## Parallel Review Execution
 
 Review agents execute in parallel when conditions are met, reducing review latency for multi-agent configurations.
