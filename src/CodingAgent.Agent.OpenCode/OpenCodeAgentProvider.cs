@@ -809,10 +809,10 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                 McpCallLog.Failed(_logger, server, tool, category, error, request.EnvironmentVariables);
                 delta = delta.Add(category switch
                 {
-                    McpFailureCategory.Auth       => new McpCallCounts { FailedAuth = 1 },
+                    McpFailureCategory.Auth => new McpCallCounts { FailedAuth = 1 },
                     McpFailureCategory.Connection => new McpCallCounts { FailedConnection = 1 },
-                    McpFailureCategory.Other      => new McpCallCounts { FailedOther = 1 },
-                    _                             => new McpCallCounts { FailedUnknown = 1 }
+                    McpFailureCategory.Other => new McpCallCounts { FailedOther = 1 },
+                    _ => new McpCallCounts { FailedUnknown = 1 }
                 });
             }
 
@@ -827,10 +827,10 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
             {
                 var mapped = status switch
                 {
-                    "failed"                      => McpServerStatuses.Failed,
-                    "needs_auth"                  => McpServerStatuses.NeedsAuth,
-                    "needs_client_registration"   => McpServerStatuses.NeedsAuth,
-                    _                             => null
+                    "failed" => McpServerStatuses.Failed,
+                    "needs_auth" => McpServerStatuses.NeedsAuth,
+                    "needs_client_registration" => McpServerStatuses.NeedsAuth,
+                    _ => null
                 };
                 if (mapped is null)
                     continue;
