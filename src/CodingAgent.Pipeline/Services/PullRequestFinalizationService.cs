@@ -363,20 +363,22 @@ public sealed class PullRequestFinalizationService
         emitOutputLine("📝 Generating PR description...");
         try
         {
+            await AgentPhaseExecutor.PreComputeDiffArtifactsAsync(run, _logger, ct);
             var prompt = PromptBuilder.BuildPrDescriptionPrompt(run);
 
-            var result = await agentProvider.ExecuteAsync(
-                new AgentRequest
+            await AgentPhaseExecutor.ExecuteAgentRawAsync(
+                new AgentExecutionRequest
                 {
+                    AgentProvider = agentProvider,
                     Prompt = prompt,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.AgentTimeout,
-                    UseResume = true
+                    Run = run,
+                    Config = config,
+                    Description = "PR description",
+                    Logger = _logger,
+                    OnOutputLine = emitOutputLine,
+                    Phase = "pr_description"
                 },
-                ct,
-                line => emitOutputLine(line));
-
-            run.AccumulateTokenUsage(result, phase: "pr_description");
+                ct);
 
             var filePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.PrDescriptionFilePath);
             string rawDescription;
