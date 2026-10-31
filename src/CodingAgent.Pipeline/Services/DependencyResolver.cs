@@ -10,7 +10,7 @@ namespace CodingAgent.Pipeline.Services;
 /// </summary>
 public sealed class DependencyResolver
 {
-    private readonly record struct Registration(string IssueNumber, string IssueUrl, string IssueProviderId);
+    private readonly record struct Registration(string IssueNumber, string? IssueUrl, string IssueProviderId);
 
     private readonly Dictionary<string, Registration> _titleToRegistration = new(StringComparer.OrdinalIgnoreCase);
 
@@ -21,13 +21,12 @@ public sealed class DependencyResolver
     /// </summary>
     /// <param name="title">The issue title to register.</param>
     /// <param name="issueNumber">The issue number (e.g., "42").</param>
-    /// <param name="issueUrl">The full URL of the created issue (e.g., "https://github.com/acme/api/issues/42").</param>
+    /// <param name="issueUrl">The full URL of the created issue, or null when the provider did not return one. When null, <see cref="Resolve"/> falls back to the <c>#N</c> short form for all dependency references to this issue.</param>
     /// <param name="issueProviderId">The provider config ID that the issue was created in.</param>
-    public void Register(string title, string issueNumber, string issueUrl, string issueProviderId)
+    public void Register(string title, string issueNumber, string? issueUrl, string issueProviderId)
     {
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(issueNumber);
-        ArgumentNullException.ThrowIfNull(issueUrl);
         ArgumentNullException.ThrowIfNull(issueProviderId);
 
         var normalized = title.Trim();
@@ -40,7 +39,8 @@ public sealed class DependencyResolver
     /// Resolves dependency titles to "Depends on" lines.
     /// When the dependency was created in the same tracker as <paramref name="targetProviderId"/>,
     /// emits <c>Depends on #N</c>. Otherwise emits <c>Depends on {url}</c> so the full cross-tracker
-    /// reference is preserved in the sub-issue body.
+    /// reference is preserved in the sub-issue body. When the registered URL is null (provider did
+    /// not return one), falls back to <c>Depends on #N</c> for both same-tracker and cross-tracker cases.
     /// Uses case-insensitive, whitespace-trimmed matching.
     /// Unresolved titles are logged and omitted.
     /// </summary>
@@ -68,10 +68,12 @@ public sealed class DependencyResolver
 
             if (_titleToRegistration.TryGetValue(normalized, out var reg))
             {
-                // Same tracker → short #N form; different tracker → full URL
+                // Same tracker → short #N form; different tracker → full URL (or #N when URL is absent)
                 var line = string.Equals(reg.IssueProviderId, targetProviderId, StringComparison.Ordinal)
                     ? $"Depends on #{reg.IssueNumber}"
-                    : $"Depends on {reg.IssueUrl}";
+                    : reg.IssueUrl is not null
+                        ? $"Depends on {reg.IssueUrl}"
+                        : $"Depends on #{reg.IssueNumber}";
                 results.Add(line);
             }
             else
