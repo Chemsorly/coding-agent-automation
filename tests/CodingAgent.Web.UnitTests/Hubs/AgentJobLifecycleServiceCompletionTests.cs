@@ -55,15 +55,15 @@ public sealed class AgentJobLifecycleServiceCompletionTests
 
     private static PipelineRun MakeRun(string jobId = "job-1", string? providerConfigId = null,
         string? brainProviderConfigId = null) => new()
-    {
-        RunId = jobId,
-        IssueIdentifier = "org/repo#42",
-        IssueTitle = "Test Issue",
-        IssueProviderConfigId = providerConfigId ?? "issue-cfg-1",
-        RepoProviderConfigId = "repo-cfg-1",
-        AgentProviderConfigId = "agent-cfg-1",
-        BrainProviderConfigId = brainProviderConfigId
-    };
+        {
+            RunId = jobId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = providerConfigId ?? "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            AgentProviderConfigId = "agent-cfg-1",
+            BrainProviderConfigId = brainProviderConfigId
+        };
 
     private static PipelineRun MakeConsolidationRun(string jobId = "job-1") =>
         MakeRun(jobId, ConsolidationConstants.ProviderConfigId);
