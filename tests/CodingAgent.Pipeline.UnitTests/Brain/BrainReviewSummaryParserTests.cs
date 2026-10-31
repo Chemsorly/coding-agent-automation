@@ -137,6 +137,9 @@ public class BrainReviewSummaryParserTests
 
         var capped = BrainReviewSummaryParser.Cap(outcome);
 
+        capped.Lines.Count.Should().BeLessThan(lines.Count, "3000 lines are well over the budget");
+        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(capped).Length.Should().BeLessThanOrEqualTo(
+            BrainLayout.MaxReviewSummaryBytes, "the capped outcome must fit");
         capped.Lines.Should().Equal(lines.Take(capped.Lines.Count), "the cap drops lines from the end only");
         var oneLineMore = outcome with { Lines = lines.Take(capped.Lines.Count + 1).ToList(), LinesTruncated = true };
         System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(oneLineMore).Length.Should().BeGreaterThan(

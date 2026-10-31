@@ -219,7 +219,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
-        dispatchedIssues.Should().Equal(["1", "2"], "the oldest issue must be dispatched first");
+        // Only the first cycle: a stalled runner can let the loop start another one before StopLoop.
+        dispatchedIssues.Take(2).Should().Equal(["1", "2"], "the oldest issue must be dispatched first");
     }
 
     [Fact]
