@@ -369,6 +369,35 @@ public class PullRequestOrchestratorTests
     }
 
     [Fact]
+    public async Task FinalizePullRequest_WhenRunReportedCost_ShouldShowItInTheBody()
+    {
+        string? capturedBody = null;
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun();
+        run.PullRequestNumber = "55";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/55";
+        run.TotalCost = 2.5m;
+        run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(100, 2.5m) { BillingMode = AgentBillingModes.Subscription };
+
+        await _sut.FinalizePullRequestAsync(
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
+
+        capturedBody.Should().Contain("Cost so far: ≈ $2.50");
+    }
+
+    [Fact]
     public async Task CreateAndFinalize_SameInputs_ProduceIdenticalBodies()
     {
         // Capture body from CreatePullRequestAsync (new-PR path)

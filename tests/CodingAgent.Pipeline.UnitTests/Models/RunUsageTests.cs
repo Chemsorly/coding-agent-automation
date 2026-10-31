@@ -28,6 +28,23 @@ public class RunUsageTests
         InitiatedBy = "manual",
     };
 
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("0", AgentBillingModes.Api, null)]
+    [InlineData("17.36", AgentBillingModes.Api, "$17.36")]
+    [InlineData("17.36", null, "$17.36")]
+    [InlineData("17.36", AgentBillingModes.Subscription, "≈ $17.36")]
+    public void CostText_ShouldMarkOnlySubscriptionCostAsEstimate_AndBeNullWithoutCost(string? cost, string? billing, string? expected)
+    {
+        var usage = new RunUsage
+        {
+            Cost = cost is null ? null : decimal.Parse(cost, System.Globalization.CultureInfo.InvariantCulture),
+            BillingMode = billing,
+        };
+
+        usage.CostText().Should().Be(expected);
+    }
+
     [Fact]
     public void From_Run_SumsTheTokenSplitOverPhases()
     {

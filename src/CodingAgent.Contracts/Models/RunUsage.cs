@@ -1,3 +1,5 @@
+using CodingAgent.Pipeline.Services;
+
 namespace CodingAgent.Pipeline.Models;
 
 /// <summary>One run's or one phase's usage, as the UI shows it: the reported cost and the token buckets.</summary>
@@ -89,7 +91,22 @@ public sealed record RunUsage
         };
     }
 
-    private static string? ResolveBillingMode(IEnumerable<PhaseUsage>? phases)
+    /// <summary>
+    /// The reported cost as text: <c>"$x.xx"</c>, <c>"≈ $x.xx"</c> for subscription billing (an API-price
+    /// estimate, not money spent), or null when no cost was reported.
+    /// </summary>
+    public string? CostText()
+    {
+        if (Cost is null or <= 0m)
+            return null;
+
+        return BillingMode == AgentBillingModes.Subscription
+            ? "≈ " + CostFormatter.FormatCost(Cost)
+            : CostFormatter.FormatCost(Cost);
+    }
+
+    /// <summary>Resolves one billing mode across phases: none known → null, all subscription → subscription, otherwise → api.</summary>
+    public static string? ResolveBillingMode(IEnumerable<PhaseUsage>? phases)
     {
         if (phases is null)
             return null;

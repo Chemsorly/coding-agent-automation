@@ -18,13 +18,7 @@ public static class UsageText
         if (usage is null || (usage.Cost is null or <= 0m && usage.Tokens <= 0))
             return "—";
 
-        if (usage.Cost > 0m && usage.BillingMode == AgentBillingModes.Subscription)
-            return "≈ " + CostFormatter.FormatCost(usage.Cost);
-
-        if (usage.Cost > 0m)
-            return CostFormatter.FormatCost(usage.Cost);
-
-        return CostFormatter.FormatTokens(usage.Tokens) + " tokens";
+        return usage.CostText() ?? CostFormatter.FormatTokens(usage.Tokens) + " tokens";
     }
 
     /// <summary>

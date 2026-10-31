@@ -23,6 +23,9 @@ internal static class ReviewFindingsFormatter
         AppendAcceptanceCriteriaSection(sb, run);
         AppendInlineCommentStatus(sb, run);
 
+        if (run.ReportedCostText() is { } cost)
+            sb.AppendLine($"*Cost: {cost}*");
+
         return sb.ToString();
     }
 

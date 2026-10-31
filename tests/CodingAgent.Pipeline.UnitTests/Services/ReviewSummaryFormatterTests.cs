@@ -118,6 +118,42 @@ public class ReviewSummaryFormatterTests
         result.Should().Contain("Race condition in X");
     }
 
+    // ─── ReviewFindingsFormatter: cost ─────────────────────────────────────────
+
+    [Fact]
+    public void ReviewFindingsFormatter_WhenRunReportedApiCost_ShouldShowCost()
+    {
+        var run = CreateRunWithSummaries("Change.", "Verdict.");
+        run.TotalCost = 1.234m;
+        run.Metrics.PhaseBreakdown["review_Correctness"] = new PhaseUsage(100, 1.234m) { BillingMode = AgentBillingModes.Api };
+
+        var result = ReviewFindingsFormatter.Format(run);
+
+        result.Should().Contain("*Cost: $1.23*");
+    }
+
+    [Fact]
+    public void ReviewFindingsFormatter_WhenRunIsSubscriptionBilled_ShouldMarkCostAsEstimate()
+    {
+        var run = CreateRunWithSummaries("Change.", "Verdict.");
+        run.TotalCost = 1.234m;
+        run.Metrics.PhaseBreakdown["review_Correctness"] = new PhaseUsage(100, 1.234m) { BillingMode = AgentBillingModes.Subscription };
+
+        var result = ReviewFindingsFormatter.Format(run);
+
+        result.Should().Contain("*Cost: ≈ $1.23*");
+    }
+
+    [Fact]
+    public void ReviewFindingsFormatter_WhenProviderReportedNoCost_ShouldOmitCost()
+    {
+        var run = CreateRunWithSummaries("Change.", "Verdict.");
+
+        var result = ReviewFindingsFormatter.Format(run);
+
+        result.Should().NotContain("Cost:");
+    }
+
     // ─── Helpers ───────────────────────────────────────────────────────────────
 
     private static PipelineRun CreateRunWithSummaries(string? changeSummary, string? verdictSummary)

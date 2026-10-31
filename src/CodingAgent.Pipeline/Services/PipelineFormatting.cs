@@ -83,10 +83,10 @@ public static partial class PipelineFormatting
         AppendComplianceSection(sb, parameters.ComplianceReport);
 
         sb.AppendLine("---");
-        if (!string.IsNullOrEmpty(parameters.ModelName))
-            sb.AppendLine($"*Model: {parameters.ModelName} · {PipelineConstants.AutomatedCommitSuffix}*");
-        else
-            sb.AppendLine($"*{PipelineConstants.AutomatedCommitSuffix}*");
+        var modelPart = string.IsNullOrEmpty(parameters.ModelName) ? "" : $"Model: {parameters.ModelName} · ";
+        // "so far": agent calls after this update (PR description, reflection, CI fixes) still add to the run's cost.
+        var costPart = string.IsNullOrEmpty(parameters.CostText) ? "" : $"Cost so far: {parameters.CostText} · ";
+        sb.AppendLine($"*{modelPart}{costPart}{PipelineConstants.AutomatedCommitSuffix}*");
 
         return sb.ToString().TrimEnd();
     }

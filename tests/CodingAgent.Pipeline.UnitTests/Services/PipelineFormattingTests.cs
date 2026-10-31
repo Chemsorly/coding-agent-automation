@@ -309,6 +309,33 @@ public class PipelineFormattingTests
     }
 
     [Fact]
+    public void GeneratePrBody_WithCost_ShouldShowCostBetweenModelAndSuffix()
+    {
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                IssueTitle = "Test",
+                ModelName = "claude-opus-5-5",
+                CostText = "≈ $17.36",
+            });
+
+        result.Should().Contain("*Model: claude-opus-5-5 · Cost so far: ≈ $17.36 · Automated implementation via pipeline*");
+    }
+
+    [Fact]
+    public void GeneratePrBody_WithCostAndNoModel_ShouldShowCostAndSuffix()
+    {
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                IssueTitle = "Test",
+                CostText = "$0.42",
+            });
+
+        result.Should().Contain("*Cost so far: $0.42 · Automated implementation via pipeline*");
+    }
+
+    [Fact]
     public void GeneratePrBody_WithComments_IncludesInputCommentsSection()
     {
         var comments = new List<IssueComment>
