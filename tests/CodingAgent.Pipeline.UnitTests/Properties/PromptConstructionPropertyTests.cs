@@ -687,4 +687,29 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain("[SUGGESTION]");
         prompt.Should().Contain("rewrite");
     }
+
+    // --- BuildReviewPrompt tests ---
+
+    /// <summary>
+    /// BuildReviewPrompt always injects ReviewEarlyStopRule, regardless of the configurable
+    /// review instructions. This ensures every reviewer — default or custom — receives the
+    /// early-stop guidance that prevents wasted turns on out-of-scope diffs.
+    /// </summary>
+    [Fact]
+    public void BuildReviewPrompt_ContainsEarlyStopRule()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+
+        var prompt = PromptBuilder.BuildReviewPrompt("Review this code.", issue, parsed, findingsPath);
+
+        prompt.Should().Contain(PromptBuilder.ReviewEarlyStopRule);
+    }
 }

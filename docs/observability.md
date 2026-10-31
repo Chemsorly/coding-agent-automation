@@ -34,7 +34,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.run.agent_time` | Counter | s | `run_type`, `phase`, `provider`, `model` | Agent execution time per phase |
 | `pipeline.run.token_usage` | Counter | `{token}` | `run_type`, `provider`, `token_type` | Tokens by type (`input`, `output`, `reasoning`, `cache_read`, `cache_write`); `output` excludes `reasoning`. No `phase` tag, to keep series bounded. Reported by OpenCode and Claude Code |
 | `pipeline.run.billing_cost_usd` | Counter | `{usd}` | `run_type`, `provider`, `billing` | Provider-reported cost by how it is paid: `api` is billed per token, `subscription` is the CLI's estimate under a flat Claude plan (not a bill), `unknown` otherwise |
-| `pipeline.run.agent_turns` | Counter | `{turn}` | `run_type`, `provider` | Model round trips per run (Claude Code) |
+| `pipeline.run.agent_turns` | Counter | `{turn}` | `run_type`, `provider` | Model round trips per run (Claude Code, OpenCode) |
 | `pipeline.run.web_search_requests` | Counter | `{request}` | `run_type`, `provider` | Web searches the model made per run (Claude Code) |
 | `pipeline.run.rate_limit_events` | Counter | `{event}` | `provider`, `window`, `status` | Latest subscription rate-limit reading per window seen in a run (Claude Code `rate_limit_event`). `window`: `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`, `other`. `status`: `allowed`, `allowed_warning`, `rejected`, `other` |
 | `pipeline.run.rate_limit_utilization` | Histogram | `1` | `provider`, `window`, `status` | Fraction (0–1) of the window used, when the CLI reports it |

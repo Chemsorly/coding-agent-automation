@@ -195,7 +195,7 @@ When no custom reviewers are configured, the system uses two built-in configurat
 **.NET Reviewers** applies to repositories labelled `dotnet`:
 - **DotNetSpecialist** — .NET-specific patterns, performance, API usage
 
-Reset to defaults via Settings → Quality → Reviewer Configs → "Reset collection to defaults" (asks for confirmation).
+Reset to defaults via Settings → Quality → Reviewer Configs → "Reset collection to defaults" (asks for confirmation). Saved reviewer prompts do not change on upgrade; "Reset collection to defaults" picks up new defaults.
 
 ### Project Review
 
