@@ -30,12 +30,11 @@ public sealed class BrainReviewInputWriter
     public async Task WriteAsync(
         string workspacePath,
         IReadOnlyList<BrainGroupMember>? group,
-        ConsolidationJobMessage job,
         CancellationToken ct)
     {
         try
         {
-            var model = await BuildModelAsync(workspacePath, group, job, ct);
+            var model = await BuildModelAsync(workspacePath, group, ct);
             var content = BrainReviewInputRenderer.Render(model);
             var outputPath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainReviewInputFilePath);
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
@@ -54,7 +53,6 @@ public sealed class BrainReviewInputWriter
     private async Task<BrainReviewInputModel> BuildModelAsync(
         string workspacePath,
         IReadOnlyList<BrainGroupMember>? group,
-        ConsolidationJobMessage job,
         CancellationToken ct)
     {
         // ── Inbox files (D25: at most 100, newest first) ─────────────────────
@@ -132,7 +130,6 @@ public sealed class BrainReviewInputWriter
             .Where(BrainLayout.IsSkillPath)
             .Select(p =>
             {
-                var fullPath = Path.Combine(workspacePath, p.Replace('/', Path.DirectorySeparatorChar));
                 var content = _brainUpdateService.ReadFileAtHead(workspacePath, p);
                 var lineCount = content?.Split('\n')
                     .Count(l => l.TrimStart().StartsWith("- [", StringComparison.Ordinal)) ?? 0;
