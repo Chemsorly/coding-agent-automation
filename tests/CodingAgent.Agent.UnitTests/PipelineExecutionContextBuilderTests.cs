@@ -326,6 +326,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             proxy, _connection, _batcher, null, CancellationToken.None);
 
         result.Run.IssueLabels.Should().BeEquivalentTo(s_BugLabel);
+        result.Run.CommitType.Should().Be(ConventionalCommitTypes.Fix);
     }
 
     [Fact]
