@@ -83,6 +83,43 @@ public class PullRequestOrchestratorTests
         run.IsDraftPr.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task CreatePullRequest_WhenRunHasCommitType_ShouldUseItInTitleAndCommit()
+    {
+        var run = CreateRun();
+        run.CommitType = ConventionalCommitTypes.Refactor;
+
+        await _sut.CreatePullRequestAsync(
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
+
+        _mockRepo.Verify(r => r.CreatePullRequestAsync(
+            It.Is<PullRequestInfo>(p => p.Title == "refactor: Test Issue (#42)"), It.IsAny<CancellationToken>()), Times.Once);
+        _mockRepo.Verify(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(),
+            It.Is<string>(m => m.StartsWith("refactor: Test Issue (#42)", StringComparison.Ordinal)),
+            It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateDraftPr_WhenRunHasCommitType_ShouldUseItInTitle()
+    {
+        var run = CreateRun();
+        run.CommitType = ConventionalCommitTypes.Test;
+
+        await _sut.CreateDraftPrIfNotExistsAsync(run, _mockRepo.Object, CancellationToken.None);
+
+        _mockRepo.Verify(r => r.CreatePullRequestAsync(
+            It.Is<PullRequestInfo>(p => p.Title == "test: Test Issue (#42)"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Happy path — draft PR ──
 
     [Fact]
@@ -366,6 +403,35 @@ public class PullRequestOrchestratorTests
         capturedBody!.Should().Contain("#42");
         capturedBody.Should().Contain("Closes #42");
         run.PullRequestBody.Should().Be(capturedBody);
+    }
+
+    [Fact]
+    public async Task FinalizePullRequest_WhenRunReportedCost_ShouldShowItInTheBody()
+    {
+        string? capturedBody = null;
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun();
+        run.PullRequestNumber = "55";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/55";
+        run.TotalCost = 2.5m;
+        run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(100, 2.5m) { BillingMode = AgentBillingModes.Subscription };
+
+        await _sut.FinalizePullRequestAsync(
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
+
+        capturedBody.Should().Contain("Cost so far: ≈ $2.50");
     }
 
     [Fact]
