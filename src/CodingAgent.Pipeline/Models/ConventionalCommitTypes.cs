@@ -36,6 +36,8 @@ public static partial class ConventionalCommitTypes
     /// </summary>
     public static string Resolve(string? issueDescription, IReadOnlyList<string> issueLabels)
     {
+        ArgumentNullException.ThrowIfNull(issueLabels);
+
         if (RefactoringScanIssues.IsScanDescription(issueDescription)
             && ScanCategoryLine().Match(issueDescription!) is { Success: true } match
             && s_typeByScanCategory.TryGetValue(match.Groups["category"].Value, out var scanType))

@@ -969,8 +969,16 @@ public class RefactoringExecutorTests : IDisposable
 
     [Theory]
     [InlineData(RefactoringCategories.Duplication, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.StructuralDrift, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.Complexity, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.OverEngineering, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.DeadCode, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.NamingInconsistency, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.PrimitiveObsession, ConventionalCommitTypes.Refactor)]
     [InlineData(RefactoringCategories.Bug, ConventionalCommitTypes.Fix)]
     [InlineData(RefactoringCategories.TestGap, ConventionalCommitTypes.Test)]
+    [InlineData(RefactoringCategories.StaleDocumentation, ConventionalCommitTypes.Docs)]
+    [InlineData(RefactoringCategories.Todo, ConventionalCommitTypes.Chore)]
     public void FormatIssueBody_ShouldProduceABodyTheCommitTypeResolverCanRead(string category, string expected)
     {
         var proposal = new RefactoringProposal

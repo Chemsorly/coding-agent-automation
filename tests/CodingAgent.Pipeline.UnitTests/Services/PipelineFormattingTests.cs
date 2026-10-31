@@ -155,6 +155,14 @@ public class PipelineFormattingTests
         result.Should().Be("refactor: Extract helper (#42)");
     }
 
+    [Fact]
+    public void GeneratePrTitle_WhenCommitTypeIsNull_ShouldThrowArgumentNullException()
+    {
+        var act = () => PipelineFormatting.GeneratePrTitle("Extract helper", "#42", null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("commitType");
+    }
+
     // --- GenerateCommitMessage ---
 
     [Fact]
@@ -163,6 +171,14 @@ public class PipelineFormattingTests
         var result = PipelineFormatting.GenerateCommitMessage("Extract helper", "#42", ConventionalCommitTypes.Refactor);
 
         result.Should().StartWith("refactor: Extract helper (#42)\n\n");
+    }
+
+    [Fact]
+    public void GenerateCommitMessage_WhenCommitTypeIsNull_ShouldThrowArgumentNullException()
+    {
+        var act = () => PipelineFormatting.GenerateCommitMessage("Extract helper", "#42", null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("commitType");
     }
 
     [Fact]

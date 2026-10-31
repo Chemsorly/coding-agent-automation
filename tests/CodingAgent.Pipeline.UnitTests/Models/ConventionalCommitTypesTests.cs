@@ -96,6 +96,14 @@ public class ConventionalCommitTypesTests
     }
 
     [Fact]
+    public void WhenLabelsAreNull_ShouldThrowArgumentNullException()
+    {
+        var act = () => ConventionalCommitTypes.Resolve("A human wrote this.", null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("issueLabels");
+    }
+
+    [Fact]
     public void WhenDescriptionIsNull_ShouldUseLabels()
     {
         ConventionalCommitTypes.Resolve(null, []).Should().Be(ConventionalCommitTypes.Feature);

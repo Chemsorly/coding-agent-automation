@@ -46,6 +46,7 @@ public static partial class PipelineFormatting
     /// </summary>
     public static string GeneratePrTitle(string issueTitle, string issueReference, string commitType = ConventionalCommitTypes.Feature)
     {
+        ArgumentNullException.ThrowIfNull(commitType);
         return $"{commitType}: {issueTitle} ({issueReference})";
     }
 
@@ -96,6 +97,7 @@ public static partial class PipelineFormatting
     /// </summary>
     public static string GenerateCommitMessage(string title, string issueReference, string commitType = ConventionalCommitTypes.Feature)
     {
+        ArgumentNullException.ThrowIfNull(commitType);
         return $"{commitType}: {title} ({issueReference})\n\n{PipelineConstants.AutomatedCommitSuffix}";
     }
 

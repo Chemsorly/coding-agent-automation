@@ -316,10 +316,12 @@ public sealed class FetchIssueStepTests
             because: "Run.IssueLabels must be updated from the fetched issue");
     }
 
-    [Fact]
-    public async Task ExecuteAsync_WhenIssueHasBugLabel_ShouldSetRunCommitTypeToFix()
+    [Theory]
+    [InlineData("bug", ConventionalCommitTypes.Fix)]
+    [InlineData("enhancement", ConventionalCommitTypes.Feature)]
+    public async Task ExecuteAsync_ShouldSetRunCommitTypeFromIssueLabels(string label, string expected)
     {
-        var issue = MakeIssue(title: "Crash on save", labels: ["bug"]);
+        var issue = MakeIssue(title: "Crash on save", labels: [label]);
         _issueProvider
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(issue);
@@ -328,10 +330,11 @@ public sealed class FetchIssueStepTests
             .ReturnsAsync(Array.Empty<IssueComment>());
 
         var context = BuildContext();
+        context.Run.CommitType = ConventionalCommitTypes.Chore;
 
         await CreateStep().ExecuteAsync(context, CancellationToken.None);
 
-        context.Run.CommitType.Should().Be(ConventionalCommitTypes.Fix);
+        context.Run.CommitType.Should().Be(expected);
     }
 
     // ── IssueDetail reconstruction preserves all init properties ─────────────
