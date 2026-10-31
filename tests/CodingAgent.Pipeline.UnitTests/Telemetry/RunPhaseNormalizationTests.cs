@@ -189,4 +189,36 @@ public class RunPhaseNormalizationTests
     {
         PipelineTelemetry.AgentStallKinds.Normalize(raw).Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData("pre_pr", "pre_pr")]
+    [InlineData("PRE_PR", "pre_pr")]
+    [InlineData("post_pr", "post_pr")]
+    [InlineData("POST_PR", "post_pr")]
+    [InlineData("unknown_stage", null)]
+    [InlineData(null, null)]
+    public void CiWaitStages_Normalize_MapsToClosedSetOrNull(string? raw, string? expected)
+    {
+        PipelineTelemetry.CiWaitStages.Normalize(raw).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("pass", "pass")]
+    [InlineData("PASS", "pass")]
+    [InlineData("fail", "fail")]
+    [InlineData("FAIL", "fail")]
+    [InlineData("unknown_result", null)]
+    [InlineData(null, null)]
+    public void CiWaitResults_Normalize_MapsToClosedSetOrNull(string? raw, string? expected)
+    {
+        PipelineTelemetry.CiWaitResults.Normalize(raw).Should().Be(expected);
+    }
+
+    [Fact]
+    public void CiWaitResults_All_ContainsExpectedValues()
+    {
+        PipelineTelemetry.CiWaitResults.Pass.Should().Be("pass");
+        PipelineTelemetry.CiWaitResults.Fail.Should().Be("fail");
+        PipelineTelemetry.CiWaitResults.All.Should().HaveCount(2).And.Contain(["pass", "fail"]);
+    }
 }

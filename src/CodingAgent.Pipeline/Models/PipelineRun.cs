@@ -170,6 +170,12 @@ public sealed partial class PipelineRun
     /// <summary>Issue labels, populated when the issue is fetched.</summary>
     public IReadOnlyList<string> IssueLabels { get; set; } = Array.Empty<string>();
 
+    /// <summary>
+    /// Conventional commit type for this run's PR title and commit messages, resolved when the issue
+    /// is fetched.
+    /// </summary>
+    public string CommitType { get; set; } = ConventionalCommitTypes.Feature;
+
     /// <summary>History of quality gate reports across retry attempts.</summary>
     public BoundedConcurrentQueue<QualityGateReport> QualityGateHistory { get; init; } = new(PipelineConstants.DefaultQualityGateHistoryCapacity);
 

@@ -1,6 +1,10 @@
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Git;
 using LibGit2Sharp;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
+using System.Runtime.Versioning;
 
 namespace CodingAgent.Infrastructure.UnitTests.Git;
 
@@ -271,6 +275,128 @@ public class LibGit2SharpGitOperationsTests : IDisposable
             "a path not present in the HEAD tree must return null");
     }
 
+    // ── TryDeleteEmptyDirectories: locked directory is skipped, debug log emitted ──
+
+    /// <summary>
+    /// Simulates a directory that cannot be deleted (parent has no write permission)
+    /// and verifies that the exception is caught, a debug log entry is emitted, and
+    /// iteration continues for remaining directories without throwing.
+    /// A second deletable directory is included so that the test proves the loop did
+    /// not stop after the failure (a break-after-log regression would leave it present).
+    /// Requires Unix file-permission semantics as a non-root user — skipped otherwise.
+    /// </summary>
+    [SkipOnWindowsFact("Requires Unix file permissions to simulate a non-deletable directory")]
+    [UnsupportedOSPlatform("windows")]
+    public void TryDeleteEmptyDirectories_LockedDirectory_ExceptionCaughtAndDebugLogged()
+    {
+        var sink = new CollectingSink();
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        var sut = new LibGit2SharpGitOperations(logger);
+
+        // container/locked/ — Directory.Delete will fail because container/ has no write permission.
+        var containerDir = Path.Combine(_repoPath, "container");
+        var lockedDir = Path.Combine(containerDir, "locked");
+        Directory.CreateDirectory(lockedDir);
+
+        // alsoToDelete/ — direct child of _repoPath (writable parent); will succeed after the failure.
+        // Its presence proves the loop continues rather than stopping after catching the exception.
+        var alsoToDeleteDir = Path.Combine(_repoPath, "alsoToDelete");
+        Directory.CreateDirectory(alsoToDeleteDir);
+
+        // Remove write permission from containerDir so that Directory.Delete(lockedDir) fails.
+        File.SetUnixFileMode(containerDir,
+            UnixFileMode.UserRead | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+
+        try
+        {
+            var act = () => sut.DiscardChangesExcept(_repoPath, "tracked.txt");
+
+            act.Should().NotThrow("exceptions from Directory.Delete must be caught and logged, not propagated");
+
+            sink.Events.Should()
+                .ContainSingle(e =>
+                    e.Level == LogEventLevel.Debug &&
+                    e.MessageTemplate.Text.Contains("Could not remove empty directory"),
+                    "a debug log entry must be emitted for the directory that could not be deleted");
+
+            Directory.Exists(lockedDir).Should().BeTrue(
+                "the locked directory must still exist after a failed delete attempt");
+
+            Directory.Exists(alsoToDeleteDir).Should().BeFalse(
+                "the second deletable directory must have been removed, proving the loop continued after the failure");
+        }
+        finally
+        {
+            // Restore write permission so Dispose() can clean up the temp repo.
+            File.SetUnixFileMode(containerDir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that when a mix of deletable and locked directories exists, all deletable
+    /// directories are removed and only the locked one is skipped.
+    /// Requires Unix file-permission semantics — skipped on Windows.
+    /// </summary>
+    [SkipOnWindowsFact("Requires Unix file permissions to simulate a non-deletable directory")]
+    [UnsupportedOSPlatform("windows")]
+    public void TryDeleteEmptyDirectories_MixedDirectories_DeletableRemovedLockedSkipped()
+    {
+        var sink = new CollectingSink();
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        var sut = new LibGit2SharpGitOperations(logger);
+
+        // toDelete/ is a direct child of _repoPath (writable parent) — will succeed.
+        var toDeleteDir = Path.Combine(_repoPath, "toDelete");
+        Directory.CreateDirectory(toDeleteDir);
+
+        // container/locked/ — write permission removed from container/ so locked/ cannot be deleted.
+        var containerDir = Path.Combine(_repoPath, "container");
+        var lockedDir = Path.Combine(containerDir, "locked");
+        Directory.CreateDirectory(lockedDir);
+
+        File.SetUnixFileMode(containerDir,
+            UnixFileMode.UserRead | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+
+        try
+        {
+            var act = () => sut.DiscardChangesExcept(_repoPath, "tracked.txt");
+
+            act.Should().NotThrow();
+
+            Directory.Exists(toDeleteDir).Should().BeFalse(
+                "the deletable directory must have been removed");
+
+            Directory.Exists(lockedDir).Should().BeTrue(
+                "the locked directory must still exist after the failed delete attempt");
+
+            sink.Events.Should()
+                .ContainSingle(e =>
+                    e.Level == LogEventLevel.Debug &&
+                    e.MessageTemplate.Text.Contains("Could not remove empty directory"),
+                    "exactly one debug log entry must be emitted — only for the locked directory");
+        }
+        finally
+        {
+            File.SetUnixFileMode(containerDir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void InitRepoWithCommit(string path)
@@ -322,5 +448,39 @@ public class LibGit2SharpGitOperationsTests : IDisposable
         {
             FastForwardStrategy = FastForwardStrategy.NoFastForward
         });
+    }
+
+    /// <summary>
+    /// Thread-safe Serilog sink that collects log events for assertion.
+    /// </summary>
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly object _lock = new();
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get { lock (_lock) { return [.. _events]; } }
+        }
+
+        public void Emit(LogEvent logEvent) { lock (_lock) { _events.Add(logEvent); } }
+    }
+
+    /// <summary>
+    /// xUnit FactAttribute that skips the test on Windows or when running as a privileged (root) process.
+    /// Used for tests that require Unix file-permission semantics as a non-root user.
+    /// Root bypasses DAC permission bits on Linux, so the simulated lock would not hold.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Method)]
+    private sealed class SkipOnWindowsFact : FactAttribute
+    {
+        public SkipOnWindowsFact(string reason = "Not supported on Windows or as root")
+        {
+            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                    System.Runtime.InteropServices.OSPlatform.Windows))
+                Skip = $"[Windows] {reason}";
+            else if (Environment.IsPrivilegedProcess)
+                Skip = $"[Root] {reason}: root bypasses DAC permissions so the simulated lock would not hold";
+        }
     }
 }

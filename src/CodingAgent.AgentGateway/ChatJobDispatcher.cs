@@ -52,6 +52,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly IChatHeartbeatTracker? _heartbeatTracker;
     // Owns the watcher loop logic (extracted collaborator).
     private readonly IChatSessionWatcher _sessionWatcher;
+    // Clock for everything the idle-kill compares: session start and client heartbeats.
+    // Shared with the watcher and the tracker so all idle timestamps come from one clock.
+    private readonly TimeProvider _timeProvider;
 
     private const string TagAgentSelector = "agent_selector";
     private const string LabelChatSessionId = "caa/chat-session-id";
@@ -61,6 +64,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // Keyed by jobName (== agentId for chat pods — see invariant note on TerminateChatSessionAsync).
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
+
+    /// <summary>How long <see cref="StopAsync"/> waits for watchers before cleaning up anyway. Test seam.</summary>
+    internal TimeSpan ShutdownWatcherWait { get; set; } = TimeSpan.FromSeconds(5);
     // TODO [WARNING]: The _stopped flag is never reset by DisposeAsync, so once StopAsync has run
     // (either explicitly or via the internal StopAsync call inside DisposeAsync), it cannot be
     // re-armed. This is intentional: IHostedService semantics do not require restart after stop.
@@ -140,11 +146,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         IAgentRegistryService registry,
         DispatchServiceOptions options,
         ILogger logger,
-        CodingAgent.Orchestration.Redis.IRedisStore? redis = null)
+        CodingAgent.Orchestration.Redis.IRedisStore? redis = null,
+        TimeProvider? timeProvider = null)
         : this(
             jobClient, hubContext, templateStore, registry, options, logger,
-            redis is not null ? new ChatHeartbeatTracker(redis, options, logger) : (IChatHeartbeatTracker?)null,
-            null)
+            redis is not null ? new ChatHeartbeatTracker(redis, options, logger, timeProvider) : (IChatHeartbeatTracker?)null,
+            null,
+            timeProvider)
     {
     }
 
@@ -162,7 +170,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         DispatchServiceOptions options,
         ILogger logger,
         IChatHeartbeatTracker? heartbeatTracker,
-        IChatSessionWatcher? sessionWatcher)
+        IChatSessionWatcher? sessionWatcher,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(jobClient);
         ArgumentNullException.ThrowIfNull(hubContext);
@@ -177,7 +186,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _options = options;
         _logger = logger;
         _heartbeatTracker = heartbeatTracker;
-        _sessionWatcher = sessionWatcher ?? new ChatSessionWatcher(jobClient, heartbeatTracker, options, logger);
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _sessionWatcher = sessionWatcher ?? new ChatSessionWatcher(jobClient, heartbeatTracker, options, logger, _timeProvider);
     }
 
     // ─── DispatchChatPodAsync ──────────────────────────────────────────────────
@@ -441,7 +451,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     {
         var watcherCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
 
-        var entry = new WatcherEntry(identity, DateTimeOffset.UtcNow, watcherCts);
+        var entry = new WatcherEntry(identity, _timeProvider.GetUtcNow(), watcherCts);
 
         // IMPORTANT: store in the dictionary BEFORE Task.Run so that if WatchJobUntilTerminalAsync
         // completes synchronously (e.g. immediate 404), CleanupSession's TryRemove runs against
@@ -474,7 +484,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// </summary>
     public void RecordClientHeartbeat(AgentId agentId)
     {
-        var nowTicks = DateTimeOffset.UtcNow.UtcTicks;
+        var nowTicks = _timeProvider.GetUtcNow().UtcTicks;
 
         // Update local in-process clock (fast path — same replica).
         // Interlocked.Exchange stays here because it operates directly on WatcherEntry.LastClientHeartbeatTicks,
@@ -525,7 +535,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         if (entry.ClaimedPvc is not null)
             ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", entry.PoolName ?? "unknown"));
 
-        var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
+        var duration = (_timeProvider.GetUtcNow() - entry.StartedAt).TotalSeconds;
         ChatTelemetry.SessionDuration.Record(
             duration,
             selectorTag,
@@ -566,7 +576,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         try
         {
             await Task.WhenAll(entries.Select(e => e.Value.WatcherTask))
-                .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+                .WaitAsync(ShutdownWatcherWait, CancellationToken.None);
         }
         catch
         {
