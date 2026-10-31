@@ -540,6 +540,27 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task ReviewAgent_NoMarkersInFindings_CountsZero()
+    {
+        // Agent writes a findings file containing only prose — no [SEVERITY] markers.
+        // The EarlyStopRule tells agents to write a short statement and stop; this test verifies that
+        // prose-only output (e.g. "The diff has nothing in my focus area.") parses to zero counts
+        // and does not fail the review iteration.
+        const string proseOnly =
+            "The diff has nothing in my focus area.\n" +
+            "No issues found. All changes are within scope.\n";
+        SetupAgentWritingFindings("Correctness", proseOnly);
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null } };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        _run.CodeReviewCriticalCount.Should().Be(0);
+        _run.CodeReviewWarningCount.Should().Be(0);
+        _run.CodeReviewSuggestionCount.Should().Be(0);
+        _run.CodeReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
     public async Task CodeReview_EnableNativeImagePartsTrue_ImagePathsPassedToReviewAgent()
     {
         // Arrange: non-null DownloadedImages + EnableNativeImageParts = true → ImagePaths must be forwarded

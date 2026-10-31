@@ -13,7 +13,7 @@ public static class DefaultPrompts
     private const string ReportOnlyInstruction = "Do NOT fix anything. Only report findings.";
 
     public const string CodeReview =
-        "Review the changes against the original issue requirements. Use a sub-agent for the review.\n" +
+        "Review the changes against the original issue requirements.\n" +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         FocusAreasHeader +
         "- Unhandled null references and exception paths\n" +
@@ -42,7 +42,7 @@ public static class DefaultPrompts
         "otherwise add a TODO comment at the relevant location. Ignore [SUGGESTION] items.";
 
     public const string CorrectnessReview =
-        "Review the changes against the original issue requirements. Use a sub-agent for the review. " +
+        "Review the changes against the original issue requirements. " +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
         FocusAreasHeader +
         "- Unhandled null references and exception paths\n" +
