@@ -229,7 +229,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         db.WorkItems.Add(CreateWorkItem("issue-1", "config-1", WorkItemStatus.Running, null));
         await db.SaveChangesAsync();
 
-        var delegateUnderTest = ApiServiceCollectionExtensions.CreateIsIssueDistributedDelegate(dbFactory);
+        var delegateUnderTest = ApiOrchestrationCoreServiceExtensions.CreateIsIssueDistributedDelegate(dbFactory);
 
         var result = await delegateUnderTest("issue-1", "config-1", CancellationToken.None);
 
@@ -252,7 +252,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         db.WorkItems.Add(CreateWorkItem("issue-2", "config-2", WorkItemStatus.Succeeded, recentCompletion));
         await db.SaveChangesAsync();
 
-        var delegateUnderTest = ApiServiceCollectionExtensions.CreateIsIssueDistributedDelegate(dbFactory);
+        var delegateUnderTest = ApiOrchestrationCoreServiceExtensions.CreateIsIssueDistributedDelegate(dbFactory);
 
         var result = await delegateUnderTest("issue-2", "config-2", CancellationToken.None);
 
@@ -271,7 +271,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         // because the DB is empty. Add a variant that seeds a row for a different
         // issueProviderConfigId (same issueIdentifier) and asserts the delegate still returns false.
         // See review finding [WARNING] ApiOrchestrationDiTests.cs:172 (TestQualityReviewer review).
-        var delegateUnderTest = ApiServiceCollectionExtensions.CreateIsIssueDistributedDelegate(dbFactory);
+        var delegateUnderTest = ApiOrchestrationCoreServiceExtensions.CreateIsIssueDistributedDelegate(dbFactory);
 
         var result = await delegateUnderTest("issue-3", "config-3", CancellationToken.None);
 
@@ -289,7 +289,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         db.WorkItems.Add(CreateWorkItem("issue-4", "config-4", WorkItemStatus.Succeeded, staleCompletion));
         await db.SaveChangesAsync();
 
-        var delegateUnderTest = ApiServiceCollectionExtensions.CreateIsIssueDistributedDelegate(dbFactory);
+        var delegateUnderTest = ApiOrchestrationCoreServiceExtensions.CreateIsIssueDistributedDelegate(dbFactory);
 
         var result = await delegateUnderTest("issue-4", "config-4", CancellationToken.None);
 

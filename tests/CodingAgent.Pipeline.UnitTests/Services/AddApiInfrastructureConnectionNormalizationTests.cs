@@ -8,7 +8,7 @@ using Npgsql;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Verifies that <see cref="ApiServiceCollectionExtensions.AddApiInfrastructure"/> reads
+/// Verifies that <see cref="ApiInfrastructureServiceExtensions.AddApiInfrastructure"/> reads
 /// <c>ASPNETCORE_ENVIRONMENT</c> and passes the derived <c>isProduction</c> flag correctly
 /// to <see cref="CodingAgent.Infrastructure.DatabaseReadinessMonitor.NormalizeConnectionString"/>.
 ///
