@@ -13,7 +13,7 @@ public partial class GitHubRepositoryProvider
         return Task.Run(async () =>
         {
             var token = await GetTokenAsync(ct);
-            return await RepositoryGitOperations.MergeFromBase(workspacePath, _baseBranch, GitConstants.TokenUsername, token, _gitPipeline, ct);
+            return await RepositoryGitOperations.MergeFromBase(workspacePath, CanonicalCloneUrl, _baseBranch, GitConstants.TokenUsername, token, _gitPipeline, ct);
         }, ct);
     }
 }

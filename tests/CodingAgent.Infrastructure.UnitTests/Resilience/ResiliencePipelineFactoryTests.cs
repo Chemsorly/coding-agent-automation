@@ -88,6 +88,13 @@ public class ResiliencePipelineFactoryTests
     }
 
     [Fact]
+    public void IsTransientGitException_RemoteRefused_ReturnsFalse()
+    {
+        var ex = new LibGit2SharpException(PushErrorClassifier.RemoteRefusedMarker + " 'x.test'.");
+        ResiliencePipelineFactory.IsTransientGitException(ex).Should().BeFalse();
+    }
+
+    [Fact]
     public void CreateGitHubApiPipeline_ReturnsNonNullPipeline()
     {
         var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);

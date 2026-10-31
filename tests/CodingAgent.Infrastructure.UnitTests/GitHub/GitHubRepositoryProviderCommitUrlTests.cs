@@ -36,6 +36,17 @@ public class GitHubRepositoryProviderCommitUrlTests
         result.Should().BeNull();
     }
 
+    [Theory]
+    [InlineData("https://api.github.com", "https://github.com/owner/repo.git")]
+    [InlineData("https://github.example.com/api/v3", "https://github.example.com/owner/repo.git")]
+    public async Task CanonicalCloneUrl_ReturnsExpectedUrl(string apiUrl, string expectedUrl)
+    {
+        await using var provider = new GitHubRepositoryProvider(
+            new GitHubConnectionInfo(apiUrl, "owner", "repo"), "token", "main");
+
+        provider.CanonicalCloneUrl.Should().Be(expectedUrl);
+    }
+
     // TODO: Missing test: GetCommitWebUrl with an empty ApiUrl ("") should return null. The
     // implementation returns null when WebBaseUrl is empty, but this branch is untested. Add a fact:
     // new GitHubConnectionInfo("", "owner", "repo") → GetCommitWebUrl("abc123") returns null.
