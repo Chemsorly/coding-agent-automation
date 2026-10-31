@@ -169,7 +169,7 @@ The brain is a central git repository of curated lessons shared across pipeline 
 
 ### How it works
 
-Every successful implementation run proposes up to 5 candidate lessons by writing `.agent/brain-candidates.md` (spec 054, req 3.3). The pipeline then composes an **inbox file** (`inbox/YYYY-MM-DD_<runId>.md`) from the candidates and the recorded evidence (gate failures, CI logs, review findings, human comments) and pushes it to the brain repository.
+Every successful implementation run proposes up to 5 candidate lessons by writing `.agent/brain-candidates.md` (spec 054, req 3.3). The pipeline then composes an **inbox file** (`inbox/YYYY-MM-DD_<runId>.md`) from the candidates and the recorded evidence (gate failures, CI logs, review findings, human comments) and writes that one file to the brain repository through the provider's API, not local git. The run's `.brain/` clone is read context only: nothing in it reaches the brain repository, and the run's own inbox file does not appear in it.
 
 Draft runs (post-PR CI failure) still write evidence-only inbox files (no candidates).
 

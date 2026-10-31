@@ -101,6 +101,7 @@ public sealed class BrainRepoFixture : IDisposable
     ///   <item><c>CommitAllAsync(path, message, ct)</c> — via <see cref="RepositoryGitOperations.CommitAll"/> so <c>.agent/</c> stays out</item>
     ///   <item><c>PushBranchAsync(path, branch, ct)</c> — maps <see cref="NonFastForwardException"/> to <see cref="InvalidOperationException"/></item>
     ///   <item><c>GetCommitWebUrl</c> → <see langword="null"/></item>
+    ///   <item><c>WriteFileToBaseBranchAsync</c> — <see cref="WriteFileOnRemote"/></item>
     /// </list>
     /// </summary>
     public Mock<IRepositoryProvider> Provider()
@@ -132,7 +133,7 @@ public sealed class BrainRepoFixture : IDisposable
                 return Task.FromResult(repo.Head.Tip.Sha);
             });
 
-        // The 3-arg overload is what BrainUpdateService calls (CommitInboxAndPushAsync).
+        // The 3-arg overload is what BrainUpdateService calls (MergeConsolidationOntoRemoteAsync).
         provider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns((WorkspacePath path, string message, CancellationToken _) =>
             {
@@ -151,7 +152,25 @@ public sealed class BrainRepoFixture : IDisposable
         provider.Setup(p => p.GetCommitWebUrl(It.IsAny<string>()))
             .Returns((string _) => null);
 
+        provider.Setup(p => p.WriteFileToBaseBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string path, string content, string message, CancellationToken _) =>
+                Task.FromResult(new RemoteFileWriteResult(WriteFileOnRemote(path, content, message))));
+
         return provider;
+    }
+
+    private readonly object _remoteWriteLock = new();
+
+    /// <summary>Commits one file to <c>main</c> on the remote, as a provider's file API would. Returns the commit SHA.</summary>
+    public string WriteFileOnRemote(string path, string content, string message)
+    {
+        lock (_remoteWriteLock)
+        {
+            var clone = Clone($"api-write-{Guid.NewGuid():N}");
+            CommitAndPush(clone, new Dictionary<string, string?> { [path] = content }, message);
+            using var repo = new Repository(RemotePath);
+            return repo.Branches["main"].Tip.Sha;
+        }
     }
 
     /// <summary>Returns all file paths and contents at the tip of <c>main</c> in the remote (recursively).</summary>

@@ -411,3 +411,36 @@ Spec 049: render-time validation of the auth values (the web host validates them
   {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Where agent pods may send telemetry inside the cluster, as JSON: {"namespace":"<ns>","port":<port>},
+or {} when no rule can be derived. Parsed with regexFind, not the built-in URL parser: the built-in
+parser fails the render on a malformed URL, and a typo in otel.endpoint must not stop an upgrade.
+agentNetworkPolicy.otel.namespace and agentNetworkPolicy.otel.port override what the URL says.
+*/}}
+{{- define "coding-agent-automation.agentOtelTarget" -}}
+{{- $override := (.Values.agentNetworkPolicy | default dict).otel | default dict -}}
+{{- $endpoint := (.Values.otel | default dict).endpoint | default "" | lower -}}
+{{- $namespace := "" -}}
+{{- $port := "" -}}
+{{- $authority := regexFind "^https?://[a-z0-9.-]+(:[0-9]+)?(/.*)?$" $endpoint | regexFind "^https?://[^/]+" | trimPrefix "http://" | trimPrefix "https://" -}}
+{{- if $authority -}}
+  {{- $host := regexFind "^[^:]+" $authority -}}
+  {{- $port = regexFind "[0-9]+$" (regexFind ":[0-9]+$" $authority) -}}
+  {{- if not (regexMatch "^[0-9]+([.][0-9]+){3}$" $host) -}}
+    {{- $labels := splitList "." $host -}}
+    {{- if eq (len $labels) 1 -}}
+      {{- $namespace = .Release.Namespace -}}
+    {{- else if or (eq (len $labels) 2) (eq (index $labels 2) "svc") -}}
+      {{- $namespace = index $labels 1 -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $namespace = $override.namespace | default $namespace -}}
+{{- $port = $override.port | default $port -}}
+{{- if and $namespace $port -}}
+{{- dict "namespace" $namespace "port" (int $port) | toJson -}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}

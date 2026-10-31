@@ -146,6 +146,10 @@ RUN mkdir -p /home/ubuntu/.claude/rules && \
 ENV DISABLE_UPDATES=1
 ENV DISABLE_AUTOUPDATER=1
 
+# No .NET diagnostics socket in the worker: attaching a profiler needs no ptrace. The worker removes this
+# variable at startup, so the processes it starts, such as dotnet test in a target repository, do not get it.
+ENV DOTNET_EnableDiagnostics=0
+
 # Predefined agent labels: the agent tool and every stack in the image (overridable at runtime;
 # Kubernetes Jobs set them from their job template)
 ENV AGENT_LABELS=claude,${STACK_LABELS}
@@ -185,6 +189,10 @@ RUN mkdir -p /home/ubuntu/.kiro && \
     rm -rf /tmp/kirocli /tmp/kirocli.zip && \
     kiro-cli settings "app.disableAutoupdates" "true" && \
     rm -f /home/ubuntu/.local/share/kiro-cli/data.sqlite3*
+
+# No .NET diagnostics socket in the worker: attaching a profiler needs no ptrace. The worker removes this
+# variable at startup, so the processes it starts, such as dotnet test in a target repository, do not get it.
+ENV DOTNET_EnableDiagnostics=0
 
 # Predefined agent labels: the agent tool and every stack in the image (overridable at runtime;
 # Kubernetes Jobs set them from their job template)

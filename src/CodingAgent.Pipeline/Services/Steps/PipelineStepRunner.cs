@@ -7,6 +7,7 @@ namespace CodingAgent.Pipeline.Services.Steps;
 /// <summary>
 /// Composes and executes an ordered list of pipeline steps.
 /// The step list is explicit and configurable — callers build the list based on run context.
+/// A workspace baseline still running when the steps end is stopped before this returns.
 /// </summary>
 public static class PipelineStepRunner
 {
@@ -22,6 +23,22 @@ public static class PipelineStepRunner
         ArgumentNullException.ThrowIfNull(steps);
         ArgumentNullException.ThrowIfNull(context);
 
+        try
+        {
+            await ExecuteStepsAsync(steps, context, ct);
+        }
+        finally
+        {
+            if (context.RunningBaseline is { } baseline)
+            {
+                context.RunningBaseline = null;
+                await baseline.StopAsync();
+            }
+        }
+    }
+
+    private static async Task ExecuteStepsAsync(IReadOnlyList<IPipelineStep> steps, PipelineStepContext context, CancellationToken ct)
+    {
         foreach (var step in steps)
         {
             using var stepCtx = LogContext.PushProperty("StepName", step.StepName);

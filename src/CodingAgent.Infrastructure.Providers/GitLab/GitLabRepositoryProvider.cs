@@ -1,6 +1,8 @@
 using LibGit2Sharp;
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
 using NGitLab;
+using NGitLab.Models;
 using Polly;
 using CodingAgent.Infrastructure.Git;
 using CodingAgent.Infrastructure.Resilience;
@@ -103,11 +105,12 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         return Task.Run(async () =>
         {
+            var canonicalCloneUrl = await GetCanonicalCloneUrlAsync(ct);
             var token = await GetTokenAsync(ct);
 
             try
             {
-                await RepositoryGitOperations.Pull(workspacePath, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
+                await RepositoryGitOperations.Pull(workspacePath, canonicalCloneUrl, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -171,9 +174,10 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         return Task.Run(async () =>
         {
+            var canonicalCloneUrl = await GetCanonicalCloneUrlAsync(ct);
             try
             {
-                await RepositoryGitOperations.Push(workspacePath, branchName, forcePush,
+                await RepositoryGitOperations.Push(workspacePath, canonicalCloneUrl, branchName, forcePush,
                     GitConstants.GitLabTokenUsername, tokenFactory: GetTokenAsync, _gitPipeline, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
@@ -205,6 +209,48 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     }
 
     /// <inheritdoc />
+    // The Commits API, not the Repository Files API: only it returns the commit and takes an author.
+    public async Task<RemoteFileWriteResult> WriteFileToBaseBranchAsync(
+        string relativePath, string content, string commitMessage, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(relativePath);
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentException.ThrowIfNullOrEmpty(commitMessage);
+
+        try
+        {
+            var exists = await ExecuteWithResilienceAsync(
+                client => client.GetRepository(ProjectId).Files.FileExistsAsync(relativePath, BaseBranch, ct),
+                "FileExistsOnBaseBranch", ct);
+            var commit = await ExecuteWriteWithResilienceAsync(
+                client => client.GetCommits(ProjectId).Create(new CommitCreate
+                {
+                    Branch = BaseBranch,
+                    CommitMessage = commitMessage,
+                    AuthorName = GitConstants.CommitAuthorName,
+                    AuthorEmail = GitConstants.CommitAuthorEmail,
+                    Actions =
+                    [
+                        new CreateCommitAction
+                        {
+                            Action = exists ? "update" : "create",
+                            FilePath = relativePath,
+                            Content = content,
+                            Encoding = "text"
+                        }
+                    ]
+                }),
+                "WriteFileToBaseBranch", ct);
+            return new RemoteFileWriteResult(commit.Id.ToString());
+        }
+        catch (GitLabException ex) when (ex.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Conflict)
+        {
+            // 400: "A file with this name already exists" or "doesn't exist", when another write came between.
+            throw new RemoteFileConflictException($"{relativePath} changed on {BaseBranch} during the write.", ex);
+        }
+    }
+
+    /// <inheritdoc />
     public Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.HasCommitsAheadAsync(workspacePath, _baseBranch, _gitPipeline, ct);
 
@@ -221,8 +267,9 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         return Task.Run(async () =>
         {
+            var canonicalCloneUrl = await GetCanonicalCloneUrlAsync(ct);
             var token = await GetTokenAsync(ct);
-            return await RepositoryGitOperations.MergeFromBase(workspacePath, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
+            return await RepositoryGitOperations.MergeFromBase(workspacePath, canonicalCloneUrl, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
         }, ct);
     }
 
@@ -237,6 +284,35 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     // ─── MR/Review Operations (implemented in GitLabRepositoryProvider.MergeRequests.cs) ───
 
     // ─── Private Helpers ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// This project's clone URL, from the GitLab API's project metadata, loaded here when validation has not run.
+    /// Never read from a workspace.
+    /// </summary>
+    internal async Task<string> GetCanonicalCloneUrlAsync(CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(HttpUrlToRepo))
+            await ValidateAsync(ct);
+
+        if (string.IsNullOrEmpty(HttpUrlToRepo))
+            throw new InvalidOperationException($"GitLab project {ProjectId} reported no clone URL.");
+
+        return ToCanonicalCloneUrl(HttpUrlToRepo);
+    }
+
+    /// <summary>
+    /// <paramref name="httpUrl"/> as HTTPS with its port and without credentials. GitLab can report <c>http://</c>
+    /// behind a TLS proxy, and the token must not go over plain HTTP.
+    /// </summary>
+    internal static string ToCanonicalCloneUrl(string httpUrl)
+    {
+        var uri = new Uri(httpUrl);
+        if (uri.Scheme is not ("http" or "https"))
+            throw new InvalidOperationException(
+                $"Clone URL has unsupported scheme '{uri.Scheme}'. Only HTTPS is supported for authenticated clone.");
+
+        return $"https://{uri.Host}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}{uri.AbsolutePath}";
+    }
 
     /// <summary>
     /// Builds an authenticated clone URL from the cached <c>http_url_to_repo</c>.

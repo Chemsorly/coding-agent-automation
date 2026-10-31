@@ -5,6 +5,9 @@ namespace CodingAgent.Infrastructure.Resilience;
 /// </summary>
 public static class PushErrorClassifier
 {
+    /// <summary>Marker string used in the exception message when credentials are refused for a foreign server.</summary>
+    internal const string RemoteRefusedMarker = "Refused to send git credentials to host";
+
     /// <summary>Push failure categories.</summary>
     public enum PushFailureCategory
     {
@@ -18,6 +21,8 @@ public static class PushErrorClassifier
         Network,
         /// <summary>Non-fast-forward / branch diverged.</summary>
         Conflict,
+        /// <summary>The remote is not this repository's provider; no credentials were sent.</summary>
+        RemoteRefused,
         /// <summary>Unknown error.</summary>
         Unknown
     }
@@ -28,6 +33,11 @@ public static class PushErrorClassifier
     public static PushFailureCategory Classify(string errorMessage)
     {
         ArgumentNullException.ThrowIfNull(errorMessage);
+
+        if (errorMessage.Contains(RemoteRefusedMarker, StringComparison.Ordinal))
+        {
+            return PushFailureCategory.RemoteRefused;
+        }
 
         if (errorMessage.Contains("refusing to allow a GitHub App to create or update workflow", StringComparison.OrdinalIgnoreCase))
         {
@@ -83,6 +93,7 @@ public static class PushErrorClassifier
             PushFailureCategory.BranchProtection => $"Push failed: branch '{branchName ?? "unknown"}' is protected.",
             PushFailureCategory.Network => "Push failed: network error after retries exhausted.",
             PushFailureCategory.Conflict => "Push failed: branch has diverged from remote (non-fast-forward).",
+            PushFailureCategory.RemoteRefused => "Push failed: the push target is not this repository's provider, so no credentials were sent.",
             _ => "Push failed: unexpected error."
         };
     }

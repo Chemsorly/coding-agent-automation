@@ -278,6 +278,33 @@ otel:
   apiServiceName: coding-agent-api
   resourceAttributes: ""
 
+# ── Agent network policy ─────────────────────────────────────────────────────
+
+# Default deny for agent pods, with an allow-list. Needs a CNI that enforces NetworkPolicy.
+# See "Agent network policy" in docs/deployment.md.
+agentNetworkPolicy:
+  enabled: true
+  # Egress peer for cluster DNS: a NetworkPolicy peer, used as written. Helm merges maps, so to
+  # replace a default label set it to null, for example k8s-app: null.
+  dnsSelector:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  # Required while enabled: the cluster's pod and service CIDRs, IPv4 and IPv6 in one list.
+  # They are excepted from the "everything outside the cluster" rule.
+  # k3s defaults: [10.42.0.0/16, 10.43.0.0/16]. Add node addresses or a cloud metadata address
+  # here to block them as well.
+  clusterCidrs: []
+  # Optional {namespace, port}, overriding what otel.endpoint says: use it when the collector's
+  # Service port differs from its pod port, or otel.endpoint is an IP address or has no port.
+  otel: {}
+  # Extra egress rules, used as written: for destinations inside the cluster, such as an
+  # in-cluster MCP server.
+  extraEgress: []
+
 # ── ServiceAccount ───────────────────────────────────────────────────────────
 
 serviceAccount:

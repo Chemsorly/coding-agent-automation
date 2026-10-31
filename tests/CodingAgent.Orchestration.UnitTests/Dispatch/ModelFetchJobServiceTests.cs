@@ -899,6 +899,22 @@ public sealed class ModelFetchJobServiceTests
             Times.Once, "the outer CancellationToken must be forwarded to the receiver");
     }
 
+    // ── Agent pod label (issue #4080) ────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenModelFetchJobIsCreated_PodCarriesTheAgentPodLabel()
+    {
+        // Guards against ModelFetchJobService.cs replacing pod-template labels. It replaces
+        // the Job's own Metadata.Labels (to add caa/job-type=model-fetch), not the pod template's.
+        // This test pins that the pod-level label survives unchanged.
+        SetupReceiverReturns(TwoModels, null);
+        var service = CreateServiceWithFakeClient();
+        await service.FetchModelsAsync("kiro", CancellationToken.None);
+
+        var job = _fakeClient.LastCreatedJob!;
+        job.Spec.Template.Metadata.Labels["caa/agent-pod"].Should().Be("true");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     /// <summary>
