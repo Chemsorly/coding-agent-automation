@@ -233,7 +233,10 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                 // which is correct — they are not provider HTTP classification failures.
                 ErrorCategory = result.ErrorCategory,
                 ToolCalls = toolCalls,
-                UnavailableMcpServers = unavailableMcpServers
+                UnavailableMcpServers = unavailableMcpServers,
+                UsageDetails = sseState.AssistantMessageIds.Count > 0
+                    ? new AgentUsageDetails { Turns = sseState.AssistantMessageIds.Count }
+                    : null
             };
         }
         finally
