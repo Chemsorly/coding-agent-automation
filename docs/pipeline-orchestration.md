@@ -260,6 +260,8 @@ The `ip → next` conflict-restart transition is automatic and does not require 
 
 2. **Automated branch updates** — For every `agent:done` PR that is behind its base branch: triggers a server-side branch update (fire-and-forget). Respects the `effectiveConcurrencyLimit` (template-level `HousekeepingConcurrencyLimit` or global fallback) — at most N updates are in-flight per repository at any time. Draft PRs and branches with active runs are skipped.
 
+   Human PRs with auto-merge enabled also receive branch updates, at lower priority than pipeline PRs. Pipeline PRs have first claim on the free concurrency slots; human PRs use whatever slots remain after pipeline PRs are processed. A human PR that already has an in-flight update keeps its slot until the CI run finishes — these in-flight slots count against the shared limit so that the total CI load stays bounded. Human PRs are only updated on providers whose update adds a merge commit and preserves the author's branch history (GitHub); providers that rebase the branch (GitLab) would rewrite history and diverge the author's local copy, so human PRs are skipped on GitLab. Human PRs never trigger conflict rework — a conflicted human PR is silently skipped.
+
 3. **Stale branch cleanup** (when `HousekeepingBranchCleanupEnabled: true`) — `StaleBranchCleaner.RunIfDueAsync` runs on a configurable interval (`HousekeepingBranchCleanupIntervalMinutes`, default 60 min): lists all `feature/auto-*` branches, skips any that have an open PR or whose linked issue carries an active label, deletes the rest.
 
 ### Configuration

@@ -263,6 +263,8 @@ internal sealed class TemplatePoller
     /// Fetches open agent-created PRs from a repository provider by matching the agent branch prefix.
     /// Uses branch name prefix (<c>feature/auto-</c>) rather than label filtering because the agent
     /// applies <c>agent:done</c> to the <em>issue</em>, not the PR — PRs have no agent status labels.
+    /// On providers where <see cref="IPullRequestHousekeepingProvider.BranchUpdatePreservesHistory"/> is true,
+    /// the list also contains human PRs with auto-merge enabled (non-draft, non-pipeline-branch).
     /// IsDraft and active-run exclusion are applied in HousekeepingService.ExecuteAsync.
     /// Returns the fetched list and a flag indicating whether the result was truncated by
     /// <paramref name="maxPages"/> before all pages were consumed.
@@ -276,8 +278,12 @@ internal sealed class TemplatePoller
                 repoProvider.ListOpenPullRequestsAsync(page, pageSize, null, token),
             maxPages, ct);
 
-        // Filter to agent-created PRs by branch prefix.
-        all.RemoveAll(pr => !pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal));
+        // Keep agent-created PRs (by branch prefix), plus human PRs that are ready to merge,
+        // when updating them cannot rewrite the author's history.
+        var keepHumanPrs = repoProvider.BranchUpdatePreservesHistory;
+        all.RemoveAll(pr =>
+            !pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal)
+            && !(keepHumanPrs && pr.HasAutoMerge && !pr.IsDraft));
         return (all, wasTruncated);
     }
 

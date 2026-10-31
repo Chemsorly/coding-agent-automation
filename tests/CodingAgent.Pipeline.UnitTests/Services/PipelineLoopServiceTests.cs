@@ -1893,6 +1893,65 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task RunHousekeepingAsync_SplitsPipelineAndHumanPrs()
+    {
+        // Verifies that donePrs is split by branch prefix before being passed to ExecuteAsync:
+        // feature/auto-* PRs go to AgentDonePrs; other PRs go to HumanAutoMergePrs.
+        HousekeepingRequest? capturedRequest = null;
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<HousekeepingRequest, CancellationToken>(
+                (request, _) => capturedRequest = request)
+            .Returns(Task.CompletedTask);
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.SupportsServerSideBranchUpdate).Returns(true);
+
+        var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
+        svc._cacheManager.RepoProviders["rp-hk"] = mockRepoProvider.Object;
+        svc._cacheManager.IssueProviders["ip-1"] = _mockIssueProvider.Object;
+
+        var template = new PipelineJobTemplate
+        {
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true
+        };
+        var snapshot = BuildSnapshot([template]);
+
+        var pipelinePr = new PullRequestSummary
+        {
+            Number = 1, Identifier = "1", Title = "Pipeline PR",
+            Description = string.Empty, Labels = Array.Empty<string>(),
+            BranchName = $"{PipelineConstants.BranchPrefix}1-fix",
+            TargetBranch = "main", Url = "https://example.com/pr/1",
+            IsDraft = false, HasAutoMerge = false
+        };
+        var humanPr = new PullRequestSummary
+        {
+            Number = 2, Identifier = "2", Title = "Human PR",
+            Description = string.Empty, Labels = Array.Empty<string>(),
+            BranchName = "feature/human",
+            TargetBranch = "main", Url = "https://example.com/pr/2",
+            IsDraft = false, HasAutoMerge = true
+        };
+
+        var queues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t-1"] = [pipelinePr, humanPr]
+        };
+
+        await svc.RunHousekeepingAsync(snapshot, queues, new Dictionary<string, bool>(), CancellationToken.None);
+
+        Assert.NotNull(capturedRequest);
+        Assert.Single(capturedRequest!.AgentDonePrs, pr => pr.Number == 1);
+        Assert.Single(capturedRequest.HumanAutoMergePrs, pr => pr.Number == 2);
+    }
+
+    [Fact]
     public async Task Housekeeping_PassesAgentDonePrsFromPollerOutput()
     {
         // Integration-style test: verifies the poller → RunHousekeepingAsync data flow.
