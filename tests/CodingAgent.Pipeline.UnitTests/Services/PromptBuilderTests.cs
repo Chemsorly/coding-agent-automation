@@ -14,19 +14,19 @@ public class PromptBuilderTests
 
     private static IssueDetail CreateIssue(string id = "42", string title = "Add feature X",
         string description = "Implement feature X as described.") => new()
-    {
-        Identifier = id,
-        Title = title,
-        Description = description,
-        Labels = new[] { "enhancement" }
-    };
+        {
+            Identifier = id,
+            Title = title,
+            Description = description,
+            Labels = new[] { "enhancement" }
+        };
 
     private static ParsedIssue CreateParsedIssue(string requirements = "Build the thing",
         IReadOnlyList<string>? criteria = null) => new()
-    {
-        RequirementsSection = requirements,
-        AcceptanceCriteria = criteria ?? new[] { "It compiles", "Tests pass" }
-    };
+        {
+            RequirementsSection = requirements,
+            AcceptanceCriteria = criteria ?? new[] { "It compiles", "Tests pass" }
+        };
 
     #region BuildAnalysisPrompt
 
