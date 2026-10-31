@@ -50,9 +50,8 @@ public class GitHubAppAuthServicePropertyTests
     [Property(MaxTest = 20)]
     public void PrivateKey_Base64RoundTrip_CanDecodeAndSign(PositiveInt installationIdSeed)
     {
-        // Arrange: Generate a fresh RSA key and export as PKCS#1 PEM
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        // Arrange: A valid RSA key as PKCS#1 PEM
+        var pemString = TestRsaKey.Pem;
 
         // Base64-encode the PEM string (this is how the key is stored in config)
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
@@ -98,7 +97,9 @@ public class GitHubAppAuthServicePropertyTests
             ValidIssuer = clientId,
             ValidateAudience = false,
             ValidateLifetime = false,
-            IssuerSigningKey = new RsaSecurityKey(verifyRsa),
+            // Public parameters, not the RSA instance: IdentityModel caches a signature provider per
+            // key, and with the shared test key it would reuse the instance disposed last iteration.
+            IssuerSigningKey = new RsaSecurityKey(verifyRsa.ExportParameters(false)),
             RequireSignedTokens = true
         };
 
@@ -119,8 +120,7 @@ public class GitHubAppAuthServicePropertyTests
     public void Jwt_Structure_HasCorrectIssIatExpAlg(PositiveInt installationIdSeed)
     {
         // Arrange: Generate a fresh RSA key and base64-encode the PEM
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        var pemString = TestRsaKey.Pem;
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
         var privateKeyBase64 = Convert.ToBase64String(pemBytes);
 
@@ -222,8 +222,7 @@ public class GitHubAppAuthServicePropertyTests
     public void TokenCaching_CacheHit_ReturnsSameTokenWithoutApiCall(CacheHitInput input)
     {
         // Arrange: Create a valid auth service with a real RSA key
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        var pemString = TestRsaKey.Pem;
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
         var privateKeyBase64 = Convert.ToBase64String(pemBytes);
 
@@ -269,8 +268,7 @@ public class GitHubAppAuthServicePropertyTests
     public void ConcurrentTokenAcquisition_AllCallersGetSameToken(ConcurrentSerializationInput input)
     {
         // Arrange: Create a valid auth service with a real RSA key
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        var pemString = TestRsaKey.Pem;
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
         var privateKeyBase64 = Convert.ToBase64String(pemBytes);
 
@@ -349,8 +347,7 @@ public class GitHubAppAuthServicePropertyTests
     {
         // Arrange: Create a valid auth service with a real RSA key and a MOCK client factory
         // that throws immediately — no real HTTP calls.
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        var pemString = TestRsaKey.Pem;
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
         var privateKeyBase64 = Convert.ToBase64String(pemBytes);
 
@@ -412,8 +409,7 @@ public class GitHubAppAuthServicePropertyTests
     {
         // Arrange: Create a valid auth service with a real RSA key and a MOCK client factory
         // that throws immediately — no real HTTP calls.
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        var pemString = TestRsaKey.Pem;
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
         var privateKeyBase64 = Convert.ToBase64String(pemBytes);
 
@@ -483,8 +479,7 @@ public static class InvalidPrivateKeyArbitrary
     /// </summary>
     private static string GenerateValidBase64Key()
     {
-        using var rsa = RSA.Create(2048);
-        var pem = rsa.ExportRSAPrivateKeyPem();
+        var pem = TestRsaKey.Pem;
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(pem));
     }
 

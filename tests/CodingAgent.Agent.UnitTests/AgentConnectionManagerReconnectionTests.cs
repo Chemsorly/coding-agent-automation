@@ -298,8 +298,8 @@ public sealed class AgentConnectionManagerReconnectionTests
         var manager = new AgentConnectionManager(hub, factory, new AgentId("agent-1"),
             Mock.Of<Serilog.ILogger>(), lifetimeMock.Object);
 
-        // Act: call HandleTerminalClosedAsync directly with maxAttempts=1 to avoid real delays
-        await manager.HandleTerminalClosedAsync(null, maxAttempts: 1);
+        // Act: call HandleTerminalClosedAsync directly
+        await manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero);
 
         // Assert
         stopCalled.Should().BeTrue("StopApplication must be called after all reconnection attempts fail");

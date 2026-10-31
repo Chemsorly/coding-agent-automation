@@ -38,14 +38,13 @@ public class LeaderElectedPollingServiceTests
         // Act: start ExecuteAsync
         var executeTask = InvokeExecuteAsync(service, cts.Token);
 
-        // Count is synchronously 0 — ExecuteAsync is waiting in the 2s leader-wait loop
+        // Count is synchronously 0 — ExecuteAsync is waiting in the leader-wait loop
         service.PollCycleCount.Should().Be(0, "should not poll before leadership is acquired");
 
         // Now grant leadership
         SetLeaderState(leaderElection, isLeader: true, new CancellationTokenSource());
 
-        // Poll until the first cycle fires. The leader-wait loop checks every 2s, so this
-        // normally resolves within ≤2s; the bound only matters when the code is broken.
+        // Poll until the first cycle fires. The bound only matters when the code is broken.
         await BackgroundWait.PollUntilAsync(
             () => Volatile.Read(ref service.PollCycleCount) > 0,
             "should poll after leadership is acquired");
@@ -85,7 +84,7 @@ public class LeaderElectedPollingServiceTests
         var newLeaderCts = new CancellationTokenSource();
         SetLeaderState(leaderElection, isLeader: true, newLeaderCts);
 
-        // Poll until a new cycle fires after re-acquisition (≤2s leader-wait; the new term polls at once).
+        // Poll until a new cycle fires after re-acquisition (the new term polls at once).
         // The deadline is a margin for stalled runners: when the test process stalls past it, this loop's
         // check can run before the service's queued wake-up and fail although the service works. A 10s
         // deadline failed that way in an agent quality gate run (#3412).
@@ -150,8 +149,8 @@ public class LeaderElectedPollingServiceTests
 
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
-        // Poll until ≥3 cycles complete. With 1s intervals, this takes ~2s; the wait's bound only
-        // matters when the loop is broken (a stalled test process must not expire it first).
+        // Poll until ≥3 cycles complete. The wait's bound only matters when the loop is broken
+        // (a stalled test process must not expire it first).
         await BackgroundWait.PollUntilAsync(() => Volatile.Read(ref service.PollCycleCount) >= 3,
             "should keep calling OnPollCycleAsync even after exceptions");
 
@@ -401,6 +400,9 @@ public class LeaderElectedPollingServiceTests
 
     // ── Test doubles ────────────────────────────────────────────────────
 
+    /// <summary>The doubles' poll and leader-wait interval: these tests only count cycles, not time.</summary>
+    private static readonly TimeSpan FastWait = TimeSpan.FromMilliseconds(10);
+
     private sealed class TestPollingService : LeaderElectedPollingService
     {
         private readonly int _pollIntervalSeconds;
@@ -408,6 +410,8 @@ public class LeaderElectedPollingServiceTests
 
         protected override string ServiceName => "TestPollingService";
         protected override int PollIntervalSeconds => _pollIntervalSeconds;
+        protected override TimeSpan PollInterval => FastWait;
+        protected override TimeSpan LeaderWaitInterval => FastWait;
 
         public TestPollingService(ILeaderElectionService leaderElection, int pollIntervalSeconds)
             : base(leaderElection)
@@ -462,6 +466,8 @@ public class LeaderElectedPollingServiceTests
 
         protected override string ServiceName => "TestThrowingService";
         protected override int PollIntervalSeconds { get; }
+        protected override TimeSpan PollInterval => FastWait;
+        protected override TimeSpan LeaderWaitInterval => FastWait;
 
         public TestThrowingService(ILeaderElectionService leaderElection, int pollIntervalSeconds, int throwOnFirstNCalls)
             : base(leaderElection)
@@ -491,6 +497,8 @@ public class LeaderElectedPollingServiceTests
 
         protected override string ServiceName => "TestThrowingServiceWithException";
         protected override int PollIntervalSeconds { get; }
+        protected override TimeSpan PollInterval => FastWait;
+        protected override TimeSpan LeaderWaitInterval => FastWait;
 
         public TestThrowingServiceWithException(
             ILeaderElectionService leaderElection,

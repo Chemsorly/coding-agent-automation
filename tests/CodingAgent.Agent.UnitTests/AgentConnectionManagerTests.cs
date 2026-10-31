@@ -373,7 +373,7 @@ public class AgentConnectionManagerTests
             hub, factory, new AgentId("agent-1"),
             Mock.Of<Serilog.ILogger>(), lifetimeMock.Object);
 
-        await manager.HandleTerminalClosedAsync(null, maxAttempts: 1);
+        await manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero);
 
         stopCalled.Should().BeTrue("StopApplication must be called when all reconnection attempts are exhausted");
         await manager.DisposeAsync();

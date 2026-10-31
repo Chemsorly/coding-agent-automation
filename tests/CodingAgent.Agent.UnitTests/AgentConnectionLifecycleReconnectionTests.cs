@@ -29,8 +29,8 @@ public class AgentConnectionLifecycleReconnectionTests
                 return fake;
             });
 
-        // maxAttempts=1 to avoid real delays; one attempt fails → exhausted
-        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 1);
+        // One attempt fails → exhausted
+        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero);
 
         stopCalled.Should().BeTrue("StopApplication must be called after all reconnection attempts fail");
     }
@@ -52,7 +52,7 @@ public class AgentConnectionLifecycleReconnectionTests
             });
 
         // With maxAttempts=1 and RegisterAgent failing, expect exhaustion → StopApplication
-        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 1);
+        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero);
 
         createdManagers.Should().HaveCount(1, "factory called once per attempt");
         createdManagers[0].StartCallCount.Should().Be(1);
@@ -88,7 +88,7 @@ public class AgentConnectionLifecycleReconnectionTests
         // Dispose sets _hubManager to null
         await lifecycle.DisposeAsync();
 
-        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 5);
+        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 5, delayOverride: _ => TimeSpan.Zero);
 
         factoryCalls.Should().Be(0, "already disposed — factory must not be called");
     }

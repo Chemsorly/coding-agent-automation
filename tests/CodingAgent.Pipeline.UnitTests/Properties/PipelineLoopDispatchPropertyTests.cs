@@ -82,7 +82,6 @@ public class PipelineLoopDispatchPropertyTests
         await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
-        await Task.Delay(200);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -174,7 +173,6 @@ public class PipelineLoopDispatchPropertyTests
         await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
-        await Task.Delay(200);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -234,7 +232,6 @@ public class PipelineLoopDispatchPropertyTests
         svc.IsCircuitBroken.Should().BeTrue("circuit breaker should trip when all templates are failing");
 
         svc.StopLoop();
-        await Task.Delay(200);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -376,7 +373,6 @@ public class PipelineLoopDispatchPropertyTests
             "the provider should be recreated after the auth error eviction");
 
         svc.StopLoop();
-        await Task.Delay(200);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -496,9 +492,8 @@ public class PipelineLoopDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await Task.Delay(300);
+        await BackgroundWait.CycleCompleteAsync(svc);
         svc.StopLoop();
-        await Task.Delay(200);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 

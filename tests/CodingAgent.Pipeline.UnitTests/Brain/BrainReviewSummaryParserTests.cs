@@ -126,4 +126,42 @@ public class BrainReviewSummaryParserTests
         var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(capped);
         json.Length.Should().BeLessThan(BrainLayout.MaxReviewSummaryBytes + 1);
     }
+
+    [Fact]
+    public void Cap_ManyLines_KeepsTheLongestPrefixThatFits()
+    {
+        var lines = Enumerable.Range(0, 3000)
+            .Select(i => new BrainReviewLine { Action = "promoted", Scope = "repository", File = "f.md", Text = $"- [2+] For situation {i}, do something (#{i})." })
+            .ToList();
+        var outcome = new BrainConsolidationOutcome { Lines = lines };
+
+        var capped = BrainReviewSummaryParser.Cap(outcome);
+
+        capped.Lines.Should().Equal(lines.Take(capped.Lines.Count), "the cap drops lines from the end only");
+        var oneLineMore = outcome with { Lines = lines.Take(capped.Lines.Count + 1).ToList(), LinesTruncated = true };
+        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(oneLineMore).Length.Should().BeGreaterThan(
+            BrainLayout.MaxReviewSummaryBytes, "one more line would not have fitted");
+    }
+
+    [Fact]
+    public void Cap_LinesThatFit_AreKeptAndNotFlagged()
+    {
+        var lines = new List<BrainReviewLine> { new() { Action = "promoted", Scope = "repository", File = "f.md", Text = "- [2+] Short (#1)." } };
+
+        var capped = BrainReviewSummaryParser.Cap(new BrainConsolidationOutcome { Lines = lines });
+
+        capped.Lines.Should().Equal(lines);
+        capped.LinesTruncated.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Cap_SingleLineTooLarge_DropsItAndFlags()
+    {
+        var lines = new List<BrainReviewLine> { new() { Action = "promoted", Scope = "repository", File = "f.md", Text = new string('x', BrainLayout.MaxReviewSummaryBytes + 1) } };
+
+        var capped = BrainReviewSummaryParser.Cap(new BrainConsolidationOutcome { Lines = lines });
+
+        capped.Lines.Should().BeEmpty();
+        capped.LinesTruncated.Should().BeTrue();
+    }
 }

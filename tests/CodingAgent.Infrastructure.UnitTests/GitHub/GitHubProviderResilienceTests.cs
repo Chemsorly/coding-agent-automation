@@ -163,7 +163,8 @@ public class GitHubProviderResilienceTests
 
     private static IResponse CreateRateLimitResponse()
     {
-        var resetTime = DateTimeOffset.UtcNow.AddSeconds(1);
+        // Already past: the retry delay honours a future reset, and these tests only count attempts.
+        var resetTime = DateTimeOffset.UtcNow.AddSeconds(-1);
         var rateLimit = new RateLimit(5000, 0, resetTime.ToUnixTimeSeconds());
         var apiInfo = new ApiInfo(
             new Dictionary<string, Uri>(), new List<string>(), new List<string>(),

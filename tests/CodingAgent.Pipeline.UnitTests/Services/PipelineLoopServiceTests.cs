@@ -193,39 +193,33 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 HasMore = false
             });
 
-        // Track which issues are started (will fail since we don't have full provider setup, but we can check order)
-        var startedIssues = new List<string>();
-        _lifecycle.OnChange += () =>
-        {
-            if (_lifecycle.ActiveRun is { CurrentStep: PipelineStep.Created })
-                startedIssues.Add(_lifecycle.ActiveRun.IssueIdentifier);
-        };
+        // The order the issues reach the dispatcher in
+        var dispatchedIssues = new List<string>();
+        var mockDistributor = new Mock<IWorkDistributor>();
+        mockDistributor.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<JobDistributionRequest, CancellationToken>((request, _) =>
+            {
+                lock (dispatchedIssues) { dispatchedIssues.Add(request.IssueIdentifier); }
+                return Task.FromResult(new DistributionResult(true, null, null));
+            });
+        mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
 
-        // The loop will fail on the actual pipeline run (no real providers), but we can verify FIFO ordering
-        // by checking which issue was attempted first
-        var svc = CreateService();
+        var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();
 
         // Start the background service
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Poll until at least one issue is started
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (startedIssues.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
         cts.Cancel();
 
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
-        // Verify oldest issue was attempted first (if any were started)
-        if (startedIssues.Count > 0)
-            Assert.Equal("1", startedIssues[0]);
+        dispatchedIssues.Should().Equal(["1", "2"], "the oldest issue must be dispatched first");
     }
 
     [Fact]

@@ -181,11 +181,8 @@ public class GitHubApiRequestMetricsTests : IDisposable
 
         // AbuseException maps to rate_limited
         var rateLimitedMeasurements = ApiRequestMeasurements(TestOperation, "rate_limited");
-        // TODO: This assertion uses NotBeEmpty rather than HaveCount(4). AbuseException is retried
-        // by Polly (1 initial + 3 retries = 4 attempts), so the expected count is 4 — the same as
-        // RateLimitExceededException (tested by WhenRateLimitExceededException_ExhaustsRetries_*).
-        // Strengthen to .HaveCount(4, ...) to lock in the per-attempt retry counting for AbuseException.
-        rateLimitedMeasurements.Should().NotBeEmpty("AbuseException must emit outcome=rate_limited");
+        rateLimitedMeasurements.Should().HaveCount(4,
+            "AbuseException is retried 3 times (1 initial + 3 retries), each emitting outcome=rate_limited");
         rateLimitedMeasurements.Should().AllSatisfy(m => m.Value.Should().Be(1L));
     }
 
@@ -253,7 +250,8 @@ public class GitHubApiRequestMetricsTests : IDisposable
 
     private static IResponse CreateRateLimitResponse()
     {
-        var resetTime = DateTimeOffset.UtcNow.AddSeconds(1);
+        // Already past: the retry delay honours a future reset, and these tests only count attempts.
+        var resetTime = DateTimeOffset.UtcNow.AddSeconds(-1);
         var rateLimit = new RateLimit(5000, 0, resetTime.ToUnixTimeSeconds());
         var apiInfo = new ApiInfo(
             new Dictionary<string, Uri>(), new List<string>(), new List<string>(),
@@ -274,7 +272,7 @@ public class GitHubApiRequestMetricsTests : IDisposable
         mock.Setup(r => r.StatusCode).Returns(HttpStatusCode.Forbidden);
         mock.Setup(r => r.Headers).Returns(new Dictionary<string, string>
         {
-            { "Retry-After", "5" }
+            { "Retry-After", "0" } // honoured by the retry delay: anything else is waited out for real
         });
         mock.Setup(r => r.Body).Returns("");
         mock.Setup(r => r.ContentType).Returns("application/json");

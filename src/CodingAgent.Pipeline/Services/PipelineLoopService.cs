@@ -106,6 +106,13 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     /// <summary>Validation errors from the last failed StartLoop() call.</summary>
     public IReadOnlyList<string> ValidationErrors => _validationErrors;
 
+    /// <summary>
+    /// Test-only replacement for the loop's fixed waits: the 5 s transient-failure backoff and the 2 s
+    /// leadership poll (settable only from test assemblies via InternalsVisibleTo). Null in production.
+    /// Set once at test-assembly load, never mutated during a run.
+    /// </summary>
+    internal static TimeSpan? TestWaitOverride { get; set; }
+
     public PipelineLoopService(PipelineLoopServiceDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
@@ -348,7 +355,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private async Task WaitForLeadershipAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested && (_leaderGate is { IsLeader: false }))
-            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            await Task.Delay(TestWaitOverride ?? TimeSpan.FromSeconds(2), stoppingToken);
     }
 
     private bool WasLeadershipLost(CancellationToken linkedToken, CancellationToken stoppingToken)

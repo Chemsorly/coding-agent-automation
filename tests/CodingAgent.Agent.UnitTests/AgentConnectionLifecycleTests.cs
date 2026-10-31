@@ -272,7 +272,7 @@ public class AgentConnectionLifecycleTests
             factoryFunc: () => { factoryCalls++; return new FakeHubConnectionManager(); });
 
         await lifecycle.DisposeAsync();
-        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 5);
+        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 5, delayOverride: _ => TimeSpan.Zero);
 
         factoryCalls.Should().Be(0, "disposed lifecycle must not attempt reconnection");
     }

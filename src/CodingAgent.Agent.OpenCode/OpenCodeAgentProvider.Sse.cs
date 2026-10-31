@@ -32,11 +32,12 @@ public sealed partial class OpenCodeAgentProvider
     /// Tears down the SSE reader by waiting briefly for late-arriving events,
     /// then cancelling and awaiting the reader task.
     /// </summary>
-    private static async Task TearDownSseAsync(CancellationTokenSource sseCts, Task sseTask)
+    private async Task TearDownSseAsync(CancellationTokenSource sseCts, Task sseTask)
     {
         // Allow a brief window for late-arriving SSE events (e.g., final
-        // message.part.updated) to be processed before tearing down the stream.
-        try { await Task.Delay(500, CancellationToken.None); } catch { /* intentional: delay is best-effort; any exception (e.g. TaskCanceledException) is safely ignored here */ }
+        // message.part.updated) to be processed before tearing down the stream. A reader that has
+        // already exited (stream closed, connect failed) cannot process any more, so don't wait for it.
+        await Task.WhenAny(sseTask, Task.Delay(SseDrainWindow, CancellationToken.None));
         await sseCts.CancelAsync();
         try { await sseTask.ConfigureAwait(false); } catch { /* expected cancellation */ }
         sseCts.Dispose();

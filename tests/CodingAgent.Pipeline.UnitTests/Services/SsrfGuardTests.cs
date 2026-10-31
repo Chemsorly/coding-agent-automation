@@ -182,18 +182,20 @@ public class SsrfGuardTests
     [Fact]
     public async Task ConnectCallbackAsync_MixOfBlockedAndPublic_SkipsBlockedAttemptsPublic()
     {
-        // Arrange: first IP is blocked (10.x), second is public but unreachable port
+        // Arrange: first IP is blocked (10.x), second is public (TEST-NET-3, RFC 5737: never routed)
         using var handler = SsrfGuard.CreateHandler(
             dnsResolver: (_, _) => Task.FromResult(new[]
             {
-                IPAddress.Parse("10.0.0.1"),      // blocked - should skip
-                IPAddress.Parse("93.184.216.34"), // public - will attempt connect
+                IPAddress.Parse("10.0.0.1"),    // blocked - should skip
+                IPAddress.Parse("203.0.113.1"), // public - will attempt connect
             }));
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        // The connect attempt only has to start: a short connect timeout ends it without relying on
+        // the network (the test used to wait out a 5 s timeout against a real internet address).
+        handler.ConnectTimeout = TimeSpan.FromMilliseconds(100);
+        using var client = new HttpClient(handler);
 
         // Act: should NOT throw SSRF policy exception (it tries the public IP)
-        // It will throw a different exception (connection refused/timeout) because we're
-        // connecting to a real IP on a random port
+        // It throws a different exception (connect timeout) instead
         var ex = await Assert.ThrowsAnyAsync<Exception>(
             () => client.GetAsync("https://mixed.example.com:12345/image.png"));
 

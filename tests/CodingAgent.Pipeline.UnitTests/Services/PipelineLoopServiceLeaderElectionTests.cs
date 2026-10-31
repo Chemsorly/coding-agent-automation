@@ -224,7 +224,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         var gate = new FakeLeaderGate(); // IsLeader = false
         var svc = CreateService(gate);
         using var hostCts = new CancellationTokenSource();
-        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
 
         // Act: request loop activation
         var started = await svc.StartLoopAsync();
@@ -250,7 +250,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
 
         // Cleanup
         hostCts.Cancel();
-        await Task.WhenAny(InvokeExecuteAsync(svc, CancellationToken.None), Task.Delay(3000));
+        await Task.WhenAny(executeTask, Task.Delay(5000));
     }
 
     /// <summary>
@@ -265,7 +265,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         var gate = new FakeLeaderGate(); // IsLeader = false
         var svc = CreateService(gate);
         using var hostCts = new CancellationTokenSource();
-        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
 
         var started = await svc.StartLoopAsync();
         started.Should().BeTrue();
@@ -277,13 +277,13 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         // Act: acquire leadership
         gate.AcquireLeadership();
 
-        // Assert: loop enters polling within the leader-wait period (≤2s per tick). The wait is
+        // Assert: loop enters polling within the leader-wait period. The wait is
         // signalled by the loop's OnChange, so a stalled test process cannot expire it first.
         await LoopPollingAsync(svc, "loop should begin polling after leadership is acquired");
 
         // Cleanup
         hostCts.Cancel();
-        await Task.WhenAny(InvokeExecuteAsync(svc, CancellationToken.None), Task.Delay(3000));
+        await Task.WhenAny(executeTask, Task.Delay(5000));
     }
 
     /// <summary>
@@ -342,7 +342,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         gate.AcquireLeadership();
         var svc = CreateService(gate);
         using var hostCts = new CancellationTokenSource();
-        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
 
         await svc.StartLoopAsync();
 
@@ -373,7 +373,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
 
         // Cleanup
         hostCts.Cancel();
-        await Task.WhenAny(InvokeExecuteAsync(svc, CancellationToken.None), Task.Delay(3000));
+        await Task.WhenAny(executeTask, Task.Delay(5000));
     }
 
     public async ValueTask DisposeAsync()

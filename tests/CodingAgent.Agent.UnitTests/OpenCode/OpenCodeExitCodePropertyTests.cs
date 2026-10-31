@@ -93,7 +93,7 @@ public class OpenCodeExitCodePropertyTests
         // longer than the configured timeout, causing the timeout to fire.
         var delayHandler = new DelayingHandler(outcome.DelayMs);
         var delayFactory = new DelayingClientFactory(delayHandler);
-        var provider = new OpenCodeAgentProvider(delayFactory, null);
+        var provider = new OpenCodeAgentProvider(delayFactory, null) { SseDrainWindow = TimeSpan.Zero };
 
         // Enqueue session creation (fast)
         delayHandler.EnqueueSessionCreation("test-session-001");
@@ -300,7 +300,7 @@ public static class ExitCodeArbitrary
     public static Arbitrary<TimeoutOutcome> TimeoutOutcomeArb()
     {
         var gen =
-            from timeoutMs in Gen.Choose(50, 500)
+            from timeoutMs in Gen.Choose(50, 100)
             select new TimeoutOutcome
             {
                 TimeoutMs = timeoutMs,

@@ -27,8 +27,7 @@ public class GitHubAppAuthServiceTests
     /// </summary>
     private static string GenerateValidPrivateKeyBase64()
     {
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        var pemString = TestRsaKey.Pem;
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
         return Convert.ToBase64String(pemBytes);
     }
@@ -399,8 +398,7 @@ public class GitHubAppAuthServiceTests
         // Arrange: Use the generated clientId and a valid RSA key
         var clientId = clientIdInput.Get;
 
-        using var rsa = RSA.Create(2048);
-        var pemString = rsa.ExportRSAPrivateKeyPem();
+        var pemString = TestRsaKey.Pem;
         var pemBytes = Encoding.UTF8.GetBytes(pemString);
         var privateKeyBase64 = Convert.ToBase64String(pemBytes);
 
