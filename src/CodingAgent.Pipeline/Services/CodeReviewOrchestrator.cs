@@ -225,7 +225,7 @@ internal class CodeReviewOrchestrator
                 return false; // Exit the loop
 
             case AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak:
-                _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
+                _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no critical or warning findings, exiting review loop",
                     run.RunId, i + 1);
                 return false; // Exit the loop — re-reviewing won't produce different results
 
