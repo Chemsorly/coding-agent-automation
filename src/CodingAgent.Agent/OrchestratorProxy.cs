@@ -264,7 +264,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
                 Log.Warning(ex,
                     "Token-vend attempt {Attempt}/{Max} failed for job {JobId} (kind: {Kind}) — retrying",
                     attempt + 1, TokenVendMaxRetries + 1, _jobId, kind);
-                await Task.Delay(TimeSpan.FromMilliseconds(500 * (1 << attempt)), ct);
+                await Task.Delay(ResiliencePipelineFactory.TestRetryDelayOverride ?? TimeSpan.FromMilliseconds(500 * (1 << attempt)), ct);
             }
         }
 

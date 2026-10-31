@@ -33,6 +33,7 @@ public static class ResiliencePipelineFactory
     /// retry BEHAVIOUR (counts, exception mapping) without waiting real exponential backoff — no test
     /// asserts wall-clock backoff duration. Intended to be set once at test-assembly load and never
     /// mutated during a run. An explicit per-call <c>retryDelay</c> argument still takes precedence.
+    /// <c>OrchestratorProxy</c>'s token-vend retry loop, which sits outside these pipelines, reads it too.
     /// </summary>
     internal static TimeSpan? TestRetryDelayOverride { get; set; }
 
