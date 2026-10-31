@@ -63,6 +63,8 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 
 ### Install
 
+> **Upgrading to the release that writes the brain inbox by API:** a brain repository on GitLab needs an access token with the `api` scope, because each run's inbox file is written through GitLab's API. With `write_repository` alone the run still completes, but its inbox file is not written, and the run reports a failed brain push. GitHub needs no change.
+
 > **Upgrading to the release with agent routing (Spec 053):** take a config export first (Settings → Data Management → Import / Export); there is no way back for the data move. Before you upgrade, check that every `jobTemplates[]` entry in your values has a `providerType`: the tool now comes from the job template, so the move disables each profile on a template without one, and work routed to it is refused. On its first start the API moves the configuration once: agent profiles keep their IDs and lose their match labels and priority, each profile takes the tool settings of its agent provider config, today's routes are written down as global and repository routing rows, the agent provider configs are deleted, and repository labels that only named an agent tool are dropped. Afterwards check the move's summary line in the API log and Settings → Agents → Routing. Repositories that had no matching profile now run on the default route, and a warning names each of them. While old and new pods overlap, dispatches and claims can fail for a few minutes: agents retry their claim on another replica, and the Scheduler dispatches again once it runs the new release. Don't save a repository's page until every API pod runs the new release: a save that an old pod serves drops the repository's routing rows, and its work falls back to the global rows. Open browser tabs must reload. No chart change is needed, unless a `jobTemplates[]` entry lacks its `providerType`. See [Agent Routing](agent-routing.md).
 
 > **Upgrading to the release with the WebAssembly UI (Spec 052):** the upgrade is a hard cut. The UI may be unavailable briefly while the web pods roll out, and every open tab reloads once; the pipeline keeps running. Sticky-session annotations are now optional and can stay. With Traefik, no values change is needed. With ingress-nginx, the UI's long calls now pass through the ingress: chat launch (up to 2 minutes), triage, browse, dispatch and provider calls, and config import. Add `nginx.ingress.kubernetes.io/proxy-read-timeout: "300"` and `nginx.ingress.kubernetes.io/proxy-body-size: "16m"` to `web.ingress.annotations`; the defaults are 60 seconds and 1 MB.
@@ -460,7 +462,7 @@ ORCHESTRATOR_URL=http://localhost:8080 AGENT_ID=local-chat-1 AGENT_API_KEY=<key>
   dotnet run --project src/CodingAgent.Agent/ -- --mode=chat
 ```
 
-`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required.
+`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required. On Linux the worker marks itself as not dumpable at startup, so attaching a debugger to a running worker and writing a crash dump are refused. Windows and macOS are unchanged.
 
 ---
 
@@ -498,3 +500,5 @@ The pipeline supports multiple provider backends. Each provider type requires sp
   }
 }
 ```
+
+A brain repository's GitLab token needs the `api` scope: the pipeline writes each run's inbox file through GitLab's API. `write_repository` alone is not enough.

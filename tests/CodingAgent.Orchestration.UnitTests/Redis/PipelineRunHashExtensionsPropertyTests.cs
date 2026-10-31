@@ -612,6 +612,7 @@ public class PipelineRunHashExtensionsPropertyTests
         ["BrainEvidence"] = "set only in the agent process",
         ["BrainSkills"] = "set only in the agent process",
         ["StackLabels"] = "set only in the agent process",
+        ["BrainInboxText"] = "set only in the agent process",
     };
 
     [Fact]

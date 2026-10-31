@@ -35,6 +35,10 @@ public static partial class PromptBuilder
     internal const string AnalysisScopeFence =
         "Analysis only. Do not modify source code. Write output to designated files only.\n\n";
 
+    // The workspace baseline builds and tests this workspace while the analysis runs (see VerifyBaselineStep).
+    internal const string NoBuildDuringAnalysisRule =
+        "Do NOT build the project or run tests. The pipeline is building and testing this workspace at the same time, so your commands would collide with it and their results would not be reliable.";
+
     // Non-configurable evaluation rules for the acceptance criteria compliance agent (issue #3534 lessons).
     internal const string AcceptanceCriteriaEvaluationRules = """
         ## Evaluation Rules
@@ -132,6 +136,7 @@ public static partial class PromptBuilder
 
         // Pipeline mechanics (non-configurable)
         sb.AppendLine("Do NOT implement any changes. Only analyze and recommend.");
+        sb.AppendLine(NoBuildDuringAnalysisRule);
         sb.AppendLine();
         sb.AppendLine($"Write your analysis to the file `{AgentWorkspacePaths.AnalysisFilePath}` in the workspace. Do NOT print the analysis to stdout — only write it to that file.");
         sb.AppendLine();
@@ -204,6 +209,7 @@ public static partial class PromptBuilder
         sb.AppendLine($"Write your findings to `{AgentWorkspacePaths.AnalysisReviewFilePath}`. Do NOT print findings to stdout — only write them to that file.");
         sb.AppendLine();
         sb.AppendLine("Do NOT modify `.agent/analysis.md` or `.agent/analysis-assessment.json` — only write your review.");
+        sb.AppendLine(NoBuildDuringAnalysisRule);
         sb.AppendLine();
 
         AppendIssueContext(sb, issue, parsed);
@@ -224,6 +230,7 @@ public static partial class PromptBuilder
         sb.AppendLine(refinementInstructions);
         sb.AppendLine();
         sb.AppendLine($"The review findings are at `{AgentWorkspacePaths.AnalysisReviewFilePath}`. Read them, then rewrite `{AgentWorkspacePaths.AnalysisFilePath}` and update `{AgentWorkspacePaths.AnalysisAssessmentFilePath}` as needed.");
+        sb.AppendLine(NoBuildDuringAnalysisRule);
 
         return sb.ToString().TrimEnd();
     }

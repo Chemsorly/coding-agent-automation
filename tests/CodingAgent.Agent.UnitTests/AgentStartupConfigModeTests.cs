@@ -7,6 +7,7 @@ namespace CodingAgent.Agent.UnitTests;
 /// Unit tests for <see cref="AgentStartupConfig.ResolveAsync"/> --mode flag parsing.
 /// Spec 043 Task 13b.2 / 13b.3.
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class AgentStartupConfigModeTests
 {
     // ── Setup: AGENT_API_KEY and ORCHESTRATOR_URL are required by ResolveAsync.
