@@ -119,6 +119,17 @@ public partial class AgentPhaseExecutor
         _logger.Information("Pipeline {RunId} found existing analysis comment on issue {IssueIdentifier}, skipping agent analysis",
             run.RunId, run.IssueIdentifier);
         run.AnalysisContent = existingAnalysis;
+        try
+        {
+            var agentDir = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory);
+            Directory.CreateDirectory(agentDir);
+            await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.AnalysisFilePath), existingAnalysis, ct);
+        }
+        catch (IOException ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to write existing analysis to {FilePath}, continuing without it",
+                run.RunId, AgentWorkspacePaths.AnalysisFilePath);
+        }
         run.AnalysisSkipped = true;
         context.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
         await AgentStallMonitor.MonitorAsync(

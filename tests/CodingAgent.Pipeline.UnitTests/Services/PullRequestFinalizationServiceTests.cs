@@ -2408,6 +2408,112 @@ public class PullRequestFinalizationServiceTests
             Times.Never);
     }
 
+    // ── GeneratePrDescriptionAsync — fresh session & token counting ──────────
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_RunsInFreshSession()
+    {
+        // Verifies that ExecuteAgentRawAsync is invoked with UseResume=false and no ResumeSessionId,
+        // so the PR description never carries the main implementation session's context.
+        // Note: UseResume=false is hardcoded inside ExecuteAgentRawAsync — the real regression this
+        // test guards against is a revert to calling agentProvider.ExecuteAsync directly with
+        // UseResume=true (which would make capturedRequest.UseResume true and fail the assertion).
+        using var tmpDir = new TempDirectory();
+        WritePrDescriptionFile(tmpDir.Path, "## Summary\nTest description");
+
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "42";
+
+        AgentRequest? capturedRequest = null;
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>>((req, _, _) => capturedRequest = req)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+        // Stub GetHealthStatus so AgentStallMonitor's poll loop does not dereference a null health
+        // object if the poll fires before ExecuteAsync returns (safe at 30 s but explicit is better).
+        agentProvider.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5), StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromHours(1) }, _ => { }, CancellationToken.None);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.UseResume.Should().BeFalse();
+        capturedRequest.ResumeSessionId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_CountsTokensOnce()
+    {
+        // Verifies that tokens are accumulated exactly once: ExecuteAgentRawAsync records them
+        // internally, so the now-removed explicit AccumulateTokenUsage call must not be present.
+        using var tmpDir = new TempDirectory();
+        WritePrDescriptionFile(tmpDir.Path, "## Summary\nTest description");
+
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "42";
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = [],
+                Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
+            });
+        // Stub GetHealthStatus so AgentStallMonitor's poll loop does not dereference a null health
+        // object if the poll fires before ExecuteAsync returns (safe at 30 s but explicit is better).
+        agentProvider.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5), StallPollInterval = TimeSpan.FromMilliseconds(50), StallWarningInterval = TimeSpan.FromHours(1) }, _ => { }, CancellationToken.None);
+
+        run.Metrics.PhaseBreakdown.Should().ContainKey("pr_description");
+        run.Metrics.PhaseBreakdown["pr_description"].Tokens.Should().Be(150);
+    }
+
+    // ── RunReflectionAsync — session contract ─────────────────────────────────
+
+    [Fact]
+    public async Task RunReflectionAsync_StillResumes()
+    {
+        // Regression guard: RunReflectionAsync must continue to use the main session
+        // (UseResume=true) even though GeneratePrDescriptionAsync was switched to a fresh session.
+        var run = CreateRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        agentProvider.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await _sut.RunReflectionAsync(run, agentProvider.Object, config, _ => { }, CancellationToken.None);
+
+        agentProvider.Verify(
+            a => a.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.UseResume == true),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>>()),
+            Times.Once);
+    }
+
     // ── Helper: TempDirectory ────────────────────────────────────────────────
 
     // TODO: The draft PR path added in PullRequestFinalizationService.RunFullPrCreationAsync

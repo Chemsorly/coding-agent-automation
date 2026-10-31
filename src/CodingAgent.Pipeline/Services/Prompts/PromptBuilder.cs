@@ -844,7 +844,7 @@ public static partial class PromptBuilder
         var sb = new StringBuilder();
         sb.AppendLine("## Generate a Pull Request Description");
         sb.AppendLine();
-        sb.AppendLine("Write a structured summary of the changes you made using this format:");
+        sb.AppendLine($"Write a structured summary of the changes on this branch. Read {AgentWorkspacePaths.DiffStatFilePath}, the parts of {AgentWorkspacePaths.FullDiffFilePath} you need, {AgentWorkspacePaths.IssueContextFilePath}, and {AgentWorkspacePaths.AnalysisFilePath} if it exists. Use this format:");
         sb.AppendLine();
         sb.AppendLine("### Summary");
         sb.AppendLine("2-3 sentences explaining what was done and why.");
