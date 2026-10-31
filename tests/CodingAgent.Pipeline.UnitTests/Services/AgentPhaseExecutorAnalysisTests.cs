@@ -263,6 +263,46 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     }
 
     [Fact]
+    public async Task ExistingAnalysis_WritesAnalysisFile()
+    {
+        const string analysisBody = "This is the existing analysis content.";
+        var commentBody = $"{CommentMarkers.AnalysisHeader}\n{analysisBody}";
+        var comments = new[]
+        {
+            new IssueComment { Id = "1", Body = commentBody, Author = "bot", CreatedAt = DateTime.UtcNow }
+        };
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, false, CancellationToken.None);
+
+        result.Should().BeTrue();
+        var analysisFilePath = Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisFilePath);
+        File.Exists(analysisFilePath).Should().BeTrue();
+        var written = await File.ReadAllTextAsync(analysisFilePath);
+        written.Should().Be(commentBody);
+    }
+
+    [Fact]
+    public async Task ExistingAnalysis_WriteFails_RunContinues()
+    {
+        // Block directory creation by placing a regular file at the .agent path
+        File.WriteAllText(Path.Combine(_workspacePath, ".agent"), "blocker");
+
+        var commentBody = $"{CommentMarkers.AnalysisHeader}\nExisting analysis that cannot be written.";
+        var comments = new[]
+        {
+            new IssueComment { Id = "1", Body = commentBody, Author = "bot", CreatedAt = DateTime.UtcNow }
+        };
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, false, CancellationToken.None);
+
+        result.Should().BeTrue("run must continue even when the file write fails");
+        _run.AnalysisSkipped.Should().BeTrue();
+        _run.AnalysisContent.Should().Be(commentBody, "AnalysisContent must be set even when the file write fails");
+        _mockAgent.Verify(a => a.EnsureSessionAsync(_workspacePath, It.IsAny<CancellationToken>()), Times.Once);
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Analysis_ForceRefresh_ExistingComment_UpdatesInsteadOfPosting()
     {
         // Existing analysis comment present + force-refresh → should update, not post new

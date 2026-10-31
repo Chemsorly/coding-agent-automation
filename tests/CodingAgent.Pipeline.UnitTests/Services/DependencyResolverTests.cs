@@ -313,17 +313,6 @@ public class DependencyResolverTests
     }
 
     [Fact]
-    public void Register_NullIssueUrl_ThrowsArgumentNullException()
-    {
-        var resolver = new DependencyResolver();
-
-        var act = () => resolver.Register("Task A", "1", null!, ProviderA);
-
-        act.Should().Throw<ArgumentNullException>()
-            .Which.ParamName.Should().Be("issueUrl");
-    }
-
-    [Fact]
     public void Register_NullProviderId_ThrowsArgumentNullException()
     {
         var resolver = new DependencyResolver();
@@ -332,6 +321,35 @@ public class DependencyResolverTests
 
         act.Should().Throw<ArgumentNullException>()
             .Which.ParamName.Should().Be("issueProviderId");
+    }
+
+    [Fact]
+    public void Register_NullUrl_SameTracker_ResolvesToShortForm()
+    {
+        // Providers may return Success=true with a non-null Identifier but a null Url
+        // (e.g. via SignalR deserialization). The resolver must still register the issue
+        // and emit #N for same-tracker dependencies.
+        var resolver = new DependencyResolver();
+        resolver.Register("Task A", "42", null!, ProviderA);
+
+        var result = resolver.Resolve(["Task A"], ProviderA, _logger);
+
+        result.Should().ContainSingle()
+            .Which.Should().Be("Depends on #42");
+    }
+
+    [Fact]
+    public void Register_NullUrl_CrossTracker_FallsBackToShortForm()
+    {
+        // When the URL is null and the dependency is cross-tracker, the resolver must fall
+        // back to the #N short form rather than emitting the broken "Depends on " string.
+        var resolver = new DependencyResolver();
+        resolver.Register("Task A", "42", null!, ProviderA);
+
+        var result = resolver.Resolve(["Task A"], ProviderB, _logger);
+
+        result.Should().ContainSingle()
+            .Which.Should().Be("Depends on #42");
     }
 
     [Fact]
