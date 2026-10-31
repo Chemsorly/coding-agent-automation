@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Web.Components.Shared;
 
@@ -21,7 +22,12 @@ public class IconComponentTests : BunitContext
     public void Icon_KnownName_RendersSvg()
     {
         var cut = Render<Icon>(p => p.Add(s => s.Name, "check-circle"));
-        cut.Find("svg[data-icon='check-circle']");
+        // bUnit's Find() throws ElementNotFoundException when the selector finds no match,
+        // so it is an implicit assertion. The explicit .Should().NotBeNull() below satisfies
+        // SonarQube S2699 (tests must have assertions); it is technically redundant because
+        // Find() never returns null. See issue #4034 for discussion.
+        var element = cut.Find("svg[data-icon='check-circle']");
+        element.Should().NotBeNull();
     }
 
     // Empty string renders nothing (existing behaviour, confirmed non-regression).

@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using CodingAgent.Api;
 using CodingAgent.Pipeline;
 using Microsoft.Extensions.Hosting;
@@ -6,19 +7,19 @@ namespace CodingAgent.Web.UnitTests;
 
 /// <summary>
 /// Smoke tests for <see cref="ApiSerilogRegistration.ConfigureApiSerilog"/> — verify that the
-/// method configures the host builder without throwing.
+/// method configures the host builder without throwing and returns the same non-null builder.
 /// These tests exist to satisfy the Sonar coverage gate on the changed line (LOG_LEVEL env var
-/// read replaced with <see cref="AgentDefaults.EnvLogLevel"/>). Their value is the implicit
-/// "does not throw" assertion: no assertion on the return value is made because
-/// <c>ConfigureApiSerilog</c> always returns the same <see cref="IHostBuilder"/> it was given.
+/// read replaced with <see cref="AgentDefaults.EnvLogLevel"/>).
 /// </summary>
 public class ApiSerilogRegistrationSmokeTests
 {
     [Fact]
     public void ConfigureApiSerilog_DoesNotThrow()
     {
-        // Verifies that configuring Serilog on a default host builder does not throw.
-        Host.CreateDefaultBuilder().ConfigureApiSerilog();
+        // Verifies that configuring Serilog on a default host builder does not throw
+        // and returns the same non-null IHostBuilder it was given.
+        var builder = Host.CreateDefaultBuilder().ConfigureApiSerilog();
+        builder.Should().NotBeNull();
     }
 
     [Fact]
@@ -35,7 +36,8 @@ public class ApiSerilogRegistrationSmokeTests
         try
         {
             Environment.SetEnvironmentVariable(AgentDefaults.EnvLogLevel, "Warning");
-            Host.CreateDefaultBuilder().ConfigureApiSerilog();
+            var builder = Host.CreateDefaultBuilder().ConfigureApiSerilog();
+            builder.Should().NotBeNull();
         }
         finally
         {
