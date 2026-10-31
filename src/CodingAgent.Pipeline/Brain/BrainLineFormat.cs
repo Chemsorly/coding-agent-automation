@@ -16,21 +16,21 @@ public static partial class BrainLineFormat
     //   - [<tag>] For <situation>, <what to do> (<refs>)[. missed again <refs>]
     [GeneratedRegex(
         @"^- \[(?<tag>2\+|user)\] (?<body>For .+?, .+?) \((?<refs>(?:#\d+|[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#\d+)(?:, (?:#\d+|[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#\d+))*)\)\.( missed again (?<missed>(?:#\d+|[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#\d+)(?:, (?:#\d+|[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#\d+))*))?$",
-        RegexOptions.None, matchTimeoutMilliseconds: 100)]
+        RegexOptions.None, matchTimeoutMilliseconds: 5000)]
     private static partial Regex SkillLineRegex();
 
     // ── Candidate line ────────────────────────────────────────────────
     //   - [<scope>] For <situation>, <what to do> (<evidence>).
     [GeneratedRegex(
         @"^- \[(?<scope>repository|general|technology:[a-z0-9._-]+)\] For .+?, .+? \(.+\)\.$",
-        RegexOptions.None, matchTimeoutMilliseconds: 100)]
+        RegexOptions.None, matchTimeoutMilliseconds: 5000)]
     private static partial Regex CandidateLineRegex();
 
     // ── URL / path / repo patterns for shared-content check ──────────
-    [GeneratedRegex(@"https?://", RegexOptions.None, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"https?://", RegexOptions.None, matchTimeoutMilliseconds: 5000)]
     private static partial Regex UrlPattern();
 
-    [GeneratedRegex(@"\.[a-z]+$", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    [GeneratedRegex(@"\.[a-z]+$", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 5000)]
     private static partial Regex FileExtPattern();
 
     // ── Public API ────────────────────────────────────────────────────
