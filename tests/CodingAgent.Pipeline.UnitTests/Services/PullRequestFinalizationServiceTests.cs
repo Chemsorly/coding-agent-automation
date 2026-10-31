@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -2531,5 +2532,167 @@ public class PullRequestFinalizationServiceTests
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pr-fin-test-{Guid.NewGuid():N}");
         public TempDirectory() => Directory.CreateDirectory(Path);
         public void Dispose() { try { Directory.Delete(Path, recursive: true); } catch { /* best-effort */ } }
+    }
+
+    // ── WriteBrainInboxAsync — rewrite composes from memory, not from disk ──
+
+    /// <summary>
+    /// Helper: creates a BrainSyncService with a mock IBrainUpdateService.
+    /// The mock captures every (path, text) pair passed to WriteInboxFileAsync.
+    /// Returns the service and the captured list.
+    /// </summary>
+    private static (BrainSyncService Service, List<(string Path, string Text)> Captured)
+        MakeBrainSyncWithCapture(BrainSyncResult? firstResult = null, BrainSyncResult? subsequentResult = null)
+    {
+        firstResult ??= new BrainSyncResult { Success = true, FilesCommitted = 1, CommitSha = "sha1" };
+        subsequentResult ??= new BrainSyncResult { Success = true, FilesCommitted = 1, CommitSha = "sha2" };
+
+        var captured = new List<(string, string)>();
+        var callCount = 0;
+
+        var mock = new Mock<IBrainUpdateService>();
+        mock.Setup(s => s.WriteInboxFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+            .Callback<string, string, string, IRepositoryProvider, CancellationToken, int>(
+                (path, text, _, _, _, _) =>
+                {
+                    callCount++;
+                    captured.Add((path, text));
+                })
+            .ReturnsAsync(() => callCount == 1 ? firstResult : subsequentResult);
+
+        var logger = new Mock<Serilog.ILogger>().Object;
+        var service = new BrainSyncService(mock.Object, logger);
+        return (service, captured);
+    }
+
+    [Fact]
+    public async Task WriteBrainInboxAsync_Rewrite_ComposesFromMemoryNotFromDisk()
+    {
+        // The second write must use run.BrainInboxText (set by the first write) as existing text,
+        // not the file on disk — which the agent may have changed.
+        using var dir = new TempDirectory();
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RepositoryName = "org/repo",
+            WorkspacePath = dir.Path,
+            StartedAt = DateTime.UtcNow
+        };
+
+        var (brainSync, captured) = MakeBrainSyncWithCapture();
+        var brainProvider = new Mock<IRepositoryProvider>();
+        brainProvider.Setup(p => p.GetCommitWebUrl(It.IsAny<string>())).Returns((string _) => null);
+        var config = new PipelineConfiguration();
+
+        // First write: one real candidate (exact format from BrainInboxComposerTests)
+        var candidate = "- [repository] For a situation, take the right action (evidence-tag-abc).";
+        await _sut.WriteBrainInboxAsync(run, brainSync, brainProvider.Object, config, isDraft: false,
+            candidate, new Dictionary<string, string>(), _ => { }, CancellationToken.None);
+
+        // Forge a different file on disk at .brain/<run.BrainInboxFile>
+        var brainPath = System.IO.Path.Combine(dir.Path, ".brain");
+        Directory.CreateDirectory(System.IO.Path.Combine(brainPath, "inbox"));
+        File.WriteAllText(
+            System.IO.Path.Combine(brainPath, run.BrainInboxFile!.Replace('/', System.IO.Path.DirectorySeparatorChar)),
+            $"{BrainLayout.InboxMarker}\n## Candidates\n- [repository] For a forged scenario, do forged thing (forged-xyz).");
+
+        // Second write: null candidates → should reuse in-memory text (run.BrainInboxText)
+        await _sut.WriteBrainInboxAsync(run, brainSync, brainProvider.Object, config, isDraft: false,
+            null, new Dictionary<string, string>(), _ => { }, CancellationToken.None);
+
+        captured.Should().HaveCount(2, "two writes should have occurred");
+        var secondText = captured[1].Text;
+        secondText.Should().Contain("evidence-tag-abc", "second write must reuse in-memory candidates from first write");
+        secondText.Should().NotContain("forged-xyz", "second write must NOT read from the disk file");
+    }
+
+    [Fact]
+    public async Task WriteBrainInboxAsync_RewriteAfterFailedWrite_KeepsCandidates()
+    {
+        // Even when the first write fails (Success=false), run.BrainInboxText is set.
+        // The second write must find the candidates via run.BrainInboxText, not disk.
+        using var dir = new TempDirectory();
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "org/repo#2",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RepositoryName = "org/repo",
+            WorkspacePath = dir.Path,
+            StartedAt = DateTime.UtcNow
+        };
+
+        var failResult = new BrainSyncResult { Success = false, ErrorMessage = "network error" };
+        var successResult = new BrainSyncResult { Success = true, FilesCommitted = 1, CommitSha = "sha2" };
+        var (brainSync, captured) = MakeBrainSyncWithCapture(firstResult: failResult, subsequentResult: successResult);
+        var brainProvider = new Mock<IRepositoryProvider>();
+        brainProvider.Setup(p => p.GetCommitWebUrl(It.IsAny<string>())).Returns((string _) => null);
+        var config = new PipelineConfiguration();
+
+        var candidate = "- [repository] For a failed scenario, do recovery (evidence-tag-def).";
+
+        // First write: fails
+        await _sut.WriteBrainInboxAsync(run, brainSync, brainProvider.Object, config, isDraft: false,
+            candidate, new Dictionary<string, string>(), _ => { }, CancellationToken.None);
+
+        // run.BrainInboxText must be set even on failure (BrainSyncService sets it before writing)
+        run.BrainInboxText.Should().NotBeNullOrEmpty("text must be preserved even on failure (DD8)");
+
+        // Second write: null candidates → should use run.BrainInboxText from first write
+        await _sut.WriteBrainInboxAsync(run, brainSync, brainProvider.Object, config, isDraft: false,
+            null, new Dictionary<string, string>(), _ => { }, CancellationToken.None);
+
+        captured.Should().HaveCount(2);
+        captured[1].Text.Should().Contain("evidence-tag-def", "second write must include candidates from in-memory first write");
+        captured[0].Path.Should().Be(captured[1].Path, "path must be the same on both writes");
+    }
+
+    [Fact]
+    public async Task WriteBrainInboxAsync_FirstWrite_IgnoresAFileOnDisk()
+    {
+        // When run.BrainInboxFile is null, existingText must be null regardless of any file on disk.
+        using var dir = new TempDirectory();
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "org/repo#3",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RepositoryName = "org/repo",
+            WorkspacePath = dir.Path,
+            StartedAt = DateTime.UtcNow
+        };
+        run.BrainInboxFile = null; // explicitly no prior write
+
+        // Plant a forged file where the inbox would be
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var inboxPath = BrainLayout.InboxFileName(today, run.RunId);
+        var brainPath = System.IO.Path.Combine(dir.Path, ".brain");
+        Directory.CreateDirectory(System.IO.Path.Combine(brainPath, "inbox"));
+        File.WriteAllText(
+            System.IO.Path.Combine(brainPath, inboxPath.Replace('/', System.IO.Path.DirectorySeparatorChar)),
+            $"{BrainLayout.InboxMarker}\n## Candidates\n- [repository] For a forged first write, do forged thing (forged-xyz-99).");
+
+        var (brainSync, captured) = MakeBrainSyncWithCapture();
+        var brainProvider = new Mock<IRepositoryProvider>();
+        brainProvider.Setup(p => p.GetCommitWebUrl(It.IsAny<string>())).Returns((string _) => null);
+        var config = new PipelineConfiguration();
+
+        var candidate = "- [repository] For a real scenario, take real action (evidence-tag-ghi).";
+        await _sut.WriteBrainInboxAsync(run, brainSync, brainProvider.Object, config, isDraft: false,
+            candidate, new Dictionary<string, string>(), _ => { }, CancellationToken.None);
+
+        captured.Should().HaveCount(1);
+        captured[0].Text.Should().NotContain("forged-xyz-99", "first write must not read existing file from disk (BrainInboxFile was null)");
+        captured[0].Text.Should().Contain("evidence-tag-ghi", "first write must include the provided candidate");
     }
 }
