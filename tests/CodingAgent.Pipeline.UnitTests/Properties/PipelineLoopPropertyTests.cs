@@ -68,7 +68,6 @@ public class PipelineLoopPropertyTests
 
         await BackgroundWait.PollUntilAsync(() => configCallCount >= 2, "the loop should load the config again for its next cycle");
         svc.StopLoop();
-        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -122,7 +121,6 @@ public class PipelineLoopPropertyTests
         var uniqueProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).Distinct().Count();
         await BackgroundWait.PollUntilAsync(() => createCount >= uniqueProviderIds, "the loop should create a provider per unique issue provider ID");
         svc.StopLoop();
-        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -189,7 +187,6 @@ public class PipelineLoopPropertyTests
         // Wait for non-failing templates to be polled
         await BackgroundWait.PollUntilAsync(() => { lock (polledIds) { return polledIds.Count > 0; } }, "the loop should poll the non-failing templates");
         svc.StopLoop();
-        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -260,7 +257,6 @@ public class PipelineLoopPropertyTests
         // Wait for rate limit to expire and recovery
         await BackgroundWait.PollUntilAsync(() => callCount >= 1, "the loop should poll the rate-limited provider");
         svc.StopLoop();
-        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -315,7 +311,6 @@ public class PipelineLoopPropertyTests
         var enabledProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).ToHashSet();
         await BackgroundWait.PollUntilAsync(() => { lock (createdForIds) { return createdForIds.Count > 0; } }, "the loop should create providers for the enabled templates");
         svc.StopLoop();
-        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
