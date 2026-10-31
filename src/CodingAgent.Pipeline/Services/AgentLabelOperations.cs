@@ -132,6 +132,12 @@ public static class AgentLabelOperations
         }
     }
 
+    /// <summary>
+    /// Test-only replacement for the remove-retry backoff (settable only from test assemblies via
+    /// InternalsVisibleTo). Null in production. Set once at test-assembly load, never mutated during a run.
+    /// </summary>
+    internal static TimeSpan? TestRetryDelayOverride { get; set; }
+
     /// <summary>Removes <paramref name="label"/> with up to three attempts and exponential backoff.
     /// On exhaustion, re-throws when <paramref name="throwOnRemoveExhaustion"/> is true; otherwise
     /// increments <paramref name="exhaustionCounter"/> and returns.</summary>
@@ -159,7 +165,7 @@ public static class AgentLabelOperations
                 logger.Warning(ex,
                     "AgentLabelOperations: removeLabel attempt {Attempt} failed for label {Label} on {Identifier} — retrying",
                     attempt + 1, label, identifier ?? UnknownIdentifier);
-                await Task.Delay(TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt)), ct);
+                await Task.Delay(TestRetryDelayOverride ?? TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt)), ct);
             }
             catch (Exception ex)
             {

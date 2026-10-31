@@ -113,7 +113,12 @@ public class AgentConnectionLifecycleGateTests
             factory,
             new AgentId("gate-agent"),
             lifetimeMock.Object,
-            mockLogger);
+            mockLogger)
+        {
+            // Registration on the fakes' unstarted connection always fails, so every reconnect goes
+            // through all three extended attempts: 15 s per reconnect at the real delay.
+            ExtendedRetryDelay = TimeSpan.FromMilliseconds(1)
+        };
 
         return (lifecycle, initialManager, factory);
     }
