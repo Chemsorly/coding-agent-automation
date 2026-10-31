@@ -1,9 +1,12 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -23,6 +26,7 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// MarkIssueComplete call have been removed; tests that tested other behaviour alongside it
 /// have had those specific Verify calls stripped.
 /// </summary>
+[Collection("Metrics")]
 public sealed class AgentJobLifecycleServiceCompletionTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
@@ -49,14 +53,16 @@ public sealed class AgentJobLifecycleServiceCompletionTests
                 _logger.Object));
     }
 
-    private static PipelineRun MakeRun(string jobId = "job-1", string? providerConfigId = null) => new()
+    private static PipelineRun MakeRun(string jobId = "job-1", string? providerConfigId = null,
+        string? brainProviderConfigId = null) => new()
     {
         RunId = jobId,
         IssueIdentifier = "org/repo#42",
         IssueTitle = "Test Issue",
         IssueProviderConfigId = providerConfigId ?? "issue-cfg-1",
         RepoProviderConfigId = "repo-cfg-1",
-        AgentProviderConfigId = "agent-cfg-1"
+        AgentProviderConfigId = "agent-cfg-1",
+        BrainProviderConfigId = brainProviderConfigId
     };
 
     private static PipelineRun MakeConsolidationRun(string jobId = "job-1") =>
@@ -1134,5 +1140,238 @@ public sealed class AgentJobLifecycleServiceCompletionTests
             "the run carries issue feedback, so an outbox row must be enqueued");
         _outbox.Verify(o => o.MarkCompletedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never,
             "the comment was not posted inline, so the row must stay Pending for FeedbackCommentRelayService");
+    }
+
+    // ── Brain-telemetry block (AgentJobLifecycleService.cs L253-262) ──────────
+    // These tests verify that pipeline.run.brain_updates is emitted with the correct
+    // result tag for each combination of BrainUpdatesPushed / BrainPushFailed flags.
+    // MeterListener is required because PipelineTelemetry.RunBrainUpdates is a static
+    // Counter<long>. The class carries [Collection("Metrics")] to prevent cross-talk with
+    // other MeterListener tests running in parallel.
+
+    private static (MeterListener Listener,
+        ConcurrentBag<(long Value, string Result)> UpdatesBag,
+        ConcurrentBag<long> SkillsBag)
+        SetupBrainUpdatesListener()
+    {
+        var updatesBag = new ConcurrentBag<(long, string)>();
+        var skillsBag = new ConcurrentBag<long>();
+        var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName &&
+                (instrument.Name == "pipeline.run.brain_updates" ||
+                 instrument.Name == "pipeline.run.brain_skills"))
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            if (instrument.Name == "pipeline.run.brain_updates")
+            {
+                string result = "";
+                foreach (var tag in tags)
+                    if (tag.Key == "result") result = tag.Value?.ToString() ?? "";
+                updatesBag.Add((measurement, result));
+            }
+            else if (instrument.Name == "pipeline.run.brain_skills")
+            {
+                skillsBag.Add(measurement);
+            }
+        });
+        listener.Start();
+        return (listener, updatesBag, skillsBag);
+    }
+
+    [Fact]
+    public async Task BrainUpdatesTag_BrainUpdatesPushed_RecordsPushed()
+    {
+        // Arrange
+        var run = MakeRun(brainProviderConfigId: "brain-1");
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BrainUpdatesPushed = true
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
+
+        var (listener, bag, skillsBag) = SetupBrainUpdatesListener();
+        try
+        {
+            var svc = CreateService();
+
+            // Act
+            await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+        }
+        finally
+        {
+            listener.Dispose();
+        }
+
+        // Assert
+        bag.Should().Contain(m => m.Result == "pushed",
+            "BrainUpdatesPushed=true must produce result=pushed");
+        bag.Should().NotContain(m => m.Result == "failed",
+            "BrainUpdatesPushed=true must not produce result=failed");
+        bag.Should().NotContain(m => m.Result == "none",
+            "BrainUpdatesPushed=true must not produce result=none");
+        skillsBag.Should().ContainSingle(
+            "RunBrainSkills must be emitted exactly once in the same brain-provider block");
+    }
+
+    [Fact]
+    public async Task BrainUpdatesTag_BrainPushFailed_RecordsFailed()
+    {
+        // Arrange
+        var run = MakeRun(brainProviderConfigId: "brain-1");
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BrainUpdatesPushed = false,
+            BrainPushFailed = true
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
+
+        var (listener, bag, skillsBag) = SetupBrainUpdatesListener();
+        try
+        {
+            var svc = CreateService();
+
+            // Act
+            await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+        }
+        finally
+        {
+            listener.Dispose();
+        }
+
+        // Assert
+        bag.Should().Contain(m => m.Result == "failed",
+            "BrainPushFailed=true must produce result=failed");
+        bag.Should().NotContain(m => m.Result == "pushed",
+            "BrainPushFailed=true must not produce result=pushed");
+        bag.Should().NotContain(m => m.Result == "none",
+            "BrainPushFailed=true must not produce result=none");
+        skillsBag.Should().ContainSingle(
+            "RunBrainSkills must be emitted exactly once in the same brain-provider block");
+    }
+
+    [Fact]
+    public async Task BrainUpdatesTag_NeitherFlag_RecordsNone()
+    {
+        // Arrange
+        var run = MakeRun(brainProviderConfigId: "brain-1");
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BrainUpdatesPushed = false,
+            BrainPushFailed = false
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
+
+        var (listener, bag, skillsBag) = SetupBrainUpdatesListener();
+        try
+        {
+            var svc = CreateService();
+
+            // Act
+            await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+        }
+        finally
+        {
+            listener.Dispose();
+        }
+
+        // Assert
+        bag.Should().Contain(m => m.Result == "none",
+            "neither BrainUpdatesPushed nor BrainPushFailed set must produce result=none");
+        bag.Should().NotContain(m => m.Result == "pushed",
+            "result must not be pushed when neither flag is set");
+        bag.Should().NotContain(m => m.Result == "failed",
+            "result must not be failed when neither flag is set");
+        skillsBag.Should().ContainSingle(
+            "RunBrainSkills must be emitted exactly once in the same brain-provider block");
+    }
+
+    // ── Outbox MarkCompletedAsync failure path (AgentJobLifecycleService.cs L419-424) ─
+
+    [Fact]
+    public async Task MarkCompletedAsync_Throws_ExceptionSwallowedAndNotPropagated()
+    {
+        // Arrange: a run with non-null feedback description so EnqueueFeedbackOutboxEntryAsync
+        // enqueues a row (the guard `run.Feedback?.Issue?.Description is null` is false).
+        var run = MakeRun();
+        var feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Failure,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback(),
+            Issue = new IssueFeedback { Description = "forces outbox enqueue" }
+        };
+        run.Feedback = feedback;
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            Feedback = feedback   // JobCompletionMapper.Apply copies this to run.Feedback
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        // Outbox enqueue succeeds — row gets a non-empty Guid
+        _outbox
+            .Setup(o => o.EnqueueAsync(It.IsAny<FeedbackCommentOutboxEntry>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Inline comment post succeeds (commentDelivered = true) → enters the else-if branch
+        // that calls MarkCompletedAsync. The Moq default for Task<bool> is false, which would
+        // skip that branch entirely, so an explicit stub is required.
+        _issueOps
+            .Setup(i => i.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // MarkCompleted throws — this is the path under test (L419-424)
+        _outbox
+            .Setup(o => o.MarkCompletedAsync(It.IsAny<Guid>(), CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("DB timeout"));
+
+        var svc = CreateService();
+
+        // Act + Assert: the catch block must swallow the exception
+        await svc.Invoking(s => s.HandleJobCompletedAsync(
+                new JobId("job-1"), null, payload, CancellationToken.None))
+            .Should().NotThrowAsync(
+                "MarkCompletedAsync failure is best-effort and must not propagate out of PostCompletionBookkeepingAsync");
+
+        // Verify the path was actually exercised (not vacuous)
+        _outbox.Verify(o => o.MarkCompletedAsync(It.IsAny<Guid>(), CancellationToken.None), Times.Once,
+            "MarkCompletedAsync must have been called before the exception was swallowed");
     }
 }
