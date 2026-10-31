@@ -82,6 +82,8 @@ Scan the entire diff systematically, but only report findings you can support wi
 
 Judge the CODE DIFF only. Ignore commit messages, branch names, PR titles, or any framing about the developer's intent. A defect is present or absent regardless of how the change is described.
 
+If the diff has nothing in your focus area, say so in your findings file and stop. Do not look for problems outside your focus area.
+
 Write your findings to the file `.agent/review-findings.md` in the workspace. Do NOT print the findings to stdout — only write them to that file.
 
 Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations — it automatically stages and commits ALL new and modified files (including untracked files). Read-only git commands (git log, git diff, git status, git show) are fine.

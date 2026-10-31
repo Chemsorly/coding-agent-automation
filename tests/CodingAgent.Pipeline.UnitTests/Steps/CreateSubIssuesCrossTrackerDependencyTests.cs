@@ -301,4 +301,77 @@ public class CreateSubIssuesCrossTrackerDependencyTests : IDisposable
         capturedBody.Should().Contain("Depends on #10",
             because: "repo-epic sub-issues are all in the same tracker so #N form is correct");
     }
+
+    // ── Null URL: registration must not be skipped ────────────────────────────
+
+    /// <summary>
+    /// When the issue provider returns Success=true with a non-null Identifier but a null Url
+    /// (which can happen via SignalR/MessagePack deserialization), the step must still register
+    /// the issue and subsequent dependencies must resolve to the #N short form.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_ProviderReturnsNullUrl_DependencyStillRegisteredAsShortForm()
+    {
+        // Both issues use the run's own tracker (no project context)
+        WriteSubIssueFile("01-first.json", "Task A", "Task A body",
+            dependencies: []);
+        WriteSubIssueFile("02-second.json", "Task B", "Task B body",
+            dependencies: ["Task A"]);
+
+        // Task A → returns Success with a null Url (simulates providers that omit the URL)
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                "Task A", It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult
+            {
+                Identifier = "42",
+                Url = null!   // simulates SignalR deserializing a null URL at runtime
+            });
+
+        string? capturedBody = null;
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                "Task B", It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>(
+                (_, body, _, _) => capturedBody = body)
+            .ReturnsAsync(new CreatedIssueResult
+            {
+                Identifier = "43",
+                Url = "https://github.com/acme/main/issues/43"
+            });
+
+        var run = CreateRun(issueProviderId: "p-main");
+        var context = new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp", MaxDecompositionSubIssues = 10 },
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = null,
+            ConfigStore = Mock.Of<IConfigurationStore>(),
+            Callbacks = _callbacks.Object,
+            IssueOps = _issueOps.Object,
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_logger),
+            Logger = _logger,
+            ProjectContext = null
+        };
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Both issues should be recorded as successful
+        run.SubIssueResults.Should().HaveCount(2);
+        run.SubIssueResults.Should().AllSatisfy(r => r.Success.Should().BeTrue());
+
+        // Task B's body must contain "Depends on #42" — not the broken "Depends on " form
+        capturedBody.Should().NotBeNull("Task B body should have been captured");
+        capturedBody.Should().Contain(
+            "Depends on #42",
+            because: "a null URL must fall back to the #N short form rather than silently omitting the dependency");
+    }
 }

@@ -96,6 +96,15 @@ public static partial class PromptBuilder
         "how the change is described.";
 
     /// <summary>
+    /// Early-stop rule injected after the calibration footer in review prompts.
+    /// Allows review agents to exit quickly when the diff has no content in their focus area,
+    /// avoiding wasted reviewer turns on out-of-scope code.
+    /// Injected at the builder level so it applies to both default and custom review prompts.
+    /// </summary>
+    internal const string ReviewEarlyStopRule =
+        "If the diff has nothing in your focus area, say so in your findings file and stop. Do not look for problems outside your focus area.";
+
+    /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .agent/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
@@ -301,6 +310,8 @@ public static partial class PromptBuilder
         sb.AppendLine(ThoroughnessFooter);
         sb.AppendLine();
         sb.AppendLine(ReviewCalibrationFooter);
+        sb.AppendLine();
+        sb.AppendLine(ReviewEarlyStopRule);
         sb.AppendLine();
 
         // PR conversation context reference
@@ -851,7 +862,7 @@ public static partial class PromptBuilder
         var sb = new StringBuilder();
         sb.AppendLine("## Generate a Pull Request Description");
         sb.AppendLine();
-        sb.AppendLine("Write a structured summary of the changes you made using this format:");
+        sb.AppendLine($"Write a structured summary of the changes on this branch. Read {AgentWorkspacePaths.DiffStatFilePath}, the parts of {AgentWorkspacePaths.FullDiffFilePath} you need, {AgentWorkspacePaths.IssueContextFilePath}, and {AgentWorkspacePaths.AnalysisFilePath} if it exists. Use this format:");
         sb.AppendLine();
         sb.AppendLine("### Summary");
         sb.AppendLine("2-3 sentences explaining what was done and why.");

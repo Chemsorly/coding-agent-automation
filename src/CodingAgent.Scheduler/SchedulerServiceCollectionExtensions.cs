@@ -234,26 +234,19 @@ public static class SchedulerServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<FeedbackCommentRelayService>());
 
         // ── Redis cleanup services (null-safe) ────────────────────────────────
-        services.AddSingleton<AgentRegistryCleanupService>(sp =>
-        {
-            var store = sp.GetService<IRedisStore>();
-            if (store is null) return null!;
-            return new AgentRegistryCleanupService(store, Log.Logger,
-                sp.GetService<ILeaderElectionService>());
-        });
-        services.AddSingleton<RunServiceCleanupService>(sp =>
-        {
-            var store = sp.GetService<IRedisStore>();
-            if (store is null) return null!;
-            return new RunServiceCleanupService(store, Log.Logger,
-                sp.GetService<ILeaderElectionService>());
-        });
-        services.AddHostedService<AgentRegistryCleanupService>(sp =>
-            sp.GetService<AgentRegistryCleanupService>()
-            ?? new AgentRegistryCleanupService(new NullRedisStore(), Log.Logger));
-        services.AddHostedService<RunServiceCleanupService>(sp =>
-            sp.GetService<RunServiceCleanupService>()
-            ?? new RunServiceCleanupService(new NullRedisStore(), Log.Logger));
+        // Each service is registered as a concrete singleton (returns null! when IRedisStore is
+        // absent) and as an IHostedService (falls back to a NullRedisStore instance so the hosted
+        // runner always has a non-null service). The helper encodes this two-registration pattern
+        // once so adding a future cleanup service requires a single call.
+        // Note: the helper interleaves AddSingleton/AddHostedService per type, so IHostedService
+        // startup order changes relative to the previous all-singletons-first layout. Both services
+        // are independent sweep loops and the change is safe.
+        AddRedisOptionalCleanupService<AgentRegistryCleanupService>(
+            services,
+            (store, leader) => new AgentRegistryCleanupService(store, Log.Logger, leader));
+        AddRedisOptionalCleanupService<RunServiceCleanupService>(
+            services,
+            (store, leader) => new RunServiceCleanupService(store, Log.Logger, leader));
 
         // ── Scheduler-specific background services ────────────────────────────
         // ISchedulerApiClient is registered as a typed HTTP client so that singletons that need it
@@ -346,6 +339,45 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+    }
+
+    /// <summary>
+    /// Registers a Redis-backed cleanup service <typeparamref name="T"/> as both a concrete
+    /// singleton and an <see cref="IHostedService"/>.
+    ///
+    /// <para>
+    /// When <see cref="IRedisStore"/> is not registered (Redis not configured), the singleton
+    /// factory returns <see langword="null"/>; the hosted-service factory falls back to a
+    /// <see cref="NullRedisStore"/> instance so the hosted runner always receives a non-null
+    /// implementation. When <see cref="IRedisStore"/> is registered the singleton holds the real
+    /// instance and the hosted-service factory returns it directly (same reference).
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Important:</b> the <c>return null!</c> pattern means
+    /// <c>sp.GetRequiredService&lt;T&gt;()</c> will throw <see cref="InvalidOperationException"/>
+    /// when Redis is absent. Always use <c>sp.GetService&lt;T&gt;()</c> (nullable-safe) when
+    /// resolving services registered via this helper.
+    /// </para>
+    /// </summary>
+    // TODO: The null singleton pattern (return null! when IRedisStore is absent) gives no
+    // compile-time signal that GetRequiredService<T>() is unsafe. Consider replacing this
+    // approach with a dedicated NullAgentRegistryCleanupService / NullRunServiceCleanupService
+    // type or a conditional registration so the singleton is always non-null and
+    // GetRequiredService<T>() is safe in all configurations.
+    private static void AddRedisOptionalCleanupService<T>(
+        IServiceCollection services,
+        Func<IRedisStore, ILeaderElectionService?, T> factory)
+        where T : class, IHostedService
+    {
+        services.AddSingleton<T>(sp =>
+        {
+            var store = sp.GetService<IRedisStore>();
+            if (store is null) return null!;
+            return factory(store, sp.GetService<ILeaderElectionService>());
+        });
+        services.AddHostedService<T>(sp =>
+            sp.GetService<T>() ?? factory(new NullRedisStore(), null));
     }
 
     private static IKubernetes? CreateKubernetesClient() =>
