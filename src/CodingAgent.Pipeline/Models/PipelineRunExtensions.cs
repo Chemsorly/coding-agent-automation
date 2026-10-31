@@ -79,8 +79,8 @@ public static class PipelineRunExtensions
         if (phase is not null && result is { ToolCalls.Count: > 0 } or { UnavailableMcpServers.Count: > 0 })
         {
             run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
-                AddToolCalls(new PhaseUsage(0, null), result!),
-                (_, existing) => AddToolCalls(existing, result!));
+                AddToolCalls(new PhaseUsage(0, null), result),
+                (_, existing) => AddToolCalls(existing, result));
         }
 
         if (result?.UsageDetails is { RateLimits.Count: > 0 } details)
