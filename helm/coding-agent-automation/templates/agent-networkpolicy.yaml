@@ -1,0 +1,78 @@
+{{- $policy := .Values.agentNetworkPolicy | default dict -}}
+{{- if $policy.enabled }}
+{{- if empty $policy.clusterCidrs }}
+  {{- fail "agentNetworkPolicy.clusterCidrs is empty. While agentNetworkPolicy.enabled is true it must list the cluster's pod and service CIDRs, for example [10.42.0.0/16, 10.43.0.0/16] on k3s. See \"Agent network policy\" in docs/deployment.md for how to find them. Set agentNetworkPolicy.enabled to false only if your own NetworkPolicy isolates the agent pods." }}
+{{- end }}
+{{- $ipv4 := list -}}
+{{- $ipv6 := list -}}
+{{- range $policy.clusterCidrs -}}
+  {{- if contains ":" . -}}
+    {{- $ipv6 = append $ipv6 . -}}
+  {{- else -}}
+    {{- $ipv4 = append $ipv4 . -}}
+  {{- end -}}
+{{- end -}}
+{{- $otel := include "coding-agent-automation.agentOtelTarget" . | fromJson -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-agent
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  podSelector:
+    matchLabels:
+      caa/agent-pod: "true"
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    # DNS
+    - to:
+        - {{ toYaml $policy.dnsSelector | indent 10 | trim }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.api.enabled }}
+    # This release's Pipeline API
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "coding-agent-automation.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+    {{- end }}
+    {{- if $otel.namespace }}
+    # OpenTelemetry collector
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $otel.namespace | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $otel.port | int }}
+    {{- end }}
+    # Everything outside the cluster
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- with $ipv4 }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+        - ipBlock:
+            cidr: ::/0
+            {{- with $ipv6 }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+    {{- with $policy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

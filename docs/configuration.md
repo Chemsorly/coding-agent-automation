@@ -360,7 +360,7 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 
 | Variable | Description |
 |----------|-------------|
-| `ORCHESTRATOR_URL` | Base URL of the Pipeline API, which hosts the agent hub (`/hubs/agent`) and the work-item endpoints (e.g., `http://my-release-coding-agent-automation-api.coding-agent.svc.cluster.local:8080`). The chart sets it from `api.serviceUrl`, else `api.baseUrl`, else the in-cluster API Service. |
+| `ORCHESTRATOR_URL` | Base URL of the Pipeline API, which hosts the agent hub (`/hubs/agent`) and the work-item endpoints (e.g., `http://my-release-coding-agent-automation-api.coding-agent.svc.cluster.local:8080`). The chart sets it from `api.serviceUrl`, else `api.baseUrl`, else the in-cluster API Service. While `agentNetworkPolicy.enabled` is true, the only in-cluster address agents can reach for it is this release's API pods; another one needs `agentNetworkPolicy.extraEgress` ([Agent network policy](deployment.md#agent-network-policy)). |
 | `AGENT_ID` | Unique identifier for this agent instance (falls back to machine hostname if unset) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | The agent's own key, `HMAC-SHA256(master key, AGENT_ID)`, used as-is. Every dispatched agent Job (work item, consolidation, chat, model fetch) receives it from its per-Job Secret `caa-key-{job name}`; agent pods never receive the master key. An agent started by hand needs the same derived key. |
