@@ -18,12 +18,22 @@ namespace CodingAgent.Infrastructure.Git;
 /// </summary>
 internal static class RepositoryGitOperations
 {
+    /// <summary>
+    /// Where libgit2 looks for its global, XDG and system config. It does not exist, and it sits under the filesystem
+    /// root, so the agent user cannot create it. The worker passes commit signatures explicitly and needs none of it.
+    /// </summary>
+    internal static readonly string NoConfigDirectory =
+        Path.Combine(Path.GetPathRoot(AppContext.BaseDirectory)!, "caa-no-git-config");
+
     static RepositoryGitOperations()
     {
         // Disable libgit2's directory ownership validation. In Docker containers,
         // cloned workspace directories often have ownership mismatches (CVE-2022-24765
         // mitigation). Without this, Commands.Stage() silently fails.
         GlobalSettings.SetOwnerValidation(false);
+        GlobalSettings.SetConfigSearchPaths(ConfigurationLevel.Global, NoConfigDirectory);
+        GlobalSettings.SetConfigSearchPaths(ConfigurationLevel.Xdg, NoConfigDirectory);
+        GlobalSettings.SetConfigSearchPaths(ConfigurationLevel.System, NoConfigDirectory);
     }
 
     public static async Task Clone(
@@ -35,8 +45,7 @@ internal static class RepositoryGitOperations
             BranchName = baseBranch,
             FetchOptions =
             {
-                CredentialsProvider = (_, _, _) =>
-                    new UsernamePasswordCredentials { Username = tokenUsername, Password = token }
+                CredentialsProvider = GitRemoteBinding.CredentialsFor(cloneUrl, tokenUsername, token)
             }
         };
 
@@ -48,19 +57,20 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task Pull(
-        WorkspacePath workspacePath, BranchName baseBranch,
+        WorkspacePath workspacePath, string canonicalCloneUrl, BranchName baseBranch,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
+        ArgumentException.ThrowIfNullOrEmpty(canonicalCloneUrl);
         await pipeline.ExecuteAsync(async _ =>
         {
             await Task.CompletedTask;
             using var repo = new Repository(workspacePath);
+            GitRemoteBinding.ResetRemoteConfig(repo, canonicalCloneUrl);
             var remote = repo.Network.Remotes["origin"];
 
             var fetchOptions = new FetchOptions
             {
-                CredentialsProvider = (_, _, _) =>
-                    new UsernamePasswordCredentials { Username = tokenUsername, Password = token }
+                CredentialsProvider = GitRemoteBinding.CredentialsFor(canonicalCloneUrl, tokenUsername, token)
             };
             var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
             Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
@@ -267,12 +277,12 @@ internal static class RepositoryGitOperations
     // Integration coverage is provided by end-to-end pipeline runs.
     [ExcludeFromCodeCoverage]
     public static async Task Push(
-        WorkspacePath workspacePath, BranchName branchName, bool forcePush,
+        WorkspacePath workspacePath, string canonicalCloneUrl, BranchName branchName, bool forcePush,
         string tokenUsername, Func<CancellationToken, Task<string>> tokenFactory,
         ResiliencePipeline pipeline, CancellationToken ct)
     {
+        ArgumentException.ThrowIfNullOrEmpty(canonicalCloneUrl);
         using var repo = new Repository(workspacePath);
-        var remote = repo.Network.Remotes["origin"];
 
         // Force-push uses '+' prefix on refspec to allow non-fast-forward updates (required after rebase)
         var refSpec = forcePush
@@ -287,13 +297,14 @@ internal static class RepositoryGitOperations
             tokenUsername: tokenUsername,
             pushAction: token =>
             {
+                GitRemoteBinding.ResetRemoteConfig(repo, canonicalCloneUrl);
+                var remote = repo.Network.Remotes["origin"];
                 // Declare pushError and PushOptions inside the lambda so each retry attempt
                 // gets a fresh error slot, and so static analysis can track the callback assignment.
                 string? pushError = null;
                 var options = new PushOptions
                 {
-                    CredentialsProvider = (_, _, _) =>
-                        new UsernamePasswordCredentials { Username = tokenUsername, Password = token },
+                    CredentialsProvider = GitRemoteBinding.CredentialsFor(canonicalCloneUrl, tokenUsername, token),
                     OnPushStatusError = error =>
                         pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
                 };
@@ -488,9 +499,10 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task<MergeResult> MergeFromBase(
-        WorkspacePath workspacePath, BranchName baseBranchName,
+        WorkspacePath workspacePath, string canonicalCloneUrl, BranchName baseBranchName,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
+        ArgumentException.ThrowIfNullOrEmpty(canonicalCloneUrl);
         using var repo = new Repository(workspacePath);
 
         var headBranchName = repo.Head.FriendlyName;
@@ -502,11 +514,11 @@ internal static class RepositoryGitOperations
 
         // Fetch latest origin/main to ensure we rebase onto the absolute latest base branch.
         // Wrapped in the resilience pipeline to retry transient network failures.
+        GitRemoteBinding.ResetRemoteConfig(repo, canonicalCloneUrl);
         var remote = repo.Network.Remotes["origin"];
         var fetchOptions = new FetchOptions
         {
-            CredentialsProvider = (_, _, _) =>
-                new UsernamePasswordCredentials { Username = tokenUsername, Password = token }
+            CredentialsProvider = GitRemoteBinding.CredentialsFor(canonicalCloneUrl, tokenUsername, token)
         };
         var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
         await pipeline.ExecuteAsync(async _ =>

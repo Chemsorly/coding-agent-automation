@@ -364,6 +364,56 @@ public class GitLabRepositoryProviderTests
     // return null. The implementation guards on string.IsNullOrEmpty(commitSha), but this path is
     // untested. Add a fact analogous to GetCommitWebUrl_EmptySha_ReturnsNull in the GitHub tests.
 
+    #region Property/Feature: ToCanonicalCloneUrl and GetCanonicalCloneUrlAsync
+
+    [Theory]
+    [InlineData("http://gitlab.example.com/g/p.git", "https://gitlab.example.com/g/p.git")]
+    [InlineData("http://gitlab.example.com:8080/g/p.git", "https://gitlab.example.com:8080/g/p.git")]
+    [InlineData("https://gitlab.example.com:8443/g/s/p.git", "https://gitlab.example.com:8443/g/s/p.git")]
+    [InlineData("https://oauth2:secret@gitlab.example.com/g/p.git", "https://gitlab.example.com/g/p.git")]
+    public void ToCanonicalCloneUrl_ForcesHttps_AndKeepsThePort(string input, string expected)
+    {
+        GitLabRepositoryProvider.ToCanonicalCloneUrl(input).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ToCanonicalCloneUrl_RefusesOtherSchemes()
+    {
+        var act = () => GitLabRepositoryProvider.ToCanonicalCloneUrl("ssh://git@gitlab.example.com/g/p.git");
+        act.Should().Throw<InvalidOperationException>().WithMessage("*ssh*");
+    }
+
+    [Fact]
+    public async Task GetCanonicalCloneUrl_LoadsTheUrlWhenValidationHasNotRun()
+    {
+        var (client, projectId) = CreateServerWithProject();
+        const string expectedUrl = "https://gitlab.example.com/g/p.git";
+        var provider = new CountingValidationProvider(client, projectId, "main", expectedUrl);
+
+        // First call: HttpUrlToRepo is empty → ValidateAsync must run
+        var url1 = await provider.GetCanonicalCloneUrlAsync(CancellationToken.None);
+        url1.Should().Be(expectedUrl);
+        provider.ValidateCallCount.Should().Be(1, "ValidateAsync should be called once on first access");
+
+        // Second call: HttpUrlToRepo already populated → ValidateAsync must NOT run again
+        var url2 = await provider.GetCanonicalCloneUrlAsync(CancellationToken.None);
+        url2.Should().Be(expectedUrl);
+        provider.ValidateCallCount.Should().Be(1, "ValidateAsync must not be called again on second access");
+    }
+
+    [Fact]
+    public async Task GetCanonicalCloneUrl_WhenValidateReturnsNoUrl_Throws()
+    {
+        var (client, projectId) = CreateServerWithProject();
+        // Provider whose ValidateAsync runs but never sets HttpUrlToRepo
+        var provider = new NoUrlValidationProvider(client, projectId, "main");
+
+        var act = () => provider.GetCanonicalCloneUrlAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    #endregion
+
     #endregion
 }
 
@@ -398,6 +448,49 @@ internal sealed class TestableGitLabRepositoryProvider : GitLabRepositoryProvide
         var method = typeof(GitLabRepositoryProvider).GetMethod("BuildAuthenticatedCloneUrl",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         return (string)method!.Invoke(this, [token])!;
+    }
+}
+
+/// <summary>
+/// Provider whose ValidateAsync counts calls and sets HttpUrlToRepo to a fixed URL.
+/// Used by GetCanonicalCloneUrl_LoadsTheUrlWhenValidationHasNotRun.
+/// </summary>
+internal sealed class CountingValidationProvider : GitLabRepositoryProvider
+{
+    private readonly string _urlToSet;
+    public int ValidateCallCount { get; private set; }
+
+    public CountingValidationProvider(IGitLabClient client, int projectId, string baseBranch, string urlToSet)
+        : base(client, projectId, baseBranch)
+    {
+        _urlToSet = urlToSet;
+    }
+
+    public override Task ValidateAsync(CancellationToken ct)
+    {
+        ValidateCallCount++;
+        var field = typeof(GitLabProviderBase).GetField("_httpUrlToRepo",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        field!.SetValue(this, _urlToSet);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// Provider whose ValidateAsync runs but deliberately does not set HttpUrlToRepo,
+/// so that GetCanonicalCloneUrlAsync hits the throw branch.
+/// </summary>
+internal sealed class NoUrlValidationProvider : GitLabRepositoryProvider
+{
+    public NoUrlValidationProvider(IGitLabClient client, int projectId, string baseBranch)
+        : base(client, projectId, baseBranch)
+    {
+    }
+
+    public override Task ValidateAsync(CancellationToken ct)
+    {
+        // Intentionally does nothing — HttpUrlToRepo stays null/empty
+        return Task.CompletedTask;
     }
 }
 

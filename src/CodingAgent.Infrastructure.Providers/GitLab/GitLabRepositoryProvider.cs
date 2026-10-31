@@ -103,11 +103,12 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         return Task.Run(async () =>
         {
+            var canonicalCloneUrl = await GetCanonicalCloneUrlAsync(ct);
             var token = await GetTokenAsync(ct);
 
             try
             {
-                await RepositoryGitOperations.Pull(workspacePath, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
+                await RepositoryGitOperations.Pull(workspacePath, canonicalCloneUrl, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -171,9 +172,10 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         return Task.Run(async () =>
         {
+            var canonicalCloneUrl = await GetCanonicalCloneUrlAsync(ct);
             try
             {
-                await RepositoryGitOperations.Push(workspacePath, branchName, forcePush,
+                await RepositoryGitOperations.Push(workspacePath, canonicalCloneUrl, branchName, forcePush,
                     GitConstants.GitLabTokenUsername, tokenFactory: GetTokenAsync, _gitPipeline, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
@@ -221,8 +223,9 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         return Task.Run(async () =>
         {
+            var canonicalCloneUrl = await GetCanonicalCloneUrlAsync(ct);
             var token = await GetTokenAsync(ct);
-            return await RepositoryGitOperations.MergeFromBase(workspacePath, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
+            return await RepositoryGitOperations.MergeFromBase(workspacePath, canonicalCloneUrl, _baseBranch, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
         }, ct);
     }
 
@@ -237,6 +240,35 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     // ─── MR/Review Operations (implemented in GitLabRepositoryProvider.MergeRequests.cs) ───
 
     // ─── Private Helpers ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// This project's clone URL, from the GitLab API's project metadata, loaded here when validation has not run.
+    /// Never read from a workspace.
+    /// </summary>
+    internal async Task<string> GetCanonicalCloneUrlAsync(CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(HttpUrlToRepo))
+            await ValidateAsync(ct);
+
+        if (string.IsNullOrEmpty(HttpUrlToRepo))
+            throw new InvalidOperationException($"GitLab project {ProjectId} reported no clone URL.");
+
+        return ToCanonicalCloneUrl(HttpUrlToRepo);
+    }
+
+    /// <summary>
+    /// <paramref name="httpUrl"/> as HTTPS with its port and without credentials. GitLab can report <c>http://</c>
+    /// behind a TLS proxy, and the token must not go over plain HTTP.
+    /// </summary>
+    internal static string ToCanonicalCloneUrl(string httpUrl)
+    {
+        var uri = new Uri(httpUrl);
+        if (uri.Scheme is not ("http" or "https"))
+            throw new InvalidOperationException(
+                $"Clone URL has unsupported scheme '{uri.Scheme}'. Only HTTPS is supported for authenticated clone.");
+
+        return $"https://{uri.Host}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}{uri.AbsolutePath}";
+    }
 
     /// <summary>
     /// Builds an authenticated clone URL from the cached <c>http_url_to_repo</c>.
