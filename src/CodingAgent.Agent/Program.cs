@@ -4,8 +4,14 @@ using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using Serilog;
 
+// ── Process hardening: first, before anything can read this process's environment ──
+var markedNotDumpable = AgentProcessHardening.MarkProcessNotDumpable();
+
 // ── Resolve startup configuration ──
 var startupConfig = await AgentStartupConfig.ResolveAsync(args);
+
+// The key now travels in startupConfig only. This stays before CreateBuilder, so IConfiguration never holds it.
+AgentProcessHardening.RemoveSecretsFromEnvironment();
 
 // ── Configure Serilog ──
 Log.Logger = AgentSerilogConfiguration.CreateAgentLogger(startupConfig.AgentId);
@@ -14,6 +20,8 @@ try
 {
     Log.Information("Agent Worker starting (AgentId={AgentId}, OrchestratorUrl={OrchestratorUrl}, Mode={Mode})",
         startupConfig.AgentId, startupConfig.OrchestratorUrl, startupConfig.IsWorkItemMode ? "WorkItem" : "Chat");
+    if (!markedNotDumpable)
+        Log.Warning("Could not mark the agent process as not dumpable; other processes of this user can read its memory");
 
     var builder = WebApplication.CreateBuilder(args);
 
