@@ -8,7 +8,7 @@ using Xunit;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Verifies that <see cref="ApiServiceCollectionExtensions.AddApiInfrastructure"/> wires up
+/// Verifies that <see cref="ApiInfrastructureServiceExtensions.AddApiInfrastructure"/> wires up
 /// <c>NpgsqlRetryingExecutionStrategy</c> for the pooled <see cref="PipelineDbContext"/> factory.
 ///
 /// <para>
@@ -21,7 +21,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 public sealed class ApiDbContextRetryStrategyTests
 {
     /// <summary>
-    /// After calling <see cref="ApiServiceCollectionExtensions.AddApiInfrastructure"/>, the
+    /// After calling <see cref="ApiInfrastructureServiceExtensions.AddApiInfrastructure"/>, the
     /// resolved <see cref="IDbContextFactory{TContext}"/> must produce contexts whose execution
     /// strategy is <c>NpgsqlRetryingExecutionStrategy</c> (not <c>NonRetryingExecutionStrategy</c>).
     /// <para>
