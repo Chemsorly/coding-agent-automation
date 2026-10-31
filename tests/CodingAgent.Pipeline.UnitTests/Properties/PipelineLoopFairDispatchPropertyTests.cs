@@ -261,7 +261,6 @@ public class PipelineLoopFairDispatchPropertyTests
         await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
-        await Task.Delay(200);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 

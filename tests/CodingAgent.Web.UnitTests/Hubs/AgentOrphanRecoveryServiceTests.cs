@@ -777,6 +777,71 @@ public sealed class AgentOrphanRecoveryServiceTests
     }
 
     /// <summary>
+    /// Two orphaned entries where the newest fails ownership verification (its work item belongs to
+    /// a different agent). The loop must continue past it and restore the older entry, which is owned
+    /// by this agent and is not in terminal history.
+    /// Covers the <c>VerifyOrphanOwnershipAsync continue</c> path introduced by issue #4018.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedOrphanDetection_TwoOrphans_NewestOwnershipFails_OlderIsRestored()
+    {
+        const string agentId = "caa-multi-owner";
+        const string oldRunId = "run-multi-own-old";
+        const string newRunId = "run-multi-own-new";
+
+        var olderRun = new PipelineRun
+        {
+            RunId = oldRunId,
+            IssueIdentifier = "org/repo#60",
+            IssueTitle = "Old orphan — owned",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        var newerRun = new PipelineRun
+        {
+            RunId = newRunId,
+            IssueIdentifier = "org/repo#61",
+            IssueTitle = "New orphan — unowned",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        var entry = CreateEntry(agentId);
+
+        // CanVerifyWorkItems = true; newerRun's work item belongs to a different agent
+        WithWorkItemStore(newRunId, OwnedRecord("caa-different-agent"));
+        // olderRun's work item belongs to this agent
+        WithWorkItemStore(oldRunId, OwnedRecord(agentId));
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
+        // [olderRun, newerRun]: [^1] = newerRun is evaluated first by the descending loop
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([olderRun, newerRun]);
+        // olderRun is not in history → restorable
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(oldRunId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
+        // Hash absent for the older run → AddRun is called to re-materialise it
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == oldRunId))).Returns((PipelineRun?)null);
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob: null), agentId);
+
+        // The older, owned entry must have been activated
+        entry.ActiveJobId.Should().Be(oldRunId,
+            "the loop must skip the newest entry (ownership failed) and restore the older owned entry");
+        entry.OrphanRestoredAt.Should().NotBeNull();
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == oldRunId)), Times.Once,
+            "the older run must be re-materialised");
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == newRunId)), Times.Never,
+            "the unowned run must never be activated");
+        // History check must NOT be called for the entry that failed ownership (short-circuit)
+        _mockFacade.Verify(f => f.GetRunSummaryAsync(newRunId, It.IsAny<CancellationToken>()), Times.Never,
+            "GetRunSummaryAsync must not be called when ownership verification already failed for that entry");
+        // History check must be called for the entry that passed ownership
+        _mockFacade.Verify(f => f.GetRunSummaryAsync(oldRunId, It.IsAny<CancellationToken>()), Times.Once,
+            "GetRunSummaryAsync must be called for the entry that passed ownership verification");
+    }
+
+    /// <summary>
     /// A work item that cannot be read is not taken as "not the agent's": registration fails with an
     /// error the agent's SignalR retry pipeline retries ("Failed to ..."), instead of leaving the agent
     /// registered without its run.
@@ -2550,6 +2615,82 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId.Should().Be(runId,
             "guard must not spuriously match history entries for different RunIds");
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
+
+    // ── DetectAndRestoreOrphans: two orphans, newest in terminal history → restores older (issue #4018) ──
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_TwoOrphans_NewestInTerminalHistory_RestoresOlderEntry()
+    {
+        // Regression test for issue #4018: when orphanedRuns[^1] (the most-recent) is in terminal
+        // history the loop must continue to the next older candidate and restore it, rather than
+        // returning immediately and abandoning the older entry for the whole reconciliation cycle.
+        const string agentId = "agent-two-orphans";
+        const string oldRunId = "orphan-old";
+        const string newRunId = "orphan-new";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = null;
+
+        var olderRun = new PipelineRun
+        {
+            RunId = oldRunId,
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "Old Orphan",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        var newerRun = new PipelineRun
+        {
+            RunId = newRunId,
+            IssueIdentifier = "org/repo#11",
+            IssueTitle = "New Orphan (Completed)",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
+        // List ordered oldest-to-newest; [^1] = newerRun is the most-recent
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([olderRun, newerRun]);
+        // newerRun is already Completed in history → CheckOrphanInHistoryAsync returns true
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(newRunId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = newRunId,
+                IssueIdentifier = "org/repo#11",
+                IssueTitle = "New Orphan",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-2)
+            });
+        // olderRun is not in history → CheckOrphanInHistoryAsync returns false → should be restored
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(oldRunId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
+        // Hash absent for the older run → AddRun is called to re-materialise it
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == oldRunId))).Returns((PipelineRun?)null);
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        // The older, restorable entry must have been activated
+        entry.ActiveJobId.Should().Be(oldRunId,
+            "the loop must skip the newest (Completed) entry and restore the older restorable one");
+        entry.OrphanRestoredAt.Should().NotBeNull(
+            "OrphanRestoredAt must be set when the older entry is activated");
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+            "TransitionStatus(Busy) must be called for the restored older run");
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == oldRunId)), Times.Once,
+            "AddRun must be called to re-materialise the older run's hash");
+        // The newer (Completed) run must NOT have been activated
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == newRunId)), Times.Never,
+            "the Completed run must never be re-added");
+        // Both runs must have been evaluated (loop did not exit early after seeing the Completed one)
+        _mockFacade.Verify(f => f.GetRunSummaryAsync(newRunId, It.IsAny<CancellationToken>()), Times.Once,
+            "GetRunSummaryAsync must be called for the newest run (the Completed entry)");
+        _mockFacade.Verify(f => f.GetRunSummaryAsync(oldRunId, It.IsAny<CancellationToken>()), Times.Once,
+            "GetRunSummaryAsync must be called for the older run (loop must not exit after the first skip)");
     }
 
     // ── Guard: null message ───────────────────────────────────────────────

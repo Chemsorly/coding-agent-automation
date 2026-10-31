@@ -61,6 +61,17 @@ public static class PipelineRunExtensions
     }
 
     /// <summary>
+    /// The cost this run has reported so far as text (see <see cref="RunUsage.CostText"/>), or null when its
+    /// provider reported none. Used in text posted to the repository provider.
+    /// </summary>
+    public static string? ReportedCostText(this PipelineRun run) =>
+        new RunUsage
+        {
+            Cost = run.TotalCost,
+            BillingMode = RunUsage.ResolveBillingMode(run.Metrics.PhaseBreakdown.Values),
+        }.CostText();
+
+    /// <summary>
     /// Accumulates token usage and cost from an agent result into the pipeline run totals.
     /// </summary>
     public static void AccumulateTokenUsage(this PipelineRun run, AgentResult? result, string? phase = null)
@@ -68,8 +79,8 @@ public static class PipelineRunExtensions
         if (phase is not null && result is { ToolCalls.Count: > 0 } or { UnavailableMcpServers.Count: > 0 })
         {
             run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
-                AddToolCalls(new PhaseUsage(0, null), result!),
-                (_, existing) => AddToolCalls(existing, result!));
+                AddToolCalls(new PhaseUsage(0, null), result),
+                (_, existing) => AddToolCalls(existing, result));
         }
 
         if (result?.UsageDetails is { RateLimits.Count: > 0 } details)

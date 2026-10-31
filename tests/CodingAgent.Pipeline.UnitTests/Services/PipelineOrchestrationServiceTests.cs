@@ -3026,9 +3026,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_NoChangesAfterCleanup_WithExternalCi_SkipsCiAndCompletes()
     {
-        // Configure pipeline (provider will be auto-resolved)
+        // Configure pipeline (provider will be auto-resolved). The post-PR CI wait sleeps one poll
+        // interval before its first poll, so keep it short.
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default());
+            .ReturnsAsync(TestPipelineConfig.Default() with { ExternalCiPollInterval = TimeSpan.FromMilliseconds(1) });
 
         // Add pipeline provider config
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))

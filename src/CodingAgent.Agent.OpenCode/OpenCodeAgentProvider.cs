@@ -29,6 +29,9 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     /// </summary>
     internal static readonly TimeSpan ControlCallTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>How long a live SSE reader gets for late events before teardown. Test seam.</summary>
+    internal TimeSpan SseDrainWindow { get; set; } = TimeSpan.FromMilliseconds(500);
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
     private readonly string? _model;

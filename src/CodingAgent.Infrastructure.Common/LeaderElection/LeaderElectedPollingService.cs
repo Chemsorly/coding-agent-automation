@@ -47,6 +47,12 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// </summary>
     protected abstract int PollIntervalSeconds { get; }
 
+    /// <summary>The wait between poll cycles. Overridable so test doubles need not wait whole seconds.</summary>
+    protected virtual TimeSpan PollInterval => TimeSpan.FromSeconds(PollIntervalSeconds);
+
+    /// <summary>How often a non-leader rechecks for leadership. Overridable for test doubles.</summary>
+    protected virtual TimeSpan LeaderWaitInterval => TimeSpan.FromSeconds(2);
+
     /// <param name="leaderElection">Leader election service. Must not be null.</param>
     /// <param name="rateLimitPerSecond">
     /// When provided, creates a <see cref="TokenBucketRateLimiter"/> owned and disposed by this
@@ -89,7 +95,7 @@ public abstract class LeaderElectedPollingService : BackgroundService
             // Wait for leadership (2s poll)
             while (!stoppingToken.IsCancellationRequested && !LeaderElection.IsLeader)
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                await Task.Delay(LeaderWaitInterval, stoppingToken);
             }
 
             if (stoppingToken.IsCancellationRequested) break;
@@ -151,7 +157,7 @@ public abstract class LeaderElectedPollingService : BackgroundService
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(PollIntervalSeconds), ct);
+                await Task.Delay(PollInterval, ct);
             }
             catch (OperationCanceledException)
             {
