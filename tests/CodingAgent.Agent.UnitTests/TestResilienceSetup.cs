@@ -4,8 +4,9 @@ using CodingAgent.Infrastructure.Resilience;
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// Assembly-wide test setup: shrinks the resilience pipelines' base retry backoff to ~0 so tests that
-/// exercise retry BEHAVIOUR (retry counts, exception mapping, exhaustion) don't wait real exponential
+/// Assembly-wide test setup: shrinks the resilience pipelines' base retry backoff and
+/// <see cref="OrchestratorProxy"/>'s token-vend retry wait to ~0, so tests that exercise retry BEHAVIOUR
+/// (retry counts, exception mapping, exhaustion) or vend a token against an unstarted hub don't wait real
 /// backoff (1–5 s per retry). No test asserts wall-clock backoff duration, so this is behaviour-preserving.
 /// Runs once when the test assembly loads, before any test — never mutated afterwards, so it is safe for
 /// xUnit's parallel test collections.
