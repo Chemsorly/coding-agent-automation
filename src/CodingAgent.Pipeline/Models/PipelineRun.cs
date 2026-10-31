@@ -291,6 +291,9 @@ public sealed partial class PipelineRun
     // ── Brain v2 agent-only fields (spec 054, DD4, T3) ────────────────
     // These are set only in the agent process and are never serialised to Redis or the API.
 
+    /// <summary>The inbox text last composed for this run. A rewrite composes from it, never from the workspace. Agent-only — never leaves the pod.</summary>
+    public string? BrainInboxText { get; set; }
+
     /// <summary>Brain evidence accumulated during the run. Agent-only — never leaves the pod.</summary>
     public CodingAgent.Pipeline.Brain.BrainEvidence? BrainEvidence { get; set; }
 

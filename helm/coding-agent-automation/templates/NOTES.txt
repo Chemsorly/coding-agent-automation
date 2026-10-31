@@ -10,7 +10,8 @@ To add the Helm repository:
 To install (example):
   helm install my-release chemsorly/coding-agent-automation \
     --set database.host=YOUR_POSTGRES_HOST \
-    --set database.auth.existingSecret=YOUR_SECRET_NAME
+    --set database.auth.existingSecret=YOUR_SECRET_NAME \
+    --set 'agentNetworkPolicy.clusterCidrs={POD_CIDR,SERVICE_CIDR}'
 
   A cryptographically secure agent-api-key is auto-generated on first install and preserved
   across upgrades. To retrieve it after install:
@@ -161,4 +162,24 @@ share agent and run state through Redis. The chart refuses to render without it.
 
 Note: api.hubUrl is no longer used. The web connects to the UI hub at api.baseUrl + /hubs/ui with the
 signed-in user's token; only agents use /hubs/agent. Remove it from your values.
+{{- end }}
+{{- if (.Values.agentNetworkPolicy | default dict).enabled }}
+
+── Agent network policy ──────────────────────────────────────────────────────
+
+Agent pods are default deny: they reach DNS, this release's Pipeline API, the OpenTelemetry collector,
+anything outside {{ join ", " .Values.agentNetworkPolicy.clusterCidrs }}, and agentNetworkPolicy.extraEgress.
+This needs a CNI that enforces NetworkPolicy. See "Agent network policy" in docs/deployment.md.
+{{- if and (.Values.otel | default dict).endpoint (not (include "coding-agent-automation.agentOtelTarget" . | fromJson).namespace) }}
+
+WARNING: no egress rule was derived from otel.endpoint ({{ .Values.otel.endpoint }}). If the collector runs
+in this cluster, agent traces will be blocked: set agentNetworkPolicy.otel.namespace and agentNetworkPolicy.otel.port.
+A collector outside the cluster needs nothing.
+{{- end }}
+{{- if not (contains (printf "//%s-api" (include "coding-agent-automation.fullname" .)) (include "coding-agent-automation.agentOrchestratorUrl" .)) }}
+
+WARNING: agents connect to {{ include "coding-agent-automation.agentOrchestratorUrl" . }}, which is not this release's API
+Service, so the API rule does not cover it. If that address is in this cluster, allow it in agentNetworkPolicy.extraEgress,
+or every agent fails to connect.
+{{- end }}
 {{- end }}
