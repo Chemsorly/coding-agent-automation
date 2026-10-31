@@ -138,19 +138,19 @@ public sealed class RepositoryGitOperationsRemoteBindingTests : IDisposable
                 File.AppendAllText(gitConfig, $"\n[url \"{canaryRoot}/\"]\n\tpushInsteadOf = {canonicalRoot}/\n");
                 break;
             case "include.path":
-            {
-                var inc = Path.Combine(path, "inc.cfg");
-                File.WriteAllText(inc, $"[url \"{canaryRoot}/\"]\n\tinsteadOf = {canonicalRoot}/\n");
-                File.AppendAllText(gitConfig, $"\n[include]\n\tpath = {inc.Replace('\\', '/')}\n");
-                break;
-            }
+                {
+                    var inc = Path.Combine(path, "inc.cfg");
+                    File.WriteAllText(inc, $"[url \"{canaryRoot}/\"]\n\tinsteadOf = {canonicalRoot}/\n");
+                    File.AppendAllText(gitConfig, $"\n[include]\n\tpath = {inc.Replace('\\', '/')}\n");
+                    break;
+                }
             case "includeIf":
-            {
-                var inc2 = Path.Combine(path, "inc2.cfg");
-                File.WriteAllText(inc2, $"[remote \"origin\"]\n\tpushurl = {canaryRoot}/o/r.git\n");
-                File.AppendAllText(gitConfig, $"\n[includeIf \"gitdir:{forward}/\"]\n\tpath = {inc2.Replace('\\', '/')}\n");
-                break;
-            }
+                {
+                    var inc2 = Path.Combine(path, "inc2.cfg");
+                    File.WriteAllText(inc2, $"[remote \"origin\"]\n\tpushurl = {canaryRoot}/o/r.git\n");
+                    File.AppendAllText(gitConfig, $"\n[includeIf \"gitdir:{forward}/\"]\n\tpath = {inc2.Replace('\\', '/')}\n");
+                    break;
+                }
             case "http.proxy":
                 File.AppendAllText(gitConfig, $"\n[http]\n\tproxy = {canaryRoot}\n");
                 break;
@@ -158,12 +158,12 @@ public sealed class RepositoryGitOperationsRemoteBindingTests : IDisposable
                 File.AppendAllText(gitConfig, $"\n[remote \"origin\"]\n\tproxy = {canaryRoot}\n");
                 break;
             case "config.worktree":
-            {
-                var wt = Path.Combine(path, ".git", "config.worktree");
-                File.WriteAllText(wt, $"[url \"{canaryRoot}/\"]\n\tinsteadOf = {canonicalRoot}/\n");
-                File.AppendAllText(gitConfig, "\n[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n");
-                break;
-            }
+                {
+                    var wt = Path.Combine(path, ".git", "config.worktree");
+                    File.WriteAllText(wt, $"[url \"{canaryRoot}/\"]\n\tinsteadOf = {canonicalRoot}/\n");
+                    File.AppendAllText(gitConfig, "\n[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n");
+                    break;
+                }
         }
     }
 
