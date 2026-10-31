@@ -474,7 +474,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     var agentProvider = providerManager.ActiveAgentProvider;
                     if (agentProvider != null)
                     {
-                    var evidenceMd = CodingAgent.Pipeline.Brain.BrainInboxComposer.RenderEvidence(run.BrainEvidence ?? new());
+                        var evidenceMd = CodingAgent.Pipeline.Brain.BrainInboxComposer.RenderEvidence(run.BrainEvidence ?? new());
                         var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(run, evidenceMd, run.StackLabels, DateOnly.FromDateTime(DateTime.UtcNow), run.IssueTitle);
                         await agentProvider.ExecuteAsync(
                             new AgentRequest { Prompt = reflectionPrompt, WorkspacePath = run.WorkspacePath ?? "", UseResume = true },
