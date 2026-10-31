@@ -2746,11 +2746,17 @@ public class PullRequestFinalizationServiceTests
         historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
         var request = new PostPrSequenceRequest
         {
-            Run = run, IsDraft = false, AgentProvider = agentProvider.Object, RepoProvider = repoProvider.Object,
+            Run = run,
+            IsDraft = false,
+            AgentProvider = agentProvider.Object,
+            RepoProvider = repoProvider.Object,
             Config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) },
-            BrainSync = null, BrainProvider = null,
-            FeedbackService = new FeedbackService(_logger.Object), HistoryService = historyService.Object,
-            EmitOutputLine = _ => { }, TransitionCallback = _ => Task.CompletedTask
+            BrainSync = null,
+            BrainProvider = null,
+            FeedbackService = new FeedbackService(_logger.Object),
+            HistoryService = historyService.Object,
+            EmitOutputLine = _ => { },
+            TransitionCallback = _ => Task.CompletedTask
         };
 
         await sut.RunPostPrSequenceAsync(request, CancellationToken.None);
@@ -2768,7 +2774,10 @@ public class PullRequestFinalizationServiceTests
         run.PullRequestNumber = "42";
         run.LinkedPullRequest = new LinkedPullRequest
         {
-            Number = 42, BranchName = "feature/branch", Url = "https://github.com/org/repo/pull/42", IsDraft = false
+            Number = 42,
+            BranchName = "feature/branch",
+            Url = "https://github.com/org/repo/pull/42",
+            IsDraft = false
         };
         var repoProvider = new Mock<IRepositoryProvider>();
 

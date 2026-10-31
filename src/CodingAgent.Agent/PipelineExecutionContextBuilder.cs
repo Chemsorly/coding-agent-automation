@@ -246,7 +246,7 @@ internal sealed class PipelineExecutionContextBuilder
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { _logger.Warning(ex, "RewriteBrainInbox failed for {RunId}", run.RunId); }
                 }
-                : null,
+        : null,
             recheckGateConfig: async (run, token) =>
             {
                 try
