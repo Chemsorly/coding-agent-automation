@@ -89,10 +89,12 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                         var full = Path.Combine(workspacePath, p.Replace('/', Path.DirectorySeparatorChar));
                         try
                         {
+                            ct.ThrowIfCancellationRequested();
                             using var sr = new System.IO.StreamReader(full, new System.Text.UTF8Encoding(false, true));
                             firstLine = sr.ReadLine();
                         }
-                        catch { }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex) { Logger.Warning(ex, "Failed to read brain file {Path}", full); }
                         return new CodingAgent.Pipeline.Brain.BrainTrackedFile(p, firstLine);
                     }).ToList();
 

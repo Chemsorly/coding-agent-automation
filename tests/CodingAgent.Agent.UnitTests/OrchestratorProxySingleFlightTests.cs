@@ -283,6 +283,25 @@ public class OrchestratorProxySingleFlightTests
         callCount.Should().Be(3, "should attempt initial call plus TokenVendMaxRetries retries");
     }
 
+    [Theory]
+    [InlineData(0, 500)]
+    [InlineData(1, 1000)]
+    public void ResolveTokenVendRetryDelay_WithoutOverride_ShouldBackOffExponentially(int attempt, int expectedMilliseconds)
+    {
+        OrchestratorProxy.ResolveTokenVendRetryDelay(attempt, testOverride: null)
+            .Should().Be(TimeSpan.FromMilliseconds(expectedMilliseconds));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void ResolveTokenVendRetryDelay_WithOverride_ShouldUseOverride(int attempt)
+    {
+        var testOverride = TimeSpan.FromMilliseconds(1);
+
+        OrchestratorProxy.ResolveTokenVendRetryDelay(attempt, testOverride).Should().Be(testOverride);
+    }
+
     // ── Cache key isolation: same kind, different includeIssuePermission ──
 
     [Fact]
