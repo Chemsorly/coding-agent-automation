@@ -120,28 +120,18 @@ public class ReviewSummaryFormatterTests
 
     // ─── ReviewFindingsFormatter: cost ─────────────────────────────────────────
 
-    [Fact]
-    public void ReviewFindingsFormatter_WhenRunReportedApiCost_ShouldShowCost()
+    [Theory]
+    [InlineData(AgentBillingModes.Api, "*Cost: $1.23*")]
+    [InlineData(AgentBillingModes.Subscription, "*Cost: ≈ $1.23*")]
+    public void ReviewFindingsFormatter_WhenRunReportedCost_ShouldEndWithCostLine(string billingMode, string expectedLine)
     {
         var run = CreateRunWithSummaries("Change.", "Verdict.");
         run.TotalCost = 1.234m;
-        run.Metrics.PhaseBreakdown["review_Correctness"] = new PhaseUsage(100, 1.234m) { BillingMode = AgentBillingModes.Api };
+        run.Metrics.PhaseBreakdown["review_Correctness"] = new PhaseUsage(100, 1.234m) { BillingMode = billingMode };
 
         var result = ReviewFindingsFormatter.Format(run);
 
-        result.Should().Contain("*Cost: $1.23*");
-    }
-
-    [Fact]
-    public void ReviewFindingsFormatter_WhenRunIsSubscriptionBilled_ShouldMarkCostAsEstimate()
-    {
-        var run = CreateRunWithSummaries("Change.", "Verdict.");
-        run.TotalCost = 1.234m;
-        run.Metrics.PhaseBreakdown["review_Correctness"] = new PhaseUsage(100, 1.234m) { BillingMode = AgentBillingModes.Subscription };
-
-        var result = ReviewFindingsFormatter.Format(run);
-
-        result.Should().Contain("*Cost: ≈ $1.23*");
+        result.TrimEnd().Should().EndWith(expectedLine);
     }
 
     [Fact]

@@ -31,6 +31,7 @@ public class RunUsageTests
     [Theory]
     [InlineData(null, null, null)]
     [InlineData("0", AgentBillingModes.Api, null)]
+    [InlineData("-0.01", AgentBillingModes.Api, null)]
     [InlineData("17.36", AgentBillingModes.Api, "$17.36")]
     [InlineData("17.36", null, "$17.36")]
     [InlineData("17.36", AgentBillingModes.Subscription, "≈ $17.36")]
