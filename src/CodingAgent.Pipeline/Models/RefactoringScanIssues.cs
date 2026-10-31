@@ -14,6 +14,9 @@ public static class RefactoringScanIssues
     /// Returns <see langword="true"/> when <paramref name="issue"/> was created by the refactoring
     /// detection scan (identified by the <see cref="Footer"/> in its description).
     /// </summary>
-    public static bool IsScanIssue(IssueSummary issue) =>
-        issue.Description?.Contains(Footer, StringComparison.Ordinal) == true;
+    public static bool IsScanIssue(IssueSummary issue) => IsScanDescription(issue.Description);
+
+    /// <summary>Returns <see langword="true"/> when <paramref name="description"/> carries the <see cref="Footer"/>.</summary>
+    public static bool IsScanDescription(string? description) =>
+        description?.Contains(Footer, StringComparison.Ordinal) == true;
 }

@@ -66,7 +66,7 @@ public sealed class PullRequestOrchestrator
         }
 
         // Build PR info
-        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
+        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef, run.CommitType);
 
         var prBody = BuildPrBody(run, isDraft, request.Issue, request.IssueComments, effectiveIssueRef, closeRef);
         run.PullRequestBody = prBody;
@@ -208,7 +208,7 @@ public sealed class PullRequestOrchestrator
         }
 
         var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
-        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
+        var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef, run.CommitType);
         var prBody = $"🤖 Agent working on {effectiveIssueRef}\n\n" +
                      "_This draft PR was created automatically. " +
                      "It will be updated with quality gate results and marked ready for review upon completion._";
@@ -361,7 +361,7 @@ public sealed class PullRequestOrchestrator
     {
         try
         {
-            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, effectiveIssueRef);
+            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, effectiveIssueRef, run.CommitType);
             var blacklisted = await repoProvider.CommitAllAsync(
                 run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct,
                 config.PipelineInjectedPaths);
