@@ -38,18 +38,10 @@ public sealed class BrainReviewInputWriterTests : IDisposable
         _sut = new BrainReviewInputWriter(_brainSvc.Object, NullLogger);
     }
 
-    private static ConsolidationJobMessage MakeJob(string jobId = "job-1") => new ConsolidationJobMessage
-    {
-        JobId = jobId,
-        Type = ConsolidationRunType.BrainConsolidation,
-        ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration()
-    };
-
     [Fact]
     public async Task WriteAsync_EmptyBrain_WritesOutputFile()
     {
-        await _sut.WriteAsync(_workspace, null, MakeJob(), CancellationToken.None);
+        await _sut.WriteAsync(_workspace, null, CancellationToken.None);
 
         var outputPath = Path.Combine(_workspace, AgentWorkspacePaths.BrainReviewInputFilePath);
         File.Exists(outputPath).Should().BeTrue("WriteAsync must create the review input file");
@@ -70,7 +62,7 @@ public sealed class BrainReviewInputWriterTests : IDisposable
         _brainSvc.Setup(s => s.ListTrackedFilesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync((IReadOnlyList<string>)[inboxRel]);
 
-        await _sut.WriteAsync(_workspace, null, MakeJob(), CancellationToken.None);
+        await _sut.WriteAsync(_workspace, null, CancellationToken.None);
 
         var outputPath = Path.Combine(_workspace, AgentWorkspacePaths.BrainReviewInputFilePath);
         var content = await File.ReadAllTextAsync(outputPath);
@@ -84,7 +76,7 @@ public sealed class BrainReviewInputWriterTests : IDisposable
         _brainSvc.Setup(s => s.ListTrackedFilesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                  .ThrowsAsync(new InvalidOperationException("no git"));
 
-        var act = () => _sut.WriteAsync(_workspace, null, MakeJob(), CancellationToken.None);
+        var act = () => _sut.WriteAsync(_workspace, null, CancellationToken.None);
         await act.Should().NotThrowAsync("WriteAsync must be non-fatal (T6)");
     }
 
@@ -99,7 +91,7 @@ public sealed class BrainReviewInputWriterTests : IDisposable
             new BrainGroupMember { RepositoryFullName = "org/repo", RepositoryShortName = "repo", ProjectName = "P", StackLabels = ["dotnet"] }
         };
 
-        await _sut.WriteAsync(_workspace, group, MakeJob(), CancellationToken.None);
+        await _sut.WriteAsync(_workspace, group, CancellationToken.None);
 
         var outputPath = Path.Combine(_workspace, AgentWorkspacePaths.BrainReviewInputFilePath);
         var content = await File.ReadAllTextAsync(outputPath);

@@ -72,6 +72,7 @@ public static class PipelineRunHashExtensions
 
             // Nullable strings
             F("issueTitle",                 run.IssueTitle ?? ""),
+            F("commitType",                 run.CommitType),
             F("issueUrl",                   run.IssueUrl ?? ""),
             F("agentId",                    run.AgentId ?? ""),
             F("branchName",                 run.BranchName ?? ""),
@@ -268,6 +269,7 @@ public static class PipelineRunHashExtensions
         run.PullRequestNumber = r.OptionalString("pullRequestNumber");
         run.WorkspacePath = r.OptionalString("workspacePath");
         run.ModelName = r.OptionalString("modelName");
+        run.CommitType = r.OptionalString("commitType") ?? ConventionalCommitTypes.Feature;
         run.AgentProfileId = r.OptionalString("agentProfileId");
         run.AgentProfileName = r.OptionalString("agentProfileName");
         run.AgentEffort = r.OptionalString("agentEffort");

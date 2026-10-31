@@ -93,6 +93,7 @@ internal sealed class PipelineExecutionContextBuilder
         run.StackLabels = job.StackLabels;
 
         run.IssueLabels = job.IssueDetail.Labels;
+        run.CommitType = ConventionalCommitTypes.Resolve(job.IssueDetail.Description, job.IssueDetail.Labels);
 
         // Orchestrators
         var agentExecution = new AgentPhaseExecutor(_logger);

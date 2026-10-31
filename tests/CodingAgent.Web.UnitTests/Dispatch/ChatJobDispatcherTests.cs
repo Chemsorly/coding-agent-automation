@@ -3650,8 +3650,9 @@ public class ChatJobDispatcherTests
         jobNames.Should().HaveCount(2).And.OnlyHaveUniqueItems("two dispatches must produce two distinct job names");
 
         // StopAsync: cancels _shutdownCts (no effect on never-completing tasks),
-        // WaitAsync(5s) → TimeoutException, bare catch swallows it, foreach calls
-        // CleanupSession for both entries. Takes ~5 seconds by design.
+        // WaitAsync(ShutdownWatcherWait) → TimeoutException, bare catch swallows it, foreach calls
+        // CleanupSession for both entries.
+        dispatcher.ShutdownWatcherWait = TimeSpan.FromMilliseconds(50);
         await dispatcher.StopAsync(CancellationToken.None);
 
         dispatcher.HasActiveSession(jobNames[0]).Should()
