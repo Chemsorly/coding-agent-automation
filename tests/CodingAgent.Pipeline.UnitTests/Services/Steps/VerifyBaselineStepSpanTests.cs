@@ -16,6 +16,12 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 /// - Fatal health-check failure sets Error on the VerifyBaseline span.
 /// - Non-critical workspace baseline failure adds exception event WITHOUT setting Error.
 /// </summary>
+/// <remarks>
+/// In the same collection as <see cref="VerifyBaselineStepTests"/> so both classes run sequentially.
+/// Each test creates a background Task.Run via BackgroundBaseline.Start; sequential execution prevents
+/// concurrent background-task accumulation that would pressure BrainLineFormat's 100 ms Regex timeout.
+/// </remarks>
+[Collection("VerifyBaselineStepTests")]
 public class VerifyBaselineStepSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
@@ -47,14 +53,21 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
     public void Dispose() => _listener.Dispose();
 
+    /// <summary>Runs the step and then the wait that follows it in the pipeline, so the span is stopped.</summary>
+    private async Task ExecuteAndAwaitBaselineAsync(PipelineStepContext context)
+    {
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+        await new AwaitBaselineStep().ExecuteAsync(context, CancellationToken.None);
+    }
+
     [Fact]
     public async Task ExecuteAsync_AlwaysEmitsVerifyBaselineSpan()
     {
         var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>(), It.IsAny<Action<PipelineRunEventReport>?>()))
             .ReturnsAsync(CreatePassingReport());
 
-        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+        await ExecuteAndAwaitBaselineAsync(context);
 
         _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
             "VerifyBaselineStep must emit a VerifyBaseline span");
@@ -64,10 +77,10 @@ public class VerifyBaselineStepSpanTests : IDisposable
     public async Task ExecuteAsync_SpanHasPipelineRunIdTag()
     {
         var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>(), It.IsAny<Action<PipelineRunEventReport>?>()))
             .ReturnsAsync(CreatePassingReport());
 
-        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+        await ExecuteAndAwaitBaselineAsync(context);
 
         var span = GetMySpan();
         span.GetTagItem("pipeline.run_id").Should().Be(_runId);
@@ -84,7 +97,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         var context = BuildContext(agentProviderMock: agentProviderMock, preResolvedQgcs: [CreateQgc()]);
 
-        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+        await ExecuteAndAwaitBaselineAsync(context);
 
         var span = GetMySpan();
         span.Status.Should().Be(ActivityStatusCode.Error,
@@ -97,10 +110,10 @@ public class VerifyBaselineStepSpanTests : IDisposable
     {
         // Non-fatal failure: workspace baseline check throws → span must NOT have Error status.
         var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>(), It.IsAny<Action<PipelineRunEventReport>?>()))
             .ThrowsAsync(new InvalidOperationException("build tool not found"));
 
-        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+        await ExecuteAndAwaitBaselineAsync(context);
 
         var span = GetMySpan();
         span.Status.Should().NotBe(ActivityStatusCode.Error,
@@ -112,10 +125,10 @@ public class VerifyBaselineStepSpanTests : IDisposable
     {
         // Non-fatal failure: workspace baseline check throws → exception event with pipeline.non_critical=true.
         var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>(), It.IsAny<Action<PipelineRunEventReport>?>()))
             .ThrowsAsync(new InvalidOperationException("compilation failed"));
 
-        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+        await ExecuteAndAwaitBaselineAsync(context);
 
         var span = GetMySpan();
         var evt = span.Events.Should().ContainSingle(e => e.Name == "exception").Which;
@@ -126,10 +139,10 @@ public class VerifyBaselineStepSpanTests : IDisposable
     public async Task ExecuteAsync_HealthCheckSucceeds_SpanHasNoErrorStatus()
     {
         var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>(), It.IsAny<Action<PipelineRunEventReport>?>()))
             .ReturnsAsync(CreatePassingReport());
 
-        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+        await ExecuteAndAwaitBaselineAsync(context);
 
         var span = GetMySpan();
         span.Status.Should().NotBe(ActivityStatusCode.Error,
@@ -137,7 +150,37 @@ public class VerifyBaselineStepSpanTests : IDisposable
         span.Events.Should().BeEmpty();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────────
+    [Fact]
+    public async Task ExecuteAsync_SpanStaysOpenUntilTheWorkspaceBaselineEnded()
+    {
+        var tcs = new TaskCompletionSource<QualityGateReport>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
+
+        _validator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<PipelineRunEventReport>?>()))
+            .Returns<WorkspacePath, IReadOnlyList<QualityGateConfiguration>, CancellationToken, Action<PipelineRunEventReport>?>(
+                async (_, _, ct, _) => await tcs.Task.WaitAsync(ct));
+
+        // Run VerifyBaselineStep — baseline running in background, span not yet stopped
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        _activities.Should().NotContain(
+            a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
+            "span must still be open while the baseline is running");
+
+        // Complete baseline and await
+        tcs.SetResult(CreatePassingReport());
+        await new AwaitBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        _activities.Should().Contain(
+            a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
+            "span must be stopped after the baseline finishes");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Returns the single VerifyBaseline span produced by this test instance.
