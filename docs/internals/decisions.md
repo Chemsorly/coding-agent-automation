@@ -259,6 +259,13 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ## Pipeline behavior
 
+### The workspace baseline runs next to the analysis
+<!-- 2026-10-31 -->
+**Rule:** The agent health check blocks, the workspace baseline runs in the background during the analysis, and code generation waits for it. The analysis prompts forbid builds and test runs.
+**Why:** The result only informs people and must only see the code before the agent changes it. Blocking the run on it cost about 30 minutes before any agent work started.
+**Not:** a separate worktree for the baseline (pods have 1.5 CPU, and two builds at once would slow both); a transition back to `VerifyingBaseline` while waiting (the sidebar would mark the analysis steps as revisited).
+**Revisit when:** the baseline's result starts to affect the run: it would then have to finish before the step that uses it.
+
 ### Confidence gate is intentionally fail-closed
 <!-- 2026-07-04 -->
 **Rule:** The analysis confidence gate treats unknown values as not ready, and any blocking issue forces not ready whatever the recommendation.
