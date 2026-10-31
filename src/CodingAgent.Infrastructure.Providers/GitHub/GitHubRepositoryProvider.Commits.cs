@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
 using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline.Models;
+using Octokit;
 
 namespace CodingAgent.Infrastructure.GitHub;
 
@@ -63,6 +65,49 @@ public partial class GitHubRepositoryProvider
     [ExcludeFromCodeCoverage]
     public Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.GetFileChangesAsync(workspacePath, _baseBranch, ct);
+
+    /// <inheritdoc />
+    public async Task<RemoteFileWriteResult> WriteFileToBaseBranchAsync(
+        string relativePath, string content, string commitMessage, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(relativePath);
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentException.ThrowIfNullOrEmpty(commitMessage);
+
+        var identity = new Committer(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
+        try
+        {
+            var existingSha = await GetFileShaOnBaseBranchAsync(relativePath, ct);
+            var changeSet = await ExecuteWithResilienceAsync(
+                client => existingSha is null
+                    ? client.Repository.Content.CreateFile(Owner, Repo, relativePath,
+                        new CreateFileRequest(commitMessage, content, BaseBranch) { Committer = identity, Author = identity })
+                    : client.Repository.Content.UpdateFile(Owner, Repo, relativePath,
+                        new UpdateFileRequest(commitMessage, content, existingSha, BaseBranch) { Committer = identity, Author = identity }),
+                "WriteFileToBaseBranch", ct);
+            return new RemoteFileWriteResult(changeSet.Commit.Sha);
+        }
+        catch (ApiException ex) when (ex.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity)
+        {
+            // 409: the sha or the branch moved. 422: the file appeared since the read, so a create lacks its sha.
+            throw new RemoteFileConflictException($"{relativePath} changed on {BaseBranch} during the write.", ex);
+        }
+    }
+
+    private async Task<string?> GetFileShaOnBaseBranchAsync(string relativePath, CancellationToken ct)
+    {
+        try
+        {
+            var contents = await ExecuteWithResilienceAsync(
+                client => client.Repository.Content.GetAllContentsByRef(Owner, Repo, relativePath, BaseBranch),
+                "GetFileOnBaseBranch", ct);
+            return contents.Count == 1 ? contents[0].Sha : null;
+        }
+        catch (Octokit.NotFoundException)
+        {
+            return null;
+        }
+    }
 
     /// <inheritdoc />
     public async Task<int> GetCommitCountSinceAsync(DateTimeOffset since, CancellationToken ct)
