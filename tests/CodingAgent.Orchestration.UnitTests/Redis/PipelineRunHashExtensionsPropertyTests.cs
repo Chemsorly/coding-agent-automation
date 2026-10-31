@@ -615,6 +615,27 @@ public class PipelineRunHashExtensionsPropertyTests
     };
 
     [Fact]
+    public void ToHashEntries_FromHash_PreservesCommitType()
+    {
+        var run = MakeMinimalRun();
+        run.CommitType = ConventionalCommitTypes.Refactor;
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.CommitType.Should().Be(ConventionalCommitTypes.Refactor);
+    }
+
+    [Fact]
+    public void FromHash_WhenCommitTypeIsMissing_ShouldDefaultToFeature()
+    {
+        var hash = MakeMinimalRun().ToHashEntries().Where(e => (string)e.Name! != "commitType").ToArray();
+
+        var restored = PipelineRunHashExtensions.FromHash(hash)!;
+
+        restored.CommitType.Should().Be(ConventionalCommitTypes.Feature);
+    }
+
+    [Fact]
     public void ToHashEntries_StoresEveryWritableProperty()
     {
         // Collect all public instance properties with a public set or init accessor.

@@ -44,9 +44,9 @@ public static partial class PipelineFormatting
     /// <summary>
     /// Generates a PR title in conventional commit format.
     /// </summary>
-    public static string GeneratePrTitle(string issueTitle, string issueReference)
+    public static string GeneratePrTitle(string issueTitle, string issueReference, string commitType = ConventionalCommitTypes.Feature)
     {
-        return $"feat: {issueTitle} ({issueReference})";
+        return $"{commitType}: {issueTitle} ({issueReference})";
     }
 
     /// <summary>Maximum character length for a comment body in the PR description before truncation.</summary>
@@ -94,9 +94,9 @@ public static partial class PipelineFormatting
     /// <summary>
     /// Generates a commit message in conventional format.
     /// </summary>
-    public static string GenerateCommitMessage(string title, string issueReference)
+    public static string GenerateCommitMessage(string title, string issueReference, string commitType = ConventionalCommitTypes.Feature)
     {
-        return $"feat: {title} ({issueReference})\n\n{PipelineConstants.AutomatedCommitSuffix}";
+        return $"{commitType}: {title} ({issueReference})\n\n{PipelineConstants.AutomatedCommitSuffix}";
     }
 
     private static void AppendComplianceSection(StringBuilder sb, AcceptanceCriteriaReport? report)

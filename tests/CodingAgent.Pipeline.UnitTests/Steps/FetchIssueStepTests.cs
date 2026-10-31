@@ -316,6 +316,24 @@ public sealed class FetchIssueStepTests
             because: "Run.IssueLabels must be updated from the fetched issue");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenIssueHasBugLabel_ShouldSetRunCommitTypeToFix()
+    {
+        var issue = MakeIssue(title: "Crash on save", labels: ["bug"]);
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issue);
+        _issueProvider
+            .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+
+        var context = BuildContext();
+
+        await CreateStep().ExecuteAsync(context, CancellationToken.None);
+
+        context.Run.CommitType.Should().Be(ConventionalCommitTypes.Fix);
+    }
+
     // ── IssueDetail reconstruction preserves all init properties ─────────────
 
     [Fact]
