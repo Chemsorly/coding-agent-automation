@@ -2823,9 +2823,9 @@ public sealed class ReconciliationLoopErrorTests
 
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(new V1JobList
-            {
-                Items = [new V1Job { Metadata = new V1ObjectMeta { Name = expectedJobName } }]
-            }, CancellationToken.None);
+        {
+            Items = [new V1Job { Metadata = new V1ObjectMeta { Name = expectedJobName } }]
+        }, CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -2870,9 +2870,9 @@ public sealed class ReconciliationLoopErrorTests
 
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(new V1JobList
-            {
-                Items = [new V1Job { Metadata = new V1ObjectMeta { Name = apiGeneratedJobName } }]
-            }, CancellationToken.None);
+        {
+            Items = [new V1Job { Metadata = new V1ObjectMeta { Name = apiGeneratedJobName } }]
+        }, CancellationToken.None);
 
         // Must NOT post Failed — the job exists under its stored name
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -3237,8 +3237,8 @@ public sealed class ReconciliationLoopErrorTests
 
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(new V1JobList
-            {
-                Items =
+        {
+            Items =
                 [
                     new V1Job
                     {
@@ -3254,7 +3254,7 @@ public sealed class ReconciliationLoopErrorTests
                         Status = new V1JobStatus { Active = 1 }
                     }
                 ]
-            }, CancellationToken.None);
+        }, CancellationToken.None);
 
         // Job was found via label — item must NOT be marked Failed (was the bug: it WAS marked Failed)
         _workItemClient.Verify(c => c.PostStatusAsync(
