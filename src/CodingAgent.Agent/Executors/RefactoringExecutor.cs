@@ -411,128 +411,33 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
         // Phase 1: Parallel Focused Detection — run only the agents of the focus.
         TransitionTo(PipelineStep.DetectingFindings);
-        var agents = new (string SpanName, Func<string> BuildPrompt, RefactoringScanFocus Focus, string? OutputPrefix, string? UsagePhase)[]
+        var phase1Specs = new AgentPhaseSpec[]
         {
-            ("RefactoringDetection.Phase1.StructuralDebt", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt, RefactoringScanFocus.Structure, "[A] ", "refactoring_structural"),
-            ("RefactoringDetection.Phase1.Correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt, RefactoringScanFocus.Correctness, "[B] ", "refactoring_correctness"),
-            ("RefactoringDetection.Phase1.DesignConsistency", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt, RefactoringScanFocus.Design, "[C] ", "refactoring_design"),
-            ("RefactoringDetection.Phase1.TestGaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt, RefactoringScanFocus.Tests, null, "refactoring_test_gaps"),
+            new("RefactoringDetection.Phase1.StructuralDebt", RefactoringScanFocus.Structure, "[A] ", "refactoring_structural", ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt),
+            new("RefactoringDetection.Phase1.Correctness", RefactoringScanFocus.Correctness, "[B] ", "refactoring_correctness", ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt),
+            new("RefactoringDetection.Phase1.DesignConsistency", RefactoringScanFocus.Design, "[C] ", "refactoring_design", ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt),
+            new("RefactoringDetection.Phase1.TestGaps", RefactoringScanFocus.Tests, null, "refactoring_test_gaps", ConsolidationPromptBuilder.BuildRefactoringTestGapPrompt),
         };
+        var (phase1Results, phase1AllFailed) = await RunParallelAgentPhaseAsync(
+            phase1Specs, job.RefactoringFocus, "Phase 1", highEffort: false,
+            agentProvider, workspacePath, job, onOutputLine, ct);
+        // Build detector outcomes BEFORE testing the failure so they are available in the failure return
+        var detectors = BuildDetectorOutcomesFromPhase1(phase1Specs, job.RefactoringFocus, phase1Results, workspacePath);
+        if (phase1AllFailed is not null) return (phase1AllFailed, detectors);
 
-        var selected = agents
-            .Where(a => job.RefactoringFocus == RefactoringScanFocus.All || a.Focus == job.RefactoringFocus)
-            .ToArray();
-
-        Logger.Information("Phase 1: Dispatching {AgentCount} parallel analysis agents for run {RunId} (focus {Focus})",
-            selected.Length, job.JobId, job.RefactoringFocus);
-
-        var phase1Tasks = selected.Select(a =>
-            RunWithTracingAsync(a.SpanName, job.JobId, async _ =>
-            {
-                var agentOnOutputLine = a.OutputPrefix is null
-                    ? onOutputLine
-                    : (onOutputLine is null ? null : line => onOutputLine($"{a.OutputPrefix}{line}"));
-                return await ExecuteAgentAndCheckAsync(
-                    agentProvider,
-                    new AgentRequest
-                    {
-                        Prompt = a.BuildPrompt(),
-                        WorkspacePath = workspacePath,
-                        Timeout = job.PipelineConfiguration.AgentTimeout
-                    },
-                    job.JobId,
-                    ct,
-                    agentOnOutputLine,
-                    a.UsagePhase);
-            })).ToArray();
-
-        var phase1Results = await Task.WhenAll(phase1Tasks);
-
-        // Build detector outcomes in the order structural, correctness, design
-        var detectorDefs = new[]
-        {
-            (Name: "Structural debt", Focus: RefactoringScanFocus.Structure, FilePath: AgentWorkspacePaths.RefactoringStructuralFindingsFilePath),
-            (Name: "Correctness and hygiene", Focus: RefactoringScanFocus.Correctness, FilePath: AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath),
-            (Name: "Design consistency", Focus: RefactoringScanFocus.Design, FilePath: AgentWorkspacePaths.RefactoringDesignFindingsFilePath),
-        };
-        var detectors = new List<RefactoringDetectorOutcome>(detectorDefs.Length);
-        for (var di = 0; di < detectorDefs.Length; di++)
-        {
-            var dd = detectorDefs[di];
-            var selectedIdx = Array.FindIndex(selected, a => a.Focus == dd.Focus);
-            var succeeded = selectedIdx >= 0 && phase1Results[selectedIdx].Failure is null;
-            detectors.Add(new RefactoringDetectorOutcome
-            {
-                Name = dd.Name,
-                Succeeded = succeeded,
-                FindingCount = CountFindings(Path.Combine(workspacePath, dd.FilePath))
-            });
-        }
-
-        // Check for failures — log but continue if at least one agent succeeded
-        var phase1Failures = phase1Results.Where(r => r.Failure is not null).ToList();
-        if (phase1Failures.Count == phase1Results.Length)
-        {
-            return (CreateFailureResult(job.JobId, "All Phase 1 analysis agents failed"), detectors);
-        }
-
-        if (phase1Failures.Count > 0)
-        {
-            Logger.Warning("{FailCount}/{TotalCount} Phase 1 agents failed in run {RunId}, continuing with partial results",
-                phase1Failures.Count, phase1Results.Length, job.JobId);
-        }
-
-        // Phase 2a: Parallel per-file scoring — same Task.WhenAll pattern as Phase 1
+        // Phase 2a: Parallel per-file scoring
         TransitionTo(PipelineStep.AggregatingProposals);
-        var phase2aAgents = new (string SpanName, RefactoringScanFocus Focus, string? OutputPrefix, string UsagePhase)[]
+        var phase2aSpecs = new AgentPhaseSpec[]
         {
-            ("RefactoringDetection.Phase2a.Structural", RefactoringScanFocus.Structure, "[2a-A] ", "refactoring_phase2a_structural"),
-            ("RefactoringDetection.Phase2a.Correctness", RefactoringScanFocus.Correctness, "[2a-B] ", "refactoring_phase2a_correctness"),
-            ("RefactoringDetection.Phase2a.Design", RefactoringScanFocus.Design, "[2a-C] ", "refactoring_phase2a_design"),
-            ("RefactoringDetection.Phase2a.TestGaps", RefactoringScanFocus.Tests, null, "refactoring_phase2a_test_gaps"),
+            new("RefactoringDetection.Phase2a.Structural", RefactoringScanFocus.Structure, "[2a-A] ", "refactoring_phase2a_structural", () => ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Structure)),
+            new("RefactoringDetection.Phase2a.Correctness", RefactoringScanFocus.Correctness, "[2a-B] ", "refactoring_phase2a_correctness", () => ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Correctness)),
+            new("RefactoringDetection.Phase2a.Design", RefactoringScanFocus.Design, "[2a-C] ", "refactoring_phase2a_design", () => ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Design)),
+            new("RefactoringDetection.Phase2a.TestGaps", RefactoringScanFocus.Tests, null, "refactoring_phase2a_test_gaps", () => ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(RefactoringScanFocus.Tests)),
         };
-
-        var selected2a = phase2aAgents
-            .Where(a => job.RefactoringFocus == RefactoringScanFocus.All || a.Focus == job.RefactoringFocus)
-            .ToArray();
-
-        Logger.Information("Phase 2a: Dispatching {AgentCount} parallel scoring agents for run {RunId} (focus {Focus})",
-            selected2a.Length, job.JobId, job.RefactoringFocus);
-
-        var phase2aTasks = selected2a.Select(a =>
-            RunWithTracingAsync(a.SpanName, job.JobId, async _ =>
-            {
-                var agentOnOutputLine = a.OutputPrefix is null
-                    ? onOutputLine
-                    : (onOutputLine is null ? null : (Action<string>)(line => onOutputLine($"{a.OutputPrefix}{line}")));
-                return await ExecuteAgentAndCheckAsync(
-                    agentProvider,
-                    new AgentRequest
-                    {
-                        Prompt = ConsolidationPromptBuilder.BuildRefactoringPhase2aPrompt(a.Focus),
-                        WorkspacePath = workspacePath,
-                        Timeout = job.PipelineConfiguration.AgentTimeout,
-                        EffortOverride = AgentEffortLevel.High
-                    },
-                    job.JobId,
-                    ct,
-                    agentOnOutputLine,
-                    a.UsagePhase);
-            })).ToArray();
-
-        var phase2aResults = await Task.WhenAll(phase2aTasks);
-
-        var phase2aFailures = phase2aResults.Where(r => r.Failure is not null).ToList();
-        if (phase2aFailures.Count == phase2aResults.Length)
-        {
-            return (CreateFailureResult(job.JobId, "All Phase 2a scoring agents failed"), detectors);
-        }
-
-        if (phase2aFailures.Count > 0)
-        {
-            Logger.Warning("{FailCount}/{TotalCount} Phase 2a scoring agents failed in run {RunId}, continuing with partial results",
-                phase2aFailures.Count, phase2aResults.Length, job.JobId);
-        }
+        var (_, phase2aAllFailed) = await RunParallelAgentPhaseAsync(
+            phase2aSpecs, job.RefactoringFocus, "Phase 2a scoring", highEffort: true,
+            agentProvider, workspacePath, job, onOutputLine, ct);
+        if (phase2aAllFailed is not null) return (phase2aAllFailed, detectors);
 
         // Phase 2b: Final aggregation
         Logger.Information("Phase 2b: Aggregating and prioritizing findings for run {RunId}", job.JobId);
@@ -579,6 +484,124 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         // Proposals are now at .agent/refactoring-proposals.json — return success
         // (the caller will finalize with review + issue creation)
         return (new ConsolidationJobResult { JobId = job.JobId, Success = true, Summary = "Phased analysis complete" }, detectors);
+    }
+
+    /// <summary>
+    /// Per-agent specification used by <see cref="RunParallelAgentPhaseAsync"/> to dispatch one
+    /// agent in a parallel phase. Unifies the Phase 1 and Phase 2a spec shapes so both phases
+    /// can share the same dispatch helper.
+    /// </summary>
+    private record struct AgentPhaseSpec(
+        string SpanName,
+        RefactoringScanFocus Focus,
+        string? OutputPrefix,
+        string? UsagePhase,
+        Func<string> BuildPrompt
+    );
+
+    /// <summary>
+    /// Dispatches all <paramref name="specs"/> that match <paramref name="focus"/> in parallel,
+    /// awaits completion, and checks for all-agent failure. Partial failures are logged but do not
+    /// abort the phase. Returns the per-agent results and, when all agents failed, a failure result.
+    /// </summary>
+    private async Task<((AgentResult Result, ConsolidationJobResult? Failure)[] Results, ConsolidationJobResult? AllFailedResult)>
+        RunParallelAgentPhaseAsync(
+            AgentPhaseSpec[] specs,
+            RefactoringScanFocus focus,
+            string phaseName,
+            bool highEffort,
+            IAgentProvider agentProvider,
+            string workspacePath,
+            ConsolidationJobMessage job,
+            Action<string>? onOutputLine,
+            CancellationToken ct)
+    {
+        var selected = specs
+            .Where(a => focus == RefactoringScanFocus.All || a.Focus == focus)
+            .ToArray();
+
+        Logger.Information("{PhaseName}: Dispatching {AgentCount} parallel agents for run {RunId} (focus {Focus})",
+            phaseName, selected.Length, job.JobId, focus);
+
+        var phaseTasks = selected.Select(a =>
+            RunWithTracingAsync(a.SpanName, job.JobId, async _ =>
+            {
+                var agentOnOutputLine = a.OutputPrefix is null
+                    ? onOutputLine
+                    : (onOutputLine is null ? null : (Action<string>)(line => onOutputLine($"{a.OutputPrefix}{line}")));
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = a.BuildPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout,
+                        EffortOverride = highEffort ? AgentEffortLevel.High : null
+                    },
+                    job.JobId,
+                    ct,
+                    agentOnOutputLine,
+                    a.UsagePhase);
+            })).ToArray();
+
+        var results = await Task.WhenAll(phaseTasks);
+
+        var failures = results.Where(r => r.Failure is not null).ToList();
+        if (failures.Count == results.Length)
+        {
+            // TODO: When phaseName = "Phase 1", this produces "All Phase 1 agents failed" instead of
+            // the original "All Phase 1 analysis agents failed". The word "analysis" was dropped to keep
+            // the partial-failure log template consistent (which uses the same phaseName). No existing
+            // test asserts this string for Phase 1, but operators with alerts keyed on the original
+            // message will see altered text. Phase 2a is unaffected — "Phase 2a scoring" embeds to
+            // produce the original "All Phase 2a scoring agents failed" verbatim.
+            return (results, CreateFailureResult(job.JobId, $"All {phaseName} agents failed"));
+        }
+
+        if (failures.Count > 0)
+        {
+            Logger.Warning($"{{FailCount}}/{{TotalCount}} {phaseName} agents failed in run {{RunId}}, continuing with partial results",
+                failures.Count, results.Length, job.JobId);
+        }
+
+        return (results, null);
+    }
+
+    /// <summary>
+    /// Builds the list of <see cref="RefactoringDetectorOutcome"/> for the three structural/correctness/design
+    /// detectors from the Phase 1 <paramref name="phase1Results"/> array. Agents that were not dispatched
+    /// (excluded by the focus filter) are marked as not succeeded with a null finding count.
+    /// </summary>
+    private List<RefactoringDetectorOutcome> BuildDetectorOutcomesFromPhase1(
+        AgentPhaseSpec[] phase1Specs,
+        RefactoringScanFocus focus,
+        (AgentResult Result, ConsolidationJobResult? Failure)[] phase1Results,
+        string workspacePath)
+    {
+        var selected = phase1Specs
+            .Where(a => focus == RefactoringScanFocus.All || a.Focus == focus)
+            .ToArray();
+
+        var detectorDefs = new[]
+        {
+            (Name: "Structural debt", Focus: RefactoringScanFocus.Structure, FilePath: AgentWorkspacePaths.RefactoringStructuralFindingsFilePath),
+            (Name: "Correctness and hygiene", Focus: RefactoringScanFocus.Correctness, FilePath: AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath),
+            (Name: "Design consistency", Focus: RefactoringScanFocus.Design, FilePath: AgentWorkspacePaths.RefactoringDesignFindingsFilePath),
+        };
+        var detectors = new List<RefactoringDetectorOutcome>(detectorDefs.Length);
+        for (var di = 0; di < detectorDefs.Length; di++)
+        {
+            var dd = detectorDefs[di];
+            var selectedIdx = Array.FindIndex(selected, a => a.Focus == dd.Focus);
+            var succeeded = selectedIdx >= 0 && phase1Results[selectedIdx].Failure is null;
+            detectors.Add(new RefactoringDetectorOutcome
+            {
+                Name = dd.Name,
+                Succeeded = succeeded,
+                FindingCount = CountFindings(Path.Combine(workspacePath, dd.FilePath))
+            });
+        }
+        return detectors;
     }
 
     /// <summary>

@@ -3727,4 +3727,200 @@ public class RefactoringExecutorTests : IDisposable
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    // ── Characterization tests: Phase 2a focus-filter guard (prerequisite for refactoring issue #4035) ─
+
+    /// <summary>
+    /// When focus is Structure, Phase 1 must dispatch exactly one agent (structural, Agent A)
+    /// and Phase 2a must dispatch exactly one agent (structural scorer). Agents B/C/D and their
+    /// Phase 2a counterparts must not run. Also verifies that <c>BuildDetectorOutcomesFromPhase1</c>
+    /// correctly marks the structural detector as succeeded and the others as not-succeeded when the
+    /// focus-filtered Phase 1 result slice has length 1.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_FocusStructure_RunsOnlyStructuralPhase2aAgent()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false
+            },
+            RefactoringFocus = RefactoringScanFocus.Structure
+        };
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                var dir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "refactoring-proposals.json"), "[]");
+            })
+            .Returns(Task.CompletedTask);
+
+        var capturedPrompts = new System.Collections.Concurrent.ConcurrentBag<string>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompts.Add(req.Prompt ?? ""))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — Phase 1 filter: only Agent A (structural) ran
+        capturedPrompts.Should().Contain(p => p.Contains("# Agent A: Structural Debt Detection"),
+            "Phase 1 structural agent (Agent A) must run when focus is Structure");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent B: Correctness & Hygiene Detection"),
+            "Phase 1 correctness agent (Agent B) must NOT run when focus is Structure");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent C: Design Consistency Detection"),
+            "Phase 1 design agent (Agent C) must NOT run when focus is Structure");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent D: Test Gap Detection"),
+            "Phase 1 test-gap agent (Agent D) must NOT run when focus is Structure");
+
+        // Assert — Phase 2a filter: exactly one Phase 2a prompt, and it is the structural scorer
+        var phase2aPrompts = capturedPrompts.Where(p => p.Contains(Phase2aScoringPromptMarker)).ToList();
+        phase2aPrompts.Should().HaveCount(1, "Structure focus must dispatch exactly one Phase 2a agent");
+        phase2aPrompts[0].Should().Contain("Phase 2a scoring for Structure",
+            "the single Phase 2a agent must be the structural scoring agent");
+        capturedPrompts.Should().NotContain(p => p.Contains("Phase 2a scoring for Correctness"),
+            "Phase 2a correctness agent must NOT run when focus is Structure");
+        capturedPrompts.Should().NotContain(p => p.Contains("Phase 2a scoring for Design"),
+            "Phase 2a design agent must NOT run when focus is Structure");
+        capturedPrompts.Should().NotContain(p => p.Contains("Phase 2a scoring for Tests"),
+            "Phase 2a test-gap agent must NOT run when focus is Structure");
+
+        // Assert — BuildDetectorOutcomesFromPhase1 correctly maps the single-element selected slice:
+        // structural detector succeeded (agent ran and passed), correctness/design not dispatched.
+        result.ScanOutcome.Should().NotBeNull();
+        var detectors = result.ScanOutcome!.Detectors;
+        detectors.Should().HaveCount(3, "BuildDetectorOutcomesFromPhase1 always returns three detectors");
+        detectors[0].Name.Should().Be("Structural debt");
+        detectors[0].Succeeded.Should().BeTrue("structural agent ran successfully with focus=Structure");
+        detectors[1].Name.Should().Be("Correctness and hygiene");
+        detectors[1].Succeeded.Should().BeFalse("correctness agent was not dispatched with focus=Structure");
+        detectors[2].Name.Should().Be("Design consistency");
+        detectors[2].Succeeded.Should().BeFalse("design agent was not dispatched with focus=Structure");
+    }
+
+    /// <summary>
+    /// When focus is Correctness, both Phase 1 and Phase 2a dispatch exactly one agent each,
+    /// yielding 4 total calls (Phase 0 + Phase 1 correctness + Phase 2a correctness + Phase 2b).
+    /// Locks in the combined Phase 1 + Phase 2a focus-filter guard before extraction.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Phase1AndPhase2aFocusFilter_SingleFocusDispatchesOneAgentEach()
+    {
+        // Arrange — Correctness focus → Phase 1 Agent B only, Phase 2a correctness scorer only.
+        // Total: Phase 0 (1) + Phase 1 Correctness (1) + Phase 2a Correctness (1) + Phase 2b (1) = 4.
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false
+            },
+            RefactoringFocus = RefactoringScanFocus.Correctness
+        };
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                var dir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "refactoring-proposals.json"), "[]");
+            })
+            .Returns(Task.CompletedTask);
+
+        var capturedPrompts = new System.Collections.Concurrent.ConcurrentBag<string>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompts.Add(req.Prompt ?? ""))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — Phase 1: only correctness ran; structural, design, test-gap did not
+        capturedPrompts.Should().Contain(p => p.Contains("# Agent B: Correctness & Hygiene Detection"),
+            "Phase 1 correctness agent must run when focus is Correctness");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent A: Structural Debt Detection"),
+            "Phase 1 structural agent must NOT run when focus is Correctness");
+        capturedPrompts.Should().NotContain(p => p.Contains("# Agent D: Test Gap Detection"),
+            "Phase 1 test-gap agent must NOT run when focus is Correctness");
+
+        // Phase 2a: only correctness scoring ran
+        capturedPrompts.Should().Contain(p => p.Contains("Phase 2a scoring for Correctness"),
+            "Phase 2a correctness agent must run when focus is Correctness");
+        capturedPrompts.Should().NotContain(p => p.Contains("Phase 2a scoring for Structure"),
+            "Phase 2a structural agent must NOT run when focus is Correctness");
+        capturedPrompts.Should().NotContain(p => p.Contains("Phase 2a scoring for Tests"),
+            "Phase 2a test-gap agent must NOT run when focus is Correctness");
+    }
+
+    /// <summary>
+    /// When focus is Tests (single Phase 2a agent dispatched) and that agent fails,
+    /// the all-failed path fires (1/1 = all). Phase 2b is never reached.
+    /// Guards the <c>phase2aFailures.Count == phase2aResults.Length</c> check when N = 1.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SingleFocusSinglePhase2aAgentFails_AllFailedReturned()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false
+            },
+            RefactoringFocus = RefactoringScanFocus.Tests
+        };
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Phase 0 (call 1): success; Phase 1 Tests (call 2): success; Phase 2a Tests (call 3): fail.
+        // 1 failed out of 1 dispatched → all-failed → Phase 2b is never reached.
+        _mockAgentProvider
+            .SetupSequence(x => x.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 0
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] })   // Phase 1 Tests (success)
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] });  // Phase 2a Tests (fail → all-failed)
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert — all-failed path fires
+        result.Success.Should().BeFalse("the single Phase 2a agent failed so all Phase 2a agents failed");
+        result.ErrorMessage.Should().Contain("All Phase 2a scoring agents failed");
+
+        // Phase 2b was never dispatched — total is exactly 3 calls
+        _mockAgentProvider.Verify(
+            p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(3));
+    }
 }
