@@ -186,15 +186,8 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             // The resolved provider ID (either the targetProviderId from cross-repo routing or the
             // run's own issue tracker) must be recorded alongside the URL so that Resolve() can
             // distinguish same-tracker deps (#N form) from cross-tracker deps (full URL form).
-            //
-            // TODO: Registration is gated on result.Url being non-null. Providers that return
-            // Success=true and a non-null Identifier but a null Url (which is permitted by
-            // CreatedIssueResult) will be silently skipped here. Any downstream sub-issue that
-            // lists this issue as a dependency will have the dependency line omitted with only a
-            // warning log — no error, no failure. Before this change, a null Url did not block
-            // registration. Consider falling back to a synthetic URL (e.g. constructed from a
-            // known base URL pattern) or relaxing the null guard and handling the null-Url case
-            // in DependencyResolver by always emitting the #N short form when Url is absent.
+            // A null Url is tolerated: DependencyResolver.Register accepts string? and Resolve()
+            // falls back to the #N short form when no URL is available.
             //
             // TODO: ResolvedProviderId on SubIssueCreationResult stores null when the issue was
             // created via the run's own tracker (no cross-repo routing). The fallback
@@ -202,7 +195,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             // SubIssueCreationResult.ResolvedProviderId cannot distinguish "default provider"
             // from "not set". Consider normalising to the actual provider ID before storing, or
             // documenting the nullable convention explicitly on the property.
-            if (result.Success && result.Identifier is not null && result.Url is not null)
+            if (result.Success && result.Identifier is not null)
             {
                 var resolvedProviderId = result.ResolvedProviderId ?? context.Run.IssueProviderConfigId;
                 resolver.Register(proposal.Title, result.Identifier, result.Url, resolvedProviderId);
