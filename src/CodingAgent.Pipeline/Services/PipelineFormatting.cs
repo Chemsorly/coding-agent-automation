@@ -44,9 +44,10 @@ public static partial class PipelineFormatting
     /// <summary>
     /// Generates a PR title in conventional commit format.
     /// </summary>
-    public static string GeneratePrTitle(string issueTitle, string issueReference)
+    public static string GeneratePrTitle(string issueTitle, string issueReference, string commitType = ConventionalCommitTypes.Feature)
     {
-        return $"feat: {issueTitle} ({issueReference})";
+        ArgumentNullException.ThrowIfNull(commitType);
+        return $"{commitType}: {issueTitle} ({issueReference})";
     }
 
     /// <summary>Maximum character length for a comment body in the PR description before truncation.</summary>
@@ -83,10 +84,10 @@ public static partial class PipelineFormatting
         AppendComplianceSection(sb, parameters.ComplianceReport);
 
         sb.AppendLine("---");
-        if (!string.IsNullOrEmpty(parameters.ModelName))
-            sb.AppendLine($"*Model: {parameters.ModelName} · {PipelineConstants.AutomatedCommitSuffix}*");
-        else
-            sb.AppendLine($"*{PipelineConstants.AutomatedCommitSuffix}*");
+        var modelPart = string.IsNullOrEmpty(parameters.ModelName) ? "" : $"Model: {parameters.ModelName} · ";
+        // "so far": agent calls after this update (PR description, reflection, CI fixes) still add to the run's cost.
+        var costPart = string.IsNullOrEmpty(parameters.CostText) ? "" : $"Cost so far: {parameters.CostText} · ";
+        sb.AppendLine($"*{modelPart}{costPart}{PipelineConstants.AutomatedCommitSuffix}*");
 
         return sb.ToString().TrimEnd();
     }
@@ -94,9 +95,10 @@ public static partial class PipelineFormatting
     /// <summary>
     /// Generates a commit message in conventional format.
     /// </summary>
-    public static string GenerateCommitMessage(string title, string issueReference)
+    public static string GenerateCommitMessage(string title, string issueReference, string commitType = ConventionalCommitTypes.Feature)
     {
-        return $"feat: {title} ({issueReference})\n\n{PipelineConstants.AutomatedCommitSuffix}";
+        ArgumentNullException.ThrowIfNull(commitType);
+        return $"{commitType}: {title} ({issueReference})\n\n{PipelineConstants.AutomatedCommitSuffix}";
     }
 
     private static void AppendComplianceSection(StringBuilder sb, AcceptanceCriteriaReport? report)

@@ -967,6 +967,35 @@ public class RefactoringExecutorTests : IDisposable
         body.Should().Contain("- Add tests for A.cs");
     }
 
+    [Theory]
+    [InlineData(RefactoringCategories.Duplication, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.StructuralDrift, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.Complexity, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.OverEngineering, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.DeadCode, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.NamingInconsistency, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.PrimitiveObsession, ConventionalCommitTypes.Refactor)]
+    [InlineData(RefactoringCategories.Bug, ConventionalCommitTypes.Fix)]
+    [InlineData(RefactoringCategories.TestGap, ConventionalCommitTypes.Test)]
+    [InlineData(RefactoringCategories.StaleDocumentation, ConventionalCommitTypes.Docs)]
+    [InlineData(RefactoringCategories.Todo, ConventionalCommitTypes.Chore)]
+    public void FormatIssueBody_ShouldProduceABodyTheCommitTypeResolverCanRead(string category, string expected)
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Some finding",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Change it",
+            Rationale = "It is wrong",
+            Category = category,
+            EstimatedEffort = "small"
+        };
+
+        var body = RefactoringIssueBodyFormatter.FormatIssueBody(proposal, "abc123def456");
+
+        ConventionalCommitTypes.Resolve(body, []).Should().Be(expected);
+    }
+
     [Fact]
     public void FormatIssueBody_WithNullFields_OmitsOptionalSections()
     {
