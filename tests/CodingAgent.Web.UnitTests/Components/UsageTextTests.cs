@@ -131,4 +131,41 @@ public class UsageTextTests : BunitContext
         var span = cut.Find("[data-testid='usage-cost']");
         span.ClassList.Should().Contain("usage-cost-estimate");
     }
+
+    [Fact]
+    public void UsageCost_NullUsage_DoesNotThrowAndHasNoEstimateClass()
+    {
+        var cut = Render<UsageCost>(p => p.Add(c => c.Usage, (RunUsage?)null));
+
+        var span = cut.Find("[data-testid='usage-cost']");
+        span.ClassList.Should().Contain("usage-cost");
+        span.ClassList.Should().NotContain("usage-cost-estimate");
+    }
+
+    [Fact]
+    public void UsageCost_SubscriptionBillingWithZeroCost_HasNoEstimateClass()
+    {
+        // Left side of && is true (BillingMode == Subscription); right side Usage!.Cost > 0m
+        // evaluates to false because 0 is not > 0. Exercises the changed expression directly.
+        var usage = new RunUsage { Cost = 0m, BillingMode = AgentBillingModes.Subscription };
+
+        var cut = Render<UsageCost>(p => p.Add(c => c.Usage, usage));
+
+        var span = cut.Find("[data-testid='usage-cost']");
+        span.ClassList.Should().NotContain("usage-cost-estimate");
+    }
+
+    [Fact]
+    public void UsageCost_SubscriptionBillingWithNullCost_HasNoEstimateClass()
+    {
+        // Left side of && is true (BillingMode == Subscription); right side Usage!.Cost > 0m
+        // evaluates to false via the lifted > operator (null is not > 0). Exercises the changed
+        // expression directly with a null Cost on a non-null Usage.
+        var usage = new RunUsage { Cost = null, BillingMode = AgentBillingModes.Subscription };
+
+        var cut = Render<UsageCost>(p => p.Add(c => c.Usage, usage));
+
+        var span = cut.Find("[data-testid='usage-cost']");
+        span.ClassList.Should().NotContain("usage-cost-estimate");
+    }
 }
