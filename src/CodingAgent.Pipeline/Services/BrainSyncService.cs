@@ -73,8 +73,9 @@ public sealed class BrainSyncService : IBrainSyncService
     }
 
     /// <summary>
-    /// Writes the inbox text to .brain/&lt;relativePath&gt;, commits and pushes.
-    /// Sets run.BrainInboxFile, BrainUpdatesPushed, BrainPushFailed, BrainInboxFileUrl.
+    /// Writes the inbox text to the brain repository through the provider's API. Reads nothing from .brain/,
+    /// which the agent can change: .brain/ is read context only. Only this run's own path is admitted.
+    /// Sets run.BrainInboxFile, BrainInboxText, BrainUpdatesPushed, BrainPushFailed, BrainInboxFileUrl.
     /// Non-fatal (T6).
     /// </summary>
     public async Task WriteInboxAsync(
@@ -84,19 +85,26 @@ public sealed class BrainSyncService : IBrainSyncService
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(brainProvider);
+        ArgumentNullException.ThrowIfNull(relativePath);
+        ArgumentNullException.ThrowIfNull(text);
 
         try
         {
-            var brainPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory);
-            var fullPath = Path.Combine(brainPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (!Brain.BrainLayout.IsInboxPath(relativePath)
+                || (run.BrainInboxFile is not null && run.BrainInboxFile != relativePath))
+            {
+                _logger.Warning("Pipeline {RunId} refused a brain inbox write to {InboxFile}", run.RunId, relativePath);
+                run.BrainUpdatesPushed = false;
+                run.BrainPushFailed = true;
+                return;
+            }
 
-            // Write inbox file with UTF-8 without BOM (T22)
-            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-            await File.WriteAllTextAsync(fullPath, text,
-                new System.Text.UTF8Encoding(false), ct);
+            // Set after the path guard: a refused call (different or invalid path) must not overwrite
+            // the text from a previous successful write (DD8).
+            run.BrainInboxText = text;
 
-            var result = await _brainUpdateService.CommitInboxAndPushAsync(
-                brainPath, relativePath,
+            var result = await _brainUpdateService.WriteInboxFileAsync(
+                relativePath, text,
                 Brain.BrainLayout.InboxCommitMessage(run.RunId, $"#{run.IssueIdentifier}"),
                 brainProvider, ct, maxPushRetries);
 
@@ -105,19 +113,8 @@ public sealed class BrainSyncService : IBrainSyncService
             run.BrainPushFailed = !result.Success;
 
             // D22: web link of the commit that added the inbox file
-            if (result.Success)
-            {
-                try
-                {
-                    var sha = await brainProvider.GetHeadCommitShaAsync(brainPath, ct);
-                    run.BrainInboxFileUrl = brainProvider.GetCommitWebUrl(sha);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} could not read brain commit URL after inbox push: {Error}",
-                        run.RunId, ex.Message);
-                }
-            }
+            if (result.Success && !string.IsNullOrEmpty(result.CommitSha))
+                run.BrainInboxFileUrl = brainProvider.GetCommitWebUrl(result.CommitSha);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

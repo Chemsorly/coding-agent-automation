@@ -265,7 +265,7 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
             IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(new BrainSyncResult());
 
-        public Task<BrainSyncResult> CommitInboxAndPushAsync(string brainPath, string relativePath, string message, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
+        public Task<BrainSyncResult> WriteInboxFileAsync(string relativePath, string text, string message, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(new BrainSyncResult { Success = true, FilesCommitted = 1 });
 
         public Task<int> PushConsolidationAsync(string brainPath, string commitMessage,

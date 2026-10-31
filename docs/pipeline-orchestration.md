@@ -129,6 +129,8 @@ Created → CloningRepository → RunningEnvironmentSetup → SyncingBrainRepoPr
 
 Each step is represented by the `PipelineStep` enum. The pipeline tracks both the current step and a `HighWaterMark` (highest step ever reached), which the UI uses to show revisited steps during retries.
 
+The workspace baseline's build and tests run next to the analysis (`AnalyzingCode` to `PostingAnalysis`). Code generation starts only after the baseline ended; while the run waits for it, the page still shows the last analysis step and an output line says so. A run that the analysis stops cancels the baseline.
+
 ## State Descriptions
 
 | Step | What Happens |
@@ -138,7 +140,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **RunningEnvironmentSetup** | Runs the repository provider's setup steps (e.g., package restore, auth configuration) with injected secrets. A step that exits non-zero fails the run, and later steps do not run. Skipped when the repository has no secrets and no setup steps |
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
 | **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId[..8]}` — the run ID is truncated to its first 8 characters) |
-| **VerifyingBaseline** | Baseline health check — runs build/tests on the default branch before the agent writes code. Catches broken base branches early. Skipped when `BaselineHealthCheckEnabled` is false |
+| **VerifyingBaseline** | Agent health check (a failure stops the run), then the baseline health check starts: build and tests on the branch before the agent writes code. It flags broken base branches on the run page and does not stop the run. It continues next to the analysis, so this step ends after the agent health check. Skipped when `BaselineHealthCheckEnabled` is false |
 | **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json`. Before analysis begins, the pipeline downloads images from the issue/PR body (if `EnableIssueImageExtraction` is true and the agent model supports vision input) and checks for analysis staleness — if the issue body changed, the agent previously errored, or enough commits landed since the last analysis (`AnalysisCommitThreshold`), a fresh analysis is forced |
 | **ReviewingAnalysis** | Adversarial review of the analysis — validates completeness, flags gaps (when `AnalysisReviewEnabled` is true) |
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |

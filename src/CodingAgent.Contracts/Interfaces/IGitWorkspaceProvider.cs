@@ -49,6 +49,16 @@ public interface IGitWorkspaceProvider : IAsyncDisposable
     Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct);
 
     /// <summary>
+    /// Creates or updates one file on the base branch through the provider's API, as one commit. Uses no
+    /// local repository. Throws <see cref="RemoteFileConflictException"/> when the file or branch changed
+    /// meanwhile. Default throws <see cref="NotSupportedException"/>.
+    /// </summary>
+    Task<RemoteFileWriteResult> WriteFileToBaseBranchAsync(
+        string relativePath, string content, string commitMessage, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support WriteFileToBaseBranchAsync.");
+
+    /// <summary>
     /// The web address of a commit of this repository, or null when the provider cannot build one.
     /// </summary>
     string? GetCommitWebUrl(string commitSha) => null;

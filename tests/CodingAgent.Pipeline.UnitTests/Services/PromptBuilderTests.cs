@@ -14,19 +14,19 @@ public class PromptBuilderTests
 
     private static IssueDetail CreateIssue(string id = "42", string title = "Add feature X",
         string description = "Implement feature X as described.") => new()
-    {
-        Identifier = id,
-        Title = title,
-        Description = description,
-        Labels = new[] { "enhancement" }
-    };
+        {
+            Identifier = id,
+            Title = title,
+            Description = description,
+            Labels = new[] { "enhancement" }
+        };
 
     private static ParsedIssue CreateParsedIssue(string requirements = "Build the thing",
         IReadOnlyList<string>? criteria = null) => new()
-    {
-        RequirementsSection = requirements,
-        AcceptanceCriteria = criteria ?? new[] { "It compiles", "Tests pass" }
-    };
+        {
+            RequirementsSection = requirements,
+            AcceptanceCriteria = criteria ?? new[] { "It compiles", "Tests pass" }
+        };
 
     #region BuildAnalysisPrompt
 
@@ -1117,6 +1117,31 @@ public class PromptBuilderTests
         // start catching NullReferenceException instead — keep the guard in place.
         var act = () => PromptBuilder.BuildPrDescriptionPrompt(null!);
         act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region NoBuildDuringAnalysisRule
+
+    [Fact]
+    public void BuildAnalysisPrompt_ForbidsBuildsAndTests()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(PromptBuilder.NoBuildDuringAnalysisRule);
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ForbidsBuildsAndTests()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(PromptBuilder.NoBuildDuringAnalysisRule);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ForbidsBuildsAndTests()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Refine the analysis.");
+        result.Should().Contain(PromptBuilder.NoBuildDuringAnalysisRule);
     }
 
     #endregion

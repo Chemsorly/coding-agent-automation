@@ -25,7 +25,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.run.outcomes` | Counter | `{run}` | `run_type`, `outcome`, `failure_reason`, `pipeline.project_name`, `provider`, `model` | Terminal run outcomes, once per terminal transition. `provider` is the tool of the work item's pinned route and `model` the route's model, not the model the agent reports: `auto` stays `auto`. Both are `unknown` for work created before agent routing. See [Outcome mapping](#outcome-mapping) |
 | `pipeline.routing.refusals` | Counter | `{refusal}` | `task_type`, `stage`, `reason` | Agent routing refusals. `stage`: `create`, `dispatch`, `claim`; `reason`: `no_route`, `profile_unavailable`, `no_tool`, `template_missing`, `template_changed`, `config_collision`. A refusal at creation leaves no work item, so `pipeline.run.outcomes` never sees it. Not pre-initialized: the series appears with the first refusal. See [Routing](#routing) |
 | `pipeline.run.duration` | Histogram | s | `run_type`, `outcome` | Dispatched → terminal |
-| `pipeline.run.step.duration` | Histogram | s | `run_type`, `step` | Duration of each step visit, recorded on every step transition |
+| `pipeline.run.step.duration` | Histogram | s | `run_type`, `step` | Duration of each step visit, recorded on every step transition. VerifyingBaseline covers only the agent health check. The time a run waits for the baseline counts towards the last analysis step, usually PostingAnalysis; the Step AwaitBaseline span shows it. |
 | `pipeline.run.sub_issues` | Counter | `{issue}` | `result` (`created`, `failed`) | Sub-issues per decomposition run, once per run |
 | `pipeline.run.brain_updates` | Counter | `{run}` | `result` (`pushed`, `none`) | Brain update result per non-consolidation run |
 | `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider`, `model` | LLM tokens per phase, at terminal time |
@@ -99,6 +99,8 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`. A `DeregisterAgent` from a connection that is not registered is skipped, not rejected. Emitted by API. |
 | `token_vending.failures` | Counter | — | Token vending failures. Emitted by API. |
 | `token_vending.scope_refused` | Counter | `permission` | Token refreshes that asked for a permission the run may not have, and got the token without it. Today `permission` is always `issues`. Expected value 0: a non-zero value means a job asked for something the pipeline's own code never asks for on that run. Emitted by API. |
+
+A refused git credentials callback is a log line, since agents record no metrics: `Refused git credentials for remote host {RefusedRemoteHost}` at Warning. It means a git operation in the workspace pointed at a server other than the repository's provider. No credentials were sent. On the code repository the run fails with a message that says so. Elsewhere, the operation's usual failure handling applies.
 
 ### Tag Schema
 
@@ -377,6 +379,7 @@ POST /api/work-items (API request span)
         │   └── VerifyBaseline
         ├── Step AnalyzeCode
         │   └── AnalyzeIssue
+        ├── Step AwaitBaseline
         ├── Step GenerateCode
         │   └── GenerateCode
         ├── Step RunQualityGates
@@ -456,7 +459,7 @@ All emitted by the agent pod.
 | `invoke_agent {phase}` | see [Session Spans](#session-spans-genai-semantic-conventions) | One per agent CLI call (`AgentStallMonitor`) |
 | `Step {StepName}` | `pipeline.step`, `pipeline.run_id` | Runner-created span per step (emitted by `PipelineStepRunner`). Error status set on unhandled exception. Non-critical failures add exception event, no Error. |
 | `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace (child of `Step CloneRepository`) |
-| `VerifyBaseline` | `pipeline.run_id`, `pipeline.issue` | Agent health check + workspace baseline verification (child of `Step VerifyBaseline`). Error status set on fatal health-check failure only. |
+| `VerifyBaseline` | `pipeline.run_id`, `pipeline.issue` | Agent health check + workspace baseline verification (child of `Step VerifyBaseline`). Error status set on fatal health-check failure only. Stays open after its parent step ended, until the baseline, which runs next to the analysis, has finished. |
 | `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
 | `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
 | `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
@@ -605,6 +608,7 @@ ExecutePipeline
 │   └── VerifyBaseline
 ├── Step AnalyzeCode
 │   └── AnalyzeIssue
+├── Step AwaitBaseline
 ├── Step GenerateCode
 │   └── GenerateCode
 ├── Step ReviewCode

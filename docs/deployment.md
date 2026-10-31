@@ -63,6 +63,8 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 
 ### Install
 
+> **Upgrading to the release that writes the brain inbox by API:** a brain repository on GitLab needs an access token with the `api` scope, because each run's inbox file is written through GitLab's API. With `write_repository` alone the run still completes, but its inbox file is not written, and the run reports a failed brain push. GitHub needs no change.
+
 > **Upgrading to the release with agent routing (Spec 053):** take a config export first (Settings → Data Management → Import / Export); there is no way back for the data move. Before you upgrade, check that every `jobTemplates[]` entry in your values has a `providerType`: the tool now comes from the job template, so the move disables each profile on a template without one, and work routed to it is refused. On its first start the API moves the configuration once: agent profiles keep their IDs and lose their match labels and priority, each profile takes the tool settings of its agent provider config, today's routes are written down as global and repository routing rows, the agent provider configs are deleted, and repository labels that only named an agent tool are dropped. Afterwards check the move's summary line in the API log and Settings → Agents → Routing. Repositories that had no matching profile now run on the default route, and a warning names each of them. While old and new pods overlap, dispatches and claims can fail for a few minutes: agents retry their claim on another replica, and the Scheduler dispatches again once it runs the new release. Don't save a repository's page until every API pod runs the new release: a save that an old pod serves drops the repository's routing rows, and its work falls back to the global rows. Open browser tabs must reload. No chart change is needed, unless a `jobTemplates[]` entry lacks its `providerType`. See [Agent Routing](agent-routing.md).
 
 > **Upgrading to the release with the WebAssembly UI (Spec 052):** the upgrade is a hard cut. The UI may be unavailable briefly while the web pods roll out, and every open tab reloads once; the pipeline keeps running. Sticky-session annotations are now optional and can stay. With Traefik, no values change is needed. With ingress-nginx, the UI's long calls now pass through the ingress: chat launch (up to 2 minutes), triage, browse, dispatch and provider calls, and config import. Add `nginx.ingress.kubernetes.io/proxy-read-timeout: "300"` and `nginx.ingress.kubernetes.io/proxy-body-size: "16m"` to `web.ingress.annotations`; the defaults are 60 seconds and 1 MB.
@@ -78,6 +80,7 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set database.host=<postgres-host> \
   --set database.auth.existingSecret=<k8s-secret-name> \
   --set signalr.redis.connectionString=<redis-host>:6379 \
+  --set 'agentNetworkPolicy.clusterCidrs={<pod-cidr>,<service-cidr>}' \
   --set scheduler.image.tag=coding-agent-scheduler-<version>
 ```
 
@@ -153,6 +156,11 @@ The chart deploys:
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. The pipeline API claims one PVC per dispatched Job. |
 | `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
+| `agentNetworkPolicy.enabled` | Default-deny NetworkPolicy for agent pods (default: `true`). See [Agent network policy](#agent-network-policy). |
+| `agentNetworkPolicy.clusterCidrs` | Required while enabled: the cluster's pod and service CIDRs, IPv4 and IPv6 in one list. The render fails without it. |
+| `agentNetworkPolicy.dnsSelector` | Egress peer for cluster DNS (default: namespace `kube-system`, label `k8s-app: kube-dns`). |
+| `agentNetworkPolicy.otel` | Optional `{namespace, port}` overriding what `otel.endpoint` says. |
+| `agentNetworkPolicy.extraEgress` | Extra egress rules, used as written, for destinations inside the cluster. |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
 ### Defining Agent Pod Templates
@@ -189,6 +197,42 @@ jobTemplates:
 ```
 
 Each agent tool has one image with every tech stack (`coding-agent-kiro`, `coding-agent-opencode`, `coding-agent-claude`), so one job template per tool is enough; add another template of a tool only for different capacity or resources. Agent profiles name their job template, and the routing table names the profiles. A repository whose work should run on another template than the default route's needs its own routing rows (see [Agent Routing — Repository Rows](agent-routing.md#repository-rows)). See [Agent Routing — Agent Images](agent-routing.md#agent-images).
+
+### Agent network policy
+
+The chart renders one NetworkPolicy, `<release>-agent`, for every pod labelled `caa/agent-pod: "true"`. It is on by default and uses only the vanilla `networking.k8s.io/v1` API. It is default deny, with this allow-list:
+
+| Direction | Allowed |
+|---|---|
+| Ingress | Nothing. Agents dial out; nothing connects to them. |
+| DNS | The peer in `agentNetworkPolicy.dnsSelector`, UDP and TCP 53 |
+| Pipeline API | This release's API pods on `api.service.port`, while `api.enabled` |
+| OpenTelemetry | The namespace and port read from `otel.endpoint`, or `agentNetworkPolicy.otel` |
+| Outside the cluster | `0.0.0.0/0` and `::/0`, except `agentNetworkPolicy.clusterCidrs` |
+| Anything else | `agentNetworkPolicy.extraEgress` |
+
+**Finding the CIDRs.** `clusterCidrs` must list the pod and the service CIDR. The chart cannot discover them.
+
+- k3s: `10.42.0.0/16` and `10.43.0.0/16`, unless the server sets `--cluster-cidr` or `--service-cidr`.
+- kubeadm: `kubectl -n kube-system get configmap kubeadm-config -o yaml | grep -E 'podSubnet|serviceSubnet'`.
+- Others: `kubectl cluster-info dump | grep -m 2 -E 'cluster-cidr|service-cluster-ip-range'`, or your provider's cluster settings.
+
+List IPv4 and IPv6 ranges together; the chart sorts them by family. To also block node addresses or a cloud metadata address, add them to the list.
+
+**OpenTelemetry.** `http://<service>.<namespace>[.svc[.<domain>]]:<port>` allows that namespace on that port, and a bare host means the release's namespace. An IP address, an external host or a URL with no port gives no rule, and `NOTES.txt` warns when an endpoint is set and no rule rendered. A policy port is a pod port, so when the collector's Service port differs from its pod port, set `agentNetworkPolicy.otel: {namespace: <namespace>, port: <pod port>}`.
+
+**Limits.**
+
+- It needs a CNI that enforces NetworkPolicy. Without one, the policy does nothing, with no signal.
+- A wrong or incomplete `clusterCidrs` fails open, with no signal.
+- Kubernetes leaves the order of policy evaluation and DNAT undefined. The DNS, API and OTel rules rely on evaluation after DNAT, which is how k3s behaves. A CNI that differs blocks agents at connect.
+- Node addresses are not in the pod and service ranges. NodePort services, host-network pods, the kubelet and the Kubernetes API stay reachable unless you list them. The agent's service account has no token.
+- Pods of Jobs created before the upgrade are not selected until they end.
+- Two releases in one namespace select each other's agent pods; their rules add up, which is harmless.
+
+A blocked connection leaves no signal of ours: it shows as an MCP or tool error in the run log. An in-cluster MCP server, or a Git or issue provider inside the cluster, needs `extraEgress`.
+
+> **Upgrading:** `agentNetworkPolicy.clusterCidrs` is now required, and `helm upgrade` fails without it, with a message that points here. Set it, or set `agentNetworkPolicy.enabled: false` if your own policy isolates the agent pods. In-cluster destinations other than DNS, the API and the collector now need `extraEgress`.
 
 ### Leader Election Without Kubernetes
 
@@ -418,7 +462,7 @@ ORCHESTRATOR_URL=http://localhost:8080 AGENT_ID=local-chat-1 AGENT_API_KEY=<key>
   dotnet run --project src/CodingAgent.Agent/ -- --mode=chat
 ```
 
-`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required.
+`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required. On Linux the worker marks itself as not dumpable at startup, so attaching a debugger to a running worker and writing a crash dump are refused. Windows and macOS are unchanged.
 
 ---
 
@@ -456,3 +500,5 @@ The pipeline supports multiple provider backends. Each provider type requires sp
   }
 }
 ```
+
+A brain repository's GitLab token needs the `api` scope: the pipeline writes each run's inbox file through GitLab's API. `write_repository` alone is not enough.
