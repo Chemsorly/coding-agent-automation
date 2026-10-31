@@ -36,7 +36,7 @@ public sealed class AgentRegistryStartupWarningCollection { }
 /// Issue #2645: No startup warning when api.replicas &gt; 1 without Redis.
 ///
 /// Tests 1 and 2 build a minimal <see cref="ServiceCollection"/> with only the services
-/// required by <see cref="ApiServiceCollectionExtensions.CreateAgentRegistryService"/>
+/// required by <see cref="ApiOrchestrationCoreServiceExtensions.CreateAgentRegistryService"/>
 /// (<see cref="AgentRegistryService"/>; no <c>IConnectionMultiplexer</c>), install a
 /// capturing <c>Log.Logger</c>, and call the real production factory method directly.
 /// This avoids the <c>UseSerilog</c> overwrite that occurs with full
@@ -79,7 +79,7 @@ public sealed class AgentRegistryStartupWarningTests
 
     /// <summary>
     /// Builds a minimal <see cref="ServiceProvider"/> containing only the services required
-    /// by <see cref="ApiServiceCollectionExtensions.CreateAgentRegistryService"/>:
+    /// by <see cref="ApiOrchestrationCoreServiceExtensions.CreateAgentRegistryService"/>:
     /// <see cref="AgentRegistryService"/> and <c>Serilog.ILogger</c>.
     /// No <c>IConnectionMultiplexer</c> is registered, so the factory takes the in-memory path.
     /// </summary>
@@ -102,7 +102,7 @@ public sealed class AgentRegistryStartupWarningTests
     /// in-memory <see cref="AgentRegistryService"/> (not the distributed variant).
     /// Acceptance criterion 1 of issue #2645.
     ///
-    /// Calls the real <see cref="ApiServiceCollectionExtensions.CreateAgentRegistryService"/>
+    /// Calls the real <see cref="ApiOrchestrationCoreServiceExtensions.CreateAgentRegistryService"/>
     /// production method to ensure the test fails if the production logic is removed.
     /// </summary>
     [Fact]
@@ -124,7 +124,7 @@ public sealed class AgentRegistryStartupWarningTests
             using var provider = BuildMinimalProvider();
 
             // Call the real production factory method — not an inline copy.
-            var registry = ApiServiceCollectionExtensions.CreateAgentRegistryService(provider, config);
+            var registry = ApiOrchestrationCoreServiceExtensions.CreateAgentRegistryService(provider, config);
 
             // The registry must be the in-memory variant (no Redis)
             registry.Should().BeOfType<AgentRegistryService>(
@@ -154,7 +154,7 @@ public sealed class AgentRegistryStartupWarningTests
     /// The existing <c>Information</c> log is unchanged.
     /// Acceptance criterion 2 of issue #2645.
     ///
-    /// Calls the real <see cref="ApiServiceCollectionExtensions.CreateAgentRegistryService"/>
+    /// Calls the real <see cref="ApiOrchestrationCoreServiceExtensions.CreateAgentRegistryService"/>
     /// production method to ensure the test fails if the production logic is removed.
     /// </summary>
     [Fact]
@@ -175,7 +175,7 @@ public sealed class AgentRegistryStartupWarningTests
             using var provider = BuildMinimalProvider();
 
             // Call the real production factory method — not an inline copy.
-            _ = ApiServiceCollectionExtensions.CreateAgentRegistryService(provider, config);
+            _ = ApiOrchestrationCoreServiceExtensions.CreateAgentRegistryService(provider, config);
 
             var splitBrainWarnings = sink.Events
                 .Where(e => e.Level == LogEventLevel.Warning
