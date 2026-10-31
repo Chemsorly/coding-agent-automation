@@ -8,6 +8,6 @@
 
     private string _cssClass =>
         "usage-cost" +
-        (Usage?.BillingMode == AgentBillingModes.Subscription && Usage?.Cost > 0m ? " usage-cost-estimate" : "") +
+        (Usage?.BillingMode == AgentBillingModes.Subscription && Usage!.Cost > 0m ? " usage-cost-estimate" : "") +
         (string.IsNullOrEmpty(CssClass) ? "" : " " + CssClass);
 }
