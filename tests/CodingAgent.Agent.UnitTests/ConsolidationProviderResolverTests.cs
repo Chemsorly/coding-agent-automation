@@ -6,6 +6,9 @@ using CodingAgent.Pipeline.Models;
 using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 using Moq;
+using WireMock.RequestBuilders;
+using WireMock.ResponseBuilders;
+using WireMock.Server;
 
 namespace CodingAgent.Agent.UnitTests;
 
@@ -300,17 +303,18 @@ public class ConsolidationProviderResolverTests
     /// This test discriminates the two paths: if the static-token branch were taken (regression),
     /// the absent token would cause <c>InvalidOperationException("…missing 'token'…")</c> at
     /// construction time. The proxy branch bypasses that check, so any exception thrown is a
-    /// runtime failure from the disconnected hub, not a configuration error.
+    /// runtime failure from the stubbed GitHub API, not a configuration error.
     /// </para>
     /// </summary>
     [Fact]
     public async Task ResolveRefactoring_WithProxy_GitHubIssueProvider_NoTokenRequired()
     {
+        using var gitHubStub = StartGitHubStubReturningNotFound();
         var resolver = CreateResolver();
         var repoConfig = CreateProviderConfig(ProviderKind.Repository, "GitHub", RepositoryRole.Work,
             new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ApiUrl] = gitHubStub.Url!,
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "work",
                 [ProviderSettingKeys.BaseBranch] = "main",
@@ -321,7 +325,7 @@ public class ConsolidationProviderResolverTests
         var issueConfig = CreateProviderConfig(ProviderKind.Issue, "GitHub", settings:
             new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ApiUrl] = gitHubStub.Url!,
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "work"
             });
@@ -332,14 +336,15 @@ public class ConsolidationProviderResolverTests
         var act = () => resolver.ResolveRefactoringProvidersAsync(job, proxy, CancellationToken.None);
         var ex = await Record.ExceptionAsync(act);
 
-        // The run must fail (repoProvider.ValidateAsync throws a runtime error against the
-        // disconnected hub), but the failure must NOT be the construction-time token-config error.
+        // The run must fail (repoProvider.ValidateAsync gets a 404 from the GitHub stub), but the
+        // failure must NOT be the construction-time token-config error.
         // Specifically: a regression to the static-token path (orchestratorProxy null check
         // mistakenly evaluates to false) would throw InvalidOperationException("missing 'token'")
         // because the config has no token. The proxy path bypasses that check, so any exception
-        // here is a runtime error from the hub/network layer.
-        ex.Should().NotBeNull("a disconnected hub must cause some runtime failure");
+        // here is a runtime error from the API call.
+        ex.Should().NotBeNull("the stubbed 404 must cause some runtime failure");
         AssertNotTokenConfigError(ex!, "proxy path must bypass the static-token null-check at construction time");
+        gitHubStub.LogEntries.Should().NotBeEmpty("validation must reach the API through the stub");
     }
 
     /// <summary>
@@ -358,10 +363,11 @@ public class ConsolidationProviderResolverTests
     {
         // Arrange: issue config that has BOTH a static token AND will be used with a proxy.
         // The proxy path must take precedence and invoke the refresh delegate, not the static token.
+        using var gitHubStub = StartGitHubStubReturningNotFound();
         var issueConfig = CreateProviderConfig(ProviderKind.Issue, "GitHub", settings:
             new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.ApiUrl] = gitHubStub.Url!,
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "work",
                 [ProviderSettingKeys.Token] = "static-token-should-be-ignored"
@@ -373,8 +379,8 @@ public class ConsolidationProviderResolverTests
         // Act: construct via the internal test-visible wrapper (proving the correct constructor
         // path was taken), then call ValidateAsync which triggers GetClientAsync → tokenProvider
         // delegate → proxy.RequestTokenRefreshAsync → our spy.
-        // ValidateAsync itself will fail at the GitHub API level (network error against the real
-        // GitHub endpoint), but the delegate is invoked before any network I/O.
+        // ValidateAsync itself will fail at the GitHub API level (404 from the stub), but the
+        // delegate is invoked before the request is sent.
         var provider = ConsolidationProviderResolver.CreateGitHubIssueProviderForTest(issueConfig, proxy);
         var validateEx = await Record.ExceptionAsync(
             () => provider.ValidateAsync(CancellationToken.None));
@@ -388,6 +394,7 @@ public class ConsolidationProviderResolverTests
 
         // Also verify it didn't fail with a token-config error (which would mean the static path ran).
         AssertNotTokenConfigError(validateEx, "proxy path must not raise a token-config error even when a token setting is present");
+        gitHubStub.LogEntries.Should().NotBeEmpty("validation must reach the API through the stub");
     }
 
     /// <summary>
@@ -427,6 +434,20 @@ public class ConsolidationProviderResolverTests
 
     private ConsolidationProviderResolver CreateResolver() =>
         new(_mockOrchestrator.Object, _mockHttpClientFactory.Object, _mockLogger.Object);
+
+    /// <summary>
+    /// Starts a local stand-in for the GitHub API so validation makes no outbound call. It answers
+    /// 404 because the API pipeline does not retry that, unlike the 401 a fake token gets from GitHub.
+    /// Caller owns the server and must dispose it.
+    /// </summary>
+    private static WireMockServer StartGitHubStubReturningNotFound()
+    {
+        var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(404).WithBodyAsJson(new { message = "Not Found" }));
+        return server;
+    }
 
     private static ConsolidationJobMessage CreateJob(
         ConsolidationRunType type,
