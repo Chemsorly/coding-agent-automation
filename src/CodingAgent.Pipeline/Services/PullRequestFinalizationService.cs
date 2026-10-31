@@ -16,16 +16,23 @@ namespace CodingAgent.Pipeline.Services;
 public sealed class PullRequestFinalizationService
 {
     private readonly Serilog.ILogger _logger;
-    private readonly Func<string?, CancellationToken, Task<IReadOnlyList<string>>> _getChangedFiles;
+    private const int GuardHeadAttempts = 6;
+    private static readonly TimeSpan GuardHeadDelay = TimeSpan.FromSeconds(5);
+
+    private readonly Func<IRepositoryProvider, int, CancellationToken, Task<PullRequestChangedFiles?>> _getChangedFiles;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private const string PipelineRunIdTag = "pipeline.run_id";
 
     public PullRequestFinalizationService(
         Serilog.ILogger logger,
-        Func<string?, CancellationToken, Task<IReadOnlyList<string>>>? getChangedFiles = null)
+        Func<IRepositoryProvider, int, CancellationToken, Task<PullRequestChangedFiles?>>? getChangedFiles = null,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
-        _getChangedFiles = getChangedFiles ?? GateConfigGuard.GetChangedFilesAsync;
+        _getChangedFiles = getChangedFiles
+            ?? ((provider, prNumber, ct) => provider.GetPullRequestChangedFilesAsync(prNumber, ct));
+        _delay = delay ?? ((wait, ct) => Task.Delay(wait, ct));
     }
 
     /// <summary>
@@ -205,18 +212,27 @@ public sealed class PullRequestFinalizationService
 
         if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
         {
+            // The guard runs first: the description below is an LLM call, and a ready rework PR must not
+            // stay ready with gate files changed while that runs.
+            var hasPrNumber = int.TryParse(run.PullRequestNumber, out var prNum);
+            var guard = hasPrNumber ? await CheckGateConfigAsync(run, prNum, repoProvider, ct) : null;
+
             await GeneratePrDescriptionAsync(run, agentProvider, repoProvider, config, emitOutputLine, ct);
 
             // Mark ready-for-review last — after description is applied so reviewers see the complete body.
             // Non-fatal: a failure to mark-ready is logged but does not abort the post-PR sequence.
-            if (int.TryParse(run.PullRequestNumber, out var prNum))
-            {
-                await MarkReadyUnlessGateConfigChangedAsync(run, prNum, repoProvider, emitOutputLine, ct);
-            }
-            else
+            if (guard is null)
             {
                 _logger.Warning("Pipeline {RunId} mark-ready skipped — PullRequestNumber '{PrNumber}' is not a valid integer",
                     run.RunId, run.PullRequestNumber);
+            }
+            else if (guard.Status == GateConfigGuardStatus.Clean)
+            {
+                await MarkReadyAsync(run, prNum, repoProvider, emitOutputLine, ct);
+            }
+            else
+            {
+                await LeaveAsDraftAsync(run, prNum, guard, repoProvider, emitOutputLine, ct);
             }
         }
         else
@@ -255,72 +271,95 @@ public sealed class PullRequestFinalizationService
     }
 
     /// <summary>
-    /// Marks the PR ready for review, unless the branch changes quality-gate configuration: then the PR
-    /// stays a draft with a warning section so that a person reviews the change; agents have weakened
-    /// failing checks this way (#3585). Non-fatal: failures are logged and the post-PR sequence continues.
+    /// Reads the PR's changed files from the provider and classifies them. When the result is not clean, converts
+    /// a ready PR to draft at once. A clean result changes nothing on the PR. Never fails open: any failure is
+    /// <see cref="GateConfigGuardStatus.Unverifiable"/>. Replaces the workspace-based guard from issue 3585.
     /// </summary>
-    private async Task MarkReadyUnlessGateConfigChangedAsync(
-        PipelineRun run, int prNum, IRepositoryProvider repoProvider, Action<string> emitOutputLine, CancellationToken ct)
+    private async Task<GateConfigGuardResult> CheckGateConfigAsync(
+        PipelineRun run, int prNum, IRepositoryProvider repoProvider, CancellationToken ct)
     {
-        IReadOnlyList<string> gateFiles;
-        try
-        {
-            gateFiles = GateConfigGuard.FindGateConfigFiles(await _getChangedFiles(run.WorkspacePath, ct));
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} could not list changed files for the quality-gate configuration check, continuing", run.RunId);
-            gateFiles = [];
-        }
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("GateConfigGuard");
+        activity?.SetTag(PipelineRunIdTag, run.RunId);
 
-        if (gateFiles.Count > 0)
+        var result = await ReadGateConfigAsync(run, prNum, repoProvider, ct);
+        activity?.SetTag("pipeline.pr.guard_result", result.Status.ToString().ToLowerInvariant());
+
+        if (result.Status != GateConfigGuardStatus.Clean)
         {
             try
             {
-                var body = GateConfigGuard.AppendWarningSection(run.PullRequestBody ?? "", gateFiles);
-                await repoProvider.UpdatePullRequestAsync(prNum, body, false, ct);
-                run.PullRequestBody = body;
-                // Read back the PR to verify the draft conversion actually took effect.
-                // The GitHub provider swallows conversion failures and returns normally (non-fatal design),
-                // so the only way to confirm the PR is actually a draft is to re-fetch its current state.
-                // Three outcomes are all handled non-fatally:
-                //   (a) IsDraft == true  → conversion confirmed
-                //   (b) IsDraft == false → conversion silently failed; PR is still ready for review
-                //   (c) null             → PR closed or not found; cannot confirm draft state
-                // The catch also handles NotSupportedException from the default IPullRequestProvider
-                // implementation and any other non-OCE provider failure.
-                PullRequestSummary? updatedPr = null;
-                var readBackFailed = false;
-                try
-                {
-                    updatedPr = await repoProvider.GetOpenPullRequestAsync(prNum, ct);
-                }
-                catch (Exception readEx) when (readEx is not OperationCanceledException)
-                {
-                    readBackFailed = true;
-                    _logger.Warning(readEx, "Pipeline {RunId} could not read back PR {PrNumber} to confirm draft state", run.RunId, run.PullRequestNumber);
-                }
-
-                if (!readBackFailed && updatedPr?.IsDraft == true)
-                {
-                    emitOutputLine($"⚠️ PR #{run.PullRequestNumber} changes quality-gate configuration ({string.Join(", ", gateFiles)}) — left as draft for review");
-                    _logger.Warning("Pipeline {RunId} left PR {PrNumber} as draft: it changes quality-gate configuration {Files}",
-                        run.RunId, run.PullRequestNumber, gateFiles);
-                }
-                else
-                {
-                    emitOutputLine($"⚠️ PR #{run.PullRequestNumber} changes quality-gate configuration ({string.Join(", ", gateFiles)}) — draft conversion could not be confirmed; the PR must be reviewed before merging");
-                    _logger.Warning("Pipeline {RunId} PR {PrNumber} draft state unconfirmed: changes quality-gate configuration {Files} but draft conversion result could not be verified",
-                        run.RunId, run.PullRequestNumber, gateFiles);
-                }
+                await repoProvider.UpdatePullRequestAsync(prNum, null, false, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Warning(ex, "Pipeline {RunId} failed to leave PR as draft for quality-gate configuration change, continuing", run.RunId);
+                _logger.Warning(ex, "Pipeline {RunId} could not convert PR {PrNumber} to draft, continuing", run.RunId, prNum);
             }
-            return;
+        }
+        return result;
+    }
+
+    private async Task<GateConfigGuardResult> ReadGateConfigAsync(
+        PipelineRun run, int prNum, IRepositoryProvider repoProvider, CancellationToken ct)
+    {
+        var unverifiable = new GateConfigGuardResult(GateConfigGuardStatus.Unverifiable, []);
+
+        // Only to detect provider lag: the local HEAD never adds to or removes from the file list.
+        string? expectedHead = null;
+        try
+        {
+            expectedHead = await repoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} could not read HEAD for the quality-gate configuration check", run.RunId);
         }
 
+        for (var attempt = 1; attempt <= GuardHeadAttempts; attempt++)
+        {
+            PullRequestChangedFiles? changed;
+            try
+            {
+                changed = await _getChangedFiles(repoProvider, prNum, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Pipeline {RunId} could not list PR {PrNumber}'s changed files from the provider", run.RunId, prNum);
+                return unverifiable;
+            }
+
+            if (changed is null)
+            {
+                _logger.Warning("Pipeline {RunId} provider does not report PR {PrNumber}'s changed files", run.RunId, prNum);
+                return unverifiable;
+            }
+
+            if (!string.IsNullOrEmpty(expectedHead)
+                && !string.IsNullOrEmpty(changed.HeadSha)
+                && !string.Equals(changed.HeadSha, expectedHead, StringComparison.OrdinalIgnoreCase))
+            {
+                if (attempt < GuardHeadAttempts)
+                    await _delay(GuardHeadDelay, ct);
+                continue;
+            }
+
+            var gateFiles = GateConfigGuard.FindGateConfigFiles(changed.Files);
+            if (gateFiles.Count > 0)
+                return new GateConfigGuardResult(GateConfigGuardStatus.Changed, gateFiles);
+            if (!changed.IsComplete)
+            {
+                _logger.Warning("Pipeline {RunId} PR {PrNumber}'s changed files are incomplete", run.RunId, prNum);
+                return unverifiable;
+            }
+            return new GateConfigGuardResult(GateConfigGuardStatus.Clean, []);
+        }
+
+        _logger.Warning("Pipeline {RunId} PR {PrNumber}'s head never matched the pushed commit", run.RunId, prNum);
+        return unverifiable;
+    }
+
+    private async Task MarkReadyAsync(
+        PipelineRun run, int prNum, IRepositoryProvider repoProvider, Action<string> emitOutputLine, CancellationToken ct)
+    {
         try
         {
             // TODO [WARNING]: TaskCanceledException is a subclass of OperationCanceledException, so the
@@ -346,6 +385,97 @@ public sealed class PullRequestFinalizationService
         {
             _logger.Warning(ex, "Pipeline {RunId} failed to mark PR ready for review, continuing", run.RunId);
         }
+    }
+
+    private async Task LeaveAsDraftAsync(
+        PipelineRun run, int prNum, GateConfigGuardResult guard, IRepositoryProvider repoProvider, Action<string> emitOutputLine, CancellationToken ct)
+    {
+        try
+        {
+            var isChanged = guard.Status == GateConfigGuardStatus.Changed;
+            var body = run.PullRequestBody ?? "";
+            if (!body.Contains(isChanged ? GateConfigGuard.WarningHeading : GateConfigGuard.UnverifiableHeading, StringComparison.Ordinal))
+            {
+                body = isChanged
+                    ? GateConfigGuard.AppendWarningSection(body, guard.GateFiles)
+                    : GateConfigGuard.AppendUnverifiableSection(body);
+            }
+
+            await repoProvider.UpdatePullRequestAsync(prNum, body, false, ct);
+            run.PullRequestBody = body;
+            // Read back the PR to verify the draft conversion actually took effect.
+            // The GitHub provider swallows conversion failures and returns normally (non-fatal design),
+            // so the only way to confirm the PR is actually a draft is to re-fetch its current state.
+            // Three outcomes are all handled non-fatally:
+            //   (a) IsDraft == true  → conversion confirmed
+            //   (b) IsDraft == false → conversion silently failed; PR is still ready for review
+            //   (c) null             → PR closed or not found; cannot confirm draft state
+            // The catch also handles NotSupportedException from the default IPullRequestProvider
+            // implementation and any other non-OCE provider failure.
+            PullRequestSummary? updatedPr = null;
+            var readBackFailed = false;
+            try
+            {
+                updatedPr = await repoProvider.GetOpenPullRequestAsync(prNum, ct);
+            }
+            catch (Exception readEx) when (readEx is not OperationCanceledException)
+            {
+                readBackFailed = true;
+                _logger.Warning(readEx, "Pipeline {RunId} could not read back PR {PrNumber} to confirm draft state", run.RunId, run.PullRequestNumber);
+            }
+
+            var what = isChanged
+                ? $"changes quality-gate configuration ({string.Join(", ", guard.GateFiles)})"
+                : "could not have its changed files verified";
+
+            if (!readBackFailed && updatedPr?.IsDraft == true)
+            {
+                emitOutputLine($"⚠️ PR #{run.PullRequestNumber} {what} — left as draft for review");
+                if (isChanged)
+                    _logger.Warning("Pipeline {RunId} left PR {PrNumber} as draft: it changes quality-gate configuration {Files}",
+                        run.RunId, run.PullRequestNumber, guard.GateFiles);
+                else
+                    _logger.Warning("Pipeline {RunId} left PR {PrNumber} as draft: its changed files could not be verified",
+                        run.RunId, run.PullRequestNumber);
+            }
+            else
+            {
+                emitOutputLine($"⚠️ PR #{run.PullRequestNumber} {what} — draft conversion could not be confirmed; the PR must be reviewed before merging");
+                if (isChanged)
+                    _logger.Warning("Pipeline {RunId} PR {PrNumber} draft state unconfirmed: changes quality-gate configuration {Files} but draft conversion result could not be verified",
+                        run.RunId, run.PullRequestNumber, guard.GateFiles);
+                else
+                    _logger.Warning("Pipeline {RunId} PR {PrNumber} draft state unconfirmed: its changed files could not be verified",
+                        run.RunId, run.PullRequestNumber);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} failed to leave PR as draft for quality-gate configuration change, continuing", run.RunId);
+        }
+    }
+
+    /// <summary>
+    /// Runs the guard again after a post-PR CI retry, which runs the agent and force-pushes a PR that may already be
+    /// ready. A clean result changes nothing: it must not mark ready a PR the first check left a draft.
+    /// </summary>
+    public async Task RecheckGateConfigAfterRetryAsync(
+        PipelineRun run, IRepositoryProvider repoProvider, Action<string> emitOutputLine, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(repoProvider);
+        ArgumentNullException.ThrowIfNull(emitOutputLine);
+
+        if (!int.TryParse(run.PullRequestNumber, out var prNum))
+        {
+            _logger.Warning("Pipeline {RunId} quality-gate configuration re-check skipped — PullRequestNumber '{PrNumber}' is not a valid integer",
+                run.RunId, run.PullRequestNumber);
+            return;
+        }
+
+        var guard = await CheckGateConfigAsync(run, prNum, repoProvider, ct);
+        if (guard.Status != GateConfigGuardStatus.Clean)
+            await LeaveAsDraftAsync(run, prNum, guard, repoProvider, emitOutputLine, ct);
     }
 
     /// <summary>

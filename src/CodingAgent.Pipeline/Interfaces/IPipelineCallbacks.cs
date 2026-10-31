@@ -67,6 +67,12 @@ public interface IPipelineCallbacks
     Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);
 
     /// <summary>
+    /// Called after a passing post-PR CI retry, which force-pushed, to run the quality-gate configuration guard again.
+    /// Default is a no-op. Overridden on the agent path.
+    /// </summary>
+    Task RecheckGateConfig(PipelineRun run, CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>
     /// Called after a passing post-PR CI retry to rewrite the brain inbox with the final outcome.
     /// Default is a no-op (spec 054 D21). Overridden on the agent path.
     /// </summary>

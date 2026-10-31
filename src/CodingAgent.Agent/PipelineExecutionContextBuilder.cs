@@ -246,7 +246,17 @@ internal sealed class PipelineExecutionContextBuilder
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { _logger.Warning(ex, "RewriteBrainInbox failed for {RunId}", run.RunId); }
                 }
-                : null);
+                : null,
+            recheckGateConfig: async (run, token) =>
+            {
+                try
+                {
+                    await new PullRequestFinalizationService(_logger).RecheckGateConfigAfterRetryAsync(
+                        run, inputs.RepoProvider, inputs.EmitOutputLine, token);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { _logger.Warning(ex, "RecheckGateConfig failed for {RunId}", run.RunId); }
+            });
 
         var ctx = PipelineStepContext.ForAgent(
             services: new PipelineStepContextServices
@@ -343,7 +353,8 @@ internal sealed class PipelineExecutionContextBuilder
         Action<PipelineStep> transitionTo,
         Action<string> emitOutputLine,
         Func<bool, int, Task> reportBrainSyncResult,
-        Func<PipelineRun, CancellationToken, Task>? rewriteBrainInbox = null) : PipelineCallbacksBase
+        Func<PipelineRun, CancellationToken, Task>? rewriteBrainInbox = null,
+        Func<PipelineRun, CancellationToken, Task>? recheckGateConfig = null) : PipelineCallbacksBase
     {
         protected override PipelineRun Run => context.Run;
         public override void TransitionTo(PipelineStep step) => transitionTo(step);
@@ -375,6 +386,9 @@ internal sealed class PipelineExecutionContextBuilder
 
         public override Task RewriteBrainInbox(PipelineRun run, CancellationToken ct)
             => rewriteBrainInbox?.Invoke(run, ct) ?? Task.CompletedTask;
+
+        public override Task RecheckGateConfig(PipelineRun run, CancellationToken ct)
+            => recheckGateConfig?.Invoke(run, ct) ?? Task.CompletedTask;
     }
 }
 
