@@ -98,6 +98,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
 | `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`. A `DeregisterAgent` from a connection that is not registered is skipped, not rejected. Emitted by API. |
 | `token_vending.failures` | Counter | — | Token vending failures. Emitted by API. |
+| `token_vending.scope_refused` | Counter | `permission` | Token refreshes that asked for a permission the run may not have, and got the token without it. Today `permission` is always `issues`. Expected value 0: a non-zero value means a job asked for something the pipeline's own code never asks for on that run. Emitted by API. |
 
 ### Tag Schema
 

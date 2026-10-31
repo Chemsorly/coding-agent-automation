@@ -28,4 +28,6 @@ The cross-provider methods, like `RequestCreateIssueForProvider`, resolve the pr
 
 Triage runs never create issues: the hub refuses `RequestCreateIssue` and `RequestCreateIssueForProvider` for them, because issues are created from the reviewed drafts in the app. `ReportTriageResult` ([RequiresActiveJob]) stores the result for the caller's own Triage WorkItem: the triage's key, project and source come from the WorkItem record, never from the agent, and a non-triage run is refused. An operator triage (`triage:{id}` on the `triage` tracker) has no issue, so its label and comment operations are skipped.
 
+The hub decides the scope of a refreshed token, whatever the agent asks for. `RequestTokenRefresh` grants issue permission only on the repository token of a refactoring scan, the only run that files issues with its own token. Any other request gets the token without the permission, with a Warning log and the `token_vending.scope_refused` counter. An unknown job counts as not allowed. The parameter stays for wire compatibility. Static tokens ignore it, as before.
+
 This keeps the agent's credential surface minimal — private keys and tokens never leave the orchestrator container.
