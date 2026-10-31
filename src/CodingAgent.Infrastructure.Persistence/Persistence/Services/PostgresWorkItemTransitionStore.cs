@@ -68,8 +68,13 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
             .Where(w => w.Id == workItemId)
             .Select(w => new
             {
-                w.TaskType, w.K8sJobName, w.AssignedAgentId,
-                w.IssueIdentifier, w.IssueProviderConfigId, w.ProjectId, w.Payload
+                w.TaskType,
+                w.K8sJobName,
+                w.AssignedAgentId,
+                w.IssueIdentifier,
+                w.IssueProviderConfigId,
+                w.ProjectId,
+                w.Payload
             })
             .FirstOrDefaultAsync(ct);
 

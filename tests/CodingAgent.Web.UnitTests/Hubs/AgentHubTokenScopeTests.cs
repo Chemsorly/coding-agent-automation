@@ -1,7 +1,6 @@
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
-using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
