@@ -52,7 +52,7 @@ Settings are listed by their page under Settings → Global Defaults. The **Proj
 | `stallWarningInterval` | 00:02:00 | 30 s–1 h | ✓ | Time without agent output before a stall warning is logged |
 | `stallPollInterval` | 00:00:30 | 5 s–2 min | | How often to check for agent silence |
 | `feedbackTimeoutSeconds` | 60 | 10–600 | ✓ | Limit for the agent call that collects feedback after the PR is opened or after the retries are used up |
-| `baselineHealthCheckEnabled` | true | | ✓ | Run a baseline health check (build + tests) after branch creation and before analysis; catches broken base branches early |
+| `baselineHealthCheckEnabled` | true | | ✓ | Run a baseline health check (build + tests) after branch creation, next to the analysis and before code generation; flags broken base branches early |
 | `blacklistedPaths` | .agent, .brain | | ✓ | Paths excluded from agent commits; the pipeline job template's list replaces it |
 
 ### Pipeline Loop

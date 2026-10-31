@@ -1,13 +1,16 @@
 using System.Diagnostics;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.Services.Steps;
 
 /// <summary>
-/// Verifies agent environment health (via IAgentProvider.ValidateAsync) and workspace baseline
-/// (quality gates) before code generation begins. Agent environment failure is fatal; workspace
-/// failure is non-fatal.
+/// Verifies agent environment health (via IAgentProvider.ValidateAsync) and starts the workspace baseline
+/// (quality gates). Agent environment failure is fatal; workspace failure is non-fatal. The result only
+/// informs people, so the baseline does not hold up the run: it continues next to the analysis until
+/// <see cref="AwaitBaselineStep"/> waits for it before code generation. The <c>VerifyBaseline</c> span
+/// covers it to its end.
 /// </summary>
 public sealed class VerifyBaselineStep : IPipelineStep
 {
@@ -15,27 +18,35 @@ public sealed class VerifyBaselineStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        using var activity = PipelineTelemetry.ActivitySource.StartActivity("VerifyBaseline");
+        var activity = PipelineTelemetry.ActivitySource.StartActivity("VerifyBaseline");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
 
-        if (!context.Config.BaselineHealthCheckEnabled)
+        try
         {
-            context.Callbacks.EmitOutputLine("⏭️ Baseline health check disabled, skipping");
+            if (!context.Config.BaselineHealthCheckEnabled)
+            {
+                context.Callbacks.EmitOutputLine("⏭️ Baseline health check disabled, skipping");
+                return StepResult.Continue;
+            }
+
+            context.Callbacks.TransitionTo(PipelineStep.VerifyingBaseline);
+
+            // Phase 1: Agent environment health (fatal)
+            var doctorResult = await RunAgentHealthCheckAsync(context, activity, ct);
+            if (!doctorResult)
+                return StepResult.Stop;
+
+            // Phase 2: Workspace baseline (non-fatal) — starts in the background
+            if (await StartWorkspaceBaselineAsync(context, activity, ct))
+                activity = null; // The running baseline ends the span.
+
             return StepResult.Continue;
         }
-
-        context.Callbacks.TransitionTo(PipelineStep.VerifyingBaseline);
-
-        // Phase 1: Agent environment health (fatal)
-        var doctorResult = await RunAgentHealthCheckAsync(context, activity, ct);
-        if (!doctorResult)
-            return StepResult.Stop;
-
-        // Phase 2: Workspace baseline (non-fatal)
-        await RunWorkspaceBaselineAsync(context, activity, ct);
-
-        return StepResult.Continue;
+        finally
+        {
+            activity?.Dispose();
+        }
     }
 
     private static async Task<bool> RunAgentHealthCheckAsync(PipelineStepContext context, Activity? activity, CancellationToken ct)
@@ -99,25 +110,46 @@ public sealed class VerifyBaselineStep : IPipelineStep
             context.Callbacks.EmitOutputLine($"  ❌ External CI: {report.ExternalCi.Details}");
     }
 
-    private static async Task RunWorkspaceBaselineAsync(PipelineStepContext context, Activity? activity, CancellationToken ct)
+    /// <summary>
+    /// Starts the workspace baseline in the background. Returns false, with nothing running, when there is
+    /// nothing to verify.
+    /// </summary>
+    private static async Task<bool> StartWorkspaceBaselineAsync(PipelineStepContext context, Activity? activity, CancellationToken ct)
     {
         if (context.QualityGateValidator is null || string.IsNullOrEmpty(context.Run.WorkspacePath))
         {
             context.Callbacks.EmitOutputLine("⏭️ Workspace baseline skipped: validator or workspace not available");
             context.Run.BaselineHealthPassed = null;
-            return;
+            return false;
         }
 
         var qgcs = await LoadQualityGateConfigsAsync(context, ct);
         if (qgcs is null)
-            return;
+            return false;
 
         context.Callbacks.EmitOutputLine("🔍 Running workspace baseline verification...");
 
+        var validator = context.QualityGateValidator;
+        var workspacePath = context.Run.WorkspacePath;
+        context.RunningBaseline = BackgroundBaseline.Start(
+            baselineCt => RunWorkspaceBaselineAsync(context, validator, workspacePath, qgcs, activity, baselineCt),
+            activity,
+            ct);
+        return true;
+    }
+
+    /// <summary>Returns whether the baseline is healthy. Writes nothing to the run: <see cref="AwaitBaselineStep"/> does that.</summary>
+    private static async Task<bool?> RunWorkspaceBaselineAsync(
+        PipelineStepContext context,
+        IQualityGateValidator validator,
+        string workspacePath,
+        IReadOnlyList<QualityGateConfiguration> qgcs,
+        Activity? activity,
+        CancellationToken ct)
+    {
         try
         {
-            var report = await context.QualityGateValidator.ValidateAsync(context.Run.WorkspacePath, qgcs, ct);
-            context.Run.BaselineHealthPassed = report.AllPassed;
+            var report = await validator.ValidateAsync(workspacePath, qgcs, ct);
 
             if (report.AllPassed)
             {
@@ -128,10 +160,11 @@ public sealed class VerifyBaselineStep : IPipelineStep
                 context.Callbacks.EmitOutputLine("⚠️ Workspace baseline has pre-existing issues (non-fatal):");
                 EmitReportDetails(context, report);
             }
+
+            return report.AllPassed;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            context.Run.BaselineHealthPassed = false;
             context.Callbacks.EmitOutputLine($"⚠️ Workspace baseline check failed (non-fatal): {ex.Message}");
             // Non-fatal: add exception event without setting Error status on the span.
             activity?.AddEvent(new ActivityEvent("exception", tags: new ActivityTagsCollection
@@ -141,6 +174,7 @@ public sealed class VerifyBaselineStep : IPipelineStep
                 { "exception.stacktrace", ex.StackTrace ?? "" },
                 { "pipeline.non_critical", true }
             }));
+            return false;
         }
     }
 
