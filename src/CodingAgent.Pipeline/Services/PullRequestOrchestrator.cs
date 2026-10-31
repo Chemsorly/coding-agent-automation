@@ -343,6 +343,7 @@ public sealed class PullRequestOrchestrator
             Comments = issueComments,
             BlacklistedFilesDetected = run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
             ModelName = run.ModelName,
+            CostText = run.ReportedCostText(),
             CloseReference = closeRef,
             ComplianceReport = run.AcceptanceCriteriaReport,
         });
