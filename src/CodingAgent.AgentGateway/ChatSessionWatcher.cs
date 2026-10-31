@@ -47,12 +47,15 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
     private readonly IChatHeartbeatTracker? _heartbeatTracker;
     private readonly DispatchServiceOptions _options;
     private readonly ILogger _logger;
+    // Clock for the poll delay and idle calculation. Heartbeat timestamps must come from the same clock.
+    private readonly TimeProvider _timeProvider;
 
     public ChatSessionWatcher(
         IKubernetesJobClient jobClient,
         IChatHeartbeatTracker? heartbeatTracker,
         DispatchServiceOptions options,
-        ILogger logger)
+        ILogger logger,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(jobClient);
         ArgumentNullException.ThrowIfNull(options);
@@ -61,6 +64,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         _heartbeatTracker = heartbeatTracker;
         _options = options;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc/>
@@ -87,7 +91,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
                 var lastHeartbeat = await ResolveLastHeartbeatAsync(jobName, entry).ConfigureAwait(false);
                 if (lastHeartbeat is null)
                 {
-                    await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+                    await Task.Delay(pollInterval, _timeProvider, ct).ConfigureAwait(false);
                     continue;
                 }
 
@@ -111,7 +115,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
 
                 try
                 {
-                    await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+                    await Task.Delay(pollInterval, _timeProvider, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -174,7 +178,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         CancellationToken ct)
     {
         var (jobName, entry, selectorEncoded, idleTimeout, pollInterval, terminateCallback, cleanupCallback) = context;
-        var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
+        var idleSince = _timeProvider.GetUtcNow() - lastHeartbeat;
         if (idleSince <= idleTimeout)
             return IdleKillResult.NotIdle;
 
@@ -191,7 +195,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
             // the current use but silently discarding OCE on an explicit ct parameter is a code smell.
             // See review finding: DotNetSpecialist WARNING @ ChatSessionWatcher.cs:161.
             // ct cancelled — let the while-condition exit the loop on the next iteration.
-            try { await Task.Delay(pollInterval, ct).ConfigureAwait(false); } catch (OperationCanceledException) { /* Expected on cancellation. */ }
+            try { await Task.Delay(pollInterval, _timeProvider, ct).ConfigureAwait(false); } catch (OperationCanceledException) { /* Expected on cancellation. */ }
             return IdleKillResult.GuardFired;
         }
 
