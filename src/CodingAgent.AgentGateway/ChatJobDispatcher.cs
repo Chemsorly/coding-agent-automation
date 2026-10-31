@@ -61,6 +61,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // Keyed by jobName (== agentId for chat pods — see invariant note on TerminateChatSessionAsync).
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
+
+    /// <summary>How long <see cref="StopAsync"/> waits for watchers before cleaning up anyway. Test seam.</summary>
+    internal TimeSpan ShutdownWatcherWait { get; set; } = TimeSpan.FromSeconds(5);
     // TODO [WARNING]: The _stopped flag is never reset by DisposeAsync, so once StopAsync has run
     // (either explicitly or via the internal StopAsync call inside DisposeAsync), it cannot be
     // re-armed. This is intentional: IHostedService semantics do not require restart after stop.
@@ -566,7 +569,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         try
         {
             await Task.WhenAll(entries.Select(e => e.Value.WatcherTask))
-                .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+                .WaitAsync(ShutdownWatcherWait, CancellationToken.None);
         }
         catch
         {
