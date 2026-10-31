@@ -45,8 +45,13 @@ internal sealed class ChatHeartbeatTracker : IChatHeartbeatTracker
     private readonly IRedisStore _redis;
     private readonly DispatchServiceOptions _options;
     private readonly ILogger _logger;
+    private readonly TimeProvider _timeProvider;
 
-    public ChatHeartbeatTracker(IRedisStore redis, DispatchServiceOptions options, ILogger logger)
+    public ChatHeartbeatTracker(
+        IRedisStore redis,
+        DispatchServiceOptions options,
+        ILogger logger,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(redis);
         ArgumentNullException.ThrowIfNull(options);
@@ -54,13 +59,14 @@ internal sealed class ChatHeartbeatTracker : IChatHeartbeatTracker
         _redis = redis;
         _options = options;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc/>
     public async Task WriteRedisHeartbeatAsync(AgentId agentId)
     {
         var ttl = TimeSpan.FromSeconds(_options.ChatIdleTimeoutSeconds * 2);
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var nowMs = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
         try
         {
             await _redis.SetAsync(HeartbeatKey(agentId.Value), nowMs.ToString(), ttl).ConfigureAwait(false);

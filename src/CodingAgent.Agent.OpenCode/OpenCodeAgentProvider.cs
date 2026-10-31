@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
@@ -28,6 +29,9 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     /// wedged server must not hang a run or a kill.
     /// </summary>
     internal static readonly TimeSpan ControlCallTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long a live SSE reader gets for late events before teardown. Test seam.</summary>
+    internal TimeSpan SseDrainWindow { get; set; } = TimeSpan.FromMilliseconds(500);
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
@@ -711,6 +715,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     /// <summary>Deserializes one entry from the GET /mcp response object.</summary>
     private sealed record McpServerStatusEntry
     {
+        [JsonPropertyName("status")]
         public string? Status { get; init; }
     }
 
