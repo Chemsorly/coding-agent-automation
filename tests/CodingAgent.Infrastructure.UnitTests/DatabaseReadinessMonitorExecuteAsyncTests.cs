@@ -13,10 +13,10 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// (<c>StartAsync</c>/<c>StopAsync</c>) and do NOT require a running database.
 ///
 /// <para>
-/// Note: the first probe in every test is preceded by a hardcoded 2-second
-/// startup delay inside <c>ExecuteAsync</c>. Combined with a 1-second Npgsql
-/// connect-timeout, each failure-path test takes a minimum of ~3 s. The
-/// overall test timeout guards against indefinite hangs.
+/// Note: tests that reach a probe inject a failing one and a zero startup delay,
+/// so no real connection is attempted: whether 127.0.0.2:5432 fails within the
+/// poll window depends on the runner. The overall test timeout guards against
+/// indefinite hangs.
 /// </para>
 /// </summary>
 public sealed class DatabaseReadinessMonitorExecuteAsyncTests
@@ -130,7 +130,9 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
             healthState,
             AlwaysFailConnectionString,
             logger,
-            checkInterval: TimeSpan.FromMilliseconds(50));
+            checkInterval: TimeSpan.FromMilliseconds(50),
+            startupDelay: TimeSpan.Zero,
+            probeOverride: _ => Task.FromException(new Exception("Simulated DB probe failure")));
 
         // Overall guard against indefinite hang.
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));

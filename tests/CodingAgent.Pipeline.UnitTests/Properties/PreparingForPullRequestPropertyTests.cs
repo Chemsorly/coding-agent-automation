@@ -201,7 +201,7 @@ public class PreparingForPullRequestPropertyTests
             WorkspaceBaseDirectory = config.WorkspaceBaseDirectory,
             CodeReview = new CodeReviewConfiguration { },
             ExternalCiTimeout = config.ExternalCiTimeout,
-            ExternalCiPollInterval = config.ExternalCiPollInterval,
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(1),
             StallWarningInterval = config.StallWarningInterval,
             StallPollInterval = config.StallPollInterval,
             BlacklistedPaths = config.BlacklistedPaths,
