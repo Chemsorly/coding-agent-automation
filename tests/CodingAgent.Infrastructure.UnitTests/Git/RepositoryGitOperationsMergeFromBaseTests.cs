@@ -243,7 +243,7 @@ public sealed class RepositoryGitOperationsMergeFromBaseTests : IDisposable
 
     private Task<MergeResult> MergeFromBaseAsync() =>
         RepositoryGitOperations.MergeFromBase(
-            new WorkspacePath(_workPath), _baseBranch, "user", "token", ResiliencePipeline.Empty, CancellationToken.None);
+            new WorkspacePath(_workPath), _originPath, _baseBranch, "user", "token", ResiliencePipeline.Empty, CancellationToken.None);
 
     private void CommitOnBranch(string message, params (string Path, string Content)[] files) =>
         Commit(_workPath, message, files, []);

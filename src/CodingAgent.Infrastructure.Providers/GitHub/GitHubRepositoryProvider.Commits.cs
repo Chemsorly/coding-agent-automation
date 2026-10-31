@@ -41,7 +41,7 @@ public partial class GitHubRepositoryProvider
         ArgumentException.ThrowIfNullOrEmpty(branchName.Value);
 
         return Task.Run(() =>
-            RepositoryGitOperations.Push(workspacePath, branchName, forcePush,
+            RepositoryGitOperations.Push(workspacePath, CanonicalCloneUrl, branchName, forcePush,
                 GitConstants.TokenUsername, tokenFactory: GetTokenAsync, _gitPipeline, ct), ct);
     }
 
