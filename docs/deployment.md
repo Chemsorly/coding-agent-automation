@@ -418,7 +418,7 @@ ORCHESTRATOR_URL=http://localhost:8080 AGENT_ID=local-chat-1 AGENT_API_KEY=<key>
   dotnet run --project src/CodingAgent.Agent/ -- --mode=chat
 ```
 
-`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required.
+`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required. On Linux the worker marks itself as not dumpable at startup, so attaching a debugger to a running worker and writing a crash dump are refused. Windows and macOS are unchanged.
 
 ---
 
