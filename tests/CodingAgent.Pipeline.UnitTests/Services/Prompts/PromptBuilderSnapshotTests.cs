@@ -146,6 +146,7 @@ Analyze carefully.
 Be exhaustive within your domain. Don't stop at the first finding — scan the entire scope systematically. Consider what's MISSING (untested paths, unhandled errors, missing validation) as much as what's wrong. Check interactions between changed components — a change in one area may break assumptions in another.
 
 Do NOT implement any changes. Only analyze and recommend.
+Do NOT build the project or run tests. The pipeline is building and testing this workspace at the same time, so your commands would collide with it and their results would not be reliable.
 
 Write your analysis to the file `.agent/analysis.md` in the workspace. Do NOT print the analysis to stdout — only write it to that file.
 

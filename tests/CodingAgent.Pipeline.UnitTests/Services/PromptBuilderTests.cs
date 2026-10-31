@@ -1120,4 +1120,29 @@ public class PromptBuilderTests
     }
 
     #endregion
+
+    #region NoBuildDuringAnalysisRule
+
+    [Fact]
+    public void BuildAnalysisPrompt_ForbidsBuildsAndTests()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(PromptBuilder.NoBuildDuringAnalysisRule);
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ForbidsBuildsAndTests()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(PromptBuilder.NoBuildDuringAnalysisRule);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ForbidsBuildsAndTests()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Refine the analysis.");
+        result.Should().Contain(PromptBuilder.NoBuildDuringAnalysisRule);
+    }
+
+    #endregion
 }
