@@ -16,6 +16,12 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 /// - Fatal health-check failure sets Error on the VerifyBaseline span.
 /// - Non-critical workspace baseline failure adds exception event WITHOUT setting Error.
 /// </summary>
+/// <remarks>
+/// In the same collection as <see cref="VerifyBaselineStepTests"/> so both classes run sequentially.
+/// Each test creates a background Task.Run via BackgroundBaseline.Start; sequential execution prevents
+/// concurrent background-task accumulation that would pressure BrainLineFormat's 100 ms Regex timeout.
+/// </remarks>
+[Collection("VerifyBaselineStepTests")]
 public class VerifyBaselineStepSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;

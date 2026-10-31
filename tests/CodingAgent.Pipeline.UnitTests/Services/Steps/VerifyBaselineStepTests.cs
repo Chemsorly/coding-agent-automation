@@ -8,6 +8,14 @@ using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 
+/// <summary>
+/// Tests are in a single collection so they run sequentially. Each test creates a background Task.Run
+/// via BackgroundBaseline.Start; on a 1.5-CPU pod, many concurrent Task.Run calls cause the 100 ms
+/// Regex timeout in BrainLineFormat.TryParseSkillLine to fire under thread-pool pressure, breaking
+/// BrainSkillsReaderTests that run in parallel. Sequential execution keeps the peak concurrent
+/// background-task count at 1.
+/// </summary>
+[Collection("VerifyBaselineStepTests")]
 public class VerifyBaselineStepTests
 {
     private readonly Mock<IQualityGateValidator> _validator = new();
