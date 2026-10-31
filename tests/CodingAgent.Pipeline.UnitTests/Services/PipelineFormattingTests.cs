@@ -147,7 +147,39 @@ public class PipelineFormattingTests
         result.Should().Contain("(#123)");
     }
 
+    [Fact]
+    public void GeneratePrTitle_WhenCommitTypeGiven_ShouldUseIt()
+    {
+        var result = PipelineFormatting.GeneratePrTitle("Extract helper", "#42", ConventionalCommitTypes.Refactor);
+
+        result.Should().Be("refactor: Extract helper (#42)");
+    }
+
+    [Fact]
+    public void GeneratePrTitle_WhenCommitTypeIsNull_ShouldThrowArgumentNullException()
+    {
+        var act = () => PipelineFormatting.GeneratePrTitle("Extract helper", "#42", null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("commitType");
+    }
+
     // --- GenerateCommitMessage ---
+
+    [Fact]
+    public void GenerateCommitMessage_WhenCommitTypeGiven_ShouldUseIt()
+    {
+        var result = PipelineFormatting.GenerateCommitMessage("Extract helper", "#42", ConventionalCommitTypes.Refactor);
+
+        result.Should().StartWith("refactor: Extract helper (#42)\n\n");
+    }
+
+    [Fact]
+    public void GenerateCommitMessage_WhenCommitTypeIsNull_ShouldThrowArgumentNullException()
+    {
+        var act = () => PipelineFormatting.GenerateCommitMessage("Extract helper", "#42", null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("commitType");
+    }
 
     [Fact]
     public void GenerateCommitMessage_BasicInput_ReturnsMultiLineMessage()
