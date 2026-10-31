@@ -16,7 +16,7 @@ public interface IBrainSyncService
         CancellationToken ct, Action<string>? onOutputLine = null);
 
     /// <summary>
-    /// Writes the inbox file to the brain repo, commits and pushes (spec 054, req 3, D13).
+    /// Writes the inbox file to the brain repo through the provider's API (spec 054, req 3, D13).
     /// Sets run.BrainInboxFile, run.BrainUpdatesPushed, run.BrainPushFailed, run.BrainInboxFileUrl.
     /// Non-fatal (T6).
     /// </summary>

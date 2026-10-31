@@ -1,6 +1,8 @@
 using LibGit2Sharp;
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
 using NGitLab;
+using NGitLab.Models;
 using Polly;
 using CodingAgent.Infrastructure.Git;
 using CodingAgent.Infrastructure.Resilience;
@@ -202,6 +204,48 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
             ? HttpUrlToRepo[..^".git".Length]
             : HttpUrlToRepo;
         return $"{webUrl}/-/commit/{commitSha}";
+    }
+
+    /// <inheritdoc />
+    // The Commits API, not the Repository Files API: only it returns the commit and takes an author.
+    public async Task<RemoteFileWriteResult> WriteFileToBaseBranchAsync(
+        string relativePath, string content, string commitMessage, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(relativePath);
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentException.ThrowIfNullOrEmpty(commitMessage);
+
+        try
+        {
+            var exists = await ExecuteWithResilienceAsync(
+                client => client.GetRepository(ProjectId).Files.FileExistsAsync(relativePath, BaseBranch, ct),
+                "FileExistsOnBaseBranch", ct);
+            var commit = await ExecuteWriteWithResilienceAsync(
+                client => client.GetCommits(ProjectId).Create(new CommitCreate
+                {
+                    Branch = BaseBranch,
+                    CommitMessage = commitMessage,
+                    AuthorName = GitConstants.CommitAuthorName,
+                    AuthorEmail = GitConstants.CommitAuthorEmail,
+                    Actions =
+                    [
+                        new CreateCommitAction
+                        {
+                            Action = exists ? "update" : "create",
+                            FilePath = relativePath,
+                            Content = content,
+                            Encoding = "text"
+                        }
+                    ]
+                }),
+                "WriteFileToBaseBranch", ct);
+            return new RemoteFileWriteResult(commit.Id.ToString());
+        }
+        catch (GitLabException ex) when (ex.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Conflict)
+        {
+            // 400: "A file with this name already exists" or "doesn't exist", when another write came between.
+            throw new RemoteFileConflictException($"{relativePath} changed on {BaseBranch} during the write.", ex);
+        }
     }
 
     /// <inheritdoc />
