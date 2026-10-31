@@ -26,10 +26,25 @@ public static class BrainReviewInputRenderer
     public static string Render(BrainReviewInputModel model)
     {
         var sb = new StringBuilder();
+        RenderHeader(sb);
+        RenderBrainGroup(sb, model);
+        RenderInboxFiles(sb, model);
+        RenderInboxOverflow(sb, model);
+        RenderMalformedInbox(sb, model);
+        RenderSkillsAtCommits(sb, model);
+        RenderCurrentSkillFiles(sb, model);
+        RenderHumanCommits(sb, model);
+        return sb.ToString();
+    }
+
+    private static void RenderHeader(StringBuilder sb)
+    {
         sb.AppendLine("# Brain review input");
         sb.AppendLine();
+    }
 
-        // Brain group
+    private static void RenderBrainGroup(StringBuilder sb, BrainReviewInputModel model)
+    {
         sb.AppendLine("## Brain group");
         sb.AppendLine();
         if (model.Group is { Count: > 0 })
@@ -44,8 +59,10 @@ public static class BrainReviewInputRenderer
             sb.AppendLine("No group information available.");
         }
         sb.AppendLine();
+    }
 
-        // Inbox files
+    private static void RenderInboxFiles(StringBuilder sb, BrainReviewInputModel model)
+    {
         sb.AppendLine("## Inbox files");
         sb.AppendLine();
         foreach (var file in model.InboxFiles)
@@ -65,12 +82,17 @@ public static class BrainReviewInputRenderer
             }
             sb.AppendLine();
         }
+    }
 
+    private static void RenderInboxOverflow(StringBuilder sb, BrainReviewInputModel model)
+    {
         if (model.InboxFilesLeft > 0)
             sb.AppendLine($"Inbox files left for the next review: {model.InboxFilesLeft}");
         sb.AppendLine();
+    }
 
-        // Malformed inbox
+    private static void RenderMalformedInbox(StringBuilder sb, BrainReviewInputModel model)
+    {
         if (model.MalformedInbox.Count > 0)
         {
             sb.AppendLine("## Malformed inbox files (excluded)");
@@ -79,8 +101,10 @@ public static class BrainReviewInputRenderer
                 sb.AppendLine($"- {bad.Path}: {bad.Reason}");
             sb.AppendLine();
         }
+    }
 
-        // Skills at injected commits
+    private static void RenderSkillsAtCommits(StringBuilder sb, BrainReviewInputModel model)
+    {
         sb.AppendLine("## Skills at injected commits");
         sb.AppendLine();
         foreach (var (sha, files) in model.SkillsAtCommits)
@@ -102,15 +126,19 @@ public static class BrainReviewInputRenderer
             }
             sb.AppendLine();
         }
+    }
 
-        // Current skill files
+    private static void RenderCurrentSkillFiles(StringBuilder sb, BrainReviewInputModel model)
+    {
         sb.AppendLine("## Current skill files");
         sb.AppendLine();
         foreach (var f in model.CurrentFiles)
             sb.AppendLine($"- {f.Path} ({f.LineCount} lines)");
         sb.AppendLine();
+    }
 
-        // Human commits
+    private static void RenderHumanCommits(StringBuilder sb, BrainReviewInputModel model)
+    {
         sb.AppendLine("## Human commits since the last review");
         sb.AppendLine();
         if (model.HumanCommits.Count > 0)
@@ -118,7 +146,5 @@ public static class BrainReviewInputRenderer
                 sb.AppendLine($"- {c.Sha[..Math.Min(8, c.Sha.Length)]}: {c.Message}");
         else
             sb.AppendLine("No human commits.");
-
-        return sb.ToString();
     }
 }

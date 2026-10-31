@@ -447,7 +447,7 @@ public partial class QualityGateExecutor
         try
         {
             var issueRef = context.IssueReference ?? $"#{run.IssueIdentifier}";
-            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, issueRef);
+            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, issueRef, run.CommitType);
             var blacklisted = await context.RepoProvider.CommitAllAsync(
                 run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct,
                 config.PipelineInjectedPaths);

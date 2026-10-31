@@ -394,18 +394,23 @@ public sealed class AgentOrphanRecoveryService(
             return;
         }
 
-        // Restore the most recent orphaned run as the active job so the
-        // disconnect grace period timer applies. If the agent truly lost the job,
-        // ReconciliationService (JobController) will time out the run after the grace period.
-        var mostRecent = orphanedRuns[^1];
+        // Iterate from most-recent to oldest and restore the first restorable candidate.
+        // Using continue per entry (rather than return) ensures that a terminal history entry
+        // at [^1] does not silently abandon older runs that are still legitimately restorable.
+        // Only one run is ever activated per registration cycle (return after ActivateOrphanedRun).
+        for (int i = orphanedRuns.Count - 1; i >= 0; i--)
+        {
+            var candidate = orphanedRuns[i];
 
-        if (!await VerifyOrphanOwnershipAsync(agentId, mostRecent, ct))
+            if (!await VerifyOrphanOwnershipAsync(agentId, candidate, ct))
+                continue;
+
+            if (await CheckOrphanInHistoryAsync(agentId, candidate, ct))
+                continue;
+
+            ActivateOrphanedRun(agentId, entry, candidate, orphanedRuns.Count);
             return;
-
-        if (await CheckOrphanInHistoryAsync(agentId, mostRecent, ct))
-            return;
-
-        ActivateOrphanedRun(agentId, entry, mostRecent, orphanedRuns.Count);
+        }
     }
 
     /// <summary>
@@ -437,20 +442,16 @@ public sealed class AgentOrphanRecoveryService(
     /// state — in that case restoration should be skipped. Returns <c>false</c> when the run is not
     /// in history (or history is unavailable — fail-open).
     /// </summary>
-    private async Task<bool> CheckOrphanInHistoryAsync(AgentId agentId, PipelineRun mostRecent, CancellationToken ct)
+    private async Task<bool> CheckOrphanInHistoryAsync(AgentId agentId, PipelineRun candidate, CancellationToken ct)
     {
         // Guard: don't re-activate a run that is already in history as a non-Cancelled/
         // non-Failed terminal state (e.g. Completed, PrMerged, PrClosed, ConflictRestart).
         // Mirrors the history check in RestoreRunFromAgentStateAsync. Cancelled/Failed runs
         // remain restorable — they may be legitimately re-dispatched.
-        // TODO [WARNING]: Early return when inHistory==true skips processing of any other orphaned runs in
-        // the active set. If mostRecent is a completed run but older entries are legitimately restorable,
-        // they are silently ignored this cycle. Assess whether the active set can hold multiple orphans
-        // for one agent; if so, iterate over all entries rather than only inspecting orphanedRuns[^1].
         PipelineRunSummary? summary;
         try
         {
-            summary = await _facade.GetRunSummaryAsync(mostRecent.RunId, ct);
+            summary = await _facade.GetRunSummaryAsync(candidate.RunId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -473,7 +474,7 @@ public sealed class AgentOrphanRecoveryService(
         {
             _logger.Information(
                 "Agent {AgentId} has orphaned run {RunId} in active set but it is already in history as a terminal non-retryable state — skipping restoration",
-                agentId, mostRecent.RunId);
+                agentId, candidate.RunId);
             return true;
         }
 

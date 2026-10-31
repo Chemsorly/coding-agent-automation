@@ -443,8 +443,15 @@ public sealed class AutoConsolidationServiceTests
             AutoBrainConsolidationAfterRuns = 5,
         });
 
-        // Must complete without throwing even when the trigger returns null
         await sut.RunOnceAsync(CancellationToken.None);
+
+        // Confirms the trigger was actually called (threshold was crossed and null result was handled).
+        _consolidation.Verify(
+            c => c.TriggerAutomaticAsync(
+                ConsolidationRunType.BrainConsolidation,
+                It.IsAny<TemplateId?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ── WorkItemRefusedException handler ──────────────────────────────────

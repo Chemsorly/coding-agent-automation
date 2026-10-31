@@ -28,7 +28,7 @@ public sealed partial class PipelineLoopService
             if (snapshot is null)
             {
                 PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "failure"));
-                await DelayOrStop(TimeSpan.FromSeconds(5), ct);
+                await DelayOrStop(TestWaitOverride ?? TimeSpan.FromSeconds(5), ct);
                 continue;
             }
 
@@ -77,7 +77,7 @@ public sealed partial class PipelineLoopService
                 //   and inflated ProcessedCount/FailedCount for the abandoned partial cycle regardless.
                 //   Confirm the dedup window is fully closed before removing this note.
                 _logger.Warning(ex, "Pipeline loop: transient API failure mid-cycle — backing off and retrying");
-                await DelayOrStop(TimeSpan.FromSeconds(5), ct);
+                await DelayOrStop(TestWaitOverride ?? TimeSpan.FromSeconds(5), ct);
             }
         }
     }

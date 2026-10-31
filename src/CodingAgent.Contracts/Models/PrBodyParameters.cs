@@ -11,6 +11,8 @@ public sealed record PrBodyParameters
     public IReadOnlyList<IssueComment>? Comments { get; init; }
     public IReadOnlyList<string>? BlacklistedFilesDetected { get; init; }
     public string? ModelName { get; init; }
+    /// <summary>The run's cost up to this body update (see <see cref="RunUsage.CostText"/>), or null when none was reported.</summary>
+    public string? CostText { get; init; }
     public string? CloseReference { get; init; }
     public AcceptanceCriteriaReport? ComplianceReport { get; init; }
 }
