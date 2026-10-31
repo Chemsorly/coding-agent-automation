@@ -41,6 +41,13 @@ public static partial class CiLogEvidenceExtractor
             string? raw;
             while ((raw = reader.ReadLine()) is not null)
             {
+                // Fast path: skip lines that cannot possibly match either kept pattern.
+                // Both markers appear after any timestamp/shard prefix, so they are present
+                // in the raw line whenever they are present in the stripped line.
+                if (!raw.Contains(QualityGateMarker, StringComparison.Ordinal) &&
+                    !raw.Contains(ErrorMarker, StringComparison.Ordinal))
+                    continue;
+
                 var line = StripPrefixes(raw);
                 if (line.Contains(QualityGateMarker, StringComparison.Ordinal))
                 {
