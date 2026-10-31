@@ -76,7 +76,7 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
             var token = await GetTokenAsync(ct);
 
             // Derive clone URL
-            var cloneUrl = $"{WebBaseUrl}/{Owner}/{Repo}.git";
+            var cloneUrl = CanonicalCloneUrl;
 
             await RepositoryGitOperations.Clone(workspacePath, cloneUrl, _baseBranch, GitConstants.TokenUsername, token, _gitPipeline, ct);
         }, ct);
@@ -105,6 +105,9 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
         }
     }
 
+    /// <summary>This repository's clone URL, from the configured API URL, owner and repo. Never read from a workspace.</summary>
+    internal string CanonicalCloneUrl => $"{WebBaseUrl}/{Owner}/{Repo}.git";
+
     /// <inheritdoc />
     public string? GetCommitWebUrl(string commitSha) =>
         string.IsNullOrEmpty(WebBaseUrl) || string.IsNullOrEmpty(commitSha)
@@ -118,7 +121,7 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
         return Task.Run(async () =>
         {
             var token = await GetTokenAsync(ct);
-            await RepositoryGitOperations.Pull(workspacePath, _baseBranch, GitConstants.TokenUsername, token, _gitPipeline, ct);
+            await RepositoryGitOperations.Pull(workspacePath, CanonicalCloneUrl, _baseBranch, GitConstants.TokenUsername, token, _gitPipeline, ct);
         }, ct);
     }
 

@@ -217,4 +217,37 @@ public class RepositoryGitOperationsPushRetryTests
 
         pushCallCount.Should().Be(1);
     }
+
+    /// <summary>
+    /// When the remote is refused (credentials binding rejected the target server),
+    /// the push must not be retried — one attempt, one token fetch, and an InvalidOperationException.
+    /// </summary>
+    [Fact]
+    public async Task PushWithTokenFactory_WhenTheRemoteIsRefused_DoesNotRetry()
+    {
+        var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(
+            Log.Logger,
+            timeout: TimeSpan.FromSeconds(10),
+            outerTimeout: TimeSpan.FromSeconds(30));
+
+        var pushCallCount = 0;
+        var tokenCallCount = 0;
+        var fakePushAction = new Func<string, Task>(token =>
+        {
+            pushCallCount++;
+            throw new LibGit2SharpException(PushErrorClassifier.RemoteRefusedMarker + " 'x.test'.");
+        });
+
+        Func<Task> act = () => RepositoryGitOperations.PushWithTokenFactory(
+            tokenFactory: _ => { tokenCallCount++; return Task.FromResult("token"); },
+            tokenUsername: "x-access-token",
+            pushAction: fakePushAction,
+            pipeline: pipeline,
+            ct: CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        pushCallCount.Should().Be(1, "RemoteRefused is permanent — must not retry");
+        tokenCallCount.Should().Be(1, "only one token fetch for one attempt");
+    }
 }

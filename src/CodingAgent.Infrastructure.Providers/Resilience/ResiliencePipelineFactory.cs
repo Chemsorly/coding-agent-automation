@@ -391,7 +391,8 @@ public static class ResiliencePipelineFactory
         var message = ex.Message;
 
         // Non-retryable patterns (permanent failures even with a fresh token)
-        if (message.Contains("protected branch", StringComparison.OrdinalIgnoreCase) ||
+        if (message.Contains(PushErrorClassifier.RemoteRefusedMarker, StringComparison.Ordinal) ||
+            message.Contains("protected branch", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("required status check", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||

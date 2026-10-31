@@ -14,10 +14,10 @@ public interface IBrainUpdateService
     Task<BrainSyncResult> CommitAndPushAsync(string brainPath, RunId runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
 
     /// <summary>
-    /// Discards changes outside the inbox file, stages and commits it, then pushes with retry/rebase (spec 054, req 3.7).
-    /// Non-fatal (T6). Returns a <see cref="BrainSyncResult"/> with the discarded paths.
+    /// Writes one inbox file through the brain provider's API, with no local git. Retries when the provider
+    /// reports a conflict. Non-fatal (T6). The result carries the commit.
     /// </summary>
-    Task<BrainSyncResult> CommitInboxAndPushAsync(string brainPath, string relativePath, string message, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
+    Task<BrainSyncResult> WriteInboxFileAsync(string relativePath, string text, string message, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
 
     /// <summary>
     /// Pushes a committed brain consolidation to the brain's base branch. Retries on non-fast-forward.

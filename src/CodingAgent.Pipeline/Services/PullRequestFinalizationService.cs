@@ -655,18 +655,8 @@ public sealed class PullRequestFinalizationService
             var relativePath = run.BrainInboxFile
                 ?? Brain.BrainLayout.InboxFileName(DateOnly.FromDateTime(DateTime.UtcNow), run.RunId);
 
-            // Read existing text for rewrite support (DD8)
-            string? existingText = null;
-            if (run.BrainInboxFile is not null)
-            {
-                var existing = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory,
-                    run.BrainInboxFile.Replace('/', Path.DirectorySeparatorChar));
-                if (File.Exists(existing))
-                {
-                    try { existingText = await File.ReadAllTextAsync(existing, new System.Text.UTF8Encoding(false, true), ct); }
-                    catch { /* non-fatal */ }
-                }
-            }
+            // Rewrite support (DD8), from memory: the file in .brain/ can be changed by the agent.
+            var existingText = run.BrainInboxFile is null ? null : run.BrainInboxText;
 
             var header = new Brain.BrainInboxHeader(
                 RunId: run.RunId,

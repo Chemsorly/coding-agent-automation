@@ -219,6 +219,12 @@ public sealed class PipelineStepContext
     /// </summary>
     public IReadOnlyList<DownloadedImage>? DownloadedImages { get; set; }
 
+    /// <summary>
+    /// The workspace baseline while it runs next to the analysis. Started by <see cref="VerifyBaselineStep"/>,
+    /// cleared by <see cref="AwaitBaselineStep"/>. Null when none is running.
+    /// </summary>
+    internal BackgroundBaseline? RunningBaseline { get; set; }
+
     /// <summary>Whether the dispatch layer determined that analysis should be force-refreshed.</summary>
     public bool ForceRefreshAnalysis { get; set; }
 

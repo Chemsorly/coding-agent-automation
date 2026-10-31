@@ -12,6 +12,7 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
      --set database.host=postgres.coding-agent.svc.cluster.local \
      --set database.auth.existingSecret=postgres-secret \
      --set signalr.redis.connectionString=<redis-host>:6379 \
+     --set 'agentNetworkPolicy.clusterCidrs={<pod-cidr>,<service-cidr>}' \
      --set scheduler.image.tag=coding-agent-scheduler-<version>
    ```
 
