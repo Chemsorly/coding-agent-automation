@@ -334,7 +334,11 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     {
         // Issue #3369: a reviewer's summary named the markers in prose, was counted as a CRITICAL finding,
         // and the loop sent a CRITICAL fix prompt and reviewed again.
+        // A [WARNING] finding is included to keep the fix prompt dispatched (per issue #4056: suggestions-only
+        // no longer trigger a fix prompt). The prose lines still embed [CRITICAL] and [WARNING] markers that
+        // must not be double-counted.
         SetupAgentWritingFindings("correctness",
+            "[WARNING] Extract helper method for readability\n" +
             "No issues were found in the changed code that rise to [CRITICAL] or [WARNING] severity under the\n" +
             "stated checklist. One [SUGGESTION] is noted below.\n" +
             "[SUGGESTION] src/Service.cs:12 — Rename the helper");
@@ -343,9 +347,9 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
         _run.CodeReviewCriticalCount.Should().Be(0);
-        _run.CodeReviewWarningCount.Should().Be(0);
+        _run.CodeReviewWarningCount.Should().Be(1);
         _run.CodeReviewSuggestionCount.Should().Be(1);
-        // Review agent + one fix prompt for the suggestion + summary agent = 3 calls; no second review iteration.
+        // Review agent + one fix prompt for the warning + summary agent = 3 calls; no second review iteration.
         _run.CodeReviewIterationsCompleted.Should().Be(1);
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
     }
@@ -536,6 +540,27 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         _run.CodeReviewCriticalCount.Should().Be(0);
         _run.CodeReviewWarningCount.Should().Be(0);
+        _run.CodeReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReviewAgent_NoMarkersInFindings_CountsZero()
+    {
+        // Agent writes a findings file containing only prose — no [SEVERITY] markers.
+        // The EarlyStopRule tells agents to write a short statement and stop; this test verifies that
+        // prose-only output (e.g. "The diff has nothing in my focus area.") parses to zero counts
+        // and does not fail the review iteration.
+        const string proseOnly =
+            "The diff has nothing in my focus area.\n" +
+            "No issues found. All changes are within scope.\n";
+        SetupAgentWritingFindings("Correctness", proseOnly);
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null } };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        _run.CodeReviewCriticalCount.Should().Be(0);
+        _run.CodeReviewWarningCount.Should().Be(0);
+        _run.CodeReviewSuggestionCount.Should().Be(0);
         _run.CodeReviewIterationsCompleted.Should().Be(1);
     }
 
@@ -1421,6 +1446,42 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             skipFixPrompt: false, fixPrompt: "", iterationCriticalCount: 5, iterationFindingsText: "[CRITICAL] something");
 
         result.Should().Be(AgentPhaseExecutor.FixPromptDecision.Skip);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_SuggestionsOnly_ReturnsNoFindingsBreak()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: "Fix it", iterationCriticalCount: 0,
+            iterationFindingsText: "[SUGGESTION] rename this");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_ProseWithoutMarkers_ReturnsNoFindingsBreak()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: "Fix it", iterationCriticalCount: 0,
+            iterationFindingsText: "No issues found. No [WARNING] items.");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_NumberedWarning_ReturnsSendFixAndBreak()
+    {
+        // TODO [WARNING]: This test would also pass under the pre-fix !string.IsNullOrEmpty implementation
+        // (non-empty string → SendFixAndBreak), so it is not a regression guard for issue #4056.
+        // Its value is validating that numbered-list [WARNING] prefixes are correctly counted by
+        // SeverityParser. The actual regression guards are DetermineFixPromptAction_SuggestionsOnly_ReturnsNoFindingsBreak
+        // and DetermineFixPromptAction_ProseWithoutMarkers_ReturnsNoFindingsBreak, which both fail under
+        // the old implementation.
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: "Fix it", iterationCriticalCount: 0,
+            iterationFindingsText: "1. [WARNING] minor issue");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.SendFixAndBreak);
     }
 
     #endregion

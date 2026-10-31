@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline.CodeReview;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Models;
@@ -181,7 +182,7 @@ public partial class AgentPhaseExecutor
         if (iterationCriticalCount > 0)
             return FixPromptDecision.SendFixAndContinue;
 
-        if (!string.IsNullOrEmpty(iterationFindingsText))
+        if (SeverityParser.Parse(iterationFindingsText.Split('\n')).Warning > 0)
             return FixPromptDecision.SendFixAndBreak;
 
         return FixPromptDecision.NoFindingsBreak;
@@ -196,7 +197,7 @@ public partial class AgentPhaseExecutor
         /// <summary>Warnings/suggestions only — send fix prompt then exit the review loop.</summary>
         SendFixAndBreak,
 
-        /// <summary>No findings at all — exit the review loop immediately.</summary>
+        /// <summary>No critical or warning findings — exit the review loop immediately.</summary>
         NoFindingsBreak,
 
         /// <summary>Fix prompt is skipped (review run) or not configured — continue to next iteration.</summary>
