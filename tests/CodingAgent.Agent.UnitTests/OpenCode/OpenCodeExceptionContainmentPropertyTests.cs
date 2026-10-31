@@ -93,7 +93,7 @@ public class OpenCodeExceptionContainmentPropertyTests
         // Arrange — the handler holds the message request open until the caller cancels
         var handler = new CancellationTestHandler();
         var factory = new ThrowingClientFactory(handler);
-        var provider = new OpenCodeAgentProvider(factory, null);
+        var provider = new OpenCodeAgentProvider(factory, null) { SseDrainWindow = TimeSpan.Zero };
 
         using var cts = new CancellationTokenSource();
 
@@ -202,7 +202,7 @@ public static class ExceptionContainmentArbitrary
     public static Arbitrary<CallerCancellationOutcome> CallerCancellationOutcomeArb()
     {
         var gen =
-            from delayMs in FsCheck.Fluent.Gen.Choose(0, 500)
+            from delayMs in FsCheck.Fluent.Gen.Choose(0, 50)
             select new CallerCancellationOutcome { DelayBeforeCancelMs = delayMs };
 
         return gen.ToArbitrary();

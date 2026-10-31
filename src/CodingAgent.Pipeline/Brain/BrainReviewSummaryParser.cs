@@ -208,15 +208,31 @@ public static partial class BrainReviewSummaryParser
     public static CodingAgent.Pipeline.Models.BrainConsolidationOutcome Cap(
         CodingAgent.Pipeline.Models.BrainConsolidationOutcome o)
     {
-        var lines = o.Lines.ToList();
-        while (lines.Count > 0)
+        var all = o.Lines.ToList();
+        if (Fits(WithFirstLines(o, all, all.Count)))
+            return WithFirstLines(o, all, all.Count);
+
+        // Binary search for the longest prefix that fits: the size grows with the line count, and
+        // serializing the whole outcome once per removed line took seconds on a long review.
+        var low = 0;
+        var high = all.Count - 1;
+        while (low < high)
         {
-            var candidate = o with { Lines = lines, LinesTruncated = lines.Count < o.Lines.Count };
-            var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(candidate);
-            if (json.Length <= BrainLayout.MaxReviewSummaryBytes)
-                return candidate;
-            lines.RemoveAt(lines.Count - 1);
+            var mid = (low + high + 1) / 2;
+            if (Fits(WithFirstLines(o, all, mid)))
+                low = mid;
+            else
+                high = mid - 1;
         }
-        return o with { Lines = [], LinesTruncated = o.Lines.Count > 0 };
+        return WithFirstLines(o, all, low);
     }
+
+    private static CodingAgent.Pipeline.Models.BrainConsolidationOutcome WithFirstLines(
+        CodingAgent.Pipeline.Models.BrainConsolidationOutcome o,
+        List<CodingAgent.Pipeline.Models.BrainReviewLine> all,
+        int count)
+        => o with { Lines = all.GetRange(0, count), LinesTruncated = count < all.Count };
+
+    private static bool Fits(CodingAgent.Pipeline.Models.BrainConsolidationOutcome candidate)
+        => System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(candidate).Length <= BrainLayout.MaxReviewSummaryBytes;
 }

@@ -9,6 +9,7 @@ using CodingAgent.Pipeline.Telemetry;
 using k8s.Autorest;
 using k8s.Models;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Serilog;
 
@@ -116,7 +117,8 @@ public class ChatJobDispatcherTests
         AgentRegistryService? registry = null,
         DispatchServiceOptions? options = null,
         CodingAgent.Orchestration.Redis.IRedisStore? redis = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        TimeProvider? timeProvider = null)
     {
         return new ChatJobDispatcher(
             jobClient ?? CreateJobClientMock().Object,
@@ -125,7 +127,8 @@ public class ChatJobDispatcherTests
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
             logger ?? Mock.Of<ILogger>(),
-            redis);
+            redis,
+            timeProvider);
     }
 
     // ─── 1. DispatchChatPodAsync — no existing chat job ───────────────────────
@@ -1457,6 +1460,130 @@ public class ChatJobDispatcherTests
 
     // ─── Circuit-based lifecycle: idle-kill tests ─────────────────────────────
 
+    // These tests run on the production defaults (ChatIdleTimeoutSeconds = 90, so a 10s poll) and a
+    // fake clock: no window is shrunk and nothing waits in real time.
+    private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(10);
+
+    // 90s after the last heartbeat the session is exactly at the idle timeout, not over it yet.
+    private const int PollsUpToIdleTimeout = 9;
+
+    // Long enough that the watcher would have idle-killed the session had it missed the keepalive.
+    private const int PollsPastIdleTimeout = 12;
+
+    /// <summary>
+    /// Fake clock that drives the chat watcher one poll at a time. Only the watcher creates timers on it,
+    /// one per poll delay, so <see cref="WatcherParkedAsync"/> completing proves the watcher has finished
+    /// a whole check and now waits for the next poll: a test can assert on that check without a race.
+    /// </summary>
+    private sealed class WatcherClock : FakeTimeProvider
+    {
+        private readonly SemaphoreSlim _parked = new(0);
+        private long _lastPollDelayTicks;
+
+        public TimeSpan LastPollDelay => TimeSpan.FromTicks(Interlocked.Read(ref _lastPollDelayTicks));
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            Interlocked.Exchange(ref _lastPollDelayTicks, dueTime.Ticks);
+            _parked.Release();
+            return timer;
+        }
+
+        /// <summary>Waits until the watcher has finished its current check and started its poll delay.</summary>
+        public async Task WatcherParkedAsync()
+        {
+            if (!await _parked.WaitAsync(TimeSpan.FromSeconds(60)))
+                throw new TimeoutException("The watcher did not reach its next poll delay: it exited or hung.");
+        }
+
+        /// <summary>Lets <paramref name="polls"/> poll delays elapse, each followed by a complete watcher check.</summary>
+        public async Task ElapsePollsAsync(int polls)
+        {
+            for (var i = 0; i < polls; i++)
+            {
+                Advance(DefaultPollInterval);
+                await WatcherParkedAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Grace period 0: the idle-kill path always waits out the full grace period before it force-deletes
+    /// (see the TODO in ChatSessionWatcher.TryTriggerIdleKillAsync), and that wait runs in real time.
+    /// </summary>
+    private static DispatchServiceOptions CreateIdleKillOptions() => CreateOptions(gracePeriod: 0);
+
+    /// <summary>
+    /// Starting from the last heartbeat, runs the clock up to the idle timeout and one poll past it,
+    /// and expects the pod to survive up to the timeout and to be deleted once on the poll after it.
+    /// </summary>
+    private static async Task ExpectIdleKillAfterTimeoutAsync(
+        WatcherClock clock,
+        ChatJobDispatcher dispatcher,
+        Mock<IKubernetesJobClient> jobClientMock,
+        string jobName,
+        string because)
+    {
+        await clock.ElapsePollsAsync(PollsUpToIdleTimeout);
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the pod must not be deleted before the idle timeout has passed");
+
+        clock.Advance(DefaultPollInterval);
+
+        var watcherDone = await dispatcher.WaitForWatcherAsync(jobName, TimeSpan.FromSeconds(60));
+        watcherDone.Should().BeTrue(because);
+
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == jobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            because);
+    }
+
+    /// <summary>
+    /// The poll interval is a third of the idle timeout, clamped to 1–10 s. 90 is the production default
+    /// and 10 the minimum <see cref="DispatchServiceOptions.ValidateAndClamp"/> allows.
+    /// </summary>
+    [Theory]
+    [InlineData(90, 10)]
+    [InlineData(3600, 10)]
+    [InlineData(12, 4)]
+    [InlineData(10, 3)]
+    [InlineData(1, 1)]
+    public async Task WatcherIdleKill_PollInterval_IsAThirdOfIdleTimeoutClampedToOneToTenSeconds(
+        int idleTimeoutSeconds, int expectedPollSeconds)
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, j.Metadata.Name, dispatchId, "conn-poll-interval");
+            })
+            .Returns(Task.CompletedTask);
+
+        var options = CreateIdleKillOptions();
+        options.ChatIdleTimeoutSeconds = idleTimeoutSeconds;
+
+        var clock = new WatcherClock();
+        await using var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            registry: registry,
+            options: options,
+            timeProvider: clock);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
+
+        clock.LastPollDelay.Should().Be(TimeSpan.FromSeconds(expectedPollSeconds));
+    }
+
     /// <summary>
     /// When the client never sends a keepalive after dispatch, the watcher should
     /// terminate the pod once ChatIdleTimeoutSeconds elapses with no heartbeat.
@@ -1481,52 +1608,21 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // Very short idle timeout so the test completes fast
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2; // 2s without a heartbeat → kill
-
+        var clock = new WatcherClock();
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            options: options,
-            redis: new CodingAgent.Web.TestUtilities.FakeRedisStore());
+            options: CreateIdleKillOptions(),
+            redis: new CodingAgent.Web.TestUtilities.FakeRedisStore(),
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
 
         // No heartbeat sent — watcher should auto-terminate after ChatIdleTimeoutSeconds
-
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
-        watcherDone.Should().BeTrue("watcher must exit after idle timeout expires");
-
-        // Pod must be terminated (CancelChat + force-delete path)
-        jobClientMock.Verify(c => c.DeleteJobAsync(
-            It.Is<string>(n => n == createdJobName),
-            TestNamespace,
-            It.IsAny<CancellationToken>()),
-            Times.Once,
+        await ExpectIdleKillAfterTimeoutAsync(
+            clock, dispatcher, jobClientMock, createdJobName!,
             "pod must be force-deleted when no client heartbeat arrives within ChatIdleTimeoutSeconds");
-    }
-
-    /// <summary>
-    /// Calls <paramref name="sendHeartbeat"/> at once and then every 200 ms from a dedicated thread,
-    /// until the returned action is invoked. A dedicated thread keeps sending while thread-pool work
-    /// (the watcher) is delayed, so a stalled test host cannot cause a false idle-kill.
-    /// </summary>
-    private static Action StartHeartbeats(Action sendHeartbeat)
-    {
-        var stop = new ManualResetEventSlim(false);
-        var thread = new Thread(() =>
-        {
-            do { sendHeartbeat(); } while (!stop.Wait(TimeSpan.FromMilliseconds(200)));
-        })
-        { IsBackground = true, Name = "test-heartbeats" };
-        thread.Start();
-        return () =>
-        {
-            stop.Set();
-            thread.Join();
-            stop.Dispose();
-        };
     }
 
     /// <summary>
@@ -1553,46 +1649,35 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // Idle timeout of 2s; heartbeats every 200ms for 6s, then they stop
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2;
-
-        var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
+        var clock = new WatcherClock();
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            options: options,
-            redis: fakeRedis);
+            options: CreateIdleKillOptions(),
+            redis: new CodingAgent.Web.TestUtilities.FakeRedisStore(),
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
 
-        // Without heartbeats the watcher would exit about 3–4s after dispatch: idle > 2s is seen
-        // at the next 1s poll, then termination waits the 1s grace period. A 6s window can only
-        // pass when the heartbeats are honoured.
-        var stopHeartbeats = StartHeartbeats(() => dispatcher.RecordClientHeartbeat(createdJobName!));
-        try
+        // A heartbeat after every poll, for longer than the idle timeout: this can only pass when
+        // the heartbeats are honoured.
+        for (var poll = 0; poll < PollsPastIdleTimeout; poll++)
         {
-            var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(6));
-            watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving");
-            jobClientMock.Verify(c => c.DeleteJobAsync(
-                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
-                Times.Never,
-                "the pod must not be deleted while client heartbeats are arriving");
+            await clock.ElapsePollsAsync(1);
+            dispatcher.RecordClientHeartbeat(createdJobName!);
         }
-        finally
-        {
-            stopHeartbeats();
-        }
+
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.Zero);
+        watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving");
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the pod must not be deleted while client heartbeats are arriving");
 
         // Heartbeats have stopped: the idle kill must fire now
-        var idleKillDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
-        idleKillDone.Should().BeTrue("watcher must exit after heartbeats stop and idle timeout fires");
-
-        jobClientMock.Verify(c => c.DeleteJobAsync(
-            It.Is<string>(n => n == createdJobName),
-            TestNamespace,
-            It.IsAny<CancellationToken>()),
-            Times.Once,
+        await ExpectIdleKillAfterTimeoutAsync(
+            clock, dispatcher, jobClientMock, createdJobName!,
             "pod must be force-deleted after heartbeats stop");
     }
 
@@ -1620,45 +1705,36 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // Idle timeout of 2s; heartbeats every 200ms for 6s, then they stop
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2;
-
         // No Redis: the watcher sees only the local ticks that RecordClientHeartbeat writes.
+        var clock = new WatcherClock();
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            options: options,
-            redis: null);
+            options: CreateIdleKillOptions(),
+            redis: null,
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
 
-        // Without honoured heartbeats the watcher would exit about 3–4s after dispatch, so a 6s window
-        // can only pass when the local tick update keeps the session alive.
-        var stopHeartbeats = StartHeartbeats(() => dispatcher.RecordClientHeartbeat(createdJobName!));
-        try
+        // A heartbeat after every poll, for longer than the idle timeout: this can only pass when the
+        // local tick update keeps the session alive.
+        for (var poll = 0; poll < PollsPastIdleTimeout; poll++)
         {
-            var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(6));
-            watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving without Redis");
-            jobClientMock.Verify(c => c.DeleteJobAsync(
-                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
-                Times.Never,
-                "the pod must not be deleted while client heartbeats are arriving without Redis");
+            await clock.ElapsePollsAsync(1);
+            dispatcher.RecordClientHeartbeat(createdJobName!);
         }
-        finally
-        {
-            stopHeartbeats();
-        }
+
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.Zero);
+        watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving without Redis");
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the pod must not be deleted while client heartbeats are arriving without Redis");
 
         // Heartbeats have stopped: the idle kill must fire now
-        var idleKillDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
-        idleKillDone.Should().BeTrue("watcher must exit after heartbeats stop and idle timeout fires");
-
-        jobClientMock.Verify(c => c.DeleteJobAsync(
-            It.Is<string>(n => n == createdJobName),
-            TestNamespace,
-            It.IsAny<CancellationToken>()),
-            Times.Once,
+        await ExpectIdleKillAfterTimeoutAsync(
+            clock, dispatcher, jobClientMock, createdJobName!,
             "pod must be force-deleted after heartbeats stop");
     }
 
@@ -1695,18 +1771,19 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2;
+        var options = CreateIdleKillOptions();
 
         // Shared Redis store — simulates the shared Redis instance in a multi-replica deployment
         var sharedRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
+        var clock = new WatcherClock();
 
         // Dispatcher A — owns the watcher, uses shared Redis
         await using var dispatcherA = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registryA,
             options: options,
-            redis: sharedRedis);
+            redis: sharedRedis,
+            timeProvider: clock);
 
         // Dispatcher B — "remote replica": separate registry (no WatcherEntry), same Redis
         var registryB = CreateRegistry(); // no agents registered on B
@@ -1714,39 +1791,32 @@ public class ChatJobDispatcherTests
             jobClient: CreateJobClientMock().Object,
             registry: registryB,
             options: options,
-            redis: sharedRedis);
+            redis: sharedRedis,
+            timeProvider: clock);
 
         await dispatcherA.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
 
-        // Send heartbeats via dispatcher B. B has no WatcherEntry, so local ticks on A are never
-        // updated by B: B writes only to sharedRedis, and A's watcher must read Redis to see them.
-        // Without heartbeats A's watcher would exit about 3–4s after dispatch, so a 6s window can only
-        // pass when the cross-replica heartbeats are honoured.
-        var stopHeartbeats = StartHeartbeats(() => dispatcherB.RecordClientHeartbeat(createdJobName!));
-        try
+        // Send heartbeats via dispatcher B, for longer than the idle timeout. B has no WatcherEntry, so
+        // local ticks on A are never updated by B: B writes only to sharedRedis, and A's watcher must
+        // read Redis to see them. This can only pass when the cross-replica heartbeats are honoured.
+        for (var poll = 0; poll < PollsPastIdleTimeout; poll++)
         {
-            var killedEarly = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(6));
-            killedEarly.Should().BeFalse(
-                "watcher must NOT idle-kill the pod while a remote replica is sending heartbeats via Redis");
-            jobClientMock.Verify(c => c.DeleteJobAsync(
-                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
-                Times.Never,
-                "the pod must not be deleted while a remote replica is sending heartbeats");
+            await clock.ElapsePollsAsync(1);
+            dispatcherB.RecordClientHeartbeat(createdJobName!);
         }
-        finally
-        {
-            stopHeartbeats();
-        }
+
+        var killedEarly = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.Zero);
+        killedEarly.Should().BeFalse(
+            "watcher must NOT idle-kill the pod while a remote replica is sending heartbeats via Redis");
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the pod must not be deleted while a remote replica is sending heartbeats");
 
         // B's heartbeats have stopped; A's watcher should now detect idle and terminate
-        var idleKillDone = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
-        idleKillDone.Should().BeTrue("watcher must idle-kill the pod after cross-replica heartbeats stop");
-
-        jobClientMock.Verify(c => c.DeleteJobAsync(
-            It.Is<string>(n => n == createdJobName),
-            TestNamespace,
-            It.IsAny<CancellationToken>()),
-            Times.Once,
+        await ExpectIdleKillAfterTimeoutAsync(
+            clock, dispatcherA, jobClientMock, createdJobName!,
             "pod must be force-deleted when cross-replica heartbeats stop");
     }
 
@@ -1767,13 +1837,15 @@ public class ChatJobDispatcherTests
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
 
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        // Use a 10s idle timeout — well above the 3s WaitForWatcherAsync observation window.
-        // With a 2s timeout the single heartbeat written at dispatch would expire during the
-        // observation window and trigger idle-kill, making the test a false negative.
-        options.ChatIdleTimeoutSeconds = 10;
-
         var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
+        var clock = new WatcherClock();
+
+        void WriteRecentHeartbeat()
+        {
+            var nowMs = clock.GetUtcNow().ToUnixTimeMilliseconds();
+            fakeRedis.SetAsync($"chat:heartbeat:{createdJobName}", nowMs.ToString(), TimeSpan.FromMinutes(1))
+                .GetAwaiter().GetResult();
+        }
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
@@ -1785,28 +1857,30 @@ public class ChatJobDispatcherTests
                 // Write the heartbeat key *inside* the CreateJobAsync callback so it is present
                 // in Redis before DispatchChatPodAsync returns and the watcher can fire its first
                 // poll. Writing after DispatchChatPodAsync races with the watcher background task.
-                var key = $"chat:heartbeat:{createdJobName}";
-                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                fakeRedis.SetAsync(key, nowMs.ToString(), TimeSpan.FromMinutes(1)).GetAwaiter().GetResult();
+                WriteRecentHeartbeat();
             })
             .Returns(Task.CompletedTask);
 
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            options: options,
-            redis: fakeRedis);
+            options: CreateIdleKillOptions(),
+            redis: fakeRedis,
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
+
+        // Keep only the Redis key fresh, for longer than the idle timeout: the local ticks go stale, so
+        // this can only pass when the watcher trusts the recent Redis heartbeat.
+        for (var poll = 0; poll < PollsPastIdleTimeout; poll++)
+        {
+            WriteRecentHeartbeat();
+            await clock.ElapsePollsAsync(1);
+        }
 
         // Watcher must NOT idle-kill while Redis shows a recent heartbeat
-        // TODO [WARNING]: WaitForWatcherAsync(3s) is a time-bounded negative assertion — it passes
-        // if the watcher does not exit within 3s, but also passes if the watcher exits for an
-        // unrelated reason and the test framework reports WaitForWatcherAsync=true before the
-        // 3s elapses. The Times.Never assertion on DeleteJobAsync below is the stronger guard;
-        // the BeFalse() here is a weaker wall-clock check. Consider increasing the timeout to 5s
-        // to reduce flakiness under CI load. See review findings: Correctness WARNING and TestQuality WARNING.
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(3));
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.Zero);
         watcherDone.Should().BeFalse(
             "watcher must NOT idle-kill the pod while Redis reports a recent heartbeat");
 
@@ -1840,9 +1914,6 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2;
-
         // FakeRedisStore does not support fault injection — use Mock<IRedisStore> that throws
         var redisMock = new Mock<CodingAgent.Orchestration.Redis.IRedisStore>();
         redisMock.Setup(r => r.GetAsync(It.IsAny<string>()))
@@ -1851,22 +1922,24 @@ public class ChatJobDispatcherTests
         redisMock.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<StackExchange.Redis.When>()))
             .ReturnsAsync(true);
 
+        var clock = new WatcherClock();
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            options: options,
-            redis: redisMock.Object);
+            options: CreateIdleKillOptions(),
+            redis: redisMock.Object,
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
+
+        // Run past the idle timeout with stale local ticks: Redis throws on every check, so the
+        // idle-kill must be skipped every cycle rather than falling back to those ticks.
+        await clock.ElapsePollsAsync(PollsPastIdleTimeout);
+        redisMock.Verify(r => r.GetAsync(It.IsAny<string>()), Times.AtLeast(PollsPastIdleTimeout));
 
         // Watcher must NOT idle-kill while Redis throws — idle-kill is skipped each cycle
-        // TODO [WARNING]: WaitForWatcherAsync(3s) is a tight time-bounded negative. With
-        // ChatIdleTimeoutSeconds=2 and pollInterval=~0.67s, the watcher runs at least 2-3 cycles
-        // within the window. If the test host is under load and any non-idle-kill exit path fires
-        // within 3s, this assertion becomes a false positive. Consider increasing the timeout to 5s
-        // to provide more buffer. The Times.Never assertion on DeleteJobAsync below is the stronger
-        // correctness guard. See review findings: Correctness WARNING and TestQuality WARNING.
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(3));
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.Zero);
         watcherDone.Should().BeFalse(
             "watcher must NOT idle-kill when Redis throws — session must be preserved");
 
@@ -1901,28 +1974,23 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2; // stale ticks from StartedAt → kills after 2s
-
         // FakeRedisStore with no heartbeat key written — GetAsync returns null → (true, null)
         // → falls back to local LastClientHeartbeatTicks which are stale (no heartbeat sent)
+        var clock = new WatcherClock();
         var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            options: options,
-            redis: fakeRedis);
+            options: CreateIdleKillOptions(),
+            redis: fakeRedis,
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
 
         // No heartbeat sent — local ticks stay at StartedAt → idle-kill fires after timeout
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
-        watcherDone.Should().BeTrue(
-            "watcher must idle-kill when Redis key is absent and local ticks are stale");
-
-        jobClientMock.Verify(c => c.DeleteJobAsync(
-            It.Is<string>(n => n == createdJobName), TestNamespace, It.IsAny<CancellationToken>()),
-            Times.Once,
+        await ExpectIdleKillAfterTimeoutAsync(
+            clock, dispatcher, jobClientMock, createdJobName!,
             "pod must be force-deleted when Redis key is absent and local ticks are stale");
     }
 
@@ -1951,26 +2019,21 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2;
-
         // No Redis — CreateDispatcher default passes redis: null
+        var clock = new WatcherClock();
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            options: options,
-            redis: null);
+            options: CreateIdleKillOptions(),
+            redis: null,
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
 
         // No heartbeat sent — local ticks are stale from dispatch → idle-kill fires
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
-        watcherDone.Should().BeTrue(
-            "watcher must idle-kill using local ticks when Redis is not configured");
-
-        jobClientMock.Verify(c => c.DeleteJobAsync(
-            It.Is<string>(n => n == createdJobName), TestNamespace, It.IsAny<CancellationToken>()),
-            Times.Once,
+        await ExpectIdleKillAfterTimeoutAsync(
+            clock, dispatcher, jobClientMock, createdJobName!,
             "pod must be force-deleted when redis=null and local ticks are stale");
     }
 
@@ -2005,30 +2068,31 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // Idle timeout 2s; the grace period is long so the watcher keeps polling while the explicit
-        // termination waits — the test ends the grace period itself once the guard has fired.
+        // The grace period is long so the watcher keeps polling while the explicit termination
+        // waits — the test ends the grace period itself once the guard has fired.
         var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 60);
-        options.ChatIdleTimeoutSeconds = 2;
 
+        var clock = new WatcherClock();
         await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
             redis: new CodingAgent.Web.TestUtilities.FakeRedisStore(),
-            logger: logger);
+            logger: logger,
+            timeProvider: clock);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await clock.WatcherParkedAsync();
 
         // TerminateChatSessionAsync sets entry.Terminating = 1 synchronously, before its first await,
-        // so calling it directly (not via Task.Run) sets the flag before the watcher can reach its
-        // idle timeout. A late-scheduled Task.Run could start after the watcher's own idle-kill had
-        // already deleted the job and removed the session, and then delete it a second time.
+        // and the watcher cannot reach its idle timeout until this test advances the clock.
         using var terminateCts = new CancellationTokenSource();
         var terminateTask = dispatcher.TerminateChatSessionAsync(
             new CodingAgent.Pipeline.Models.AgentId(createdJobName!), terminateCts.Token);
 
-        // Once the session has been idle for 2s, the watcher's idle-kill check must hit the
+        // Once the session is past the idle timeout, the watcher's idle-kill check must hit the
         // Terminating guard instead of starting a second termination.
+        await clock.ElapsePollsAsync(PollsUpToIdleTimeout + 1);
         await idleKillSkipped.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
         // End the grace period: the explicit termination force-deletes the job.
@@ -2048,12 +2112,6 @@ public class ChatJobDispatcherTests
 
     // ─── 26. WatchJobUntilTerminalAsync — fault guard ─────────────────────────
 
-    /// <summary>
-    /// Creates options with a very short idle timeout so the watcher fires the idle-kill path
-    /// quickly in fault-guard tests. ChatIdleTimeoutSeconds=1 is below the production minimum
-    /// of 10, but ValidateAndClamp is not called in unit tests, so the raw value is used.
-    /// This gives pollInterval = Math.Min(10, Math.Max(1, 1/3)) = 1s.
-    /// </summary>
     private static DispatchServiceOptions CreateFaultTestOptions() => new()
     {
         Namespace = TestNamespace,
@@ -2064,9 +2122,18 @@ public class ChatJobDispatcherTests
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = 5,
         ChatJobMaxDurationSeconds = 7200,
-        ChatTerminationGracePeriodSeconds = 1,
-        ChatIdleTimeoutSeconds = 1   // triggers idle-kill quickly; below prod minimum but valid for tests
+        ChatTerminationGracePeriodSeconds = 1
     };
+
+    /// <summary>
+    /// Runs a freshly dispatched session past the idle timeout, so the watcher takes the idle-kill path.
+    /// </summary>
+    private static async Task TriggerIdleKillAsync(WatcherClock clock)
+    {
+        await clock.WatcherParkedAsync();
+        await clock.ElapsePollsAsync(PollsUpToIdleTimeout);
+        clock.Advance(DefaultPollInterval);
+    }
 
     /// <summary>
     /// Sets up a dispatcher whose idle-kill path will throw an unhandled exception:
@@ -2074,11 +2141,10 @@ public class ChatJobDispatcherTests
     /// <c>TrySendCancelChatAsync</c>, so a throw from it propagates through
     /// <c>TerminateChatSessionAsync</c> and into <c>WatchJobUntilTerminalAsync</c>'s
     /// outer <c>catch (Exception)</c> guard.
-    /// The fault is held back until the test completes <c>releaseFault</c>: the idle-kill fires
-    /// about 1s after dispatch, so a test thread stalled that long would otherwise find the session
-    /// already cleaned up and <see cref="ChatJobDispatcher.TryGetWatcherTask"/> returning null.
+    /// The idle-kill fires only once the test advances the returned clock (see
+    /// <see cref="TriggerIdleKillAsync"/>), so the test can capture the watcher task first.
     /// </summary>
-    private static (ChatJobDispatcher dispatcher, Mock<IKubernetesJobClient> jobClientMock, TaskCompletionSource releaseFault)
+    private static (ChatJobDispatcher dispatcher, Mock<IKubernetesJobClient> jobClientMock, WatcherClock clock)
         CreateFaultingDispatcher(
             Serilog.ILogger? logger = null,
             DispatchServiceOptions? options = null,
@@ -2094,13 +2160,6 @@ public class ChatJobDispatcherTests
         var registryMock = new Mock<IAgentRegistryService>();
         string capturedAgentId = "";
         string capturedDispatchId = "";
-        var releaseFault = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        async Task<AgentEntry?> FaultOnceReleased()
-        {
-            await releaseFault.Task;
-            throw new InvalidOperationException("simulated registry fault for watcher fault test");
-        }
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
@@ -2127,7 +2186,7 @@ public class ChatJobDispatcherTests
                 // the fault path was actually exercised.
                 // See review finding: TestQualityReviewer WARNING @ line 1371.
                 registryMock.Setup(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
-                    .Returns(FaultOnceReleased);
+                    .ThrowsAsync(new InvalidOperationException("simulated registry fault for watcher fault test"));
                 // Deregister is a no-op (never reached because GetByAgentIdAsync throws first)
                 registryMock.Setup(r => r.Deregister(It.IsAny<AgentId>())).Returns(false);
             })
@@ -2141,15 +2200,17 @@ public class ChatJobDispatcherTests
             ? CreateTemplateStoreWithLabels(agentSelector)
             : CreateTemplateStore();
 
+        var clock = new WatcherClock();
         var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
             templateStore,
             registryMock.Object,
             options ?? CreateFaultTestOptions(),
-            logger ?? Mock.Of<ILogger>());
+            logger ?? Mock.Of<ILogger>(),
+            timeProvider: clock);
 
-        return (dispatcher, jobClientMock, releaseFault);
+        return (dispatcher, jobClientMock, clock);
     }
 
     /// <summary>
@@ -2178,16 +2239,16 @@ public class ChatJobDispatcherTests
     [Fact]
     public async Task WatchJobUntilTerminalAsync_WhenExceptionThrown_CleanupSessionExecutes()
     {
-        var (dispatcher, _, releaseFault) = CreateFaultingDispatcher();
+        var (dispatcher, _, clock) = CreateFaultingDispatcher();
 
         // Capture the WatcherTask before the entry is removed from _activeWatchers by CleanupSession.
-        // The fault is held back until releaseFault completes, so the entry is still registered here.
+        // The clock has not advanced yet, so the entry is still registered here.
         var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
         watcherTask.Should().NotBeNull("watcher task must exist immediately after dispatch");
 
         // Wait for the watcher to complete (fault fires via idle-kill → TerminateChatSessionAsync → registry throws)
-        releaseFault.SetResult();
+        await TriggerIdleKillAsync(clock);
         await watcherTask!.WaitAsync(TimeSpan.FromSeconds(60));
 
         // AC3: entry must be removed from _activeWatchers
@@ -2248,12 +2309,12 @@ public class ChatJobDispatcherTests
         });
         listener.Start();
 
-        var (dispatcher, _, releaseFault) = CreateFaultingDispatcher(agentSelector: uniqueSelector);
+        var (dispatcher, _, clock) = CreateFaultingDispatcher(agentSelector: uniqueSelector);
         var agentId = await dispatcher.DispatchChatPodAsync(uniqueSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
 
         // Wait for the fault to fire and CleanupSession to run
-        releaseFault.SetResult();
+        await TriggerIdleKillAsync(clock);
         await watcherTask!.WaitAsync(TimeSpan.FromSeconds(60));
 
         // Stop the listener immediately after the watcher completes to prevent measurements
@@ -2297,11 +2358,11 @@ public class ChatJobDispatcherTests
             .WriteTo.Sink(capturingSink)
             .CreateLogger();
 
-        var (dispatcher, _, releaseFault) = CreateFaultingDispatcher(logger: logger);
+        var (dispatcher, _, clock) = CreateFaultingDispatcher(logger: logger);
         var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
 
-        releaseFault.SetResult();
+        await TriggerIdleKillAsync(clock);
         await watcherTask!.WaitAsync(TimeSpan.FromSeconds(60));
 
         var errorEvents = capturedEvents
@@ -3650,8 +3711,9 @@ public class ChatJobDispatcherTests
         jobNames.Should().HaveCount(2).And.OnlyHaveUniqueItems("two dispatches must produce two distinct job names");
 
         // StopAsync: cancels _shutdownCts (no effect on never-completing tasks),
-        // WaitAsync(5s) → TimeoutException, bare catch swallows it, foreach calls
-        // CleanupSession for both entries. Takes ~5 seconds by design.
+        // WaitAsync(ShutdownWatcherWait) → TimeoutException, bare catch swallows it, foreach calls
+        // CleanupSession for both entries.
+        dispatcher.ShutdownWatcherWait = TimeSpan.FromMilliseconds(50);
         await dispatcher.StopAsync(CancellationToken.None);
 
         dispatcher.HasActiveSession(jobNames[0]).Should()
