@@ -77,12 +77,14 @@ public sealed class TemplateFeatureToggleUiTests : E2ETestBase
         var toggleInput = Page.Locator($"input[aria-label='Enable {feature} for {ToggleTemplateName}']");
 
         // Open the panel if not yet open (inputs absent from DOM when collapsed).
-        // Scope the click to the Toggle Repo row — an unscoped click would open the wrong
-        // panel if other templates are present on the page after fixture reset.
-        // Use CountAsync() only: IsVisibleAsync() always returns false for opacity:0 inputs.
+        // The unscoped click is intentional: each test calls SeedTemplateAsync() on a freshly
+        // reset fixture, guaranteeing exactly one template row on the page. An unscoped click
+        // matches the pattern in LoopControlTests.cs:262.
+        // Use CountAsync() only: the opacity:0 input is never "visible" so IsVisibleAsync()
+        // would always return false regardless of panel state.
         if (await toggleInput.CountAsync() == 0)
         {
-            await Page.Locator($".template-row:has(.template-name:text-is('{ToggleTemplateName}')) button.feature-badge-bar").ClickAsync();
+            await Page.ClickAsync("button.feature-badge-bar");
             await toggleInput.WaitForAsync(new() { Timeout = 5_000 });
         }
 
@@ -154,7 +156,7 @@ public sealed class TemplateFeatureToggleUiTests : E2ETestBase
         await codingPage.NavigateAsync();
         if (await Page.Locator($"input[aria-label='Enable {feature} for {ToggleTemplateName}']").CountAsync() == 0)
         {
-            await Page.Locator($".template-row:has(.template-name:text-is('{ToggleTemplateName}')) button.feature-badge-bar").ClickAsync();
+            await Page.ClickAsync("button.feature-badge-bar");
             await Page.Locator($"input[aria-label='Enable {feature} for {ToggleTemplateName}']").WaitForAsync(new() { Timeout = 5_000 });
         }
 

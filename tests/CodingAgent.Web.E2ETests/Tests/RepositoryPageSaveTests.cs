@@ -257,7 +257,9 @@ public sealed class RepositoryPageSaveTests : E2ETestBase
 
         var repoPage = new RepositoryPageObject(Page, BaseUrl);
         await repoPage.NavigateAsync(SaveTemplateId);
-        await Page.WaitForSelectorAsync("button:has-text('Scan for refactorings')", new() { Timeout = 10_000 });
+        // Wait for binding card visible — ensures page data has loaded before clicking header buttons
+        await Page.WaitForSelectorAsync("[data-testid='binding-card']",
+            new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         // Open modal
         await Page.ClickAsync("button:has-text('Scan for refactorings')");
@@ -302,10 +304,18 @@ public sealed class RepositoryPageSaveTests : E2ETestBase
 
         var repoPage = new RepositoryPageObject(Page, BaseUrl);
         await repoPage.NavigateAsync(SaveTemplateId);
-        await Page.WaitForSelectorAsync("button:has-text('Scan for refactorings')", new() { Timeout = 10_000 });
+        // Wait for the binding card to be visible — this confirms PageService.LoadAsync() has
+        // completed and the header buttons (including Scan for refactorings) are interactive.
+        // Without this, WaitForSelectorAsync with default Attached state finds the button in
+        // prerendered DOM before data loads, and ClickAsync then times out waiting for it to
+        // become actionable.
+        await Page.WaitForSelectorAsync("[data-testid='binding-card']",
+            new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
         // Open modal
-        await Page.ClickAsync("button:has-text('Scan for refactorings')");
+        var scanBtn = Page.Locator("button:has-text('Scan for refactorings')");
+        await scanBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
+        await scanBtn.ClickAsync();
         var dialog = Page.Locator("[role='dialog']");
         await dialog.WaitForAsync(new() { Timeout = 5_000 });
         Assert.Contains(SaveTemplateName, await dialog.TextContentAsync() ?? "", StringComparison.Ordinal);

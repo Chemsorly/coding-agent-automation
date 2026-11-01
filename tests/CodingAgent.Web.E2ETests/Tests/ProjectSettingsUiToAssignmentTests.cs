@@ -387,7 +387,10 @@ public sealed class ProjectSettingsUiToAssignmentTests : E2ETestBase
         await httpForm.Locator("input[type='text']").Nth(1).WaitForAsync(new() { Timeout = 5_000 });
         await httpForm.Locator("input[type='text']").Nth(1).FillAsync("https://mcp.example.test/mcp"); // URL
         await httpForm.Locator("textarea").FillAsync("Authorization=Bearer ui-token"); // Headers
-        await httpForm.Locator("button.btn-save").ClickAsync();
+        // Use text selector instead of .btn-save class — ProjectDetailSection.razor renders
+        // multiple .provider-form divs (one per tab section), so the class-based selector
+        // would resolve to more than one element. "Save Server" is unique to the MCP form.
+        await Page.ClickAsync("button:has-text('Save Server')");
         // Wait for form to close (+ Add MCP Server button reappears)
         var addBtn = Page.Locator("button.btn-add");
         await addBtn.WaitForAsync(new() { Timeout = 5_000 });
@@ -404,7 +407,7 @@ public sealed class ProjectSettingsUiToAssignmentTests : E2ETestBase
         await stdioForm.Locator("input[type='text']").Nth(2).FillAsync("some-mcp@1 --flag"); // Args
         await stdioForm.Locator("textarea").FillAsync("LOG=debug"); // Environment Variables
         await stdioForm.Locator("input[type='checkbox']").UncheckAsync(); // Uncheck Enabled
-        await stdioForm.Locator("button.btn-save").ClickAsync();
+        await Page.ClickAsync("button:has-text('Save Server')");
         await addBtn.WaitForAsync(new() { Timeout = 5_000 });
 
         // Save MCP Servers
