@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgent.Agent.Executors;
-using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
