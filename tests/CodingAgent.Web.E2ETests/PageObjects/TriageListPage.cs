@@ -75,11 +75,16 @@ public sealed class TriageListPage
     /// <summary>The pager info text element (<c>.cockpit-pager-info</c>).</summary>
     public ILocator PagerInfo => _page.Locator(".cockpit-pager-info");
 
-    /// <summary>The previous-page button (first <c>.cockpit-pager-btn</c>).</summary>
-    public ILocator PrevButton => _page.Locator(".cockpit-pager-btn").First;
+    /// <summary>The previous-page button (first <c>.cockpit-pager-btn</c> inside <c>.cockpit-pager-buttons</c>).</summary>
+    /// <remarks>
+    /// Scoped to <c>.cockpit-pager-buttons</c> to avoid matching the RefreshBar's "Refresh now"
+    /// button, which also uses <c>cockpit-pager-btn</c> and appears earlier in the DOM.
+    /// </remarks>
+    public ILocator PrevButton => _page.Locator(".cockpit-pager-buttons .cockpit-pager-btn").First;
 
-    /// <summary>The next-page button (last <c>.cockpit-pager-btn</c>).</summary>
-    public ILocator NextButton => _page.Locator(".cockpit-pager-btn").Last;
+    /// <summary>The next-page button (last <c>.cockpit-pager-btn</c> inside <c>.cockpit-pager-buttons</c>).</summary>
+    /// <remarks>See <see cref="PrevButton"/> for the scoping rationale.</remarks>
+    public ILocator NextButton => _page.Locator(".cockpit-pager-buttons .cockpit-pager-btn").Last;
 
     /// <summary>Clicks the next-page button.</summary>
     public async Task NextPageAsync() => await NextButton.ClickAsync();
