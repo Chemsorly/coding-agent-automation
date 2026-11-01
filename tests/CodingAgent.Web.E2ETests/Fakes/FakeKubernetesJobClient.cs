@@ -29,6 +29,9 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     /// <summary>Pod logs keyed by pod name. Used by ReadPodLogTailAsync.</summary>
     public ConcurrentDictionary<string, string> PodLogs { get; } = new();
 
+    /// <summary>Pods returned by ListPodsAsync, keyed by pod name.</summary>
+    public ConcurrentDictionary<string, V1Pod> Pods { get; } = new();
+
     /// <summary>If set, CreateJobAsync will throw this exception.</summary>
     public Exception? CreateJobException { get; set; }
 
@@ -139,8 +142,13 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
 
     public Task<V1JobList> ListJobsAsync(string ns, string labelSelector, CancellationToken ct = default)
     {
-        var allJobs = CreatedJobs.Values.Concat(ExistingJobs).ToList();
-        return Task.FromResult(new V1JobList { Items = allJobs });
+        // Validate before the Where so unsupported selectors throw even when the collection is empty
+        // (a lazy Where over an empty sequence never invokes the predicate, masking the error).
+        ValidateSelector(labelSelector);
+        var jobs = CreatedJobs.Values.Concat(ExistingJobs)
+            .Where(j => MatchesSelector(j.Metadata?.Labels, labelSelector))
+            .ToList();
+        return Task.FromResult(new V1JobList { Items = jobs });
     }
 
     public Task CreateSecretAsync(V1Secret secret, string ns, CancellationToken ct = default)
@@ -154,13 +162,21 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
 
     public Task<V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default)
     {
-        return Task.FromResult(new V1PodList { Items = new List<V1Pod>() });
+        // Validate before the Where for the same reason as ListJobsAsync.
+        ValidateSelector(labelSelector);
+        var pods = Pods.Values
+            .Where(p => MatchesSelector(p.Metadata?.Labels, labelSelector))
+            .ToList();
+        return Task.FromResult(new V1PodList { Items = pods });
     }
 
     public Task<string> ReadPodLogTailAsync(string podName, string ns, string container, int tailLines, CancellationToken ct = default)
     {
-        PodLogs.TryGetValue(podName, out var logs);
-        return Task.FromResult(logs ?? string.Empty);
+        if (!PodLogs.TryGetValue(podName, out var logs))
+            return Task.FromResult(string.Empty);
+        var lines = logs.Split('\n');
+        var tail = lines.Length <= tailLines ? lines : lines[^tailLines..];
+        return Task.FromResult(string.Join('\n', tail));
     }
 
     /// <summary>Resets all state for test isolation.</summary>
@@ -171,6 +187,7 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         while (DeletedJobs.TryTake(out _)) { }
         ExistingJobs.Clear();
         PodLogs.Clear();
+        Pods.Clear();
         CreateJobException = null;
         FailNextCreate = false;
         ChatJobs.Clear();
@@ -214,11 +231,59 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     }
 
     /// <summary>
+    /// Adds a pod of <paramref name="jobName"/> whose agent container has terminated, as the kubelet reports it.
+    /// The returned pod can be changed further, for example to add conditions.
+    /// </summary>
+    public V1Pod AddTerminatedPod(
+        string jobName,
+        string podName,
+        int exitCode,
+        string? reason = "Error",
+        DateTime? finishedAt = null,
+        string? logTail = null)
+    {
+        var pod = new V1Pod
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = podName,
+                Labels = new Dictionary<string, string>
+                {
+                    ["batch.kubernetes.io/job-name"] = jobName
+                }
+            },
+            Status = new V1PodStatus
+            {
+                ContainerStatuses = new List<V1ContainerStatus>
+                {
+                    new V1ContainerStatus
+                    {
+                        Name = JobSpecBuilder.AgentContainerName,
+                        State = new V1ContainerState
+                        {
+                            Terminated = new V1ContainerStateTerminated
+                            {
+                                ExitCode = exitCode,
+                                Reason = reason,
+                                FinishedAt = finishedAt ?? DateTime.UtcNow
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        Pods[podName] = pod;
+        if (logTail is not null)
+            PodLogs[podName] = logTail;
+        return pod;
+    }
+
+    /// <summary>
     /// Simulates a work-item job reaching a <c>Failed</c> terminal state.
     /// Sets the <c>Failed</c> condition so <see cref="CodingAgent.JobController.Reconciliation.ReconciliationLoop"/>
     /// detects it during <c>ReconcileOnceAsync</c>.
     /// </summary>
-    public Task SimulateWorkItemJobFailedAsync(string jobName)
+    public Task SimulateWorkItemJobFailedAsync(string jobName, string? reason = null, string? message = null)
     {
         if (!CreatedJobs.TryGetValue(jobName, out var job))
             throw new InvalidOperationException($"Job '{jobName}' not found in CreatedJobs");
@@ -236,6 +301,33 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         {
             Type = "Failed",
             Status = "True",
+            Reason = reason,
+            Message = message,
+            LastTransitionTime = DateTime.UtcNow
+        });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Sets the Complete condition on a work-item Job, as Kubernetes does when its pod exits 0.</summary>
+    public Task SimulateWorkItemJobSucceededAsync(string jobName)
+    {
+        if (!CreatedJobs.TryGetValue(jobName, out var job))
+            throw new InvalidOperationException($"Job '{jobName}' not found in CreatedJobs");
+
+        job.Status ??= new k8s.Models.V1JobStatus();
+        job.Status.Conditions ??= new List<k8s.Models.V1JobCondition>();
+
+        // Remove any existing Complete/Failed conditions first
+        var existing = job.Status.Conditions
+            .Where(c => c.Type == "Complete" || c.Type == "Failed")
+            .ToList();
+        foreach (var c in existing) job.Status.Conditions.Remove(c);
+
+        job.Status.Conditions.Add(new k8s.Models.V1JobCondition
+        {
+            Type = "Complete",
+            Status = "True",
             LastTransitionTime = DateTime.UtcNow
         });
 
@@ -252,5 +344,45 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
             j.Metadata?.Labels != null &&
             j.Metadata.Labels.TryGetValue("caa/chat-selector", out var val) &&
             string.Equals(val, encodedSelector, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Validates that a label selector uses only supported equality operators. Throws <see cref="NotSupportedException"/> for unsupported operators ("!=") or terms with no "=". An empty selector is valid. Call this before any LINQ Where to ensure the throw is unconditional even when the sequence is empty.</summary>
+    private static void ValidateSelector(string? labelSelector)
+    {
+        if (string.IsNullOrEmpty(labelSelector))
+            return;
+        foreach (var term in labelSelector.Split(','))
+        {
+            if (term.Contains("!="))
+                throw new NotSupportedException($"Unsupported label selector: {labelSelector}");
+            if (term.IndexOf('=') < 0)
+                throw new NotSupportedException($"Unsupported label selector: {labelSelector}");
+        }
+    }
+
+    /// <summary>Matches a Kubernetes equality selector: "a=b" or "a=b,c=d". An empty selector matches everything.</summary>
+    private static bool MatchesSelector(IDictionary<string, string>? labels, string? labelSelector)
+    {
+        if (string.IsNullOrEmpty(labelSelector))
+            return true;
+        if (labels is null)
+            return false;
+
+        foreach (var term in labelSelector.Split(','))
+        {
+            if (term.Contains("!="))
+                throw new NotSupportedException($"Unsupported label selector: {labelSelector}");
+
+            var eqIdx = term.IndexOf('=');
+            if (eqIdx < 0)
+                throw new NotSupportedException($"Unsupported label selector: {labelSelector}");
+
+            var key = term[..eqIdx];
+            var value = term[(eqIdx + 1)..];
+            if (!labels.TryGetValue(key, out var actual) || actual != value)
+                return false;
+        }
+
+        return true;
     }
 }

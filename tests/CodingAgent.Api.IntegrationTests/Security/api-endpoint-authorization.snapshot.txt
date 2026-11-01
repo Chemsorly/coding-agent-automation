@@ -109,6 +109,7 @@ GET /api/work-items/active-decomposition-count -> Service: AgentApiKey, Operator
 GET /api/work-items/active-identifiers -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/counts-by-status -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/is-distributed -> Service: AgentApiKey, OperatorApiKey
+GET /api/work-items/latest-outcome -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/pending -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/staleness -> Service: AgentApiKey, OperatorApiKey
 GET /api/work-items/{id:guid}/assignment -> Service: AgentApiKey

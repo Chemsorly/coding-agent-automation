@@ -165,4 +165,56 @@ public class AgentJobRunnerTests
 
         reportedStep.Should().Be(PipelineStep.RunningQualityGates);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_PipelineCancelledWithoutSigterm_ReturnsCancelledPayload()
+    {
+        // Executor returns Cancelled payload (as LocalPipelineExecutor does on pipeline cancel).
+        // RethrowOnSigterm is a token that is NOT cancelled — this simulates an operator cancel
+        // via CancelJob, where only pipelineCt is cancelled, not the SIGTERM token.
+        var cancelledPayload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Cancelled,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FinalLabel = AgentLabels.Cancelled
+        };
+        _mockExecutor.Setup(e => e.ExecuteAsync(
+            It.IsAny<JobAssignmentMessage>(), It.IsAny<HubConnection>(),
+            It.IsAny<OutputBatcher>(), It.IsAny<Action<PipelineStep?>>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cancelledPayload);
+
+        using var sigtermCts = new CancellationTokenSource(); // not cancelled
+        var result = await AgentJobRunner.ExecuteAsync(
+            _mockExecutor.Object, _assignment, null!,
+            _ => { }, rethrowOnSigterm: sigtermCts.Token);
+
+        result.FinalStep.Should().Be(PipelineStep.Cancelled);
+        result.FinalLabel.Should().Be(AgentLabels.Cancelled);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SigtermAfterACompletedPayload_ReturnsThePayload()
+    {
+        // Executor returns Completed payload. RethrowOnSigterm is already cancelled (SIGTERM arrived
+        // after the run finished). A finished run must keep its Completed outcome.
+        var completedPayload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        _mockExecutor.Setup(e => e.ExecuteAsync(
+            It.IsAny<JobAssignmentMessage>(), It.IsAny<HubConnection>(),
+            It.IsAny<OutputBatcher>(), It.IsAny<Action<PipelineStep?>>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(completedPayload);
+
+        using var sigtermCts = new CancellationTokenSource();
+        await sigtermCts.CancelAsync(); // already cancelled when executor returns
+        var result = await AgentJobRunner.ExecuteAsync(
+            _mockExecutor.Object, _assignment, null!,
+            _ => { }, rethrowOnSigterm: sigtermCts.Token);
+
+        result.FinalStep.Should().Be(PipelineStep.Completed);
+    }
 }

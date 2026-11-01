@@ -119,6 +119,18 @@ public static partial class PipelineTelemetry
     }
 
     /// <summary>
+    /// Closed-set tag values for the <c>pr_origin</c> tag on <c>pipeline.housekeeping.triggered</c>.
+    /// Distinguishes pipeline-created PRs from human PRs with auto-merge enabled.
+    /// </summary>
+    public static class HousekeepingPrOrigins
+    {
+        /// <summary>Branch update was triggered for a pipeline-created PR (branch prefix <c>feature/auto-</c>).</summary>
+        public const string Pipeline = "pipeline";
+        /// <summary>Branch update was triggered for a human PR with auto-merge enabled.</summary>
+        public const string Human = "human";
+    }
+
+    /// <summary>
     /// Reason tag values for <see cref="HubAuthRejections"/> (closed set — do not add cardinality).
     /// </summary>
     public static class HubAuthRejectionReasons

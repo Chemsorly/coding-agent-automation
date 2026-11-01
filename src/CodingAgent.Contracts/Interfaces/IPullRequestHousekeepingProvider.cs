@@ -17,6 +17,14 @@ public interface IPullRequestHousekeepingProvider : IAsyncDisposable
     bool SupportsServerSideBranchUpdate => false;
 
     /// <summary>
+    /// Whether <see cref="UpdatePullRequestBranchAsync"/> keeps the existing branch history
+    /// (for example by adding a merge commit). Housekeeping only updates branches of human PRs
+    /// when this is true, because a rewritten branch makes the author's local copy diverge.
+    /// Default: false (default-deny for providers that have not declared it).
+    /// </summary>
+    bool BranchUpdatePreservesHistory => false;
+
+    /// <summary>
     /// Returns the mergeability status of the PR branch relative to the base branch.
     /// </summary>
     /// <returns>
