@@ -48,6 +48,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
         if (hasSecrets)
         {
             context.InjectedSecrets = effectiveSecrets;
+            (context.IssueOps as OrchestratorProxy)?.SetSecretsToMask(effectiveSecrets);
 
             var keyList = string.Join(", ", effectiveSecrets.Keys);
 
