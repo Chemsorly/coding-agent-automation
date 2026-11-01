@@ -43,18 +43,18 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = $"template-staleness-{agentLabel}",
-            Name  = $"Staleness Test Template ({agentLabel})",
+            Name = $"Staleness Test Template ({agentLabel})",
             IssueProviderId = "issue-e2e",
-            RepoProviderId  = "repo-e2e",
+            RepoProviderId = "repo-e2e",
             Enabled = true
         }, CancellationToken.None);
 
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
-            Id             = $"profile-staleness-{agentLabel}",
-            DisplayName    = $"Staleness Profile ({agentLabel})",
+            Id = $"profile-staleness-{agentLabel}",
+            DisplayName = $"Staleness Profile ({agentLabel})",
             JobTemplate = E2ERouting.Key(agentLabel),
-            Enabled        = true
+            Enabled = true
         });
     }
 
@@ -73,27 +73,27 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Re-queue after rejection test",
+            Identifier = "42",
+            Title = "Re-queue after rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // T1: analysis comment — older
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Analysis content",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-30));
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Analysis content",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-30));
 
         // T2: gate-rejection comment — newer than analysis
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_002L,
-            body:            $"{CommentMarkers.GateRejection}\nIssue needs more context.",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-10));
+            commentId: 9_000_000_002L,
+            body: $"{CommentMarkers.GateRejection}\nIssue needs more context.",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-10));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -122,19 +122,19 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "No rejection test",
+            Identifier = "42",
+            Title = "No rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // Only an analysis comment — no rejection comment
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Existing analysis",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-30));
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Existing analysis",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-30));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -166,27 +166,27 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Old rejection test",
+            Identifier = "42",
+            Title = "Old rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // T1: gate-rejection comment — older than analysis
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.GateRejection}\nOld rejection reason",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-60));
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.GateRejection}\nOld rejection reason",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-60));
 
         // T2: analysis comment — newer than rejection (user refined and re-ran)
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_002L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Fresh analysis after refinement",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-10));
+            commentId: 9_000_000_002L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Fresh analysis after refinement",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-10));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -211,30 +211,30 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
     [Fact]
     public async Task BodyChanged_ForcesFreshAnalysis()
     {
-        const string agentLabel          = "staleness-s4";
+        const string agentLabel = "staleness-s4";
         const string originalDescription = "## Original requirements\nBefore the user edited.";
-        const string changedDescription  = "## Updated requirements\nUser edited the description after analysis.";
+        const string changedDescription = "## Updated requirements\nUser edited the description after analysis.";
 
         await SeedTemplateAndProfileAsync(agentLabel);
 
         // Issue carries the *current* (changed) description
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Body changed test",
+            Identifier = "42",
+            Title = "Body changed test",
             Description = changedDescription,
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // Analysis comment embeds hash of the *original* description
         var originalHash = AnalysisBodyHash.Compute(originalDescription);
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Prior analysis\n" +
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Prior analysis\n" +
                              $"<!-- agent:analysis-body-hash:{originalHash} -->",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-30));
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-30));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -268,19 +268,19 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            Id              = "template-staleness-s5",
-            Name            = "Staleness Test Template (s5)",
+            Id = "template-staleness-s5",
+            Name = "Staleness Test Template (s5)",
             IssueProviderId = "issue-e2e",
-            RepoProviderId  = "repo-e2e",
-            Enabled         = true
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
-            Id                    = "profile-staleness-s5",
-            DisplayName           = "Staleness Profile (s5)",
+            Id = "profile-staleness-s5",
+            DisplayName = "Staleness Profile (s5)",
             JobTemplate = E2ERouting.Key("staleness-s5"),
-            Enabled               = true
+            Enabled = true
         });
 
         // Issue has BOTH agent:next and agent:needs-refinement — the loop must skip it.
@@ -290,10 +290,10 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         // even if the agent:needs-refinement skip logic in DispatchScheduler were completely removed.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Needs refinement skip test",
+            Identifier = "42",
+            Title = "Needs refinement skip test",
             Description = "## Requirements\nVague requirements.\n\n## Acceptance Criteria\n- [ ] TBD",
-            Labels      = new[] { "agent:next", "agent:needs-refinement", "staleness-s5" }
+            Labels = new[] { "agent:next", "agent:needs-refinement", "staleness-s5" }
         });
 
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
