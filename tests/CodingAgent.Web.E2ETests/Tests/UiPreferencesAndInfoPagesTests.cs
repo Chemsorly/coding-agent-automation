@@ -71,9 +71,6 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         await Page.WaitForSelectorAsync("textarea", new() { Timeout = 10_000 });
 
         // Scope to the Analysis Prompt form-group to avoid targeting the wrong btn-revert
-        // TODO [WARNING]: If the Analysis Prompt form-group contains more than one textarea, this
-        // locates the first one, which may not be the intended field. Use a unique id or data-*
-        // attribute selector when one is available to avoid ambiguity.
         var analysisFormGroup = Page.Locator(".form-group:has(label:has-text('Analysis Prompt'))").First;
 
         // Modify the analysis prompt to something custom
@@ -84,24 +81,17 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
 
         // The btn-revert should now be enabled (value differs from default)
         var revertBtn = analysisFormGroup.Locator(".btn-revert");
-        // TODO [WARNING]: btn-revert is always visible in the DOM; only its `disabled` attribute
-        // toggles. WaitForAsync(State=Visible) does not verify the button is actually enabled.
-        // Replace with: Assert.False(await revertBtn.IsDisabledAsync(), "btn-revert should be enabled after editing");
         await revertBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5_000 });
+        Assert.False(await revertBtn.IsDisabledAsync(), "btn-revert should be enabled after editing");
 
         // Save the custom value
         var saveBtn = Page.Locator("button.btn-save");
         await saveBtn.ClickAsync();
-        // TODO [WARNING]: WaitForTimeoutAsync is an unconditional sleep and an async anti-pattern.
-        // Replace with polling GetPipelineConfigAsync in a loop (or a DOM-observable condition such
-        // as a success toast) until the saved value is reflected, to avoid both false positives on
-        // slow CI and unnecessary latency on fast ones.
-        await Page.WaitForTimeoutAsync(1000);
+        await WaitUntilAsync(
+            async () => (await Fixture.Factory.ApiConfigClient.GetPipelineConfigAsync(CancellationToken.None)).AnalysisPrompt == "custom-test-prompt-value-3112",
+            timeout: TimeSpan.FromSeconds(10));
 
         // Verify the custom value reached the store
-        // TODO [WARNING]: CancellationToken.None here (and in the post-revert save check) means
-        // the API call has no timeout. Use a CancellationTokenSource with a reasonable timeout
-        // (e.g. 30s) to bound the wait and produce a clear failure instead of an infinite hang.
         var config = await Fixture.Factory.ApiConfigClient.GetPipelineConfigAsync(CancellationToken.None);
         Assert.Equal("custom-test-prompt-value-3112", config.AnalysisPrompt);
 
@@ -119,11 +109,9 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
 
         // Save the default
         await saveBtn.ClickAsync();
-        // TODO [WARNING]: Same unconditional sleep as above. Replace with a polling confirmation
-        // that the save reached the store (e.g. poll GetPipelineConfigAsync until it returns the
-        // default) before navigating away, to avoid a race where the save hasn't persisted by the
-        // time settingsPage.NavigateAsync() fires.
-        await Page.WaitForTimeoutAsync(1000);
+        await WaitUntilAsync(
+            async () => (await Fixture.Factory.ApiConfigClient.GetPipelineConfigAsync(CancellationToken.None)).AnalysisPrompt == PipelineConfigurationDefaults.DefaultAnalysisPrompt,
+            timeout: TimeSpan.FromSeconds(10));
 
         // Reload and verify the default is still stored
         await settingsPage.NavigateAsync();
@@ -152,10 +140,6 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await Page.WaitForSelectorAsync(".refresh-bar-select", new() { Timeout = 10_000 });
             // Before any change, Blazor default is 60. Poll until OnAfterRenderAsync settles
             // (if no stored value, the select stays at 60 — the condition is immediately true).
-            // TODO [WARNING]: The acceptance criterion says "a page with no stored value shows 1m"
-            // as a distinct scenario. This test verifies the Work page default, but never navigates
-            // to a third unrelated page (e.g. /fleet) and asserts its select shows 60, leaving
-            // that part of the criterion untested.
             // Timeout raised to 20s: slow CI runners can take >10s for the initial Blazor render
             // cycle + SignalR connection to complete, after which the select is populated with the
             // default 60s value. Matches the tolerance given to the post-reload localStorage checks.
@@ -178,10 +162,6 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await Page.GotoCockpitPageAsync($"{BaseUrl}/runs");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
             await Page.WaitForSelectorAsync(".refresh-bar-select", new() { Timeout = 10_000 });
-            // TODO [WARNING]: The Runs page select pre-condition (default 60) is not verified here.
-            // If a previous test left autoRefresh.runs in localStorage the select would start at
-            // that value, and the test would still pass because it only checks the final "0" — the
-            // starting condition is never asserted.
             // The select is prerendered; a change before the circuit attaches @onchange is lost.
             await Page.WaitForInteractiveAsync(".refresh-bar-select", 20_000);
             await Page.SelectOptionAsync(".refresh-bar-select", "0");
@@ -197,7 +177,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             // OnAfterRenderAsync reads localStorage asynchronously after the default 60s timer starts.
             // Poll until the select reflects the stored "10" value.
             // Timeout raised to 20s: slow CI runners can take >10s for OnAfterRenderAsync to fire
-            // and update the select — this is the known flaky site (see TODO [WARNING] above).
+            // and update the select — this is the known flaky site.
             await Page.WaitForFunctionAsync(
                 "() => document.querySelector('.refresh-bar-select')?.value === '10'",
                 null,
@@ -269,11 +249,6 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await toggleBtn.ClickAsync();
 
             // Assert data-theme changed to the opposite value
-            // TODO [WARNING]: expectedAfterToggle is interpolated directly into the JS expression
-            // string. If the value ever originates from untrusted input, a single-quote or
-            // backslash could break the expression. Prefer passing expectedAfterToggle as the arg
-            // parameter (as is done correctly for DefaultAnalysisPrompt above) rather than
-            // embedding it in the JS source.
             await Page.WaitForFunctionAsync(
                 $"() => document.documentElement.getAttribute('data-theme') === '{expectedAfterToggle}'",
                 null,
@@ -374,10 +349,6 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         await Page.WaitForSelectorAsync(
             ".sidebar-health-item:has(.sidebar-health-label:text('Database')) .infra-health-dot.dot-healthy",
             new() { Timeout = 15_000 });
-        // TODO [WARNING]: The Database health assertion is implicit — it only times out if the
-        // selector is never matched, but doesn't re-assert the final DOM state via an explicit
-        // Assert.Contains("dot-healthy", ...) after the wait (unlike the Redis check below which
-        // uses explicit Assert.Contains). Add an explicit assertion to match the Redis check's style.
 
         // Redis: not configured → _redisStatus is null → dot-inactive
         var redisDot = Page.Locator(
@@ -413,12 +384,6 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
 
         // Seed: 3 Completed, 2 Failed, 1 Cancelled — all terminal.
         // About.razor uses GetRunHistoryAsync() (non-paged, no terminal filter), so all appear.
-        // TODO [WARNING]: These runs are not cleaned up after the test. Cleanup is handled by
-        // E2ETestBase.InitializeAsync → Fixture.ResetAllAsync() → HistoryService.Reset() before
-        // each test, so the next test starts clean. If that reset contract ever changes (e.g.
-        // becomes conditional), the count assertions below and in Knowledge_TilesMatchSeededRunData
-        // will silently break. The isolation guard in Knowledge_TilesMatchSeededRunData's
-        // Assert.Empty pre-check protects that test; the same pre-check could be added here.
         await Fixture.HistoryService.AddRunSummaryAsync(
             MakeRun(PipelineStep.Completed, "3112-a", startedAt: now.AddHours(-6)));
         await Fixture.HistoryService.AddRunSummaryAsync(
@@ -439,10 +404,6 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
 
         var appVersion = await about.GetInfoGridValueAsync("Version Info", "App Version");
         Assert.NotNull(appVersion);
-        // TODO [WARNING]: Assert.True(length > 0) cannot distinguish a correct value from a
-        // placeholder like "N/A" or "unknown". Consider asserting a known pattern: e.g.
-        // Assert.Matches(@"^\d+\.\d+", runtimeVersion) for .NET Runtime, and
-        // Assert.Equal("local", commit) since dev builds use CommitSha="local" → ShortSha="local".
         Assert.True(appVersion.Length > 0, $"App Version should be non-empty, got: '{appVersion}'");
 
         var runtimeVersion = await about.GetInfoGridValueAsync("Version Info", ".NET Runtime");

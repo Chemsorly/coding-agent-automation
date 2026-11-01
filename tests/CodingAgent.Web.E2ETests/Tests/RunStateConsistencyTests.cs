@@ -110,12 +110,6 @@ public sealed class RunStateConsistencyTests : E2ETestBase
         var runningWorkItemId = runningRunId;  // RunId == WorkItem.Id by contract
         var pendingWorkItemId = Guid.NewGuid();
 
-        // TODO [WARNING]: WorkItemEntity rows seeded here and PipelineRunSummary entries added via
-        // HistoryService are never cleaned up after the test. If the E2E fixture DB is shared
-        // across test runs (CollectionFixture lifetime), these rows accumulate and can corrupt
-        // counts asserted in other tests (GetInFlightCountAsync, GetQueuedCountAsync,
-        // GetActiveCountAsync). Add a teardown/cleanup step (IAsyncLifetime.DisposeAsync or
-        // fixture reset) to remove these rows after the test completes.
         using (var db = Fixture.DbContextFactory.CreateDbContext())
         {
             db.WorkItems.Add(new WorkItemEntity
@@ -144,8 +138,6 @@ public sealed class RunStateConsistencyTests : E2ETestBase
                 TimeoutSeconds = 3600,
                 ProjectId = Guid.Parse(WellKnownIds.DefaultProjectId),
             });
-            // TODO [WARNING]: Pass a CancellationToken here (e.g. from a base-class property)
-            // to match the pattern of propagating tokens through all async calls.
             await db.SaveChangesAsync();
         }
 
@@ -206,36 +198,32 @@ public sealed class RunStateConsistencyTests : E2ETestBase
 
         // Completed tab: only the Completed run.
         await runsPage.SelectTabAsync("Completed");
-        // TODO [WARNING]: After SelectTabAsync the DOM may not have finished re-rendering on slow
-        // CI machines — the fixed 2s sleep in SelectTabAsync is a fragile guard. Replace
-        // WaitForTimeoutAsync(2000) with a condition-based wait (e.g. WaitForAsync on a sentinel
-        // element that changes between tabs) so the assertions are robust to slow rendering.
         Assert.True(await runsPage.IsRunVisibleAsync(completedIssue), "Completed run should appear in Completed tab");
         Assert.False(await runsPage.IsRunVisibleAsync(mergedIssue), "PrMerged run should NOT appear in Completed tab");
         Assert.False(await runsPage.IsRunVisibleAsync(conflictIssue), "ConflictRestart run should NOT appear in Completed tab");
         Assert.False(await runsPage.IsRunVisibleAsync(failedIssue), "Failed run should NOT appear in Completed tab");
         Assert.False(await runsPage.IsRunVisibleAsync(cancelledIssue), "Cancelled run should NOT appear in Completed tab");
-        // TODO [WARNING]: closedIssue (PrClosed) absence is not asserted here — a regression
-        // routing PrClosed into the Completed tab would not be caught. Add:
-        //   Assert.False(await runsPage.IsRunVisibleAsync(closedIssue), "PrClosed run should NOT appear in Completed tab");
+        Assert.False(await runsPage.IsRunVisibleAsync(closedIssue), "PrClosed run should NOT appear in Completed tab");
 
         // Failed tab: only the Failed run.
         await runsPage.SelectTabAsync("Failed");
         Assert.True(await runsPage.IsRunVisibleAsync(failedIssue), "Failed run should appear in Failed tab");
         Assert.False(await runsPage.IsRunVisibleAsync(completedIssue), "Completed run should NOT appear in Failed tab");
         Assert.False(await runsPage.IsRunVisibleAsync(conflictIssue), "ConflictRestart run should NOT appear in Failed tab");
-        // TODO [WARNING]: cancelledIssue, mergedIssue, closedIssue, and runningIssue absence
-        // is not asserted in the Failed tab. A regression routing any of those into Failed
-        // would not be caught. Add absence assertions for each.
+        Assert.False(await runsPage.IsRunVisibleAsync(cancelledIssue), "Cancelled run should NOT appear in Failed tab");
+        Assert.False(await runsPage.IsRunVisibleAsync(mergedIssue), "PrMerged run should NOT appear in Failed tab");
+        Assert.False(await runsPage.IsRunVisibleAsync(closedIssue), "PrClosed run should NOT appear in Failed tab");
+        Assert.False(await runsPage.IsRunVisibleAsync(runningIssue), "Running run should NOT appear in Failed tab");
 
         // Cancelled tab: only the Cancelled run.
         await runsPage.SelectTabAsync("Cancelled");
         Assert.True(await runsPage.IsRunVisibleAsync(cancelledIssue), "Cancelled run should appear in Cancelled tab");
         Assert.False(await runsPage.IsRunVisibleAsync(closedIssue), "PrClosed run should NOT appear in Cancelled tab");
         Assert.False(await runsPage.IsRunVisibleAsync(failedIssue), "Failed run should NOT appear in Cancelled tab");
-        // TODO [WARNING]: completedIssue, mergedIssue, conflictIssue, and runningIssue absence
-        // is not asserted in the Cancelled tab. A regression routing any of those into Cancelled
-        // would not be caught. Add absence assertions for each.
+        Assert.False(await runsPage.IsRunVisibleAsync(completedIssue), "Completed run should NOT appear in Cancelled tab");
+        Assert.False(await runsPage.IsRunVisibleAsync(mergedIssue), "PrMerged run should NOT appear in Cancelled tab");
+        Assert.False(await runsPage.IsRunVisibleAsync(conflictIssue), "ConflictRestart run should NOT appear in Cancelled tab");
+        Assert.False(await runsPage.IsRunVisibleAsync(runningIssue), "Running run should NOT appear in Cancelled tab");
 
         // All tab: all terminal runs are visible.
         await runsPage.SelectTabAsync("All");
@@ -246,12 +234,7 @@ public sealed class RunStateConsistencyTests : E2ETestBase
         Assert.True(await runsPage.IsRunVisibleAsync(failedIssue), "Failed run should appear in All tab");
         Assert.True(await runsPage.IsRunVisibleAsync(cancelledIssue), "Cancelled run should appear in All tab");
         Assert.True(await runsPage.IsRunVisibleAsync(runningIssue), "Running run should appear in All tab");
-        // TODO [WARNING]: No assertion checks that exactly 7 rows (and no more) are present.
-        // If the Runs page shows duplicate rows (e.g. a run appearing in both history and the
-        // active-merge path), IsRunVisibleAsync returns true for each individual issue and the
-        // duplication goes undetected. Add a row-count assertion, e.g.:
-        //   var rowCount = await runsPage.GetRowCountAsync();
-        //   Assert.Equal(7, rowCount);
+        Assert.Equal(7, await runsPage.GetRowCountAsync());
 
         // ════════════════════════════════════════════════════════════════════════
         // AC4 — RunPage: Cancel button and Live output panel visibility
@@ -276,13 +259,13 @@ public sealed class RunStateConsistencyTests : E2ETestBase
         Assert.False(await runDetail.IsCancelButtonVisibleAsync(), "Failed: Cancel button should not be visible");
         Assert.False(await runDetail.HasLiveOutputPanelAsync(), "Failed: Live output panel should not be present");
 
-        // TODO [WARNING]: AC4 does not navigate to mergedRunId or closedRunId. The issue scenario
-        // explicitly includes PrMerged and PrClosed as terminal runs that should show no Cancel
-        // button and no Live output panel. Add RunDetailPage navigation and assertions for both:
-        //   await runDetail.NavigateAsync(mergedRunId.ToString());
-        //   Assert.False(await runDetail.IsCancelButtonVisibleAsync(), "PrMerged: Cancel button should not be visible");
-        //   Assert.False(await runDetail.HasLiveOutputPanelAsync(),    "PrMerged: Live output panel should not be present");
-        //   (same for closedRunId)
+        await runDetail.NavigateAsync(mergedRunId.ToString());
+        Assert.False(await runDetail.IsCancelButtonVisibleAsync(), "PrMerged: Cancel button should not be visible");
+        Assert.False(await runDetail.HasLiveOutputPanelAsync(), "PrMerged: Live output panel should not be present");
+
+        await runDetail.NavigateAsync(closedRunId.ToString());
+        Assert.False(await runDetail.IsCancelButtonVisibleAsync(), "PrClosed: Cancel button should not be visible");
+        Assert.False(await runDetail.HasLiveOutputPanelAsync(), "PrClosed: Live output panel should not be present");
 
         // Active: Running
         await runDetail.NavigateAsync(runningRunId.ToString());
@@ -304,20 +287,12 @@ public sealed class RunStateConsistencyTests : E2ETestBase
 
         // Page subtitle shows total count.
         var subtitleText = await Page.Locator(".cockpit-page-sub").InnerTextAsync();
-        // TODO [WARNING]: Assert.Contains("6 run", ...) is a weak substring match — it passes on
-        // "16 runs" or "26 runs" (since "6 run" appears as a substring). Use a precise match
-        // such as Assert.Matches(@"\b6 runs?\b", subtitleText) to guard against false positives.
-        // Also note: if other tests in the same E2ECollection have seeded history runs and not
-        // cleaned them up, the subtitle count will exceed 6 and this assertion becomes vacuous.
-        Assert.Contains("6 run", subtitleText);
+        Assert.Matches(@"\b6 runs?\b", subtitleText);
 
         // Outcome mix labels: Succeeded, Failed, Cancelled present; Restarted conditional section.
         // Assert the Restarted legend is visible (rendered only when _restarted > 0).
         var restartedLegend = Page.Locator(".cockpit-card:has(h2:has-text('Outcome mix'))")
             .Locator("span[title='Superseded by a conflict restart']");
         await Assertions.Expect(restartedLegend).ToBeVisibleAsync(new() { Timeout = 5_000 });
-        // TODO [WARNING]: The Restarted legend visibility check does not assert the count shown
-        // beside the legend equals 1. A regression where ConflictRestart runs are double-counted
-        // (count=2) would pass this check. Add an assertion on the numeric count next to the legend.
     }
 }

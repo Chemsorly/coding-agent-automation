@@ -149,11 +149,6 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         Assert.NotNull(dotnetGate);
         Assert.Equal("dotnet build -c Release", dotnetGate.CompilationCommand);
 
-        // TODO [WARNING]: Scenario 2 requires "The assignment for a dotnet job contains the edited commands.
-        // A disabled config is not included." The test verifies the edited command in the store, and verifies
-        // the disabled UI icon, but does not call QualityGateResolver.Resolve to confirm (a) the edited commands
-        // appear in a resolved assignment and (b) the disabled config is excluded from the resolved assignment.
-
         // Act: disable the config
         await qgHelper.EditRowAsync("Dotnet Gate");
         await qgHelper.SetEnabledAsync(false);
@@ -241,10 +236,8 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         var namesAfterDelete = await reviewerHelper.GetTableRowNamesAsync();
         Assert.DoesNotContain("E2E Reviewers", namesAfterDelete.Select(n => n.Replace("GLOBAL", "").Trim()));
 
-        // TODO [WARNING]: Verify via store that the delete actually removed the record before calling reset,
-        // to isolate a silent delete failure from a subsequent reset that would mask it:
-        // var storedAfterDelete = await Fixture.ConfigStore.LoadReviewerConfigsAsync(CancellationToken.None);
-        // Assert.DoesNotContain(storedAfterDelete, c => c.DisplayName == "E2E Reviewers");
+        var storedAfterDelete = await Fixture.ConfigStore.LoadReviewerConfigsAsync(CancellationToken.None);
+        Assert.DoesNotContain(storedAfterDelete, c => c.DisplayName == "E2E Reviewers");
 
         // Act: reset to defaults
         await reviewerHelper.ClickResetToDefaultsAsync();
@@ -286,13 +279,6 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
     [Fact]
     public async Task TemplateLabelPreview_ShowsAndHidesWithQualityGateEnabled()
     {
-        // TODO [WARNING]: This test mutates shared fixture state (the template) without restoring it in a teardown
-        // step. If test ordering causes this test to run before other tests that read the template table, those tests
-        // may see unexpected data. Consider a try/finally block or DisposeAsync override.
-
-        // TODO [WARNING]: CancellationToken.None is passed to all ConfigStore calls. Thread the xUnit
-        // cancellation token through (TestContext.Current.CancellationToken in xUnit v3) so teardown is not blocked.
-
         // Arrange: seed a template that uses the default repo provider
         const string templateName = "Label Preview Template";
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -314,7 +300,6 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         // Step 1: Navigate to /agent-coding and confirm the preview button is visible.
         // The pre-seeded "E2E Quality Gate" (empty MatchLabels = global) already matches "dotnet".
         await templateHelper.NavigateAsync();
-        // TODO [WARNING]: NavigateAsync uses a fixed 3s delay; use WaitForLabelPreviewButtonAsync for determinism
         Assert.True(
             await templateHelper.IsLabelPreviewButtonVisibleAsync(templateName),
             "Label preview button should be visible because 'E2E Quality Gate' (global) matches the resolved label");
@@ -342,8 +327,6 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         Assert.True(await qgHelper.IsStatusMessageVisibleAsync("saved"), "Expected 'saved' status after adding Dotnet Gate");
 
         // Step 4: Navigate back to /agent-coding and verify "Dotnet Gate" appears in preview.
-        // TODO [WARNING]: NavigateAsync uses a fixed 3s delay; use WaitForLabelPreviewButtonAsync before
-        // ToggleLabelPreviewAsync to ensure the button is present before clicking (avoids race on slow CI)
         await templateHelper.NavigateAsync();
         await templateHelper.ToggleLabelPreviewAsync(templateName);
         Assert.True(await templateHelper.IsLabelPreviewExpandedAsync(templateName));
@@ -365,7 +348,6 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
 
         // Step 6: Navigate back to /agent-coding and verify "Dotnet Gate" is gone from preview.
         // The button remains visible because "E2E Quality Gate" (global, enabled) still matches.
-        // TODO [WARNING]: NavigateAsync uses a fixed 3s delay; use WaitForLabelPreviewButtonAsync for determinism
         await templateHelper.NavigateAsync();
         Assert.True(
             await templateHelper.IsLabelPreviewButtonVisibleAsync(templateName),

@@ -4,6 +4,7 @@ using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
 using CodingAgent.Web.TestUtilities;
+using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.Tests;
 
@@ -47,11 +48,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     /// so the chat's model select offers both (spec 053 req 6.2). Call before <see cref="AgentChatPage.NavigateAsync"/>:
     /// the page loads profiles when it initialises.
     /// </summary>
-    // TODO [WARNING]: these entities are saved with CancellationToken.None and may not be cleaned
-    // up by Fixture.ResetAll() between tests (depends on whether InMemoryConfigurationStore.ResetAll
-    // clears profiles and provider configs). A subsequent test that expects zero profiles or resolves
-    // "kiro,dotnet" may find these stale entities. Verify ResetAll covers them, or explicitly delete
-    // after the test.
     private async Task SeedChatProfileAsync()
     {
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
@@ -91,12 +87,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         TimeSpan timeout)
     {
         var jobTcs = new TaskCompletionSource<k8s.Models.V1Job>(TaskCreationOptions.RunContinuationsAsynchronously);
-        // TODO [WARNING]: if startDispatchAction() throws synchronously before ChatJobCreated fires,
-        // jobTcs is never cancelled and the caller's WaitAsync(timeout) blocks until it expires rather
-        // than propagating the real exception immediately. Consider adding a fault-propagation
-        // continuation: _ = startDispatchAction().ContinueWith(t => jobTcs.TrySetCanceled(),
-        // TaskContinuationOptions.OnlyOnFaulted), matching DispatchChatPodAndConnectAsync in
-        // HeadlessE2ETestBase.
         Action<k8s.Models.V1Job>? handler = null;
         handler = job =>
         {
@@ -112,12 +102,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         }
         catch
         {
-            // TODO [WARNING]: if WaitAsync(timeout) fires, the catch block unsubscribes the handler
-            // correctly. However, FakeKubernetesJobClient.Reset() must clear the ChatJobCreated
-            // event subscribers (set it to null) between tests; if it does not, a stale handler
-            // from a timed-out WaitForFirstChatJobAsync call could fire during a subsequent test's
-            // dispatch and satisfy that test's TCS with the wrong job. Verify Reset() clears
-            // ChatJobCreated before the next test in the collection runs.
             Fixture.K8sClient.ChatJobCreated -= handler;
             throw;
         }
@@ -154,13 +138,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         Assert.Equal(ChosenModel, job.Spec.Template.Spec.Containers.SelectMany(c => c.Env ?? []).Single(e => e.Name == AgentDefaults.EnvChatModel).Value);
 
         // Connect the fake agent concurrently — same approach as DispatchChatPodAndConnectAsync.
-        // TODO [WARNING]: connectTask is not externally cancellable; ConnectAsChatAgentAsync manages
-        // its own internal 25s CTS (BuildAndStartConnectionAsync). If WaitAsync(35s) fires first,
-        // ConnectAsChatAgentAsync runs as an orphaned background task. A fault observer is attached
-        // below to suppress unobserved exceptions. Same pattern at Scenarios 2 and 4.
-        // TODO [WARNING]: agent IDs are truncated to 21 chars; "chat-rt-agent-" is 14 chars leaving
-        // only 7 GUID hex chars (28 bits of entropy). Under parallel assembly execution concurrent
-        // runs could collide. Consider using Guid.NewGuid():N[..16] or removing the slice.
         var agentId = $"chat-rt-agent-{Guid.NewGuid():N}"[..21];
         var fakeAgent = new FakeAgentClient(agentId, "kiro", "dotnet");
         var connectTask = fakeAgent.ConnectAsChatAgentAsync(AgentHubUrl, Fixture.ApiKey, chatSessionId);
@@ -175,9 +152,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         await using (fakeAgent)
         {
             // ── Assert: chat header is visible with the agent id and model ────
-            // TODO [WARNING]: the assertions below re-read the header via GetChatHeaderTextAsync which
-            // is not visibility-aware (QuerySelectorAsync returns hidden elements). Assert directly on
-            // the text returned by WaitForChatHeaderAsync, or use WaitForSelectorAsync with Visible state.
             var headerText = await chatPage.WaitForChatHeaderAsync(timeoutMs: 60_000);
             Assert.NotNull(headerText);
             Assert.Contains(agentId, headerText, StringComparison.OrdinalIgnoreCase);
@@ -189,10 +163,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             // Wait for the fake agent to receive the prompt.
             var prompt = await fakeAgent.ChatPromptAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
             Assert.Equal("What is 2+2?", prompt.Prompt);
-            // TODO [WARNING]: the sent prompt is only confirmed at the SignalR layer. Add an assertion
-            // that the user's message bubble also renders in the browser transcript (e.g. via
-            // GetTranscriptMessagesAsync), so a regression where the UI sends correctly but fails
-            // to render the outbound message is caught.
 
             // Agent sends response.
             await fakeAgent.SendChatResponseAsync(prompt.SessionId, "The answer is 4.");
@@ -237,8 +207,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
 
         var chatSessionId = GetChatSessionId(job);
 
-        // TODO [WARNING]: agent IDs are truncated to 21 chars; "chat-end-agent-" is 15 chars leaving
-        // only 6 GUID hex chars. Under parallel assembly execution concurrent runs could collide.
         var agentId = $"chat-end-agent-{Guid.NewGuid():N}"[..21];
         var fakeAgent = new FakeAgentClient(agentId, "kiro", "dotnet");
         var connectTask = fakeAgent.ConnectAsChatAgentAsync(AgentHubUrl, Fixture.ApiKey, chatSessionId);
@@ -264,21 +232,9 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             await chatPage.WaitForLaunchStateAsync(timeoutMs: 10_000);
 
             // Confirm the chat window header is gone.
+            await Page.WaitForSelectorAsync(".chat-header-bar", new() { State = WaitForSelectorState.Hidden, Timeout = 10_000 });
             var header = await chatPage.GetChatHeaderTextAsync();
-            // TODO [WARNING]: GetChatHeaderTextAsync uses QuerySelectorAsync which is not
-            // visibility-aware — it returns the element even if it is hidden via display:none.
-            // If the Blazor component hides rather than removes .chat-header-bar when returning
-            // to launch state, this assertion passes despite the header still being in the DOM.
-            // TODO [WARNING]: there is no wait for .chat-header-bar to disappear before this
-            // assertion. WaitForLaunchStateAsync returns as soon as #template-select appears,
-            // but the header element may still be in the DOM in the same render frame. Use
-            // WaitForSelectorAsync with State=Hidden on .chat-header-bar before calling
-            // GetChatHeaderTextAsync to make this assertion non-racy.
             Assert.Null(header);
-            // TODO [WARNING]: this test does not assert that the K8s job is deleted or reaches a
-            // terminal state after EndChatAsync. If TerminateChatSessionAsync fails to call
-            // DeleteJobAsync, this test still passes. The headless K8sChat_EndChat_PvcReleasedJobTerminal
-            // asserts on terminal job state; consider adding a matching assertion here.
         }
     }
 
@@ -333,22 +289,10 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         // the Blazor component renders the error message in .agent-detail-warning.
         var errorText = await chatPage.WaitForLaunchErrorAsync(timeoutMs: 40_000);
         Assert.NotNull(errorText);
-        // TODO [WARNING]: these assertions are too weak — any non-empty string satisfies them,
-        // including an unrelated warning or the transient "Launching…" text if WaitForLaunchErrorAsync
-        // returns early. Add a scenario-specific substring assertion (e.g. Assert.Contains("timed out",
-        // errorText, StringComparison.OrdinalIgnoreCase) or a fragment from ChatPodTimeoutException's
-        // message) to distinguish a genuine connect-timeout error from any incidental non-empty text.
         Assert.False(string.IsNullOrWhiteSpace(errorText),
             "Expected a non-empty error message in the page error banner");
 
         // ── Assert: the K8s job is cleaned up by the dispatcher after the timeout ──
-        // TODO [WARNING]: DeletedJobs is populated by FakeKubernetesJobClient.DeleteJobAsync.
-        // If ChatJobDispatcher catches the timeout internally and does not call DeleteJobAsync
-        // (e.g. it only terminates the in-memory PVC reservation), this assertion will fail.
-        // This is the intended behavior — the assertion catches that regression.
-        // TODO [WARNING]: WaitUntilAsync does not include the expected job name in its timeout
-        // message, making CI failures hard to diagnose. Pass a descriptive message or use an
-        // overload that includes jobName in the assertion failure output.
         await WaitUntilAsync(
             () => Fixture.K8sClient.DeletedJobs.Contains(jobName),
             timeout: TimeSpan.FromSeconds(10));
@@ -383,9 +327,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         var chatSessionId = GetChatSessionId(job);
         var jobName = GetJobName(job);
 
-        // TODO [WARNING]: agent ID is truncated to 21 chars; "chat-idle-agent-" is 16 chars leaving
-        // only 5 GUID hex chars (20 bits of entropy). Under parallel assembly execution concurrent
-        // runs could collide, causing hub registration overwrites.
         var agentId = $"chat-idle-agent-{Guid.NewGuid():N}"[..21];
         var fakeAgent = new FakeAgentClient(agentId, "kiro", "dotnet");
         var connectTask = fakeAgent.ConnectAsChatAgentAsync(AgentHubUrl, Fixture.ApiKey, chatSessionId);

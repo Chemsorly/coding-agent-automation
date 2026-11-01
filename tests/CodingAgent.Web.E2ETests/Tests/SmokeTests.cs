@@ -135,13 +135,6 @@ public sealed class SmokeTests : E2ETestBase
 
         foreach (var (route, expectedHeading) in routes)
         {
-            // TODO [WARNING]: consoleErrors.Clear() is called before navigation. Errors emitted
-            // asynchronously by the previous route's teardown (e.g. a SignalR disconnect event
-            // firing after the GotoAsync for the current route starts) are silently discarded rather
-            // than attributed to the correct route. For the very first route, any errors fired
-            // between the listener registration (above) and this Clear() would also be lost, but
-            // the listener is registered before the first GotoAsync so that window is zero.
-            // If stricter per-route error isolation is needed, create a new Page context per route.
             consoleErrors.Clear();
 
             await Page.GotoCockpitPageAsync($"{BaseUrl}{route}");
@@ -159,11 +152,6 @@ public sealed class SmokeTests : E2ETestBase
             // the circuit has rendered CockpitLayout, so NavLink's active class is reliable
             // without an additional explicit wait.
             var navHref = route.TrimStart('/');
-            // TODO [WARNING]: navLink.GetAttributeAsync("class") will throw a Playwright
-            // TimeoutException if no element matching .cockpit-nav-link[href='{navHref}'] exists
-            // in the DOM. For routes where the nav item uses a different href format this produces
-            // an opaque timeout error. Consider using Locator.CountAsync() to check existence first
-            // and emit a clearer failure message before calling GetAttributeAsync.
             var navLink = Page.Locator($".cockpit-nav-link[href='{navHref}']");
             var navClasses = await navLink.GetAttributeAsync("class") ?? "";
             Assert.True(
@@ -171,13 +159,6 @@ public sealed class SmokeTests : E2ETestBase
                 $"Route {route}: expected nav item href=\"{navHref}\" to have class \"active\" but got \"{navClasses}\"");
 
             // Verify no Blazor error UI is displayed.
-            // TODO [WARNING]: IsVisibleAsync() returns false when the element does not exist in the
-            // DOM at all (which is the case on a healthy page — Blazor only injects #blazor-error-ui
-            // dynamically when the circuit crashes). This means the assertion can never fail on a
-            // healthy page, but also cannot detect a very early crash that occurs before the Blazor
-            // framework had a chance to inject the element. The check only catches crashes where
-            // Blazor fully boots, crashes, *and* sets the element to a non-hidden display style.
-            // For stronger detection, use QuerySelectorAsync + a null check (see AgentChatSignalRTests.cs:41).
             var blazorErrorUi = Page.Locator("#blazor-error-ui");
             var isBlazorErrorVisible = await blazorErrorUi.IsVisibleAsync();
             Assert.False(
@@ -204,13 +185,6 @@ public sealed class SmokeTests : E2ETestBase
         // Seed a completed run into the in-memory history service.
         // AddRunSummaryAsync inserts the summary directly; GetRunAsync(Guid) on the API host
         // looks it up without the terminal-step filter that GetRunHistoryAsync applies.
-        // TODO [WARNING]: Fixture.HistoryService is the in-memory fake on the Blazor/UI host.
-        // If RunPage.razor fetches run data via the IPipelineApiRunHistoryClient (HTTP calls to
-        // the separate API host), the seeded data may not be visible to the API host unless both
-        // hosts share the same InMemoryPipelineRunHistoryService instance. Verify that
-        // ApiE2EWebApplicationFactory receives Factory.HistoryService in its constructor and that
-        // the same instance is registered in both DI containers. If they diverge, the test would
-        // navigate to a "Run not found" page and the h1 assertion would fail misleadingly.
         await Fixture.HistoryService.AddRunSummaryAsync(new PipelineRunSummary
         {
             RunId = runId.ToString(),
@@ -252,21 +226,12 @@ public sealed class SmokeTests : E2ETestBase
     [Fact]
     public async Task GotoCockpitPageAsync_PageWithoutCockpitLayout_ThrowsTimeoutNamingTheSignal()
     {
-        // TODO [WARNING]: This test navigates Page to about:blank, leaving it in an unusable state for
-        // any test sharing the same Page instance. xUnit instantiates a new SmokeTests per test, so
-        // Page is per-test-instance and the risk is currently zero. If E2ETestBase ever switches to a
-        // class-scoped or collection-scoped Page, move this test to its own fixture or reset navigation
-        // at the start of the next test. (DotNetSpecialist finding, SmokeTests.cs:252)
         var ex = await Assert.ThrowsAsync<TimeoutException>(
             () => Page.GotoCockpitPageAsync("about:blank", timeoutMs: 1_000));
 
         Assert.Contains(".cockpit-theme-toggle", ex.Message);
         Assert.Contains("about:blank", ex.Message);
-        // TODO [WARNING]: Add Assert.Contains("1000", ex.Message) to lock in the contract that the
-        // TimeoutException message includes the timeout in ms (required by the acceptance criterion).
-        // Also add Assert.NotNull(ex.InnerException) to verify the original Playwright exception is
-        // preserved as InnerException per the acceptance criterion. Both assertions are currently
-        // absent — a regression that drops {timeoutMs} from the message or omits the inner exception
-        // would not be caught. (Correctness/TestQuality findings, SmokeTests.cs:257/263)
+        Assert.Contains("1000", ex.Message);
+        Assert.NotNull(ex.InnerException);
     }
 }
