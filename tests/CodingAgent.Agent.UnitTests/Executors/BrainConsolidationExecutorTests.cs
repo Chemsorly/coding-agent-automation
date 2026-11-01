@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Agent.Executors;
+using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Moq;
@@ -503,6 +505,14 @@ public class BrainConsolidationExecutorTests
             .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
 
+        // Write a valid brain review summary so the validator passes. Without this, after the fix the
+        // run returns Success = false (SummaryMissing) because GetWorkingTreeChanges + ListTrackedFilesAsync
+        // are both set up (making validation run) but no summary file exists on disk.
+        var workspacePath = Path.Combine(Path.GetTempPath(), job.JobId);
+        var summaryFilePath = Path.Combine(workspacePath, ".agent", "brain-review-summary.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(summaryFilePath)!);
+        await File.WriteAllTextAsync(summaryFilePath, "{}");
+
         // Act
         var result = await executor.ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
@@ -527,5 +537,100 @@ public class BrainConsolidationExecutorTests
             It.Is<string>(t => t.Contains("Brain archive step failed")),
             It.IsAny<string>()),
             Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task WhenReviewIsRefused_DoesNotCommitOrPush_AndReturnsFailed()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        _mockBrainProvider.Setup(x => x.BaseBranch).Returns("main");
+        _mockBrainProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Set up both mocks so validation actually runs (not skipped via NullReferenceException).
+        // With an empty changes list and no summary file on disk, CheckSummary returns SummaryMissing.
+        _mockBrainUpdateService
+            .Setup(x => x.GetWorkingTreeChanges(It.IsAny<string>()))
+            .Returns(new List<BrainPathChange>());
+        _mockBrainUpdateService
+            .Setup(x => x.ListTrackedFilesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string>().AsReadOnly());
+
+        // Act
+        var result = await executor.ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.BrainReviewRefusalReason.Should().Be(BrainReviewRefusalReasons.SummaryMissing);
+        result.ErrorMessage.Should().Contain(BrainReviewRefusalReasons.SummaryMissing);
+        _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockBrainUpdateService.Verify(x => x.PushConsolidationAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenReviewIsValid_CommitsAndPushes_WithTheReviewCommitMessage()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        // Write a valid brain review summary before executing. In production the main review agent
+        // writes this file; in this test we write it directly to simulate a valid review.
+        var workspacePath = Path.Combine(Path.GetTempPath(), job.JobId);
+        var summaryFilePath = Path.Combine(workspacePath, ".agent", "brain-review-summary.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(summaryFilePath)!);
+        await File.WriteAllTextAsync(summaryFilePath, "{}");
+
+        _mockBrainProvider.Setup(x => x.BaseBranch).Returns("main");
+        _mockBrainProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockBrainProvider
+            .Setup(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockBrainProvider
+            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Set up both mocks so validation runs. Empty changes + valid summary → validator passes.
+        _mockBrainUpdateService
+            .Setup(x => x.GetWorkingTreeChanges(It.IsAny<string>()))
+            .Returns(new List<BrainPathChange>());
+        _mockBrainUpdateService
+            .Setup(x => x.ListTrackedFilesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string>().AsReadOnly());
+
+        // Act
+        var result = await executor.ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.BrainReviewRefusalReason.Should().BeNull();
+        _mockBrainProvider.Verify(
+            x => x.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(m => m == BrainLayout.ReviewCommitMessage(job.JobId)),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockBrainUpdateService.Verify(x => x.PushConsolidationAsync(
+            It.IsAny<string>(),
+            It.Is<string>(m => m == BrainLayout.ReviewCommitMessage(job.JobId)),
+            _mockBrainProvider.Object,
+            It.IsAny<CancellationToken>(),
+            It.IsAny<int>()),
+            Times.Once);
     }
 }
