@@ -186,14 +186,21 @@ public sealed class FleetAgentStatesTests : E2ETestBase
         await fleet.NavigateAsync();
         await fleet.WaitForAgentStatusAsync("fleet-u06-4", "Busy", timeoutMs: 15_000);
 
-        // Act: click the row to expand the detail
+        // Act: click the row to expand the detail.
+        // Force=true is required for Blazor Server elements: WaitForAgentStatusAsync uses
+        // WaitForFunctionAsync (DOM poll), but Blazor may still be completing a render cycle
+        // when that poll resolves. Without Force, Playwright's actionability check can block
+        // the click during that render window. This matches the pattern used in CancelAsync
+        // and RedispatchAsync throughout the test suite.
         await Page.Locator("tr.monitoring-row-clickable")
             .Filter(new() { HasTextString = "fleet-u06-4" })
-            .ClickAsync();
+            .ClickAsync(new() { Force = true });
 
-        // Assert: detail row shows expected labels
+        // Assert: detail row shows expected labels.
+        // 10s timeout: the Blazor render triggered by the click takes up to a few seconds
+        // on slow CI runners.
         var detailRow = Page.Locator("tr.fleet-detail-row");
-        await Assertions.Expect(detailRow).ToBeVisibleAsync(new() { Timeout = 5_000 });
+        await Assertions.Expect(detailRow).ToBeVisibleAsync(new() { Timeout = 10_000 });
         await Assertions.Expect(detailRow).ToContainTextAsync("Busy since", new() { Timeout = 5_000 });
         await Assertions.Expect(detailRow).ToContainTextAsync("Active issue", new() { Timeout = 5_000 });
         await Assertions.Expect(detailRow).ToContainTextAsync("Active run", new() { Timeout = 5_000 });

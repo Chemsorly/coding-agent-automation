@@ -218,8 +218,14 @@ public sealed class RunPageLiveCompletionTests : E2ETestBase
         // Act: cancel from the Run page UI (two-step confirm flow)
         await runPage.CancelAsync(confirm: true);
 
-        // Assert: the page flips to the Cancelled terminal state via the hub event
-        await runPage.WaitForCancelledStateAsync(TimeSpan.FromSeconds(15));
+        // Assert: the page flips to the Cancelled terminal state via the hub event.
+        // 30s timeout: cancel via UI goes through HTTP → RunLifecycleManager.CancelRunAsync →
+        // hub event → OnCompleted → ReloadCompletedRunAsync. Unlike AcceptAndCompleteJobAsync
+        // (which writes history before firing the hub event), the cancel path may write history
+        // asynchronously after the hub event, so the Cancelled badge can appear several seconds
+        // after the cancel button disappears. 15s was insufficient on CI runners (observed: 8s
+        // for button disappear + 15s badge wait = 23s total timeout, badge appeared at ~16s).
+        await runPage.WaitForCancelledStateAsync(TimeSpan.FromSeconds(30));
 
         // Assert: no page reload happened
         var markerStillSet = await Page.EvaluateAsync<bool>("() => window.__noReload === true");
