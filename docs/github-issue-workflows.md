@@ -124,6 +124,12 @@ See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-ep
 
 To ask for another attempt from the tracker, post a comment and replace `agent:triage-review` with `agent:triage`; the next attempt reads the newest 50 comments. A failed dispatch returns the issue to `agent:triage`. Operators can also start a triage without an issue on the Triage page. See [Triage](triage.md).
 
+## Verified authors
+
+A comment's author is **verified** when the author is on the repository. On GitHub that means `author_association` OWNER, MEMBER or COLLABORATOR, or a bot account, or a repository permission of admin, maintain or write. On GitLab it means the token's own user, or a project member, inherited included, with Developer or higher. The second check on GitHub, and the member check on GitLab, take one API call per author.
+
+If that lookup fails, reading the comments fails. A provider outage does not make a maintainer's comment count as outside text. A token that cannot push gets no answer from that call; then the association alone decides.
+
 ## Issue Dependencies
 
 An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) are not recognized and do not block dispatch.

@@ -305,4 +305,46 @@ public abstract class GitLabProviderBase : IAsyncDisposable
                 nameof(apiUrl));
         }
     }
+
+    /// <summary>
+    /// Tells whether authors are on the project: the token's own user, or a member, inherited included, with
+    /// Developer or higher. Create one per listing: it caches by user ID for its own lifetime. A user who is
+    /// not a member is not verified. Any other failure propagates, so a transient failure fails the listing
+    /// and never reads as "not verified".
+    /// </summary>
+    protected sealed class AuthorVerifier(GitLabProviderBase provider)
+    {
+        private readonly Dictionary<long, bool> _known = [];
+        private long? _ownUserId;
+
+        public async Task<bool> VerifyAsync(long? authorId, CancellationToken ct)
+        {
+            if (authorId is not { } id)
+                return false;
+            if (_known.TryGetValue(id, out var known))
+                return known;
+
+            _ownUserId ??= (await provider.ExecuteWithResilienceAsync(
+                client => client.Users.GetCurrentUserAsync(ct), "GetCurrentUser", ct)).Id;
+
+            var verified = id == _ownUserId || await IsDeveloperOrHigherAsync(id, ct);
+            _known[id] = verified;
+            return verified;
+        }
+
+        private async Task<bool> IsDeveloperOrHigherAsync(long userId, CancellationToken ct)
+        {
+            try
+            {
+                var member = await provider.ExecuteWithResilienceAsync(
+                    client => client.Members.GetMemberOfProjectAsync(provider.ProjectId, userId, includeInheritedMembers: true, ct),
+                    "GetProjectMember", ct);
+                return member is not null && member.AccessLevel >= (int)AccessLevel.Developer;
+            }
+            catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                return false;
+            }
+        }
+    }
 }
