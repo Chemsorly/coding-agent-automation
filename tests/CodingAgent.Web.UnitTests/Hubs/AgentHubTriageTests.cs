@@ -279,17 +279,14 @@ public sealed class AgentHubTriageTests
         _tokens.Verify(t => t.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>(), false), Times.Once);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RequestTokenRefresh_ForOtherRuns_PassesThePermissionThrough(bool includeIssuePermission)
+    [Fact]
+    public async Task RequestTokenRefresh_ForAnImplementationRun_NeverGrantsIssueWriteAccess()
     {
-        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(Run(PipelineRunType.Implementation));
         SetupTokens();
 
-        await CreateHub(Ops()).RequestTokenRefresh(new JobId("job-1"), ProviderKind.Repository, includeIssuePermission);
+        await CreateHub(Ops()).RequestTokenRefresh(new JobId("job-1"), ProviderKind.Repository, includeIssuePermission: true);
 
-        _tokens.Verify(t => t.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>(), includeIssuePermission), Times.Once);
+        _tokens.Verify(t => t.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>(), false), Times.Once);
     }
 
     private void SetupTokens() =>

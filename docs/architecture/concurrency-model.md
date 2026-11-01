@@ -259,7 +259,7 @@ The five processes communicate strictly via defined interfaces:
 | Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, `PUT /api/scheduler/loop-status` (leader only), among others |
 | Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |
-| Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, `RequestTokenRefresh` (token vending), etc. |
+| Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, `RequestTokenRefresh` (token vending; the hub decides the scope), etc. |
 | Pipeline API | Agent pod | SignalR hub push — `CancelJob`, `CancelChat`, `AssignChatPrompt`, `ForceDisconnect`, `RequestFetchModels` |
 
 There is no direct process-to-process communication between the web UI and the
