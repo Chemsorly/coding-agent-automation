@@ -28,7 +28,6 @@ public sealed class RunsAndConsolidationDetailTests : E2ETestBase
     /// </summary>
     private async Task SeedRunAsync(string issue, PipelineStep step, PipelineRunType type, DateTimeOffset started)
     {
-        var started1 = started;
         var completed = started + TimeSpan.FromMinutes(1);
 #pragma warning disable CS0618
         await Fixture.HistoryService.AddRunSummaryAsync(new PipelineRunSummary
@@ -38,8 +37,8 @@ public sealed class RunsAndConsolidationDetailTests : E2ETestBase
             IssueTitle = $"Issue {issue}",
             FinalStep = step,
             RunType = type,
-            StartedAtOffset = started1,
-            StartedAt = started1.DateTime,
+            StartedAtOffset = started,
+            StartedAt = started.DateTime,
             CompletedAtOffset = completed,
             CompletedAt = completed.DateTime,
         });
@@ -120,7 +119,7 @@ public sealed class RunsAndConsolidationDetailTests : E2ETestBase
     {
         var now = DateTimeOffset.UtcNow;
         await SeedRunAsync("9611", PipelineStep.Completed, PipelineRunType.Implementation, now.AddMinutes(-3));
-        await SeedRunAsync("9612", PipelineStep.Failed,    PipelineRunType.Implementation, now.AddMinutes(-2));
+        await SeedRunAsync("9612", PipelineStep.Failed, PipelineRunType.Implementation, now.AddMinutes(-2));
         await SeedRunAsync("9613", PipelineStep.Cancelled, PipelineRunType.Implementation, now.AddMinutes(-1));
 
         // Compute expected ascending order: RunOutcomeDisplay.Label ordinal
@@ -185,8 +184,8 @@ public sealed class RunsAndConsolidationDetailTests : E2ETestBase
     public async Task TypeSort_OrdersByType()
     {
         var now = DateTimeOffset.UtcNow;
-        await SeedRunAsync("9621", PipelineStep.Completed, PipelineRunType.Review,          now.AddMinutes(-2));
-        await SeedRunAsync("9622", PipelineStep.Completed, PipelineRunType.Implementation,  now.AddMinutes(-1));
+        await SeedRunAsync("9621", PipelineStep.Completed, PipelineRunType.Review, now.AddMinutes(-2));
+        await SeedRunAsync("9622", PipelineStep.Completed, PipelineRunType.Implementation, now.AddMinutes(-1));
 
         var runsPage = new RunsPage(Page, BaseUrl);
         await runsPage.NavigateAsync();
