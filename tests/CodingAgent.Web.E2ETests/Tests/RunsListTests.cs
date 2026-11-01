@@ -82,7 +82,7 @@ public sealed class RunsListTests : E2ETestBase
     {
         var now = DateTimeOffset.UtcNow;
         var completedIds = Enumerable.Range(1, 5).Select(i => $"TAB-C{i}").ToList();
-        var failedIds    = Enumerable.Range(1, 3).Select(i => $"TAB-F{i}").ToList();
+        var failedIds = Enumerable.Range(1, 3).Select(i => $"TAB-F{i}").ToList();
         var cancelledIds = Enumerable.Range(1, 2).Select(i => $"TAB-X{i}").ToList();
 
         foreach (var id in completedIds)
@@ -505,7 +505,7 @@ public sealed class RunsListTests : E2ETestBase
     {
         var now = DateTimeOffset.UtcNow;
         const string issueUrl = "https://github.com/e2e-org/repo/issues/42";
-        const string prUrl    = "https://github.com/e2e-org/repo/pull/99";
+        const string prUrl = "https://github.com/e2e-org/repo/pull/99";
 
         await Fixture.HistoryService.AddRunSummaryAsync(
             MakeRun(NewRunId(), "LINK-001", PipelineStep.Completed, now.AddMinutes(-3),
