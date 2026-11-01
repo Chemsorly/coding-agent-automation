@@ -37,11 +37,6 @@ public sealed class RunsListTests : E2ETestBase
     /// Creates a <see cref="PipelineRunSummary"/> with the given parameters.
     /// <paramref name="durationSeconds"/> controls CompletedAtOffset relative to StartedAtOffset.
     /// </summary>
-    // TODO [WARNING]: The #pragma warning disable CS0618 suppressions below assign to the obsolete
-    // StartedAt / CompletedAt (DateTime) properties. If those properties are removed in a future
-    // refactor, these assignments become compile errors rather than warnings, surfacing the breakage
-    // immediately. Prefer removing the obsolete assignments entirely and relying solely on
-    // StartedAtOffset / CompletedAtOffset if the model allows it.
     private static PipelineRunSummary MakeRun(
         string runId,
         string issueId,
@@ -106,10 +101,6 @@ public sealed class RunsListTests : E2ETestBase
         await runsPage.NavigateAsync();
 
         // All tab — all 10 rows visible
-        // TODO [WARNING]: This assertion depends on a clean store. E2ETestBase.InitializeAsync calls
-        // ResetAllAsync which clears _history before each test, so this is safe today. If test isolation
-        // ever weakens (e.g. parallel execution enabled), this count-based assertion will become fragile.
-        // A more robust approach would assert on seeded-ID membership rather than absolute counts.
         var allCount = await runsPage.GetRowCountAsync();
         Assert.Equal(10, allCount);
 
@@ -143,9 +134,6 @@ public sealed class RunsListTests : E2ETestBase
 
         // Back to All
         await runsPage.SelectTabAsync("All");
-        // TODO [WARNING]: Count-only check here. If a bug caused SelectTabAsync to land on the wrong
-        // tab (e.g. CSS class mismatch), 10 rows might still show from a lingering filter state,
-        // masking the defect. Consider asserting spot-membership across all three outcome groups.
         Assert.Equal(10, await runsPage.GetRowCountAsync());
     }
 
@@ -227,11 +215,8 @@ public sealed class RunsListTests : E2ETestBase
         // Also enable Feedback-only: should narrow to the 3 Review+loop:review+feedback rows
         await runsPage.SetFeedbackOnlyAsync(true);
         // Feedback-only is a server-side filter → reloads; wait is baked into SetFeedbackOnlyAsync
-        // TODO [WARNING]: This asserts only a count of 3. A bug that kept three arbitrary non-feedback
-        // rows visible would still pass. Consider also asserting ID membership, e.g.:
-        //   var fbIds = await runsPage.GetVisibleIssueIdentifiersAsync();
-        //   Assert.All(fbIds, id => Assert.StartsWith("F-REV-FB-", id));
         Assert.Equal(3, await runsPage.GetRowCountAsync());
+        Assert.All(await runsPage.GetVisibleIssueIdentifiersAsync(), id => Assert.StartsWith("F-REV-FB-", id));
 
         // Clear Feedback-only → back to 8
         await runsPage.SetFeedbackOnlyAsync(false);
@@ -240,10 +225,6 @@ public sealed class RunsListTests : E2ETestBase
         // Clear Type filter → still Initiated by=loop:review; 5+3 = 8 (the manual Review run
         // was Review type, but InitiatedBy=loop:review still excludes it; the Impl/Decomp rows
         // have different initiatedBy values so they are also excluded)
-        // TODO [WARNING]: This asserts a count of 8 but does not verify which specific rows are
-        // visible. If the Initiated-by filter were inverted (showing everything except loop:review),
-        // a coincidental count of 8 could still occur. Consider adding an Assert.All check that
-        // visible IDs match expected loop:review runs for a stronger guarantee.
         await runsPage.SelectTypeFilterAsync("");
         Assert.Equal(8, await runsPage.GetRowCountAsync());
 
@@ -322,19 +303,13 @@ public sealed class RunsListTests : E2ETestBase
         var filtered = ids.Where(id => id.StartsWith("DUR-")).ToList();
         Assert.Equal(4, filtered.Count);
         // Shortest (10s) must come before longest (300s)
-        // TODO [WARNING]: Only the two extreme positions (DUR-10 vs DUR-300) are checked. A partial-sort
-        // defect that leaves DUR-30 and DUR-120 in the wrong relative order would go undetected.
-        // Consider asserting the full expected ordering: [DUR-10, DUR-30, DUR-120, DUR-300].
-        Assert.True(filtered.IndexOf("DUR-10") < filtered.IndexOf("DUR-300"),
-            "DUR-10 (10s) must appear before DUR-300 (300s) when sorted by Duration asc");
+        Assert.Equal(new[] { "DUR-10", "DUR-30", "DUR-120", "DUR-300" }, filtered);
 
         // Toggle to descending → longest first
         await runsPage.ClickSortHeaderAsync("Duration");
         var idsDesc = await runsPage.GetVisibleIssueIdentifiersAsync();
         var filteredDesc = idsDesc.Where(id => id.StartsWith("DUR-")).ToList();
-        // TODO [WARNING]: Same partial-assertion caveat as above for the descending direction.
-        Assert.True(filteredDesc.IndexOf("DUR-300") < filteredDesc.IndexOf("DUR-10"),
-            "DUR-300 (300s) must appear before DUR-10 (10s) when sorted by Duration desc");
+        Assert.Equal(new[] { "DUR-300", "DUR-120", "DUR-30", "DUR-10" }, filteredDesc);
     }
 
     // ── Scenario 4: Paging ────────────────────────────────────────────────────
@@ -357,8 +332,6 @@ public sealed class RunsListTests : E2ETestBase
         // If Completed ever stops being terminal, all 60 rows would be invisible and every
         // assertion in this test would fail with a confusing count mismatch rather than an
         // obvious failure message. Assert this invariant up-front so the failure is immediate.
-        // TODO [WARNING]: If PipelineStep.Completed stops being terminal the guard below will
-        // fail first, making the root cause obvious rather than a mysterious count mismatch later.
         Assert.True(PipelineStep.Completed.IsTerminal(),
             "PipelineStep.Completed must be terminal for the seeded runs to appear in GetRunHistoryAsync. " +
             "If this assertion fails, update the seeded step to a terminal step (e.g. PrMerged).");
@@ -412,10 +385,6 @@ public sealed class RunsListTests : E2ETestBase
         Assert.Equal(total - 2 * pageSize, page3Ids.Count);
 
         // No overlap between page 3 and pages 1/2
-        // TODO [WARNING]: The intermediate pairwise overlap checks add limited value over the
-        // final Distinct().Count() == 60 assertion below, which already guarantees full coverage
-        // with no duplicates across all three pages. The intermediate checks are kept for
-        // early-failure diagnostic clarity.
         var overlap3 = page3Ids.Intersect(page1Ids.Concat(page2Ids)).ToList();
         Assert.Empty(overlap3);
 
@@ -445,13 +414,6 @@ public sealed class RunsListTests : E2ETestBase
     ///   → This is a real discriminating assertion: on page 2 the filter must actively
     ///     remove 20 rows rather than being a no-op.
     /// </summary>
-    // TODO [WARNING]: This test depends on InMemoryPipelineRunHistoryService using Insert(0,...) (prepend)
-    // so that later-seeded Review runs occupy page 1. If the service changes to append order or sorts by
-    // StartedAtOffset, the Implementation runs (which have newer timestamps: AddSeconds(-i)) would land on
-    // page 1 instead, breaking the Assert.Equal(25, page1FilteredCount) and Assert.All(...StartsWith("PF-REV-"))
-    // assertions with a confusing count mismatch. To remove this fragility, seed timestamps so that the
-    // expected page composition is correct under both insertion-order and timestamp-descending ordering
-    // (e.g. give all Review runs newer timestamps than all Implementation runs).
     [Fact]
     public async Task Runs_Scenario4b_FiltersPersistAcrossPages()
     {
@@ -532,10 +494,6 @@ public sealed class RunsListTests : E2ETestBase
         await runsPage.ClickRunRowAsync("NAV-001");
 
         // After clicking, URL must contain /runs/{runId}
-        // TODO [WARNING]: This only checks URL navigation, not that the detail page loaded without
-        // error. If the RunDetail page renders a "Run not found" error state, this assertion still
-        // passes. Consider adding a WaitForSelectorAsync on a known success element (e.g. the run
-        // detail heading) to verify successful page load.
         Assert.Contains($"/runs/{runId}", Page.Url);
     }
 

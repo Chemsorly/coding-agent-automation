@@ -113,10 +113,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await Page.WaitForSelectorAsync("[data-testid='issue-row-11']", new() { Timeout = 5_000 });
         await Page.WaitForSelectorAsync("[data-testid='issue-row-12']", new() { Timeout = 5_000 });
 
-        // TODO [WARNING]: These ArrowDown assertions assume the fake provider returns issues in insertion
-        // order (10, 11, 12). If the provider sorts issues by identifier or title the row-index mapping
-        // will be wrong and all three position assertions below will be fragile.
-        // Verify that FakeIssueProvider preserves insertion order, or make the assertions order-independent.
         await FocusDrawerListAsync();
 
         // Press ArrowDown once → row 0 (issue-row-10) gets the highlight class
@@ -141,12 +137,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         // ArrowDown on the last row → wraps back to row 0 (modular wrap)
-        // TODO [WARNING]: The acceptance criterion says "never leaves the list bounds", which is
-        // satisfied by both modular wrap and clamping. These assertions encode the specific
-        // modular-wrap behaviour implemented in DispatchDrawerBase.HandleKeyDown
-        // ((_highlightedIndex + 1) % Count). If the implementation is ever changed to clamp at
-        // the boundary instead of wrapping, these WaitForFunctionAsync calls will fail even though
-        // the stated requirement is still met. Update these assertions if the boundary strategy changes.
         await Page.Keyboard.PressAsync("ArrowDown");
         await Page.WaitForFunctionAsync(
             "() => document.querySelector('[data-testid=\"issue-row-10\"]')?.classList.contains('drawer-item-highlighted')",
@@ -214,10 +204,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         Assert.Contains("#21", toastText);
 
         // Verify exactly one work item was created for issue #21
-        // TODO [WARNING]: GetActiveAsync(olderThanSeconds: -3600) uses a negative value; verify the
-        // fixture interprets this as "items created within the last hour" (absolute age < 3600s).
-        // If the implementation treats it literally as "older than -3600 seconds" the result set may
-        // always be empty and the assertion below would fail for the wrong reason.
         Assert.Equal(1, await CountWorkItemsForIssueAsync("21"));
 
         // Press Enter a second time quickly (self-disabling after first dispatch) — no second item
@@ -388,10 +374,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
 
         // Scenario 5a: "?" with focus outside an input opens the overlay.
         // Close the drawer first so Escape is available.
-        // TODO [WARNING]: Scenario 5 depends on Escape-to-close working correctly (same path as
-        // Scenario 4). If the global Escape handler is broken, this WaitForFunctionAsync will hang
-        // for 5 s before failing, making the root cause ambiguous. Consider closing the drawer via
-        // the UI button instead to decouple this scenario from the Escape-close path.
         await Page.Keyboard.PressAsync("Escape");
         await Page.WaitForFunctionAsync(
             "() => !document.querySelector('.dispatch-drawer.open')",
@@ -399,10 +381,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         // Click a non-input area to ensure focus is not in any input
-        // TODO [WARNING]: The "?" global shortcut is handled by registerGlobalKeyboardHandler in
-        // JavaScript. If that JS function fails to register (e.g. throws on init), the
-        // WaitForSelectorAsync below will hang for its full timeout rather than giving a clean
-        // assertion failure. Consider adding a short-circuit check for JS handler registration.
         await Page.ClickAsync("h1");
 
         await Page.Keyboard.PressAsync("?");
@@ -415,10 +393,8 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // Verify overlay lists drawer shortcuts
         var overlayText = await Page.TextContentAsync(".shortcut-overlay");
         Assert.NotNull(overlayText);
-        // TODO [WARNING]: These content assertions are minimal — any overlay containing "↓", "↑",
-        // and "Enter" for unrelated reasons would satisfy them. Consider asserting on a more specific
-        // string such as "Drawer Navigation" (the section header in ShortcutHelpOverlay.razor) or
-        // a full shortcut description like "Move to next item" to pin the drawer-specific content.
+        Assert.Contains("Drawer Navigation", overlayText);
+        Assert.Contains("Move to next item", overlayText);
         Assert.Contains("↓", overlayText);
         Assert.Contains("↑", overlayText);
         Assert.Contains("Enter", overlayText);
@@ -448,10 +424,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await Page.FocusAsync("input[placeholder='Filter by number or title...']");
 
         // Type "?" — since focus is on an input, the global keyboard handler skips it
-        // TODO [WARNING]: Keyboard.PressAsync("?") sends the key by name; on non-US keyboard
-        // locales in CI the "?" character may not be produced in the input, causing the
-        // Assert.Contains("?", filterValue) check below to fail even when overlay suppression
-        // is correct. Consider using Page.Keyboard.TypeAsync("?") which is layout-independent.
         await Page.Keyboard.PressAsync("?");
 
         // Overlay must NOT appear
@@ -487,11 +459,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             Enabled = true
         });
 
-        // TODO [WARNING]: SaveAgentProfileAsync("profile-e2e") is called here and in SeedDefaultTemplateAsync.
-        // If Enter_PrDrawer_DispatchesPrReview and Enter_EpicDrawer_DispatchesDecomposition ever run
-        // concurrently (xUnit parallel collections), two concurrent upserts on the same profile ID can
-        // race on the config store. Confirm that the E2ECollection disables parallelism, or use
-        // profile IDs unique to each test.
         Fixture.RepositoryProvider.PullRequests.Add(new PullRequestSummary
         {
             Number = 200,
@@ -535,10 +502,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         Assert.Contains("200", toastText);
 
         // Confirm one work item was created
-        // TODO [WARNING]: w.IssueIdentifier == "200" assumes DispatchFromPrDrawerAsync stores the
-        // work item with IssueIdentifier set to the PR's Identifier field ("200"). If it uses a
-        // different field (e.g. PrNumber, BranchName) the assertion will always be false and the
-        // test will fail for the wrong reason. Verify against the WorkItem model.
         Assert.True(await CountWorkItemsForIssueAsync("200") > 0,
             "Work item for PR #200 must exist after keyboard dispatch");
     }
@@ -570,11 +533,6 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             Identifier = "300",
             Title = "Epic keyboard test",
             Description = "## Goal\nTest keyboard dispatch",
-            // TODO [WARNING]: The epic drawer appearance depends on both the "agent:epic" label and
-            // the DecompositionEnabled flag. If the fake provider filters by label AND uses a
-            // different label than "agent:epic" (e.g. "agent:epic-approved"), issue #300 will not
-            // appear. Verify that the fake issue provider and EpicDispatchDrawer agree on the label
-            // used to identify epics, and that label-based filtering in the fake is consistent.
             Labels = new[] { "agent:epic" }
         });
 

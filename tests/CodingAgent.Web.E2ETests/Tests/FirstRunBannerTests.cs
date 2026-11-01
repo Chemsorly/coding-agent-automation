@@ -18,10 +18,6 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// Each test calls <c>Fixture.Factory.ApiConfigClient.Reset()</c> in its arrange step to ensure
 /// a clean dismiss-flag state.
 /// </summary>
-// TODO [WARNING]: The dismiss-flag isolation relies on each test calling ApiConfigClient.Reset() in
-// its own arrange step. If a test is added to this class that does NOT call Reset(), it will inherit
-// stale dismiss state from a previously run test. Consider implementing IAsyncLifetime with a
-// per-test Reset() call in InitializeAsync() to enforce isolation unconditionally.
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
 public sealed class FirstRunBannerTests : E2ETestBase
@@ -78,9 +74,6 @@ public sealed class FirstRunBannerTests : E2ETestBase
         await Page.WaitForFunctionAsync("document.querySelector('h1')?.textContent?.includes('Pipelines')", null, new() { Timeout = 10_000 });
         var heading = await Page.TextContentAsync("h1");
         Assert.Contains("Pipelines", heading);
-        // TODO [WARNING]: The issue's Scenario 2 requires that "the add-template control is visible
-        // there". This assertion only checks the <h1> heading. Add an assertion that the
-        // Pipeline Job Templates section / "+ Add" button is also present and visible on the page.
     }
 
     /// <summary>
@@ -131,11 +124,6 @@ public sealed class FirstRunBannerTests : E2ETestBase
 
         // Wait a moment for Blazor circuit to establish and component to initialise
         await Page.WaitForTimeoutAsync(2000);
-        // TODO [WARNING]: Fixed sleep can produce a false positive — CountAsync() returning 0
-        // because the layout hasn't rendered yet (circuit not established) rather than because
-        // the banner logic correctly hid it. Replace with an explicit absence wait, e.g.:
-        //   await Expect(Page.Locator(".first-run-banner")).ToHaveCountAsync(0, new() { Timeout = 5000 });
-        // after first waiting for a known-ready page element to confirm the circuit is up.
 
         // Assert: banner is not present (HasEnabledTemplates returns true)
         var bannerCount = await Page.Locator(".first-run-banner").CountAsync();

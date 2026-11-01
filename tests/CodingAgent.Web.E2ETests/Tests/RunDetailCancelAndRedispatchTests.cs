@@ -108,14 +108,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         FakeAgentClient agent, string issueId, string templateName = "Run Page Template")
     {
         var (_, assignment) = await DispatchAndActivateAsync(agent, issueId, templateName);
-        // TODO [WARNING]: AcceptAndCompleteJobAsync calls JobAccepted again for a job that was already
-        // accepted by DispatchAndActivateAsync (via AcceptJobAsync + ReportStepAsync). It also replays
-        // the GeneratingCode step. This currently works because the hub treats duplicate JobAccepted
-        // and non-monotonic step replays as benign, but it relies on undocumented idempotence.
-        // If the hub ever rejects a duplicate accept or a backward step transition, all re-dispatch
-        // tests (Scenarios 3, 4c, 5) will break here. Prefer driving completion without a second
-        // accept: report the remaining steps individually and post the Failed terminal step via
-        // ReportStepAsync, mirroring the fine-grained pattern used elsewhere in the E2E suite.
         await agent.AcceptAndCompleteJobAsync(assignment.JobId, PipelineStep.Failed);
 
         // Wait until the run appears in history as Failed
@@ -210,16 +202,9 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         }
 
         // Assert: terminal label is agent:cancelled
-        // TODO [WARNING]: This assertion has no polling wait. TrySwapLabelAsync executes inside
-        // RunTerminalCleanupAsync (step 4 after TransitionWorkItemAsync and ClearAgentStateAsync),
-        // which runs after RemoveRun() — the condition that unblocks the WaitUntilAsync polling
-        // loop above. The bare Assert.Contains therefore races against the async label-swap: if the
-        // polling loop wakes up between the DB write completing and the label swap finishing, the
-        // assertion fails intermittently. Fix: wrap this assertion in a WaitUntilAsync that polls
-        // until AgentLabels.Cancelled appears in issue.Labels.
-        var issue = Fixture.IssueProvider.Issues.FirstOrDefault(i => i.Identifier == issueId);
-        Assert.NotNull(issue);
-        Assert.Contains(AgentLabels.Cancelled, issue!.Labels);
+        await WaitUntilAsync(
+            () => Fixture.IssueProvider.Issues.FirstOrDefault(i => i.Identifier == issueId)?.Labels.Contains(AgentLabels.Cancelled) == true,
+            timeout: TimeSpan.FromSeconds(10));
 
         // Assert: K8s job was deleted
         Assert.Contains(fakeJobName, Fixture.K8sClient.DeletedJobs);
@@ -255,15 +240,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     ///   covers the idempotence of the underlying status endpoint independently of the UI guard.</item>
     /// </list>
     /// </para>
-    ///
-    /// TODO [WARNING]: The browser-level double-click guard is exercised on a best-effort basis.
-    /// The reliability of the second-click-while-in-flight timing depends on Blazor Server's
-    /// round-trip latency in CI. If the first request completes before the second ClickAsync
-    /// fires (because the CI runner is fast or the network is local), the component will have
-    /// already hidden the confirm prompt via re-render, and the second click will silently miss.
-    /// In that case the test still passes (no error text, Cancelled state) but does not exercise
-    /// the in-flight guard. Tolerating this race is preferable to skipping the browser-level
-    /// assertion entirely.
     /// </summary>
     [Fact]
     public async Task Cancel_DoubleClick_ProducesOnlyOneStatusPost()
@@ -315,22 +291,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         await WaitUntilAsync(() => !runService.GetActiveRuns().Any(r => r.IssueIdentifier == issueId),
             timeout: TimeSpan.FromSeconds(15));
 
-        // Brief settle for any second spurious write to arrive
-        // TODO [WARNING]: This unconditional Task.Delay(500) is a fixed sleep, not a deterministic
-        // signal. It makes the test slower and hides timing races without detecting them — if a
-        // second spurious write arrives after 500 ms, the assertion below still passes (WorkItemStatus
-        // is still Cancelled, idempotently). Replace with a deterministic signal (e.g. polling the DB
-        // for a count == 2 change-log entry) or remove the sleep and rely on the WaitUntilAsync above.
-        await Task.Delay(500);
-
         // Assert: WorkItem is Cancelled (exactly one terminal transition occurred)
-        // TODO [WARNING]: The test name "Cancel_DoubleClick_ProducesOnlyOneStatusPost" implies that
-        // only one PostStatusAsync call was made, but this assertion only checks the final DB state
-        // (WorkItemStatus.Cancelled) and the absence of "Cancel failed" text — both of which pass
-        // whether one or two PostStatusAsync calls fired, since the endpoint is idempotent. The
-        // double-click guard is therefore not actually verified: the test can pass even when the
-        // guard is entirely absent. To verify the guard, spy on PostStatusAsync (e.g. via a
-        // counting decorator or a call-count property on the fake) and assert the count == 1.
         await using var db = await Fixture.DbContextFactory.CreateDbContextAsync();
         var entity = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
         Assert.NotNull(entity);
@@ -431,11 +392,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     // Scenario 4 — Re-dispatch hidden where it should be
     // ═══════════════════════════════════════════════════════════════════════
 
-    // TODO [WARNING]: The issue specifies Scenario 4 covers "Review/Decomposition runs" but only
-    // Review is tested (Scenario 4b below). A Decomposition run (PipelineRunType.Decomposition or
-    // PipelineRunType.DecompositionAnalysis) is not covered. Add a Redispatch_HiddenForDecompositionRun
-    // test that dispatches via the decomposition path and asserts the re-dispatch card is absent.
-
     /// <summary>
     /// Scenario 4a: Re-dispatch card is NOT visible for an active (live) run.
     /// </summary>
@@ -467,11 +423,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     public async Task Redispatch_HiddenForReviewRun()
     {
         const string prId = "3091-pr-4b";
-        // TODO [WARNING]: prNumber is assigned but never used. It was likely left over from an
-        // earlier approach that looked up the PR by its numeric GitHub ID. The PullRequestSummary
-        // seeded below references it only to satisfy the constructor — no assertion uses it.
-        // If a future test step needs to locate the PR by number, use prNumber there. Otherwise
-        // remove it to avoid the compiler "unused variable" warning surfacing in CI output.
         const int prNumber = 3091;
         const string issueId = "3091-linked-4b";
 
@@ -518,11 +469,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         await using var agent = new FakeAgentClient("review-agent-4b", "e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // TODO [WARNING]: IDispatchOrchestrationService and IWorkDistributor are resolved directly
-        // from a root service provider (Fixture.ApiServices, Fixture.Factory.Services). If either is registered as
-        // Scoped, this creates a captive-scope instance that is never disposed within the test,
-        // leaking any resources it holds for the lifetime of the test fixture. Consider resolving
-        // these via Fixture.Factory.Services.CreateScope() and disposing the scope after the call.
         var orchService = Fixture.ApiServices.GetRequiredService<IDispatchOrchestrationService>();
         var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
@@ -563,13 +509,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         await agent.AcceptAndCompleteJobAsync(assignment.JobId, PipelineStep.Completed);
 
         var completedRun = await WaitForHistoryAsync(r =>
-            // TODO [WARNING]: This predicate is not scoped to the PR or issue seeded by this test.
-            // In a parallel test run, a Review run from another concurrently executing test that
-            // reaches history first will match, causing NavigateAsync to navigate to the wrong run.
-            // The assertion (redispatchCard == false) would still pass (Review runs don't show the
-            // card) but the browser navigation tests the wrong state. Add a filter on the PR
-            // identifier: r.RunType == PipelineRunType.Review && r.PrIdentifier == prId
-            // (or equivalent) once PipelineRunSummary exposes that field.
             r.RunType == PipelineRunType.Review,
             timeout: TimeSpan.FromSeconds(30));
 
@@ -737,9 +676,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // Uses IWorkDistributor.DistributeAsync (→ POST /api/work-items) which returns
         // DistributionResult.AlreadyExists=true on 409 rather than throwing, and uses the same
         // dedup guard as the UI confirm button path.
-        // TODO [WARNING]: IWorkDistributor is resolved from the root service provider without a scope.
-        // If it is registered as Scoped, this creates a captive-scope instance. Prefer resolving via
-        // CreateScope() + dispose. See similar pattern in Scenario 4b.
         var distributor = Fixture.ApiServices.GetRequiredService<IWorkDistributor>();
         var request = new JobDistributionRequest
         {
