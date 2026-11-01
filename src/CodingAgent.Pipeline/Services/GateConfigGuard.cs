@@ -2,10 +2,17 @@ using System.Text;
 
 namespace CodingAgent.Pipeline.Services;
 
+/// <summary>What the quality-gate configuration guard found. The values are the <c>pipeline.pr.guard_result</c> tag.</summary>
+internal enum GateConfigGuardStatus { Clean, Changed, Unverifiable }
+
+/// <summary>The guard's result. <paramref name="GateFiles"/> is empty unless the status is Changed.</summary>
+internal sealed record GateConfigGuardResult(GateConfigGuardStatus Status, IReadOnlyList<string> GateFiles);
+
 /// <summary>
 /// Detects branch changes to files that configure quality gates (analyzers, coverage, lint or CI),
 /// so the pipeline can leave such a PR as a draft for a person to review instead of marking it ready.
 /// The file list is fixed in code on purpose: it is a guard against agents weakening a check.
+/// The list of changed files comes from the provider, never from the workspace, whose refs an agent can change.
 /// </summary>
 public static class GateConfigGuard
 {
@@ -22,6 +29,9 @@ public static class GateConfigGuard
     private static readonly string[] FileNamePrefixes = [".eslintrc", "eslint.config."];
     // Repository-relative directory prefixes.
     private static readonly string[] PathPrefixes = [".github/workflows/"];
+
+    internal const string WarningHeading = "## ⚠️ Quality-gate configuration changed";
+    internal const string UnverifiableHeading = "## ⚠️ Could not verify the changed files";
 
     /// <summary>
     /// Returns the changed paths that configure a quality gate, in input order and without duplicates.
@@ -46,19 +56,6 @@ public static class GateConfigGuard
     }
 
     /// <summary>
-    /// Lists the files the branch in <paramref name="workspacePath"/> changed against <c>origin/main</c>.
-    /// Returns an empty list when the workspace is missing or is not a git repository.
-    /// </summary>
-    internal static async Task<IReadOnlyList<string>> GetChangedFilesAsync(string? workspacePath, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(Path.Combine(workspacePath, ".git")))
-            return [];
-
-        var output = await GitProcessRunner.RunAsync(workspacePath, "diff --name-only origin/main...HEAD", ct, throwOnNonZeroExit: false);
-        return output.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-    }
-
-    /// <summary>
     /// Returns <paramref name="body"/> followed by a warning section that lists each changed
     /// quality-gate configuration file as a bullet.
     /// </summary>
@@ -69,7 +66,7 @@ public static class GateConfigGuard
 
         var sb = new StringBuilder(body);
         sb.Append('\n');
-        sb.Append("\n## ⚠️ Quality-gate configuration changed\n");
+        sb.Append('\n').Append(WarningHeading).Append('\n');
         sb.Append('\n');
         sb.Append("This PR changes files that configure quality gates (analyzers, coverage, lint or CI). The pipeline left it as a draft so that a person reviews these changes before merging:\n");
         sb.Append('\n');
@@ -77,6 +74,24 @@ public static class GateConfigGuard
             sb.Append("- `").Append(file).Append("`\n");
         sb.Append('\n');
         sb.Append("If the change is intended, mark the PR ready for review. If not, revert these files.\n");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Returns <paramref name="body"/> followed by a section saying the PR's changed files could not be
+    /// read completely, so the guard could not check them.
+    /// </summary>
+    internal static string AppendUnverifiableSection(string body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        var sb = new StringBuilder(body);
+        sb.Append('\n');
+        sb.Append('\n').Append(UnverifiableHeading).Append('\n');
+        sb.Append('\n');
+        sb.Append("The pipeline could not read this PR's complete list of changed files from the provider, so it could not check whether quality-gate configuration changed. It left the PR as a draft so that a person reviews it.\n");
+        sb.Append('\n');
+        sb.Append("Check the changed files, then mark the PR ready for review.\n");
         return sb.ToString();
     }
 

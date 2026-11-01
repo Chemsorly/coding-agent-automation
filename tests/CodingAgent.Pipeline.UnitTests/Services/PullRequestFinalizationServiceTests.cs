@@ -3,7 +3,10 @@ using CodingAgent.Pipeline.Brain;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
 using Moq;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -14,8 +17,11 @@ public class PullRequestFinalizationServiceTests
 
     public PullRequestFinalizationServiceTests()
     {
-        _sut = new PullRequestFinalizationService(_logger.Object);
+        _sut = new PullRequestFinalizationService(_logger.Object, getChangedFiles: ChangedFiles());
     }
+
+    private static Func<IRepositoryProvider, int, CancellationToken, Task<PullRequestChangedFiles?>> ChangedFiles(params string[] files) =>
+        (_, _, _) => Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles(files, true, "head-sha"));
 
     private static PipelineRun CreateRun() => new()
     {
@@ -259,7 +265,7 @@ public class PullRequestFinalizationServiceTests
     public async Task RunPostPrSequenceAsync_GateConfigChanged_LeavesDraftAndAppendsWarning()
     {
         var sut = new PullRequestFinalizationService(_logger.Object,
-            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+            getChangedFiles: ChangedFiles("src/Foo.cs", "SonarQube.Analysis.xml"));
         var run = CreateRun();
         run.PullRequestNumber = "42";
         run.PullRequestBody = "Original body";
@@ -271,7 +277,7 @@ public class PullRequestFinalizationServiceTests
         await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
 
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42,
-            It.Is<string>(b => b.StartsWith("Original body") && b.Contains("- `SonarQube.Analysis.xml`")),
+            It.Is<string>(b => b != null && b.StartsWith("Original body") && b.Contains("- `SonarQube.Analysis.xml`")),
             false, It.IsAny<CancellationToken>()), Times.Once);
         repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
         run.PrMarkedReadyAt.Should().BeNull();
@@ -288,7 +294,7 @@ public class PullRequestFinalizationServiceTests
         // This test fails before the fix (current code emits "left as draft" unconditionally)
         // and passes after (code branches on IsDraft).
         var sut = new PullRequestFinalizationService(_logger.Object,
-            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+            getChangedFiles: ChangedFiles("src/Foo.cs", "SonarQube.Analysis.xml"));
         var run = CreateRun();
         run.PullRequestNumber = "42";
         run.PullRequestBody = "Original body";
@@ -309,7 +315,7 @@ public class PullRequestFinalizationServiceTests
         // GetOpenPullRequestAsync returns null (PR closed or not found).
         // The run must still complete without throwing and emit an unconfirmed-state warning.
         var sut = new PullRequestFinalizationService(_logger.Object,
-            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+            getChangedFiles: ChangedFiles("src/Foo.cs", "SonarQube.Analysis.xml"));
         var run = CreateRun();
         run.PullRequestNumber = "42";
         run.PullRequestBody = "Original body";
@@ -323,7 +329,7 @@ public class PullRequestFinalizationServiceTests
         emitted.Should().Contain(l => l.Contains("could not be confirmed") && l.Contains("SonarQube.Analysis.xml"));
         emitted.Should().NotContain(l => l.Contains("left as draft for review"));
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42,
-            It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]
@@ -333,7 +339,7 @@ public class PullRequestFinalizationServiceTests
         // implementation). The outer guard must remain non-fatal; the unconfirmed-state line must
         // still be emitted and RunPostPrSequenceAsync must complete without throwing.
         var sut = new PullRequestFinalizationService(_logger.Object,
-            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+            getChangedFiles: ChangedFiles("src/Foo.cs", "SonarQube.Analysis.xml"));
         var run = CreateRun();
         run.PullRequestNumber = "42";
         run.PullRequestBody = "Original body";
@@ -347,7 +353,7 @@ public class PullRequestFinalizationServiceTests
         emitted.Should().Contain(l => l.Contains("could not be confirmed") && l.Contains("SonarQube.Analysis.xml"));
         emitted.Should().NotContain(l => l.Contains("left as draft for review"));
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42,
-            It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     private static PullRequestSummary MakeDraftPr(int number) => new()
@@ -380,7 +386,7 @@ public class PullRequestFinalizationServiceTests
     public async Task RunPostPrSequenceAsync_NoGateConfigChanged_MarksReady()
     {
         var sut = new PullRequestFinalizationService(_logger.Object,
-            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs"]));
+            getChangedFiles: ChangedFiles("src/Foo.cs"));
         var run = CreateRun();
         run.PullRequestNumber = "42";
         var repoProvider = new Mock<IRepositoryProvider>();
@@ -393,18 +399,20 @@ public class PullRequestFinalizationServiceTests
     }
 
     [Fact]
-    public async Task RunPostPrSequenceAsync_ChangedFilesLookupThrows_MarksReady()
+    public async Task RunPostPrSequenceAsync_ChangedFilesLookupThrows_StaysDraft()
     {
         var sut = new PullRequestFinalizationService(_logger.Object,
-            getChangedFiles: (_, _) => throw new TimeoutException("git diff timed out"));
+            getChangedFiles: (_, _, _) => throw new TimeoutException("provider timed out"));
         var run = CreateRun();
         run.PullRequestNumber = "42";
         var repoProvider = new Mock<IRepositoryProvider>();
+        var emitted = new List<string>();
 
-        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
 
-        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
-        run.PrMarkedReadyAt.Should().NotBeNull();
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+        run.PrMarkedReadyAt.Should().BeNull();
+        run.PullRequestBody.Should().Contain(GateConfigGuard.UnverifiableHeading);
     }
 
     private PostPrSequenceRequest CreatePostPrRequest(PipelineRun run, IRepositoryProvider repoProvider, Action<string> emitOutputLine)
@@ -2526,6 +2534,388 @@ public class PullRequestFinalizationServiceTests
     //   silently skips UpdatePullRequestAsync and the section is lost with no diagnostic trace
     //   (documented in a TODO in the production code). This failure mode is also not tested.
     // Add tests for both paths to complete AC #1 coverage for draft PRs.
+
+    // ── New guard tests (issue #4083) ──────────────────────────────────────────
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_ProviderReturnsNull_StaysDraft()
+    {
+        // Default seam: provider.GetPullRequestChangedFilesAsync returns null (Moq default, interface default is null)
+        var sut = new PullRequestFinalizationService(_logger.Object); // no getChangedFiles seam → uses interface default → null
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        // Plain mock: GetPullRequestChangedFilesAsync returns null (Moq does not call default interface methods)
+        var emitted = new List<string>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+        run.PrMarkedReadyAt.Should().BeNull();
+        run.PullRequestBody.Should().Contain(GateConfigGuard.UnverifiableHeading);
+        emitted.Should().Contain(l => l.Contains("could not have its changed files verified"));
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_IncompleteList_StaysDraft()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _, _) => Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles(["src/Foo.cs"], false, "head-sha")));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+        run.PrMarkedReadyAt.Should().BeNull();
+        run.PullRequestBody.Should().Contain(GateConfigGuard.UnverifiableHeading);
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_IncompleteListWithGateFile_ReportsTheFile()
+    {
+        // Gate file in an incomplete list → Changed, not Unverifiable
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _, _) => Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles(["SonarQube.Analysis.xml"], false, "head-sha")));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeDraftPr(42));
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        run.PullRequestBody.Should().Contain(GateConfigGuard.WarningHeading);
+        run.PullRequestBody.Should().Contain("SonarQube.Analysis.xml");
+        run.PullRequestBody.Should().NotContain(GateConfigGuard.UnverifiableHeading);
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_TamperedWorkspace_HasNoEffect()
+    {
+        // WorkspacePath is a temp path that doesn't exist → GetHeadCommitShaAsync throws → expectedHead is null
+        // → head lag check skipped → seam result used directly → gate file found → stays draft
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: ChangedFiles("SonarQube.Analysis.xml"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.WorkspacePath = Path.Combine(Path.GetTempPath(), "nonexistent-" + Guid.NewGuid().ToString("N"));
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("workspace not found"));
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeDraftPr(42));
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        run.PullRequestBody.Should().Contain(GateConfigGuard.WarningHeading);
+        run.PrMarkedReadyAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_NonMainBase_IsGuarded()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: ChangedFiles("SonarQube.Analysis.xml"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.BaseBranch).Returns("develop");
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeDraftPr(42));
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        run.PullRequestBody.Should().Contain(GateConfigGuard.WarningHeading);
+        run.PrMarkedReadyAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_HeadLag_RetriesThenDecides()
+    {
+        // Seam returns head "old" twice then "new" with src/Foo.cs → clean after 3 attempts
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        var callCount = 0;
+        var delayCount = 0;
+        Func<IRepositoryProvider, int, CancellationToken, Task<PullRequestChangedFiles?>> seam = (_, _, _) =>
+        {
+            callCount++;
+            var headSha = callCount <= 2 ? "old" : "new";
+            return Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles(["src/Foo.cs"], true, headSha));
+        };
+        Func<TimeSpan, CancellationToken, Task> delay = (wait, _) =>
+        {
+            delayCount++;
+            wait.Should().Be(TimeSpan.FromSeconds(5));
+            return Task.CompletedTask;
+        };
+
+        var sut = new PullRequestFinalizationService(_logger.Object, getChangedFiles: seam, delay: delay);
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("new");
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        callCount.Should().Be(3, "seam should be called once per lag retry until head matches");
+        delayCount.Should().Be(2, "delay fires between attempts");
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+        run.PrMarkedReadyAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_HeadNeverMatches_StaysDraft()
+    {
+        // Seam always returns head "old" → exhausts 6 attempts → unverifiable
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        var callCount = 0;
+        var delayCount = 0;
+        Func<IRepositoryProvider, int, CancellationToken, Task<PullRequestChangedFiles?>> seam = (_, _, _) =>
+        {
+            callCount++;
+            return Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles(["src/Foo.cs"], true, "old"));
+        };
+        Func<TimeSpan, CancellationToken, Task> delay = (_, _) => { delayCount++; return Task.CompletedTask; };
+
+        var sut = new PullRequestFinalizationService(_logger.Object, getChangedFiles: seam, delay: delay);
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("new");
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        callCount.Should().Be(6, "must exhaust all 6 attempts");
+        delayCount.Should().Be(5, "delay fires between attempts (not after the last)");
+        run.PullRequestBody.Should().Contain(GateConfigGuard.UnverifiableHeading);
+        run.PrMarkedReadyAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_HeadUnknown_SkipsTheLagCheck()
+    {
+        // GetHeadCommitShaAsync returns null → expectedHead is null → lag check skipped → seam called once
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        var callCount = 0;
+        Func<IRepositoryProvider, int, CancellationToken, Task<PullRequestChangedFiles?>> seam = (_, _, _) =>
+        {
+            callCount++;
+            return Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles(["src/Foo.cs"], true, "anything"));
+        };
+
+        var sut = new PullRequestFinalizationService(_logger.Object, getChangedFiles: seam);
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string)null!);
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        callCount.Should().Be(1, "with no expected head, the lag check is skipped");
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+        run.PrMarkedReadyAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_GateConfigChanged_ConvertsBeforeDescription()
+    {
+        // Guard runs before description (LLM call): UpdatePullRequestAsync(false) must fire before any agent call
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: ChangedFiles("SonarQube.Analysis.xml"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "Body";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeDraftPr(42));
+
+        var callOrder = new List<string>();
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), (string?)null, false, It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("convert"))
+            .Returns(Task.CompletedTask);
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .Callback(() => callOrder.Add("agent"))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+        var request = new PostPrSequenceRequest
+        {
+            Run = run,
+            IsDraft = false,
+            AgentProvider = agentProvider.Object,
+            RepoProvider = repoProvider.Object,
+            Config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) },
+            BrainSync = null,
+            BrainProvider = null,
+            FeedbackService = new FeedbackService(_logger.Object),
+            HistoryService = historyService.Object,
+            EmitOutputLine = _ => { },
+            TransitionCallback = _ => Task.CompletedTask
+        };
+
+        await sut.RunPostPrSequenceAsync(request, CancellationToken.None);
+
+        callOrder.Should().ContainInOrder("convert", "agent");
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_NoGateFiles_ReworkSeesNoStateChange()
+    {
+        // A rework PR with clean files sees no draft conversion
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: ChangedFiles("src/Foo.cs"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 42,
+            BranchName = "feature/branch",
+            Url = "https://github.com/org/repo/pull/42",
+            IsDraft = false
+        };
+        var repoProvider = new Mock<IRepositoryProvider>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Never);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("clean", null, null)] // clean files + complete list
+    [InlineData("changed", "SonarQube.Analysis.xml", null)] // gate file present
+    [InlineData("unverifiable", null, "throw")] // seam throws
+    public async Task RunPostPrSequenceAsync_SetsGuardResultTag(string expectedTag, string? gateFile, string? errorMode)
+    {
+        var uniqueRunId = "guard-tag-test-" + Guid.NewGuid().ToString("N");
+        var run = new PipelineRun
+        {
+            RunId = uniqueRunId,
+            IssueIdentifier = "test/repo#1",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            RepositoryName = "org/repo",
+            WorkspacePath = "/tmp/workspace",
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            PullRequestNumber = "42"
+        };
+
+        Func<IRepositoryProvider, int, CancellationToken, Task<PullRequestChangedFiles?>> seam = errorMode == "throw"
+            ? (_, _, _) => throw new InvalidOperationException("provider failed")
+            : (_, _, _) => Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles(
+                gateFile is not null ? [gateFile] : [], true, "head-sha"));
+
+        var sut = new PullRequestFinalizationService(_logger.Object, getChangedFiles: seam);
+        var repoProvider = new Mock<IRepositoryProvider>();
+        if (gateFile is not null)
+            repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(MakeDraftPr(42));
+
+        var activities = new ConcurrentBag<Activity>();
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => activities.Add(activity)
+        };
+        ActivitySource.AddActivityListener(listener);
+        try
+        {
+            await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+        }
+        finally
+        {
+            listener.Dispose();
+        }
+
+        var guardActivity = activities
+            .Where(a => a.DisplayName == "GateConfigGuard"
+                && (string?)a.GetTagItem("pipeline.run_id") == run.RunId)
+            .SingleOrDefault();
+
+        guardActivity.Should().NotBeNull("GateConfigGuard span must have been emitted");
+        guardActivity!.GetTagItem("pipeline.pr.guard_result").Should().Be(expectedTag);
+    }
+
+    // ── RecheckGateConfigAfterRetryAsync ──────────────────────────────────────
+
+    [Fact]
+    public async Task RecheckGateConfigAfterRetryAsync_GateFileChanged_ConvertsAndWarns()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: ChangedFiles("SonarQube.Analysis.xml"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "Body";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeDraftPr(42));
+        var emitted = new List<string>();
+
+        await sut.RecheckGateConfigAfterRetryAsync(run, repoProvider.Object, emitted.Add, CancellationToken.None);
+
+        // Pre-emptive conversion (null body) + body update = 2 calls
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, (string?)null, false, It.IsAny<CancellationToken>()), Times.Once);
+        run.PullRequestBody.Should().Contain(GateConfigGuard.WarningHeading);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+        emitted.Should().Contain(l => l.Contains("SonarQube.Analysis.xml"));
+    }
+
+    [Fact]
+    public async Task RecheckGateConfigAfterRetryAsync_Clean_ChangesNothing()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: ChangedFiles("src/Foo.cs"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+
+        await sut.RecheckGateConfigAfterRetryAsync(run, repoProvider.Object, _ => { }, CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RecheckGateConfigAfterRetryAsync_ProviderFails_StaysDraft()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _, _) => throw new TimeoutException("provider failed"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+
+        await sut.RecheckGateConfigAfterRetryAsync(run, repoProvider.Object, _ => { }, CancellationToken.None);
+
+        run.PullRequestBody.Should().Contain(GateConfigGuard.UnverifiableHeading);
+    }
+
+    [Fact]
+    public async Task RecheckGateConfigAfterRetryAsync_SectionAlreadyPresent_DoesNotRepeatIt()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: ChangedFiles("SonarQube.Analysis.xml"));
+        var existingBody = GateConfigGuard.AppendWarningSection("Body", ["SonarQube.Analysis.xml"]);
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = existingBody;
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.GetOpenPullRequestAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeDraftPr(42));
+
+        await sut.RecheckGateConfigAfterRetryAsync(run, repoProvider.Object, _ => { }, CancellationToken.None);
+
+        var occurrences = run.PullRequestBody!
+            .Split(GateConfigGuard.WarningHeading, StringSplitOptions.None).Length - 1;
+        occurrences.Should().Be(1, "the warning section must not be duplicated");
+    }
 
     private sealed class TempDirectory : IDisposable
     {
