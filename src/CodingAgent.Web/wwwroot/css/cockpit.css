@@ -621,6 +621,19 @@
 /* Section cards match .cockpit-card: 14px radius, faint shadow, plain-text titles. */
 .cockpit .settings-section { padding: 18px 20px; border-radius: 14px; box-shadow: 0 1px 2px rgba(15, 19, 32, .04); }
 .cockpit .settings-section h2 { font-size: 15px; font-weight: 700; color: var(--text); }
+/* A section's own subheadings sit below its 15px h2. Zero-specificity so classed headings keep their size. */
+:where(.cockpit .settings-section) h3 { font-size: 14px; font-weight: 600; color: var(--text); }
+:where(.cockpit .settings-section) h4 { font-size: 13px; font-weight: 600; color: var(--text); }
+
+/* Fields placed directly in a section (no .provider-form) have no flex gap, so they space themselves. */
+.cockpit .settings-section > .form-group,
+.cockpit .settings-section > .form-group + .form-hint { margin-top: 12px; }
+.cockpit .settings-section > .form-hint + .monitoring-table-wrap,
+.cockpit .settings-section > .monitoring-table-wrap + .settings-status,
+.cockpit .settings-section > .monitoring-table-wrap + .form-buttons { margin-top: 12px; }
+.cockpit .settings-section > .form-group + .form-buttons { margin-top: 16px; }
+.cockpit .settings-section > .form-buttons + h3,
+.cockpit .settings-section > .monitoring-table-wrap + h3 { margin-top: 24px; }
 /* A section whose body is a single settings form: the card already frames it, so the form's own box would
    nest a second bordered well inside the card. Add/edit panels under a list keep their frame. */
 .cockpit .settings-section > .section-description + .provider-form { padding: 0; border: 0; background: none; }
