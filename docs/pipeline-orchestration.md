@@ -43,7 +43,7 @@ A single ID flows end-to-end:
 PipelineRun.RunId = WorkItem.Id = hub GetRun(jobId)
 ```
 
-The K8s Job name is a **truncated derivative** of the WorkItem ID (not the full GUID) and also serves as the agent's `AGENT_ID`. Hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId` (= WorkItem ID). If these don't match, the hub returns "No active run found".
+The K8s Job name is a **truncated derivative** of the WorkItem ID (not the full GUID) and also serves as the agent's `AGENT_ID`. Hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId` (= WorkItem ID). If these don't match, the hub returns "No active run found". For `RequestTokenRefresh`, the hub also looks up the run type by this ID, to decide the token's scope.
 
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 
@@ -213,7 +213,7 @@ External CI is only evaluated after local gates (compilation, tests) pass. If an
 
 The retry prompt includes the full gate failure details and points the agent to diagnostic output files. Each retry attempt is a `--resume` call, so the agent has full conversation history.
 
-If all retries are exhausted, a **draft PR** is created with the failing code and the issue label is set to `agent:error`. The pipeline completes with `FailureCategory = QualityGateExhausted`. `agent:error` is applied both when retries are exhausted (draft PR path) and when an unexpected exception escapes the pipeline's error boundary (e.g., unhandled infrastructure failure) — in both cases the issue requires human attention before the next run.
+If all retries are exhausted, a **draft PR** is created with the failing code and the issue label is set to `agent:error`. The pipeline completes with `FailureCategory = QualityGateExhausted`. When external CI failed for an infrastructure reason, it completes with `FailureCategory = InfrastructureFailure` instead. `agent:error` is applied both when retries are exhausted (draft PR path) and when an unexpected exception escapes the pipeline's error boundary (e.g., unhandled infrastructure failure) — in both cases the issue requires human attention before the next run.
 
 ## Label Transitions
 
@@ -259,6 +259,8 @@ The `ip → next` conflict-restart transition is automatic and does not require 
 1. **Conflict rework** — `IssueReworkService.TriggerConflictReworkAsync` handles every `agent:done` PR that is merge-conflicted: extracts linked issues, swaps the issue's label back to `agent:next` so the pipeline dispatches a rework run. Skips issues already carrying an active label (`agent:next`, `agent:in-progress`, `agent:epic`, `agent:epic-review`, `agent:epic-approved`) or an abandonment label (`agent:wont-do`, `agent:cancelled`).
 
 2. **Automated branch updates** — For every `agent:done` PR that is behind its base branch: triggers a server-side branch update (fire-and-forget). Respects the `effectiveConcurrencyLimit` (template-level `HousekeepingConcurrencyLimit` or global fallback) — at most N updates are in-flight per repository at any time. Draft PRs and branches with active runs are skipped.
+
+   Human PRs with auto-merge enabled also receive branch updates, at lower priority than pipeline PRs. Pipeline PRs have first claim on the free concurrency slots; human PRs use whatever slots remain after pipeline PRs are processed. A human PR that already has an in-flight update keeps its slot until the CI run finishes — these in-flight slots count against the shared limit so that the total CI load stays bounded. Human PRs are only updated on providers whose update adds a merge commit and preserves the author's branch history (GitHub); providers that rebase the branch (GitLab) would rewrite history and diverge the author's local copy, so human PRs are skipped on GitLab. Human PRs never trigger conflict rework — a conflicted human PR is silently skipped.
 
 3. **Stale branch cleanup** (when `HousekeepingBranchCleanupEnabled: true`) — `StaleBranchCleaner.RunIfDueAsync` runs on a configurable interval (`HousekeepingBranchCleanupIntervalMinutes`, default 60 min): lists all `feature/auto-*` branches, skips any that have an open PR or whose linked issue carries an active label, deletes the rest.
 

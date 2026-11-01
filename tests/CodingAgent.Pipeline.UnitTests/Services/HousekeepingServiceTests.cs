@@ -114,7 +114,8 @@ public class HousekeepingServiceTests
         bool branchCleanup = false,
         int intervalMinutes = 60,
         int triggerCooldownMinutes = 25,
-        bool wasInputTruncated = false)
+        bool wasInputTruncated = false,
+        IReadOnlyList<PullRequestSummary>? humanPrs = null)
         => svc.ExecuteAsync(
             new HousekeepingRequest
             {
@@ -123,6 +124,7 @@ public class HousekeepingServiceTests
                 IssueProvider = issues.Object,
                 IssueProviderId = IssueProviderId,
                 AgentDonePrs = prs,
+                HumanAutoMergePrs = humanPrs ?? [],
                 WasInputTruncated = wasInputTruncated,
                 EffectiveConcurrencyLimit = limit,
                 BranchCleanupEnabled = branchCleanup,
@@ -1637,5 +1639,151 @@ public class HousekeepingServiceTests
     // TODO: No span-emission tests exist for Housekeeping.BranchUpdate (added in issue #2977).
     // Add tests to verify: (1) Housekeeping.BranchUpdate is emitted with pr_number and repo_provider_id
     // tags when a branch update is triggered; (2) no span is emitted when no PRs qualify for update.
+
+    // ── Human auto-merge PRs ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_HumanPrBehind_SlotFree_TriggersUpdate()
+    {
+        var (svc, provider, issues, _) = Create();
+        var humanPr = MakePr(1, "feature/human", hasAutoMerge: true);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+
+        await ExecAsync(svc, provider, issues, prs: [], humanPrs: [humanPr]);
+
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PipelineAndHumanPrBehind_LimitOne_UpdatesPipelinePrOnly()
+    {
+        var (svc, provider, issues, _) = Create();
+        var pipelinePr = MakePr(1, "feature/auto-1-fix");
+        var humanPr = MakePr(2, "feature/human", hasAutoMerge: true);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+
+        await ExecAsync(svc, provider, issues, prs: [pipelinePr], humanPrs: [humanPr], limit: 1);
+
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HumanPrInFlight_LimitOne_PipelinePrWaits()
+    {
+        var (svc, provider, issues, _) = Create();
+        var humanPr = MakePr(1, "feature/human", hasAutoMerge: true);
+        var pipelinePr = MakePr(2, "feature/auto-2-fix");
+
+        // Tick 1: human PR is Behind — it claims the one slot.
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        await ExecAsync(svc, provider, issues, prs: [], humanPrs: [humanPr], limit: 1);
+
+        // Tick 2: human PR is now Blocked (CI still running), pipeline PR arrives Behind.
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Blocked);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        await ExecAsync(svc, provider, issues, prs: [pipelinePr], humanPrs: [humanPr], limit: 1);
+
+        // Human PR holds the slot — pipeline PR must never be updated.
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HumanPrConflicted_NotPassedToRework()
+    {
+        var runsMock = new Mock<IOrchestratorRunService>();
+        runsMock.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>().AsReadOnly());
+        runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        var staleBranchCleanerMock = new Mock<IStaleBranchCleaner>();
+        staleBranchCleanerMock.Setup(s => s.RunIfDueAsync(It.IsAny<StaleBranchCleanupRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        ConflictReworkRequest? capturedRequest = null;
+        var issueReworkServiceMock = new Mock<IIssueReworkService>();
+        issueReworkServiceMock.Setup(s => s.TriggerConflictReworkAsync(It.IsAny<ConflictReworkRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ConflictReworkRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .Returns(Task.CompletedTask);
+
+        var svc = new HousekeepingService(runsMock.Object, staleBranchCleanerMock.Object, issueReworkServiceMock.Object, Log.Logger);
+        svc.FireAndForget = task => task;
+
+        var providerMock = new Mock<IRepositoryProvider>();
+        providerMock.Setup(p => p.ListOpenPullRequestsAsync(It.IsAny<int>(), It.IsAny<int>(),
+                        It.Is<IReadOnlyList<string>?>(l => l == null), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(new PagedResult<PullRequestSummary>
+                    {
+                        Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
+                        Page = 1,
+                        PageSize = 100,
+                        HasMore = false
+                    });
+        var issueProviderMock = new Mock<IIssueProvider>();
+
+        var humanPr = MakePr(1, "feature/human", hasAutoMerge: true);
+        var pipelinePr = MakePr(2, "feature/auto-2-fix");
+
+        providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+        providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        await svc.ExecuteAsync(new HousekeepingRequest
+        {
+            RepoProvider = providerMock.Object,
+            RepoProviderId = RepoId,
+            IssueProvider = issueProviderMock.Object,
+            IssueProviderId = IssueProviderId,
+            AgentDonePrs = [pipelinePr],
+            HumanAutoMergePrs = [humanPr],
+            WasInputTruncated = false,
+            EffectiveConcurrencyLimit = 2,
+            BranchCleanupEnabled = false,
+            CleanupIntervalMinutes = 60,
+            TriggerCooldownMinutes = 25
+        }, CancellationToken.None);
+
+        // The rework request must contain the pipeline PR but NOT the human PR.
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Sorted.Should().ContainSingle(pr => pr.Number == 2,
+            "only the pipeline PR should reach conflict rework");
+        capturedRequest.Sorted.Should().NotContain(pr => pr.Number == 1,
+            "human PRs must never be passed to conflict rework");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HumanPrLeavesList_RecordsNoOutcome()
+    {
+        var (svc, provider, issues, _) = Create();
+        var humanPr = MakePr(1, "feature/human", hasAutoMerge: true);
+
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+
+        // Tick 1: human PR is present and Behind — it enters _humanInFlight.
+        await ExecAsync(svc, provider, issues, prs: [], humanPrs: [humanPr]);
+
+        // Precondition: the human PR must have been triggered (i.e. entered _humanInFlight).
+        // Without this the test would pass vacuously if Step 6c was never reached.
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Install the outcome seam BEFORE tick 2.
+        var outcomeCalled = 0;
+        svc.GetPrOutcomeAsync = (_, _, _) => { outcomeCalled++; return Task.FromResult<string?>("merged"); };
+
+        // Tick 2: human PR has left the list.
+        await ExecAsync(svc, provider, issues, prs: [], humanPrs: []);
+
+        outcomeCalled.Should().Be(0,
+            "RecordPrOutcomesAsync must only run for pipeline PRs in _inFlight — human PRs must never trigger outcome metrics");
+    }
 }
 

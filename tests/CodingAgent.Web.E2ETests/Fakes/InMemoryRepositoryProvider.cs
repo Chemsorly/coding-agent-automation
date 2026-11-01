@@ -211,6 +211,9 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     public Task<PullRequestSummary?> GetOpenPullRequestAsync(int prNumber, CancellationToken ct) =>
         Task.FromResult(PullRequests.FirstOrDefault(p => p.Number == prNumber));
 
+    public Task<PullRequestChangedFiles?> GetPullRequestChangedFilesAsync(int prNumber, CancellationToken ct) =>
+        Task.FromResult<PullRequestChangedFiles?>(new PullRequestChangedFiles([], true, "abc123def456"));
+
     public Task AddPrLabelAsync(int prNumber, string label, CancellationToken ct)
     {
         var idx = PullRequests.FindIndex(pr => pr.Number == prNumber);

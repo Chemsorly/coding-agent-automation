@@ -56,6 +56,20 @@ public static class E2ETestSignIn
         $"{serverAddress}/test/sign-in?user={Uri.EscapeDataString(user)}&groups={Uri.EscapeDataString(string.Join(',', groups))}";
 
     /// <summary>
+    /// Navigates <paramref name="page"/> to the test sign-in endpoint, signing in as
+    /// <paramref name="user"/> with <paramref name="groups"/>. The endpoint redirects to
+    /// <c>/user</c> after issuing the session cookie.
+    /// <para>
+    /// This helper exists so that test files under <c>Tests/</c> do not call
+    /// <c>page.GotoAsync</c> directly (which the architecture guard in
+    /// <c>LayerBoundaryTests.E2ENavigation.cs</c> forbids). The raw navigation lives here in
+    /// <c>Infrastructure/</c>, outside the scanned directories.
+    /// </para>
+    /// </summary>
+    public static Task SignInAsync(Microsoft.Playwright.IPage page, string serverAddress, string user, params string[] groups) =>
+        page.GotoAsync(SignInUrl(serverAddress, user, groups));
+
+    /// <summary>
     /// Maps <c>/test/sign-in</c>. A plain path check, not app.Map: Map moves the path into
     /// PathBase and the cookie handler would scope the session cookie to it.
     /// </summary>

@@ -180,42 +180,32 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             agentId: agentId,
             workItemId: workItemId.ToString(),
             fakeProviders: Fixture.FakeProviders,
-            qualityGateValidator: Fixture.QualityGateValidator,
-            dbContextFactory: Fixture.DbContextFactory);
+            qualityGateValidator: Fixture.QualityGateValidator);
 
         // ── Wait for completion ────────────────────────────────────────────────────
 
         await harness.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
 
-        // WorkItem must be Succeeded
-        // TODO [WARNING]: WaitForCompletionAsync returns when the in-process agent host shuts down,
-        // but the API host may not have persisted the terminal Succeeded status to the DB yet.
-        // The subsequent 5s poll can time out under CI load. Consider a longer poll window or a
-        // direct DB check to avoid this latent race.
-        // TODO [WARNING]: finalItem.Status.Should().Be(WorkItemStatus.Succeeded) is a tautology —
-        // WaitForWorkItemStatusAsync already throws if Succeeded is never reached. The real guard is
-        // in the polling helper. Consider asserting a field that varies (e.g. CompletedAt is non-null,
-        // ErrorMessage is null) to make the assertion informative rather than circular.
         var finalItem = await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Succeeded,
-            timeout: TimeSpan.FromSeconds(5));
-        finalItem.Status.Should().Be(WorkItemStatus.Succeeded);
+            timeout: TimeSpan.FromSeconds(15));
+        finalItem.CompletedAt.Should().NotBeNull();
+        finalItem.ErrorMessage.Should().BeNull();
+        // Only the real POST /status writes Result; a direct DB write never did.
+        finalItem.Result.Should().NotBeNullOrEmpty();
+        var payload = System.Text.Json.JsonSerializer.Deserialize<JobCompletionPayload>(finalItem.Result!, PipelineJsonOptions.Default);
+        payload!.FinalStep.Should().Be(PipelineStep.Completed);
 
         // PR was created on InMemoryRepositoryProvider
-        // TODO [WARNING]: MethodCalls.Should().Contain(...) only checks the method name string, not
-        // the arguments (branch, title, body). A regression passing wrong parameters would not be caught.
-        // Consider asserting Fixture.RepositoryProvider.PullRequests.Should().HaveCount(1) and checking
-        // the PR title or branch name for a more meaningful contract assertion.
         Fixture.RepositoryProvider.MethodCalls.Should().Contain(nameof(IRepositoryProvider.CreatePullRequestAsync),
             "the pipeline must create a PR after successful quality gates");
+        Fixture.RepositoryProvider.MethodCalls.Count(m => m == nameof(IRepositoryProvider.CreatePullRequestAsync)).Should().Be(1);
 
         // Issue label ends with agent:done
-        // TODO [WARNING]: Labels.Should().Contain(AgentLabels.Done) passes even if agent:in-progress or
-        // agent:next are still present alongside agent:done, which would indicate a label-swap bug.
-        // The requirement states the issue ends with *exactly* agent:done. Use ContainSingle or assert
-        // the full label set to match that requirement.
         var issue = await Fixture.IssueProvider.GetIssueAsync(issueId, CancellationToken.None);
-        issue.Labels.Should().Contain(AgentLabels.Done,
-            "the pipeline must set agent:done after PR creation");
+        issue.Labels.Should().Contain(AgentLabels.Done);
+        issue.Labels.Should().NotContain(AgentLabels.Next);
+        issue.Labels.Should().NotContain(AgentLabels.InProgress);
+        issue.Labels.Should().NotContain(AgentLabels.Error);
 
         // Analysis comment was posted through the hub
         Fixture.IssueProvider.PostedComments.Should().Contain(c =>
@@ -293,10 +283,12 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             agentId: agentId1,
             workItemId: workItemId1.ToString(),
             fakeProviders: Fixture.FakeProviders,
-            qualityGateValidator: Fixture.QualityGateValidator,
-            dbContextFactory: Fixture.DbContextFactory);
+            qualityGateValidator: Fixture.QualityGateValidator);
 
         await harness1.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
+
+        var firstItem = await WaitForWorkItemStatusAsync(workItemId1, WorkItemStatus.Succeeded, TimeSpan.FromSeconds(15));
+        firstItem.Result.Should().NotBeNullOrEmpty();
 
         // Assert: plan comment was posted
         Fixture.IssueProvider.PostedComments.Should().Contain(c =>
@@ -330,30 +322,22 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             agentId: agentId2,
             workItemId: workItemId2.ToString(),
             fakeProviders: Fixture.FakeProviders,
-            qualityGateValidator: Fixture.QualityGateValidator,
-            dbContextFactory: Fixture.DbContextFactory);
+            qualityGateValidator: Fixture.QualityGateValidator);
 
         await harness2.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
+
+        var secondItem = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Succeeded, TimeSpan.FromSeconds(15));
+        secondItem.Result.Should().NotBeNullOrEmpty();
 
         // Assert: second run updates the existing comment, not posts a second one.
         // UpdatedComments is populated when UpdateCommentAsync is called, which the pipeline uses
         // when it detects an existing plan comment. This proves the RequestUpdateComment hub
         // method's IssueIdentifierFormatter wire contract is exercised end-to-end.
-        // TODO [WARNING]: NotBeEmpty() only verifies that *some* comment was updated anywhere in the
-        // shared InMemoryIssueProvider — it does not assert that the updated comment belongs to issueId
-        // or contains CommentMarkers.DecompositionPlan. Tighten this to:
-        //   UpdatedComments.Should().Contain(c => c.Identifier == issueId && c.NewBody.Contains(CommentMarkers.DecompositionPlan))
-        // to directly prove the IssueIdentifierFormatter wire contract for the correct message type.
-        Fixture.IssueProvider.UpdatedComments.Should().NotBeEmpty(
-            "the second Phase 1 run must update the existing plan comment via RequestUpdateComment " +
-            "(the IssueIdentifierFormatter wire contract) rather than posting a new one");
+        Fixture.IssueProvider.UpdatedComments.Should().Contain(
+            c => c.Identifier == issueId && c.NewBody.Contains(CommentMarkers.DecompositionPlan),
+            "the second Phase 1 run must update the existing plan comment via RequestUpdateComment");
 
         // Only one plan comment should exist (same comment updated, not duplicated)
-        // TODO [WARNING]: planCommentCount.Should().Be(1) counts PostedComments from both runs combined.
-        // If the second run posted zero plan comments but updated an existing one, the count would still
-        // be 1 (from the first run only), hiding the case where the second run produced no comment output.
-        // A more precise intent: assert PostedComments for issueId still has exactly 1 entry *after*
-        // the second run, combined with the UpdatedComments check above scoped to issueId.
         var planCommentCount = Fixture.IssueProvider.PostedComments.Count(c =>
             c.Identifier == issueId && c.Body.Contains(CommentMarkers.DecompositionPlan));
         planCommentCount.Should().Be(1,
@@ -363,5 +347,107 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         var issueAfterPhase1Run2 = await Fixture.IssueProvider.GetIssueAsync(issueId, CancellationToken.None);
         issueAfterPhase1Run2.Labels.Should().Contain(AgentLabels.EpicReview,
             "the second Phase 1 run must also set agent:epic-review");
+    }
+
+    // ── Scenario C: analysis not-ready gate rejection ────────────────────────────────
+
+    /// <summary>
+    /// A real agent worker runs an analysis that returns not_ready on both the primary and
+    /// adversarial review passes. The pipeline records <c>GateRejected</c> through the real
+    /// HTTP status channel, proving that <c>FailureReason</c> is written by
+    /// <see cref="CodingAgent.Api.WorkItemStatusTransitionService"/> (the old direct DB client
+    /// never set this field).
+    ///
+    /// Asserts:
+    /// <list type="bullet">
+    ///   <item><c>FailureReason</c> is <c>GateRejected</c> — only the real HTTP path writes it.</item>
+    ///   <item><c>Result</c> is non-null — serialized by <see cref="CodingAgent.Agent.HttpPrimaryCompletionReporter"/>.</item>
+    ///   <item><c>ErrorMessage</c> contains "Analysis gate: needs refinement".</item>
+    ///   <item>The issue label ends at <c>agent:needs-refinement</c>, not <c>agent:error</c>.</item>
+    ///   <item>No PR was created.</item>
+    /// </list>
+    /// </summary>
+    [Fact]
+    public async Task ScenarioC_AnalysisNotReady_RecordsGateRejectedThroughHttpStatus()
+    {
+        const string issueId = "5003";
+
+        // ── Arrange ────────────────────────────────────────────────────────────────
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = issueId,
+            Title = "Vague issue with no acceptance criteria",
+            Description = "## Goal\nDo something.",
+            Labels = ["agent:next"]
+        });
+
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "real-agent-template-c",
+            Name = "Real Agent Template C",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.SeedRoutedProfileAsync(new AgentProfile
+        {
+            Id = "real-agent-profile-c",
+            DisplayName = "Real Agent Profile C",
+            JobTemplate = E2ERouting.Key(["e2e"]),
+            Enabled = true
+        });
+
+        // First script: primary analysis agent returns not_ready.
+        // Second script: adversarial review agent also returns not_ready.
+        // The pipeline exits GateRejected before code generation, so the empty queue is never reached.
+        Fixture.AgentProvider
+            .EnqueueAnalysis("not_ready", "Missing acceptance criteria")
+            .EnqueueAnalysis("not_ready", "Missing acceptance criteria");
+
+        Fixture.QualityGateValidator.AlwaysPass();
+
+        // ── Create + claim work item ───────────────────────────────────────────────
+
+        var agentId = $"real-worker-c-{Guid.NewGuid():N}";
+        var workItemId = await CreateAndClaimWorkItemAsync(issueId, agentId);
+
+        // ── Start real agent worker ────────────────────────────────────────────────
+
+        await using var harness = new RealAgentWorkerHarness();
+        await harness.StartAsync(
+            agentHubUrl: Fixture.AgentHubUrl,
+            apiKey: Fixture.ApiKey,
+            agentId: agentId,
+            workItemId: workItemId.ToString(),
+            fakeProviders: Fixture.FakeProviders,
+            qualityGateValidator: Fixture.QualityGateValidator);
+
+        // ── Wait for completion ────────────────────────────────────────────────────
+
+        await harness.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
+
+        // ── Assert ─────────────────────────────────────────────────────────────────
+
+        var item = await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(15));
+
+        // Only the real POST /status path writes FailureReason via ApplyStatusMutation.
+        // A mock that returns true without calling HTTP leaves this field null.
+        item.FailureReason.Should().Be(FailureReason.GateRejected);
+
+        // Result is serialized by HttpPrimaryCompletionReporter only on the real HTTP path.
+        item.Result.Should().NotBeNullOrEmpty();
+
+        // HandleNotReadyGateAsync sets: $"Analysis gate: needs refinement — {assessment.Reason}"
+        item.ErrorMessage.Should().Contain("Analysis gate: needs refinement");
+
+        // FailRunWithLabelAsync sets agent:needs-refinement (not agent:error).
+        var issue = await Fixture.IssueProvider.GetIssueAsync(issueId, CancellationToken.None);
+        issue.Labels.Should().Contain(AgentLabels.NeedsRefinement);
+        issue.Labels.Should().NotContain(AgentLabels.Error);
+
+        // No PR was created — the pipeline exited at the analysis gate.
+        Fixture.RepositoryProvider.MethodCalls.Should().NotContain(nameof(IRepositoryProvider.CreatePullRequestAsync));
     }
 }
