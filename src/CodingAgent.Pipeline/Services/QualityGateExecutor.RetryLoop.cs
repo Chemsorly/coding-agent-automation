@@ -297,7 +297,10 @@ public partial class QualityGateExecutor
         // (a) FinalizePullRequest sees the correct FailureCategory if it reads run.FailureCategory,
         // (b) if FinalizePullRequest throws, the category is still recorded on the run object
         // and the metric will emit "quality_gate_exhausted" instead of "unknown".
-        run.FailureCategory = FailureReason.QualityGateExhausted;
+        // An infrastructure failure of external CI stays one: it is not the agent's failure.
+        run.FailureCategory = report.ExternalCi is { IsInfrastructureFailure: true }
+            ? FailureReason.InfrastructureFailure
+            : FailureReason.QualityGateExhausted;
         await callbacks.FinalizePullRequest(run, true, ct);
     }
 
