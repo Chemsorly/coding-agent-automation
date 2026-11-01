@@ -34,6 +34,9 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     /// <inheritdoc />
     public bool SupportsServerSideBranchUpdate => true;
 
+    /// <inheritdoc />
+    public bool BranchUpdatePreservesHistory => true;
+
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>

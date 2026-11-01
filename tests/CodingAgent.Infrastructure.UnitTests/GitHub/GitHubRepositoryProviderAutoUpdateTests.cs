@@ -33,6 +33,14 @@ public class GitHubRepositoryProviderAutoUpdateTests : WireMockTestBase
         ((IRepositoryProvider)provider).SupportsServerSideBranchUpdate.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task BranchUpdatePreservesHistory_ReturnsTrue()
+    {
+        await using var provider = new GitHubRepositoryProvider(
+            new GitHubConnectionInfo(Server.Url!, Owner, Repo), Token, BaseBranch);
+        ((IRepositoryProvider)provider).BranchUpdatePreservesHistory.Should().BeTrue();
+    }
+
     // ── IsPullRequestBehindBaseAsync — Behind ─────────────────────────────────
 
     [Fact]
