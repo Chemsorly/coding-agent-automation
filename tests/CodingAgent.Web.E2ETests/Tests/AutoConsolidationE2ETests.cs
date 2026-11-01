@@ -6,7 +6,6 @@ using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.Tests;
 
