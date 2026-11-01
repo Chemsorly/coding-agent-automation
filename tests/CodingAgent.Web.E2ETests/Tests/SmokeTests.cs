@@ -112,6 +112,7 @@ public sealed class SmokeTests : E2ETestBase
             ("/overview",     "Overview"),
             ("/work",         "Work"),
             ("/runs",         "Runs"),
+            ("/triage",       "Triage"),
             ("/fleet",        "Fleet"),
             ("/attention",    "Attention"),
             ("/insights",     "Insights"),
