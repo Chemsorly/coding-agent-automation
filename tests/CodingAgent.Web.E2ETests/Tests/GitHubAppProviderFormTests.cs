@@ -384,12 +384,12 @@ public sealed class GitHubAppProviderFormTests : E2ETestBase
             ProviderType = "GitHub",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ApiUrl]           = ProviderSettingKeys.DefaultApiUrl,
-                [ProviderSettingKeys.ClientId]         = "Iv1.abc",
-                [ProviderSettingKeys.InstallationId]   = "123",
+                [ProviderSettingKeys.ApiUrl] = ProviderSettingKeys.DefaultApiUrl,
+                [ProviderSettingKeys.ClientId] = "Iv1.abc",
+                [ProviderSettingKeys.InstallationId] = "123",
                 [ProviderSettingKeys.PrivateKeyBase64] = "stored-key",
-                [ProviderSettingKeys.Owner]            = "o",
-                [ProviderSettingKeys.Repo]             = "r",
+                [ProviderSettingKeys.Owner] = "o",
+                [ProviderSettingKeys.Repo] = "r",
             },
         }, CancellationToken.None);
 

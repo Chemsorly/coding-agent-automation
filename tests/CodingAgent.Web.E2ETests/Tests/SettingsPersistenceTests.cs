@@ -31,12 +31,12 @@ public sealed class SettingsPersistenceTests : E2ETestBase
     /// assertion and the reload assertion to fail.
     /// </summary>
     [Theory]
-    [InlineData(SettingsNodes.PipelineLoop,         "ClosedLoopMaxRunsPerCycle",                   "17", "Save Pipeline Loop Settings",    "Pipeline loop settings saved.")]
-    [InlineData(SettingsNodes.PipelineCi,           "CiNotStartedMaxRetries",                      "7",  "Save External CI Settings",       "External CI settings saved.")]
-    [InlineData(SettingsNodes.PipelineCodeReview,   "CodeReview.InlineComments.MaxInlineComments", "11", "Save Code Review Settings",       "Code review settings saved.")]
-    [InlineData(SettingsNodes.PipelineDecomposition,"MaxDecompositionSubIssues",                   "13", "Save Decomposition Settings",     "Decomposition settings saved.")]
-    [InlineData(SettingsNodes.PipelineConsolidation,"MaxRefactoringProposals",                     "8",  "Save Consolidation Settings",     "Consolidation settings saved.")]
-    [InlineData(SettingsNodes.PipelineTriage,       "TriageRetentionDays",                         "21", "Save Triage Settings",            "Triage settings saved.")]
+    [InlineData(SettingsNodes.PipelineLoop, "ClosedLoopMaxRunsPerCycle", "17", "Save Pipeline Loop Settings", "Pipeline loop settings saved.")]
+    [InlineData(SettingsNodes.PipelineCi, "CiNotStartedMaxRetries", "7", "Save External CI Settings", "External CI settings saved.")]
+    [InlineData(SettingsNodes.PipelineCodeReview, "CodeReview.InlineComments.MaxInlineComments", "11", "Save Code Review Settings", "Code review settings saved.")]
+    [InlineData(SettingsNodes.PipelineDecomposition, "MaxDecompositionSubIssues", "13", "Save Decomposition Settings", "Decomposition settings saved.")]
+    [InlineData(SettingsNodes.PipelineConsolidation, "MaxRefactoringProposals", "8", "Save Consolidation Settings", "Consolidation settings saved.")]
+    [InlineData(SettingsNodes.PipelineTriage, "TriageRetentionDays", "21", "Save Triage Settings", "Triage settings saved.")]
     public async Task Section_ValueSurvivesSaveAndReload(
         string section,
         string setting,
@@ -63,13 +63,13 @@ public sealed class SettingsPersistenceTests : E2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         var stored = setting switch
         {
-            "ClosedLoopMaxRunsPerCycle"                   => config.ClosedLoopMaxRunsPerCycle.ToString(),
-            "CiNotStartedMaxRetries"                      => config.CiNotStartedMaxRetries.ToString(),
+            "ClosedLoopMaxRunsPerCycle" => config.ClosedLoopMaxRunsPerCycle.ToString(),
+            "CiNotStartedMaxRetries" => config.CiNotStartedMaxRetries.ToString(),
             "CodeReview.InlineComments.MaxInlineComments" => config.CodeReview.InlineComments.MaxInlineComments.ToString(),
-            "MaxDecompositionSubIssues"                   => config.MaxDecompositionSubIssues.ToString(),
-            "MaxRefactoringProposals"                     => config.MaxRefactoringProposals.ToString(),
-            "TriageRetentionDays"                         => config.TriageRetentionDays.ToString(),
-            _                                             => throw new ArgumentOutOfRangeException(nameof(setting), setting, "Unmapped setting")
+            "MaxDecompositionSubIssues" => config.MaxDecompositionSubIssues.ToString(),
+            "MaxRefactoringProposals" => config.MaxRefactoringProposals.ToString(),
+            "TriageRetentionDays" => config.TriageRetentionDays.ToString(),
+            _ => throw new ArgumentOutOfRangeException(nameof(setting), setting, "Unmapped setting")
         };
         Assert.Equal(value, stored);
 
