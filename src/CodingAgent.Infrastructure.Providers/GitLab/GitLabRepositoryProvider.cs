@@ -83,7 +83,7 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
         return Task.Run(async () =>
         {
             var token = await GetTokenAsync(ct);
-            var cloneUrl = BuildAuthenticatedCloneUrl(token);
+            var cloneUrl = await GetCanonicalCloneUrlAsync(ct);
 
             try
             {
@@ -312,29 +312,6 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
                 $"Clone URL has unsupported scheme '{uri.Scheme}'. Only HTTPS is supported for authenticated clone.");
 
         return $"https://{uri.Host}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}{uri.AbsolutePath}";
-    }
-
-    /// <summary>
-    /// Builds an authenticated clone URL from the cached <c>http_url_to_repo</c>.
-    /// Format: <c>https://oauth2:{token}@{host}/{namespace}/{project}.git</c>
-    /// Enforces HTTPS scheme regardless of what the API returns.
-    /// </summary>
-    [ExcludeFromCodeCoverage]
-    private string BuildAuthenticatedCloneUrl(string token)
-    {
-        var httpUrl = HttpUrlToRepo;
-        if (string.IsNullOrEmpty(httpUrl))
-            throw new InvalidOperationException(
-                "Clone URL not available. Call ValidateAsync before CloneAsync to populate project metadata.");
-
-        // Insert oauth2:{token}@ into the URL after the scheme
-        var uri = new Uri(httpUrl);
-
-        // Enforce HTTPS scheme regardless of what the API returns
-        var scheme = uri.Scheme == "http" || uri.Scheme == "https" ? "https" : throw new InvalidOperationException(
-            $"Clone URL has unsupported scheme '{uri.Scheme}'. Only HTTPS is supported for authenticated clone.");
-
-        return $"{scheme}://{GitConstants.GitLabTokenUsername}:{token}@{uri.Host}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}{uri.AbsolutePath}";
     }
 
     /// <summary>

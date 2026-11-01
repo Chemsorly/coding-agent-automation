@@ -305,29 +305,15 @@ public class GitLabRepositoryProviderTests
     #region Property 19: Clone URL format construction
 
     /// <summary>
-    /// Property 19: Clone URL format construction.
-    /// The BuildAuthenticatedCloneUrl method constructs URLs in the format:
-    /// https://oauth2:{token}@{host}/{path}.git
-    /// We test this indirectly by exposing the private method via reflection.
-    /// **Validates: Requirements 24.1, 24.2, 24.3, 24.4, 27.3**
+    /// Property 19: the clone URL is HTTPS, on the project's host and path, and carries no credentials.
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = [typeof(CloneUrlArbitrary)])]
-    public void BuildAuthenticatedCloneUrl_ConstructsCorrectFormat(CloneUrlTestData data)
+    public void ToCanonicalCloneUrl_ForcesHttps_AndCarriesNoCredentials(CloneUrlTestData data)
     {
-        // Arrange — use a testable subclass to expose the private method
-        var (client, projectId) = CreateServerWithProject();
-        var provider = new TestableGitLabRepositoryProvider(client, projectId, "main");
+        var uri = new Uri(GitLabRepositoryProvider.ToCanonicalCloneUrl(data.HttpUrlToRepo));
 
-        // Simulate ValidateAsync populating the HttpUrlToRepo
-        provider.SetHttpUrlToRepo(data.HttpUrlToRepo);
-
-        // Act
-        var cloneUrl = provider.ExposeBuildAuthenticatedCloneUrl(data.Token);
-
-        // Assert — URL should follow the format: https://oauth2:{token}@{host}/{path}.git
-        var uri = new Uri(cloneUrl);
         uri.Scheme.Should().Be("https");
-        uri.UserInfo.Should().Be($"{GitConstants.GitLabTokenUsername}:{data.Token}");
+        uri.UserInfo.Should().BeEmpty();
         uri.Host.Should().Be(data.ExpectedHost);
         uri.AbsolutePath.Should().Be(data.ExpectedPath);
     }
@@ -438,16 +424,6 @@ internal sealed class TestableGitLabRepositoryProvider : GitLabRepositoryProvide
         var field = typeof(GitLabProviderBase).GetField("_httpUrlToRepo",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         field!.SetValue(this, url);
-    }
-
-    /// <summary>
-    /// Exposes the private BuildAuthenticatedCloneUrl method for testing.
-    /// </summary>
-    public string ExposeBuildAuthenticatedCloneUrl(string token)
-    {
-        var method = typeof(GitLabRepositoryProvider).GetMethod("BuildAuthenticatedCloneUrl",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        return (string)method!.Invoke(this, [token])!;
     }
 }
 
