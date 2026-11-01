@@ -475,6 +475,7 @@ All emitted by the agent pod.
 | `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
 | `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `code_review.agent_name`, `code_review.iteration`, `code_review.exit_code`, `code_review.findings_critical`, `code_review.findings_warning`, `code_review.findings_suggestion`, `code_review.has_findings_file` | Individual review agent execution (child of CodeReview.Iteration) |
 | `CreatePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation, then the post-PR sequence (description, reflection, brain sync, feedback) |
+| `GateConfigGuard` | `pipeline.run_id`, `pipeline.pr.guard_result` | Quality-gate configuration check on the PR's changed files. A child of `CreatePullRequest`, or of the post-PR CI retry. |
 | `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `WritePrConversationContext` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Writing PR conversation context to workspace |
@@ -525,6 +526,7 @@ All emitted by the agent pod.
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
+| `pipeline.pr.guard_result` | `clean`, `changed`, `unverifiable` | Result of the quality-gate configuration check (on `GateConfigGuard` span) |
 | `pipeline.project_id` | UUID | Project identifier — set only on **spans** (not on metric tags; use `pipeline.project_name` for metrics since it is 1:1 with `pipeline.project_id`) |
 | `pipeline.project_name` | string | Project display name |
 | `pipeline.consolidation_type` | `BrainConsolidation`, `RefactoringDetection` | Consolidation run type (on `ExecuteConsolidation` span) |
