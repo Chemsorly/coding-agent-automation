@@ -114,8 +114,8 @@ public sealed class ReconciliationEnforcementTests : HeadlessE2ETestBase
                     Labels = new Dictionary<string, string>
                     {
                         ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
-                        ["app.kubernetes.io/component"]  = "agent-job",
-                        ["caa/work-item-id"]             = id.ToString()
+                        ["app.kubernetes.io/component"] = "agent-job",
+                        ["caa/work-item-id"] = id.ToString()
                     },
                     CreationTimestamp = DateTime.UtcNow
                 },
@@ -310,9 +310,9 @@ public sealed class ReconciliationEnforcementTests : HeadlessE2ETestBase
         {
             await using var db = Fixture.DbContextFactory.CreateDbContext();
             var row = await db.WorkItems.FindAsync(id);
-            row!.Status       = WorkItemStatus.Running;
-            row.CompletedAt   = null;
-            row.ErrorMessage  = null;
+            row!.Status = WorkItemStatus.Running;
+            row.CompletedAt = null;
+            row.ErrorMessage = null;
             row.FailureReason = null;
             await db.SaveChangesAsync();
         }
@@ -343,8 +343,8 @@ public sealed class ReconciliationEnforcementTests : HeadlessE2ETestBase
                 Labels = new Dictionary<string, string>
                 {
                     ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
-                    ["app.kubernetes.io/component"]  = "agent-job",
-                    ["caa/work-item-id"]             = id.ToString()
+                    ["app.kubernetes.io/component"] = "agent-job",
+                    ["caa/work-item-id"] = id.ToString()
                 },
                 CreationTimestamp = DateTime.UtcNow
             },
@@ -398,7 +398,7 @@ public sealed class ReconciliationEnforcementTests : HeadlessE2ETestBase
             var snapshot = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id);
             Assert.NotNull(snapshot);
             originalErrorMessage = snapshot!.ErrorMessage;
-            originalCompletedAt  = snapshot.CompletedAt;
+            originalCompletedAt = snapshot.CompletedAt;
         }
         originalLabelCount = Fixture.IssueProvider.LabelChanges
             .Count(lc => lc.Identifier == "jc-leader-2" && lc.Label == AgentLabels.Error && lc.Added);
@@ -417,8 +417,8 @@ public sealed class ReconciliationEnforcementTests : HeadlessE2ETestBase
                 Labels = new Dictionary<string, string>
                 {
                     ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
-                    ["app.kubernetes.io/component"]  = "agent-job",
-                    ["caa/work-item-id"]             = id.ToString()
+                    ["app.kubernetes.io/component"] = "agent-job",
+                    ["caa/work-item-id"] = id.ToString()
                 },
                 CreationTimestamp = DateTime.UtcNow
             },
