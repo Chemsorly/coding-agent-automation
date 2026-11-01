@@ -55,6 +55,15 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     Task<int> GetActiveDecompositionCountAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Returns the status and final label of the most recently created work item for the given
+    /// issue and provider, or null when no work item exists.
+    /// Used by the orphaned-label recovery sweep to distinguish a silently-succeeded run (hub
+    /// completion report was lost) from a genuinely dead one.
+    /// Returns null on 404. Other non-success statuses throw through <see cref="System.Net.Http.HttpRequestException"/>.
+    /// </summary>
+    Task<WorkItemLatestOutcome?> GetLatestOutcomeAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct = default);
+
+    /// <summary>
     /// Calls <c>POST /api/work-items/{id}/dispatch</c> to dispatch an existing Pending WorkItem by CAS.
     /// Claims the item (Pending→Dispatched) and creates the K8s Job atomically.
     /// Returns a <see cref="DispatchPendingResult"/> indicating the outcome:
