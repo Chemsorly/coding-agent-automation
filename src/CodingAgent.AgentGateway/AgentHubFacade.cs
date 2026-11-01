@@ -416,6 +416,16 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     /// <inheritdoc />
+    public async Task<ConsolidationRunType?> GetConsolidationRunTypeAsync(JobId jobId, CancellationToken ct)
+    {
+        if (_runService.GetRun(jobId.Value)?.ConsolidationType is { } inMemory)
+            return inMemory;
+
+        var record = await GetWorkItemRunRecordAsync(jobId, ct);
+        return record?.ConsolidationRunType;
+    }
+
+    /// <inheritdoc />
     public Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value)
         => _registry.UpdateAgentFieldAsync(agentId, field, value);
 

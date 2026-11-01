@@ -292,6 +292,8 @@ public static partial class PipelineTelemetry
             "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");
         TokenVendingFailures = Meter.CreateCounter<long>(
             "token_vending.failures", UnitFailure, "Token vending failures");
+        TokenVendingScopeRefused = Meter.CreateCounter<long>(
+            "token_vending.scope_refused", "{refusal}", "Token refreshes that asked for a permission the run may not have; granted without it");
         LoopPolls = Meter.CreateCounter<long>(
             "pipeline.loop.polls", "{poll}", "Pipeline loop poll attempts");
         LoopIssuesFound = Meter.CreateCounter<long>(
