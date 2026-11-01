@@ -92,6 +92,8 @@ public sealed class FleetViewTests : E2ETestBase
 
         Assert.True(await fleet.IsStatTilePresentAsync("Agents"),
             "Agents tile must remain on Fleet view after tile removal");
+        Assert.True(await fleet.IsStatTilePresentAsync("Kiro Credentials kiro"),
+            "Kiro Credentials tile must remain on Fleet view after tile removal");
     }
 
     // ── Active work links ──────────────────────────────────────────────────────
