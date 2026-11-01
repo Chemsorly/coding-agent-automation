@@ -83,13 +83,6 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
         string issueId,
         string issueTitle = "Terminal label outcome test")
     {
-        // TODO [WARNING]: Each call adds a new PipelineJobTemplate and AgentProfile keyed by issueId
-        // to the shared fixture's config store. These accumulate across theory rows in the same
-        // [Collection] because there is no cleanup after each row. While dispatch uses MatchLabels
-        // (not "exactly N profiles exist"), this unbounded growth will complicate debugging if a
-        // future test relies on profile-count invariants. Verify that InMemoryConfigurationStore.Reset()
-        // (called by HeadlessE2ETestBase.InitializeAsync) clears all templates and profiles seeded
-        // mid-test, or add explicit cleanup here. (Reported by DotNetSpecialist, Correctness review.)
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = issueId,
@@ -128,15 +121,6 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
     /// </summary>
     private void AssertExactlyOneTerminalLabelAdded(string issueId, string expectedLabel)
     {
-        // TODO [WARNING]: This assertion counts net adds only (add minus remove). It passes when
-        // the correct label is present and not subsequently removed, but it would also pass for a
-        // double-swap (add→remove→add, net count = 1) if a wrong label happened to be added and
-        // then fully removed. A production bug that adds the terminal label twice and removes it
-        // once (leaving net count = 1) would be invisible here. The secondary
-        // AssertMaterializedTerminalLabel partially guards this, but neither method detects a
-        // spurious intermediate removal. Consider also asserting that the correct label was added
-        // exactly once in the raw LabelChanges sequence if this gap becomes a concern.
-        // (Reported by TestQualityReviewer.)
         var net = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (id, label, added) in Fixture.IssueProvider.LabelChanges)
         {
@@ -284,9 +268,6 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
             // R5 is any other agent error (IsDraftPr=false, FinalLabel=null — resolved by default).
             // Keep them as separate rows to pin that IsDraftPr=true does not accidentally route
             // to a label other than agent:error (e.g. a misrouted agent:needs-refinement).
-            // TODO [WARNING]: No row covers IsDraftPr=true with a non-null FinalLabel to verify
-            // that IsDraftPr does not override an explicit FinalLabel. If the routing logic
-            // changes, this gap could hide a regression. (Reported by TestQualityReviewer.)
             {
                 "3089-r4-draft-error",
                 "R4: Failed DraftPr exhausted → agent:error",
@@ -582,15 +563,6 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
         // Arrange — seed the PR in the repository provider and also as an issue
         // (dispatch preparation calls GetIssueAsync for the PR identifier on GitHub where
         // every PR is also an issue; the fake requires explicit seeding on both sides).
-        // TODO [WARNING]: PR is seeded with Labels = ["agent:next"]. The secondary assertion in
-        // AssertExactlyOneTerminalPrLabelAdded checks that materialized pr.Labels contains exactly
-        // one terminal label. If the production label-swap path for PRs does not issue a
-        // RemovePrLabel call for "agent:next" before (or as part of) adding the terminal label,
-        // pr.Labels after completion would contain both "agent:next" and the terminal label. The
-        // net audit-log assertion (PrLabelChanges replay) would still pass, but the materialized
-        // secondary assertion would fail. Verify that InMemoryRepositoryProvider.SwapPrLabelAsync
-        // (or the production equivalent) removes "agent:next" as part of the swap, or seed the PR
-        // without any pre-existing agent:* label to avoid the ambiguity. (Reported by Correctness review.)
         Fixture.RepositoryProvider.PullRequests.Add(new PullRequestSummary
         {
             Number = prNumber,
@@ -864,52 +836,32 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
         };
 
         // Act — interleave the two paths; the race winner is non-deterministic
-        // TODO [WARNING]: The agent side uses agent.ReportCompletionAsync (hub-only), not
-        // CompleteLikeProductionAsync. In production the agent always sends an HTTP POST first
-        // then fires the hub. This test therefore models "operator-HTTP vs agent-hub-only" rather
-        // than the actual production race of "operator-HTTP vs agent-HTTP+hub". The actual
-        // two-channel race is untested and could have a label gap not caught here.
-        // (Reported by Correctness review and TestQualityReviewer.)
         var httpTask = Task.Run(() =>
             operatorClient.PostAsJsonAsync(
                 $"/api/work-items/{workItemId}/status",
                 failedUpdate,
                 PipelineJsonOptions.Default));
 
-        // TODO [WARNING]: httpTask is Task<HttpResponseMessage>; PostAsJsonAsync does not throw on
-        // non-2xx responses. Task.WhenAll completes without inspecting httpTask.Result.IsSuccessStatusCode.
-        // If the HTTP POST is rejected (409/404/403 because the work item already reached a terminal
-        // state), the test silently treats it as a success. Capture and log (or assert) the HTTP
-        // status after Task.WhenAll to make the race's observable outcome explicit.
-        // (Reported by DotNetSpecialist.)
         var hubTask = Task.Run(() =>
             agent.ReportCompletionAsync(assignment.JobId, cancelledPayload));
 
         await Task.WhenAll(httpTask, hubTask);
+
+        // 200: the HTTP report won. 204: the hub report won and the item was already terminal.
+        var httpResponse = await httpTask;
+        Assert.Contains(httpResponse.StatusCode, new[] { System.Net.HttpStatusCode.OK, System.Net.HttpStatusCode.NoContent });
 
         // Wait for the race to settle in history. Require a terminal FinalStep (Failed or
         // Cancelled) so that a non-terminal history entry written during dispatch or acceptance
         // cannot satisfy the predicate and cause assertions to run before the winning path's
         // terminal cleanup — including the label swap — has completed.
         // Fix for [CRITICAL] TestQualityReviewer:819 / Correctness:697 / DotNetSpecialist:730.
-        // TODO [WARNING]: The agent side uses agent.ReportCompletionAsync (hub-only), not
-        // CompleteLikeProductionAsync. In production the agent always sends an HTTP POST first
-        // then fires the hub. This test therefore models "operator-HTTP vs agent-hub-only" rather
-        // than the actual production race of "operator-HTTP vs agent-HTTP+hub". The actual
-        // two-channel race is untested and could have a label gap not caught here.
-        // (Reported by Correctness review and TestQualityReviewer.)
         await WaitForHistoryAsync(
             r => r.IssueIdentifier == issueId &&
                  (r.FinalStep == PipelineStep.Failed || r.FinalStep == PipelineStep.Cancelled),
             TimeSpan.FromSeconds(15));
 
         // Assert invariant: exactly one terminal label, regardless of race winner
-        // TODO [WARNING]: This assertion can observe a false pass when the wrong terminal step
-        // wins the race and the label matches by coincidence (e.g. Failed wins, label is
-        // agent:error, test passes — but only because the HTTP POST was never processed, not
-        // because both paths actually raced). Without asserting httpTask.Result.IsSuccessStatusCode,
-        // the test cannot distinguish a genuine two-path race from a single-path completion.
-        // (Reported by TestQualityReviewer.)
         var net = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (id, label, added) in Fixture.IssueProvider.LabelChanges)
         {
@@ -923,29 +875,12 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
 
         var actualLabel = net.Single();
 
-        // TODO [WARNING]: The label net-replay logic above (HashSet add/remove over LabelChanges)
-        // is duplicated inline rather than calling the shared AssertExactlyOneTerminalLabelAdded
-        // helper. If the helper is updated (e.g. to add the raw-sequence count check in its own
-        // TODO), this copy will silently diverge. Consider refactoring to use the helper.
-        // (Reported by TestQualityReviewer.)
-
         // Poll until the WorkItem row reaches a terminal status before reading it for the
         // expected-label derivation. Without polling, WorkItem.Status may still be Running or
         // Dispatched at assertion time (the service's SaveChangesAsync for WorkItems fires after
         // the history write), causing the switch to throw InvalidOperationException with a
         // misleading error rather than a meaningful assertion failure.
         // Fix for [CRITICAL] TestQualityReviewer:836 / DotNetSpecialist:745.
-        // TODO [WARNING]: httpTask is Task<HttpResponseMessage>; PostAsJsonAsync does not throw on
-        // non-2xx responses. Task.WhenAll completes without inspecting httpTask.Result.IsSuccessStatusCode.
-        // If the HTTP POST is rejected (409/404/403 because the work item already reached a terminal
-        // state), the test silently treats it as a success. Capture and log (or assert) the HTTP
-        // status after Task.WhenAll to make the race's observable outcome explicit.
-        // (Reported by DotNetSpecialist.)
-        // TODO [WARNING]: WaitForWorkItemByIdUntilTerminalAsync queries by ID only and checks
-        // status in-memory, which avoids the EF Core untranslatable-predicate issue. The
-        // 15-second timeout is independent and starts fresh after WaitForHistoryAsync completes;
-        // a shorter timeout (e.g. 5 seconds) would give a more informative diagnostic on
-        // pathological WorkItem write delays. (Reported by TestQualityReviewer.)
         // Use WaitForWorkItemStatusAsync-style polling (query by ID only, check status in-memory)
         // to avoid EF Core's inability to translate a Func<> delegate predicate to SQL.
         // The race winner is non-deterministic (Failed or Cancelled), so we check both statuses

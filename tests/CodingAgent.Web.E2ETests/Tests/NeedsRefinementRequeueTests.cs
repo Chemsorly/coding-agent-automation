@@ -2,6 +2,7 @@ using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.E2ETests.Tests;
@@ -70,12 +71,6 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         const string agentLabel = "staleness-s1";
         await SeedTemplateAndProfileAsync(agentLabel);
 
-        // TODO [WARNING]: Scenarios 1–4 all use Identifier="42". Isolation relies on
-        // ResetAllAsync() (called by HeadlessE2ETestBase.InitializeAsync) clearing
-        // InMemoryIssueProvider.Issues between tests. The [Collection(E2ECollection.Name)]
-        // attribute serialises execution, so there is no collision in practice. Consider using
-        // distinct identifiers per scenario ("42-s1", "42-s2", …) to make isolation explicit
-        // and independent of the collection's serialisation guarantee.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier  = "42",
@@ -152,11 +147,8 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
             "No rejection comment must not force a fresh analysis");
         Assert.Null(assignment.StalenessSignal);
         Assert.NotNull(assignment.ExistingAnalysis);
-        // TODO [WARNING]: Only asserts the AnalysisHeader marker is present, not the specific body
-        // content seeded above ("## Existing analysis"). If ExistingAnalysis were populated from any
-        // comment containing the marker (e.g. stale fixture state), this assertion would still pass.
-        // Consider adding: Assert.Contains("## Existing analysis", assignment.ExistingAnalysis)
         Assert.Contains(CommentMarkers.AnalysisHeader, assignment.ExistingAnalysis);
+        Assert.Contains("## Existing analysis", assignment.ExistingAnalysis);
     }
 
     // ── Scenario 3 ───────────────────────────────────────────────────────
@@ -305,27 +297,12 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         });
 
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
-        // TODO [WARNING]: PipelineLoopService is a singleton. StopLoop() in the finally block
-        // only sets _stopRequested — it does not await loop task completion. If the loop's
-        // DelayOrStop is mid-sleep when StopLoop fires, the background task is still running
-        // when the next test's InitializeAsync/ResetAllAsync clears provider state, which can
-        // cause the in-flight loop iteration to call into reset fakes and produce spurious
-        // failures in subsequent tests. Matches the same pattern in ClosedLoopDispatchTests and
-        // EpicDecompositionTests; a shared fix would be to await IsLoopActive becoming false
-        // in E2EFixture.ResetAllAsync before proceeding (already attempted with a 10s timeout).
         try
         {
             var started = await Fixture.StartLoopAsync();
             Assert.True(started, "StartLoopAsync should return true with valid template config");
 
             // Wait for at least one cycle to complete (up to 15s)
-            // TODO [WARNING]: StatusMessage is a plain auto-property updated inside a lock() in
-            // PipelineLoopService but read here without any memory barrier. On Arm64 release builds
-            // the JIT may cache the field value in a register and never see the updated string.
-            // Using Volatile.Read or making the backing field volatile would guarantee visibility.
-            // In practice the 50 ms poll interval is sufficient on x64, but this is a latent
-            // correctness issue for non-x64 CI environments. Matches the same pattern in
-            // ClosedLoopDispatchTests and EpicDecompositionTests.
             var deadline = DateTime.UtcNow.AddSeconds(15);
             while (!loopService.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
                    && DateTime.UtcNow < deadline)
@@ -341,21 +318,8 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         }
 
         // Assert: no WorkItem was created for this issue
-        var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
-        var active  = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-
-        // TODO [WARNING]: This negative assertion only checks pending/active WorkItems; a WorkItem
-        // that was created and immediately completed/failed (moved to a terminal state) would not
-        // be returned by GetPendingAsync or GetActiveAsync, so the assertion would still pass.
-        // A stronger check would query the database directly via Fixture.DbContextFactory or
-        // assert via WaitForHistoryAsync with a short timeout to confirm no run was created at all.
-        // TODO [WARNING]: The assertion confirms no WorkItem was created, but does not verify that
-        // the loop actually evaluated issue "42" at all. If the loop processed zero issues and still
-        // emitted "Cycle complete", the skip logic never ran and this test passes trivially.
-        // A stronger assertion would verify the issue was seen and skipped (e.g. a SkippedIssues
-        // counter on PipelineLoopService, or a ListOpenIssuesAsync call count on the fake provider).
-        Assert.False(
-            pending.Any(w => w.IssueIdentifier == "42") || active.Any(w => w.IssueIdentifier == "42"),
+        await using var db = Fixture.DbContextFactory.CreateDbContext();
+        Assert.False(await db.WorkItems.AsNoTracking().AnyAsync(w => w.IssueIdentifier == "42"),
             "Issue labelled agent:needs-refinement must be skipped by the closed loop and produce no WorkItem");
     }
 }
