@@ -212,16 +212,16 @@ internal class CodeReviewOrchestrator
                 _logger.Information("Pipeline {RunId} code review iteration {Iteration}: CRITICAL findings detected, sending fix prompt",
                     run.RunId, i + 1);
                 context.Callbacks.EmitOutputLine($"📝 Code review: critical findings — sending fix prompt");
-                await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
+                await SendFixPromptAsync(context, i, iterationFindingsText,
+                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", "fix_critical", ct);
                 return true;
 
             case AgentPhaseExecutor.FixPromptDecision.SendFixAndBreak:
                 _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting",
                     run.RunId, i + 1);
                 context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
-                await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
+                await SendFixPromptAsync(context, i, iterationFindingsText,
+                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", "fix_warnings", ct);
                 return false; // Exit the loop
 
             case AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak:
@@ -289,13 +289,15 @@ internal class CodeReviewOrchestrator
     /// </summary>
     private async Task SendFixPromptAsync(
         AgentPhaseContext context,
-        PipelineRun run,
-        PipelineConfiguration config,
         int iterationIndex,
         string iterationFindingsText,
         string fixDescription,
+        string phase,
         CancellationToken ct)
     {
+        var run = context.Run;
+        var config = context.Config;
+
         // Write concatenated findings from all agents to the file so the fix agent can read it
         var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
         await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
@@ -313,7 +315,7 @@ internal class CodeReviewOrchestrator
                 Description = $"Code review fix agent (iteration {iterationIndex + 1})",
                 Logger = _logger,
                 EnvironmentVariables = context.InjectedSecrets,
-                Phase = "fix"
+                Phase = phase
             },
             context.Callbacks, ct,
             recordOutputToHistory: false,
