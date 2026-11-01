@@ -98,6 +98,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `agent.connections.total` | ObservableGauge | — | Agents registered with the hub, polled from the agent registry by the Scheduler leader |
 | `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`. A `DeregisterAgent` from a connection that is not registered is skipped, not rejected. Emitted by API. |
 | `token_vending.failures` | Counter | — | Token vending failures. Emitted by API. |
+| `token_vending.scope_refused` | Counter | `permission` | Token refreshes that asked for a permission the run may not have, and got the token without it. Today `permission` is always `issues`. Expected value 0: a non-zero value means a job asked for something the pipeline's own code never asks for on that run. Emitted by API. |
 
 A refused git credentials callback is a log line, since agents record no metrics: `Refused git credentials for remote host {RefusedRemoteHost}` at Warning. It means a git operation in the workspace pointed at a server other than the repository's provider. No credentials were sent. On the code repository the run fails with a message that says so. Elsewhere, the operation's usual failure handling applies.
 
@@ -474,6 +475,7 @@ All emitted by the agent pod.
 | `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
 | `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `code_review.agent_name`, `code_review.iteration`, `code_review.exit_code`, `code_review.findings_critical`, `code_review.findings_warning`, `code_review.findings_suggestion`, `code_review.has_findings_file` | Individual review agent execution (child of CodeReview.Iteration) |
 | `CreatePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation, then the post-PR sequence (description, reflection, brain sync, feedback) |
+| `GateConfigGuard` | `pipeline.run_id`, `pipeline.pr.guard_result` | Quality-gate configuration check on the PR's changed files. A child of `CreatePullRequest`, or of the post-PR CI retry. |
 | `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `WritePrConversationContext` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Writing PR conversation context to workspace |
@@ -524,6 +526,7 @@ All emitted by the agent pod.
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
+| `pipeline.pr.guard_result` | `clean`, `changed`, `unverifiable` | Result of the quality-gate configuration check (on `GateConfigGuard` span) |
 | `pipeline.project_id` | UUID | Project identifier — set only on **spans** (not on metric tags; use `pipeline.project_name` for metrics since it is 1:1 with `pipeline.project_id`) |
 | `pipeline.project_name` | string | Project display name |
 | `pipeline.consolidation_type` | `BrainConsolidation`, `RefactoringDetection` | Consolidation run type (on `ExecuteConsolidation` span) |

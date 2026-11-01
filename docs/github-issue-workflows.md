@@ -63,6 +63,12 @@ Only one status label (every `agent:*` label except `agent:generated`) should be
 4. **Pipeline** swaps label to `agent:error`
 5. **User** can review the draft PR, fix issues manually, or close it
 
+### Quality-gate configuration changes stay a draft
+
+Before the pipeline marks a PR ready, it asks the provider which files the PR changes. If one of them configures a quality gate (analyzers, coverage, lint or CI: `sonar-project.properties`, `.editorconfig`, `.github/workflows/` and similar), the PR stays a draft with a section that lists them, so that a person reviews the change. If the list cannot be read completely (an API failure, 3000 or more changed files on GitHub, or more than GitLab reports), the PR also stays a draft, with a section that says so. Mark it ready once you have checked it.
+
+The check runs before the PR description is generated, and again after a post-PR CI retry passes. A ready rework PR converts to draft only when the check finds something. It reads the provider, not the workspace, so it works on any base branch. It covers quality-gate configuration only: other files, such as `CLAUDE.md`, `.mcp.json`, build files and tests, are not part of it.
+
 ## Flow 5: Pipeline Error
 
 1. **Pipeline** encounters an unrecoverable error (clone failure, timeout, provider error)
