@@ -152,13 +152,13 @@ Hub-completed runs (where the agent's SignalR connection reports terminal status
 | `analysis` | `analysis` |
 | `analysis_review` | `analysis_review` |
 | `codegen`, `code_gen`, `code generation` | `codegen` |
-| `review`, `code_review`, `review_{reviewer}`, `review_summary`, `follow_up_{reviewer}`, `fix` (review fix iterations) | `review` |
+| `review`, `code_review`, `review_{reviewer}`, `review_summary`, `follow_up_{reviewer}`, `fix`, `fix_critical`, `fix_warnings` (review fix iterations) | `review` |
 | `quality_gate` (quality gate fix agent and gate processes), `qgc_retry_agent` (older agents) | `quality_gate` |
 | `acceptance_criteria` | `acceptance_criteria` |
 | `pr_description` | `pr_description` |
 | `reflection` | `reflection` |
 | `decomposition`, `decomposition_*` | `decomposition` |
-| anything else, empty, null (incl. `unknown` from older agents, and the triage phases `triage`, `triage_review`, `triage_refinement`, which `run_type=triage` already separates) | `other` |
+| anything else, empty, null (incl. `unknown` from older agents, `cleanup`, and the triage phases `triage`, `triage_review`, `triage_refinement`, which `run_type=triage` already separates) | `other` |
 
 #### Counting events exactly
 

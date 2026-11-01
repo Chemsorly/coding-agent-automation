@@ -1486,6 +1486,78 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
     #endregion
 
+    #region Phase Breakdown Tests
+
+    [Fact]
+    public async Task RunReviewLoop_CriticalFindings_UsesFixCriticalPhase()
+    {
+        // Arrange
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns((AgentRequest req, CancellationToken ct, Action<string>? a) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    // Review agent: write a [CRITICAL] finding to trigger fix_critical dispatch
+                    WriteFindingsFile("Correctness", "[CRITICAL] Critical bug found");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Fix agent (call 2): return non-null Usage so AccumulateTokenUsage writes to PhaseBreakdown
+                return Task.FromResult(new AgentResult
+                {
+                    ExitCode = 0,
+                    OutputLines = Array.Empty<string>(),
+                    Usage = new TokenUsage { InputTokens = 1 }
+                });
+            });
+
+        var context = BuildContext();
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: fix agent was dispatched under the fix_critical phase key
+        _run.Metrics.PhaseBreakdown.Should().ContainKey("fix_critical",
+            "SendFixAndContinue (CRITICAL findings) must record the fix_critical phase key in PhaseBreakdown");
+    }
+
+    [Fact]
+    public async Task RunReviewLoop_WarningsOnly_UsesFixWarningsPhase()
+    {
+        // Arrange
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns((AgentRequest req, CancellationToken ct, Action<string>? a) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    // Review agent: write a [WARNING]-only finding to trigger fix_warnings dispatch
+                    WriteFindingsFile("Correctness", "[WARNING] Minor style issue");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Fix agent (call 2): return non-null Usage so AccumulateTokenUsage writes to PhaseBreakdown
+                return Task.FromResult(new AgentResult
+                {
+                    ExitCode = 0,
+                    OutputLines = Array.Empty<string>(),
+                    Usage = new TokenUsage { InputTokens = 1 }
+                });
+            });
+
+        var context = BuildContext();
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: fix agent was dispatched under the fix_warnings phase key
+        _run.Metrics.PhaseBreakdown.Should().ContainKey("fix_warnings",
+            "SendFixAndBreak (warnings-only findings) must record the fix_warnings phase key in PhaseBreakdown");
+    }
+
+    #endregion
+
     #region Diff Re-computation and Findings Deletion Tests
 
     [Fact]

@@ -213,7 +213,7 @@ internal class CodeReviewOrchestrator
                     run.RunId, i + 1);
                 context.Callbacks.EmitOutputLine($"📝 Code review: critical findings — sending fix prompt");
                 await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
+                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", "fix_critical", ct);
                 return true;
 
             case AgentPhaseExecutor.FixPromptDecision.SendFixAndBreak:
@@ -221,7 +221,7 @@ internal class CodeReviewOrchestrator
                     run.RunId, i + 1);
                 context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
                 await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
+                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", "fix_warnings", ct);
                 return false; // Exit the loop
 
             case AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak:
@@ -294,6 +294,7 @@ internal class CodeReviewOrchestrator
         int iterationIndex,
         string iterationFindingsText,
         string fixDescription,
+        string phase,
         CancellationToken ct)
     {
         // Write concatenated findings from all agents to the file so the fix agent can read it
@@ -313,7 +314,7 @@ internal class CodeReviewOrchestrator
                 Description = $"Code review fix agent (iteration {iterationIndex + 1})",
                 Logger = _logger,
                 EnvironmentVariables = context.InjectedSecrets,
-                Phase = "fix"
+                Phase = phase
             },
             context.Callbacks, ct,
             recordOutputToHistory: false,

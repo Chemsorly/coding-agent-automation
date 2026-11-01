@@ -353,7 +353,7 @@ public static partial class PipelineTelemetry
             "analysis" => RunPhases.Analysis,
             "analysis_review" or "analysisreview" => RunPhases.AnalysisReview,
             "codegen" or "code_gen" or "code generation" => RunPhases.CodeGen,
-            "review" or "code_review" or "fix" => RunPhases.Review,
+            "review" or "code_review" or "fix" or "fix_critical" or "fix_warnings" => RunPhases.Review,
             "quality_gate" or "qgc_retry_agent" => RunPhases.QualityGate,
             "acceptance_criteria" or "acceptancecriteria" => RunPhases.AcceptanceCriteria,
             "pr_description" or "prdescription" => RunPhases.PrDescription,
