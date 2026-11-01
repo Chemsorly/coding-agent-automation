@@ -3,6 +3,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgent.AgentGateway;
@@ -197,6 +198,9 @@ public sealed partial class AgentHub
 
     // ── Token refresh ───────────────────────────────────────────────────
 
+    private const string PermissionTag = "permission";
+    private const string IssuePermissionName = "issues";
+
     /// <summary>
     /// Generates a fresh short-lived token via <see cref="IAgentTokenRefreshService"/>.
     /// Supports both SignalR mode (PipelineRun in memory) and K8s mode (WorkItem payload in DB).
@@ -204,11 +208,20 @@ public sealed partial class AgentHub
     [RequiresActiveJob]
     public async Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind, bool includeIssuePermission = false)
     {
-        // A triage run only proposes issues; a person creates them in the app. It never gets issue write access.
-        if (includeIssuePermission && await IsTriageRunAsync(jobId))
+        // The server decides the scope: only a refactoring scan may hold issue permission, and only on its repository
+        // token. A triage run only proposes issues, so it never gets it either. An unknown job fails closed.
+        if (includeIssuePermission)
         {
-            _logger.Warning("Token refresh for triage job {JobId} asked for issue permission; granted without it", jobId.Value);
-            includeIssuePermission = false;
+            var runType = await _facade.GetConsolidationRunTypeAsync(jobId, CancellationToken.None);
+            if (providerKind != ProviderKind.Repository || runType != ConsolidationRunType.RefactoringDetection)
+            {
+                _logger.Warning(
+                    "Token refresh for job {JobId} asked for {RequestedPermission} permission; granted without it (provider kind {ProviderKind}, run type {RunType})",
+                    SanitizeForLog(jobId.Value), IssuePermissionName, providerKind, runType?.ToString() ?? "none");
+                PipelineTelemetry.TokenVendingScopeRefused.Add(1,
+                    new KeyValuePair<string, object?>(PermissionTag, IssuePermissionName));
+                includeIssuePermission = false;
+            }
         }
         return await _tokenRefreshService.RefreshTokenAsync(jobId.Value, providerKind, CancellationToken.None, includeIssuePermission);
     }

@@ -1179,6 +1179,92 @@ public class QualityGateExecutorEdgeCaseTests
             "the run must end on the terminal step FinalizePullRequest set, not on the retry loop's RunningQualityGates");
     }
 
+    // ── RecheckGateConfig after post-PR CI retry (issue #4083) ────────────────
+
+    [Fact]
+    public async Task WhenPostPrCiRetryPasses_RechecksGateConfigBeforeRewritingInbox()
+    {
+        // After a passing post-PR CI retry, RecheckGateConfig must be called before RewriteBrainInbox.
+        SetupValidatorAlwaysPasses();
+
+        _mockCallbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()))
+            .Callback<PipelineStep>(step => _run.CurrentStep = step);
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(_run, false, It.IsAny<CancellationToken>()))
+            .Callback(() => _run.CurrentStep = PipelineStep.Completed)
+            .Returns(Task.CompletedTask);
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+        var ciFailure = new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "CI failure" }] };
+
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)
+            .ReturnsAsync(ciPassed)
+            .ReturnsAsync(ciFailure)
+            .ReturnsAsync(ciPassed);
+
+        var callOrder = new List<string>();
+        _mockCallbacks.Setup(c => c.RecheckGateConfig(_run, It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("RecheckGateConfig"))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.RewriteBrainInbox(_run, It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("RewriteBrainInbox"))
+            .Returns(Task.CompletedTask);
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(maxRetries: 1), CancellationToken.None);
+
+        callOrder.Should().ContainInOrder("RecheckGateConfig", "RewriteBrainInbox");
+        _mockCallbacks.Verify(c => c.RecheckGateConfig(_run, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WhenPostPrCiRetryFails_DoesNotRecheckGateConfig()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciFailure = new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "CI failure" }] };
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)   // pre-PR CI passes
+            .ReturnsAsync(ciPassed)   // cleanup CI passes
+            .ReturnsAsync(ciFailure)  // WaitForPostPrCiAsync fails
+            .ReturnsAsync(ciFailure); // retry CI also fails
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(maxRetries: 1), CancellationToken.None);
+
+        _mockCallbacks.Verify(c => c.RecheckGateConfig(_run, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenPostPrCiPassesWithoutRetry_DoesNotRecheckGateConfig()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed);
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(maxRetries: 1), CancellationToken.None);
+
+        _mockCallbacks.Verify(c => c.RecheckGateConfig(_run, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     /// <summary>
     /// Regression test for issue #3843: when the first post-PR CI poll (inside
     /// <c>WaitForPostPrCiAsync</c>, before the retry loop) returns ConflictRestart, the first

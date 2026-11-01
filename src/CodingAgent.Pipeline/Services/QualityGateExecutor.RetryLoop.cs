@@ -248,6 +248,7 @@ public partial class QualityGateExecutor
             if (report.AllPassed)
             {
                 run.CurrentStep = finalizedStep;
+                await context.Callbacks.RecheckGateConfig(run, linkedCt);
                 await context.Callbacks.RewriteBrainInbox(run, linkedCt);
             }
             else

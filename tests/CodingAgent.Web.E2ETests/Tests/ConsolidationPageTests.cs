@@ -39,7 +39,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// <c>PrepareAsync_NonRefactoring_ExcludesIssueProviderConfig</c>,
 /// <c>PrepareAsync_TemplateWithRepoAndBrain_BothResolved</c>) — at a level where it costs
 /// milliseconds instead of 34 seconds of waiting for a message that never comes. They also each
-/// began with <c>if (isDisabled) return;</c>, so they reported green whenever the button they
+/// began with an early-return guard on <c>IsBrainButtonDisabledAsync</c>, so they reported green whenever the button they
 /// meant to click was disabled.
 /// </para>
 /// </summary>
@@ -175,10 +175,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
         await page.NavigateAsync();
         await Page.WaitForSelectorAsync(".settings-section h2", new() { Timeout = 10_000 });
 
-        // Only click if button is enabled (not blocked by stale state from a prior test)
-        var isDisabled = await page.IsBrainButtonDisabledAsync("Failure Template");
-        if (isDisabled)
-            return;
+        Assert.False(await page.IsBrainButtonDisabledAsync("Failure Template"),
+            "The Brain Consolidation button must be enabled: nothing is running and the brain is not read-only");
 
         await page.ClickBrainConsolidationAsync("Failure Template");
 
