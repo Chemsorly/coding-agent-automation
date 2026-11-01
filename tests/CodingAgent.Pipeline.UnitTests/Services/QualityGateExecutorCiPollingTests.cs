@@ -1854,3 +1854,228 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests
         QualityGateConfigs = new List<QualityGateConfiguration>()
     };
 }
+
+/// <summary>
+/// Verifies that <see cref="PipelineRun.FailureCategory"/> correctly reflects the
+/// infrastructure vs code-quality distinction when
+/// <c>QualityGateExecutor.FinalizeDraftPrAsync</c> is reached from the retry-loop
+/// exhaustion path. Regression tests for issue #4111.
+/// </summary>
+public class QualityGateExecutorFinalizeDraftPrCategoryTests
+{
+    private readonly Mock<IAgentProvider> _mockAgent;
+    private readonly Mock<IPipelineCallbacks> _mockCallbacks;
+    private readonly Mock<IAgentIssueOperations> _mockIssueOps;
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider;
+    private readonly Mock<IPipelineProvider> _mockPipelineProvider;
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
+    private readonly Mock<Serilog.ILogger> _mockLogger;
+    private readonly PipelineRun _run;
+    private readonly QualityGateExecutor _executor;
+
+    public QualityGateExecutorFinalizeDraftPrCategoryTests()
+    {
+        _mockAgent = new Mock<IAgentProvider>();
+        _mockCallbacks = new Mock<IPipelineCallbacks>();
+        _mockIssueOps = new Mock<IAgentIssueOperations>();
+        _mockRepoProvider = new Mock<IRepositoryProvider>();
+        _mockPipelineProvider = new Mock<IPipelineProvider>();
+        _mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        _mockLogger = new Mock<Serilog.ILogger>();
+
+        _run = new PipelineRun
+        {
+            RunId = "test-run-draft-pr-category",
+            IssueIdentifier = "4111",
+            IssueTitle = "FinalizeDraftPr category test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-draft-cat-{Guid.NewGuid():N}"),
+            BranchName = "feature/auto-4111-test"
+        };
+
+        // No stored validator mock: empty QualityGateConfigs bypasses the validator entirely —
+        // RunQualityGateValidationAsync returns a passing report when Count == 0.
+        _executor = new QualityGateExecutor(
+            new Mock<IQualityGateValidator>().Object,
+            new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
+            _mockLogger.Object,
+            _mockHistoryService.Object);
+
+        SetupDefaultMocks();
+    }
+
+    /// <summary>
+    /// Acceptance criterion (issue #4111): when CI never starts, the run must end with
+    /// <c>FailureCategory = InfrastructureFailure</c>. <c>FinalizeDraftPrAsync</c> must not
+    /// overwrite the category set by the CI-never-started exhaustion path.
+    /// </summary>
+    [Fact]
+    public async Task WhenCiNeverStarts_FailureCategoryIsInfrastructureFailure()
+    {
+        // Arrange: GetRunStatusAsync always returns Pending — CI never appears.
+        // CiNotStartedTimeout = 1ms causes immediate timeout; CiNotStartedMaxRetries = 1
+        // means one empty-commit re-trigger before exhaustion.
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = new List<PipelineJobResult>() });
+
+        var context = BuildContext(ciNotStartedMaxRetries: 1);
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // FailureCategory must be InfrastructureFailure — FinalizeDraftPrAsync must preserve it
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure,
+            "CI-never-started exhaustion is an infrastructure failure, not an agent failure — " +
+            "FinalizeDraftPrAsync must not overwrite it with QualityGateExhausted");
+
+        // The run still finalizes as a draft PR with agent:error (issue #4111 requirement)
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "run must be finalized as a draft PR on CI-never-started exhaustion");
+    }
+
+    /// <summary>
+    /// Regression guard: a plain CI code failure must still route through
+    /// <c>FailureCategory = QualityGateExhausted</c>.
+    /// </summary>
+    [Fact]
+    public async Task WhenCiFailsForTheCode_FailureCategoryIsQualityGateExhausted()
+    {
+        // Arrange: CI runs and fails for code reasons (IsInfrastructureFailure = false on the status).
+        // GetRunStatusAsync returns Running so WaitForCiRunsToAppearAsync proceeds immediately.
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
+            });
+
+        // CI completes with a code failure. IsInfrastructureFailure defaults to false (bool),
+        // so ClassifyCiResult returns NormalResult and the gate result has IsInfrastructureFailure = null.
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Failed,
+                IsInfrastructureFailure = false,
+                Jobs = new List<PipelineJobResult>
+                {
+                    new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "Test regression" }
+                }
+            });
+
+        var context = BuildContext();
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // FailureCategory must be QualityGateExhausted — code failures are agent failures
+        _run.FailureCategory.Should().Be(FailureReason.QualityGateExhausted,
+            "a plain CI code failure must route through the QualityGateExhausted failure path");
+
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "run must be finalized as a draft PR when CI fails");
+
+        // Corroborating assertion: WaitForCompletionAsync must have been called — this confirms
+        // that the "CI ran to completion and failed for code reasons" path was actually exercised
+        // and not short-circuited by a default/null mock return value.
+        _mockPipelineProvider.Verify(
+            p => p.WaitForCompletionAsync(
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "WaitForCompletionAsync must be called to confirm the CI-ran-and-failed path was exercised");
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private void SetupDefaultMocks()
+    {
+        // 5-param overload: initial push before CI polling
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+
+        // 6-param overload (allowEmptyCommit = true): used by CI-never-started empty-commit retries
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-4111-abc");
+
+        _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+
+        _mockAgent.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = false });
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = new[] { "Feedback collected" },
+                Usage = new TokenUsage { InputTokens = 10, OutputTokens = 5 }
+            });
+    }
+
+    private QualityGateContext BuildContext(int ciNotStartedMaxRetries = 0) => new()
+    {
+        Run = _run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 0,
+            CiCancelledMoveMaxRetries = 0,
+            // Very short timeout so WaitForCiRunsToAppearAsync exits quickly on Pending
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(1),
+            CiNotStartedMaxRetries = ciNotStartedMaxRetries,
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(5),
+            // Large budget — must never be reached if the never-started path is exercised
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = _mockAgent.Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        // Empty QualityGateConfigs: RunQualityGateValidationAsync skips the validator when
+        // Count == 0 and returns a passing report — local gates pass, the CI gate runs.
+        QualityGateConfigs = new List<QualityGateConfiguration>(),
+        Issue = new IssueDetail
+        {
+            Identifier = "4111",
+            Title = "FinalizeDraftPr category test",
+            Description = "Test description",
+            Labels = new[] { "bug" }
+        }
+    };
+}
