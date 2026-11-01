@@ -114,4 +114,37 @@ public sealed class TriageDetailPage
 
     /// <summary>The create-issues button (<c>data-testid=triage-create</c>).</summary>
     public ILocator Create => _page.Locator("[data-testid=triage-create]");
+
+    // ── Verdict / re-run panel / answer inputs ───────────────────────────
+
+    /// <summary>
+    /// The verdict pill inside the verdict card (<c>data-testid=triage-verdict-pill</c>).
+    /// Contains the <c>VerdictLabel</c> text, e.g. "Inconclusive".
+    /// </summary>
+    public ILocator VerdictPill => _page.Locator("[data-testid=triage-verdict-pill]");
+
+    /// <summary>
+    /// The verdict card root (<c>data-testid=triage-verdict</c>).
+    /// Contains the summary, DuplicateOf, and other result details.
+    /// </summary>
+    public ILocator Verdict => _page.Locator("[data-testid=triage-verdict]");
+
+    /// <summary>
+    /// The feedback <c>&lt;textarea&gt;</c> in the re-run panel (<c>data-testid=triage-feedback</c>).
+    /// Shown after clicking <see cref="RerunOpen"/>; <see cref="Rerun"/> is disabled until non-blank.
+    /// </summary>
+    public ILocator Feedback => _page.Locator("[data-testid=triage-feedback]");
+
+    /// <summary>
+    /// The "Start attempt N" submit button in the re-run panel (<c>data-testid=triage-rerun</c>).
+    /// Disabled while <see cref="Feedback"/> is blank or while a request is in flight.
+    /// </summary>
+    public ILocator Rerun => _page.Locator("[data-testid=triage-rerun]");
+
+    /// <summary>
+    /// Returns the answer <c>&lt;textarea&gt;</c> for the question at zero-based
+    /// <paramref name="index"/> (<c>#triage-answer-{index}</c>).
+    /// Rendered inside the <see cref="Questions"/> form when the triage is in NeedsInput state.
+    /// </summary>
+    public ILocator AnswerAt(int index) => _page.Locator($"#triage-answer-{index}");
 }
