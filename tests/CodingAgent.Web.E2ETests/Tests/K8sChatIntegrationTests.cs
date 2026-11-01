@@ -149,21 +149,27 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
         {
             var (_, job) = Fixture.K8sClient.ChatJobs.Single();
             var jobName = job.Metadata!.Name!;
+            var claimedPvc = job.Metadata.Labels["caa/claimed-pvc"];
 
-            // Terminate the session
-            await Fixture.ChatDispatcher.TerminateChatSessionAsync(
-                agentId, CancellationToken.None);
+            var heldBefore = await AgentJobPvcs.ListHeldAsync(Fixture.K8sClient, "e2e", CancellationToken.None);
+            Assert.Contains(claimedPvc, heldBefore);
 
-            // Wait for CancelChat to be delivered to the fake agent
+            // Terminate waits for the Job to end, so start it first and end the Job while it waits.
+            var terminate = Fixture.ChatDispatcher.TerminateChatSessionAsync(agentId, CancellationToken.None);
             await fakeAgent.CancelChatReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-            // Simulate clean pod exit (job reaches terminal)
             await Fixture.K8sClient.SimulateChatJobTerminalAsync(jobName, success: true);
+            await terminate.WaitAsync(TimeSpan.FromSeconds(60));
 
-            // Assert: job reached a terminal (Complete) condition
-            var terminalJob = Fixture.K8sClient.ChatJobs[jobName];
-            Assert.Contains(terminalJob.Status.Conditions,
-                c => c.Type == "Complete" && c.Status == "True");
+            var heldAfter = await AgentJobPvcs.ListHeldAsync(Fixture.K8sClient, "e2e", CancellationToken.None);
+            Assert.DoesNotContain(claimedPvc, heldAfter);
+
+            // The next chat gets the released PVC, because the dispatcher takes the first free pool entry.
+            var (_, secondAgent) = await DispatchChatPodAndConnectAsync("kiro,dotnet", overrideAgentId: "chat-pvc-reuse");
+            await using (secondAgent)
+            {
+                var secondJob = Fixture.K8sClient.ChatJobs.Values.Single(j => j.Metadata!.Name != jobName);
+                Assert.Equal(claimedPvc, secondJob.Metadata!.Labels["caa/claimed-pvc"]);
+            }
         }
     }
 
