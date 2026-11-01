@@ -237,6 +237,8 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
                     FinalStep = PipelineStep.Completed,
                     FinalLabel = AgentLabels.WontDo,
                     CompletedAt = DateTimeOffset.UtcNow,
+                    FailureReason = "Analysis gate: won't do — Issue is out of scope",
+                    FailureCategory = FailureReason.GateRejected,
                     PullRequestUrl = null,
                     RetryCount = 0,
                     FilesChangedCount = 0,
@@ -260,7 +262,7 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
                     FinalStep = PipelineStep.Failed,
                     FinalLabel = AgentLabels.NeedsRefinement,
                     FailureReason = "Analysis gate: issue lacks acceptance criteria",
-                    FailureCategory = FailureReason.AgentError,
+                    FailureCategory = FailureReason.GateRejected,
                     CompletedAt = DateTimeOffset.UtcNow,
                     RetryCount = 0,
                     FilesChangedCount = 0,
@@ -485,6 +487,78 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
         AssertMaterializedTerminalLabel(issueId, expectedLabel);
     }
 
+    /// <summary>
+    /// Verifies that a gate-rejected not-ready run persists <see cref="FailureReason.GateRejected"/>
+    /// to the database <c>WorkItems.FailureReason</c> column and applies exactly one terminal label.
+    ///
+    /// <para>
+    /// This test closes the gap identified in issue #2956: nothing in E2E previously asserted that
+    /// <c>FailureCategory = GateRejected</c> flows all the way through
+    /// <c>WorkItemStatusTransitionService</c> into the persisted row. The mutation check (sending
+    /// <c>AgentError</c> instead of <c>GateRejected</c>) must make
+    /// <c>Assert.Equal(FailureReason.GateRejected, item.FailureReason)</c> fail.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ImplementationRun_NotReady_PersistsGateRejectedOnWorkItem()
+    {
+        // Arrange
+        const string issueId = "3089-nr-gate";
+        await SeedImplementationIssueAsync(issueId, "NotReady persists GateRejected");
+
+        await using var agent = new FakeAgentClient($"agent-{issueId}", AgentSelector);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+
+        var dispatchResult = await DispatchIssueAsync(issueId);
+        Assert.True(dispatchResult.Success,
+            $"Dispatch failed for {issueId}: {dispatchResult.ErrorMessage}");
+
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(issueId, assignment.IssueIdentifier);
+
+        await agent.AcceptJobAsync(assignment.JobId);
+
+        // Act — complete via HTTP-then-hub (production ordering)
+        await agent.CompleteLikeProductionAsync(assignment.JobId, new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            FinalLabel = AgentLabels.NeedsRefinement,
+            FailureReason = "Analysis gate: needs refinement — no acceptance criteria",
+            FailureCategory = FailureReason.GateRejected,
+            CompletedAt = DateTimeOffset.UtcNow,
+            RetryCount = 0,
+            FilesChangedCount = 0,
+            LinesAdded = 0,
+            LinesRemoved = 0,
+            BrainUpdatesPushed = false,
+            AnalysisRecommendation = AnalysisGateResult.NotReady,
+            AnalysisConcerns = ["Acceptance criteria missing"],
+            AnalysisBlockingIssues = ["No clear success condition"],
+            BlacklistedFilesDetected = [],
+            CodeReviewAgentsRun = []
+        });
+
+        // Assert — DB row: GateRejected must be persisted (WorkItemStatusTransitionService writes
+        // entity.FailureReason only when Status == Failed; this path qualifies).
+        var item = await WaitForWorkItemStatusAsync(
+            Guid.Parse(assignment.JobId),
+            WorkItemStatus.Failed,
+            TimeSpan.FromSeconds(15));
+        Assert.Equal(FailureReason.GateRejected, item.FailureReason);
+
+        // WaitForHistoryAsync is the mandatory timing anchor for hub-path labels (NeedsRefinement
+        // is applied by SwapLabelAsync on the hub path, which runs after the HTTP POST that
+        // triggers WaitForWorkItemStatusAsync). History is written before SwapLabelAsync, so this
+        // wait guarantees label application has completed before the snapshot assertions run.
+        await WaitForHistoryAsync(
+            r => r.IssueIdentifier == issueId && r.FinalStep == PipelineStep.Failed,
+            TimeSpan.FromSeconds(15));
+
+        // Assert — labels: exactly one terminal label, the correct one
+        AssertExactlyOneTerminalLabelAdded(issueId, AgentLabels.NeedsRefinement);
+        AssertMaterializedTerminalLabel(issueId, AgentLabels.NeedsRefinement);
+    }
+
     // ── PR review runs ────────────────────────────────────────────────────
 
     /// <summary>
@@ -698,7 +772,7 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
             FinalStep = PipelineStep.Failed,
             FinalLabel = AgentLabels.NeedsRefinement,
             FailureReason = "Analysis gate: issue needs more detail",
-            FailureCategory = FailureReason.AgentError,
+            FailureCategory = FailureReason.GateRejected,
             CompletedAt = DateTimeOffset.UtcNow,
             RetryCount = 0,
             FilesChangedCount = 0,

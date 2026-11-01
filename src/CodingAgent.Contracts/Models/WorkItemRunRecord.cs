@@ -23,6 +23,9 @@ public sealed record WorkItemRunRecord
     /// <summary>The route pinned on the work item's payload; null for work items created before spec 053.</summary>
     public AgentRouteSnapshot? Route { get; init; }
 
+    /// <summary>The consolidation kind from the work item's payload; null for any other work item.</summary>
+    public ConsolidationRunType? ConsolidationRunType { get; init; }
+
     /// <summary>
     /// True when <paramref name="agentId"/> is the work item's K8s Job or its assigned agent — the
     /// ownership rule the work-item HTTP endpoints enforce.

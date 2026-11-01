@@ -244,6 +244,39 @@ Set the dispatch priority weight for a pending work item. Operators call this to
 
 ---
 
+### GET /api/work-items/latest-outcome
+
+Returns the status and optional final label of the most recently created work item for the given issue and provider. Used by the orphaned-label recovery sweep to distinguish a silently-succeeded run (hub completion report was lost) from a genuinely dead one.
+
+**Authentication:** OperatorApiKey
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issueIdentifier` | string | ✅ | Issue or PR identifier (e.g., `owner/repo#42`) |
+| `issueProviderConfigId` | string | ✅ | Provider config ID that owns the issue |
+
+**Responses:**
+
+| Status | Description |
+|--------|-------------|
+| 200 | Returns `WorkItemLatestOutcome` JSON |
+| 404 | No work item exists for the (issueIdentifier, issueProviderConfigId) pair |
+
+**Example response (200):**
+
+```json
+{ "status": "Succeeded", "finalLabel": "agent:next" }
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Status of the most recently created work item (`Succeeded`, `Failed`, etc.) |
+| `finalLabel` | string? | `FinalLabel` from the work item's completion payload, or `null` when absent or malformed |
+
+---
+
 ### GET /api/work-items/active
 
 List work items that are `Dispatched` or `Running` and were dispatched more than `olderThanSeconds` seconds ago. Items whose `DispatchedAt` is null are matched on `CreatedAt` instead. `Pending` and terminal items are never returned. Used by the Job Controller's reconciliation loop (timeout enforcement, the Dispatched sweep and orphan cleanup) and by the web Work page, which also passes `projectId`.

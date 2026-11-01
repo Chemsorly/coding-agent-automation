@@ -272,6 +272,12 @@ public interface IAgentHubFacade
     Task<WorkItemRunRecord?> GetWorkItemRunRecordAsync(JobId jobId, CancellationToken ct);
 
     /// <summary>
+    /// The consolidation kind of the job, from the in-memory run or else from the work item's record. Null when the
+    /// job is not a consolidation run or is unknown. A failed read throws, so callers cannot mistake it for null.
+    /// </summary>
+    Task<ConsolidationRunType?> GetConsolidationRunTypeAsync(JobId jobId, CancellationToken ct);
+
+    /// <summary>
     /// Updates a single field on the agent's registry entry.
     /// Use instead of direct <see cref="AgentEntry"/> property mutation so writes are
     /// visible to all replicas under <c>DistributedAgentRegistryService</c>.

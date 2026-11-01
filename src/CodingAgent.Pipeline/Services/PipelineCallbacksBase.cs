@@ -111,5 +111,8 @@ public abstract class PipelineCallbacksBase : IPipelineCallbacks
     public abstract Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);
 
     /// <inheritdoc />
+    public virtual Task RecheckGateConfig(PipelineRun run, CancellationToken ct) => Task.CompletedTask;
+
+    /// <inheritdoc />
     public virtual Task RewriteBrainInbox(PipelineRun run, CancellationToken ct) => Task.CompletedTask;
 }

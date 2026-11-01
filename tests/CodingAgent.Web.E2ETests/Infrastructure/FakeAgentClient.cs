@@ -276,6 +276,40 @@ public sealed class FakeAgentClient : IAsyncDisposable
         });
     }
 
+    /// <summary>Accepts a PR review job and completes it with the steps a real review run reports. SignalR only.</summary>
+    public async Task AcceptAndCompleteReviewJobAsync(string jobId, string pullRequestUrl)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+
+        await _connection.InvokeAsync("JobAccepted", jobId);
+
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.CloningRepository,
+            DateTimeOffset.UtcNow, (Dictionary<string, string>?)null);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.ReviewingCode,
+            DateTimeOffset.UtcNow, (Dictionary<string, string>?)null);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.PostingFindings,
+            DateTimeOffset.UtcNow, (Dictionary<string, string>?)null);
+        await _connection.InvokeAsync("ReportStepTransition", jobId, PipelineStep.Completed,
+            DateTimeOffset.UtcNow, (Dictionary<string, string>?)null);
+
+        await _connection.InvokeAsync("ReportJobCompleted", jobId, new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PullRequestUrl = pullRequestUrl,
+            RetryCount = 0,
+            FilesChangedCount = 0,
+            LinesAdded = 0,
+            LinesRemoved = 0,
+            BrainUpdatesPushed = false,
+            // AnalysisRecommendation intentionally omitted (null) — review runs have none
+            AnalysisConcerns = Array.Empty<string>(),
+            AnalysisBlockingIssues = Array.Empty<string>(),
+            BlacklistedFilesDetected = Array.Empty<string>(),
+            CodeReviewAgentsRun = new[] { "e2e-reviewer" }
+        });
+    }
+
     /// <summary>
     /// Accepts a job and reports completion with a fully custom payload.
     /// Use this for tests that need to control RetryCount, FailureReason, IsDraftPr, etc.
