@@ -25,10 +25,11 @@ public class HousekeepingPollCycleIntegrationTests
     private static (TemplatePoller Poller,
                     Mock<IRepositoryProvider> RepoProviderMock,
                     Mock<IHousekeepingService> HousekeepingMock)
-        CreatePoller(bool supportsUpdate = true, IReadOnlyList<PullRequestSummary>? returnedPrs = null)
+        CreatePoller(bool supportsUpdate = true, IReadOnlyList<PullRequestSummary>? returnedPrs = null, bool preservesHistory = true)
     {
         var repoProviderMock = new Mock<IRepositoryProvider>();
         repoProviderMock.Setup(r => r.SupportsServerSideBranchUpdate).Returns(supportsUpdate);
+        repoProviderMock.Setup(r => r.BranchUpdatePreservesHistory).Returns(preservesHistory);
 
         // The fetch uses null labels (fetch all open PRs), then filters client-side by branch prefix
         repoProviderMock.Setup(r => r.ListOpenPullRequestsAsync(
@@ -72,7 +73,7 @@ public class HousekeepingPollCycleIntegrationTests
             HousekeepingConcurrencyLimit = concurrencyLimit
         };
 
-    private static PullRequestSummary MakePr(int number, string branch) => new()
+    private static PullRequestSummary MakePr(int number, string branch, bool hasAutoMerge = false, bool isDraft = false) => new()
     {
         Number = number,
         Identifier = number.ToString(),
@@ -82,7 +83,8 @@ public class HousekeepingPollCycleIntegrationTests
         BranchName = branch,
         TargetBranch = "main",
         Url = $"https://example.com/pr/{number}",
-        IsDraft = false
+        IsDraft = isDraft,
+        HasAutoMerge = hasAutoMerge
     };
 
     private static (ConcurrentDictionary<string, ConfigStatusSnapshot> Statuses,
@@ -253,5 +255,72 @@ public class HousekeepingPollCycleIntegrationTests
         agentDonePrTruncated["t-hk"].Should().BeTrue(
             "a polling failure is equivalent to a truncated result — StaleBranchCleaner must skip " +
             "cleanup rather than treating the empty list as a complete authoritative set");
+    }
+
+    // ── Human auto-merge PRs — poller filtering ───────────────────────────────
+
+    [Fact]
+    public async Task PollTemplateQueuesAsync_HumanPrWithAutoMerge_IsKept()
+    {
+        var humanPr = MakePr(20, "feature/human", hasAutoMerge: true);
+        var (poller, _, _) = CreatePoller(preservesHistory: true, returnedPrs: [humanPr]);
+        var template = MakeTemplate(housekeepingEnabled: true);
+        var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
+
+        var (_, _, _, agentDonePrQueues, _, _) = await poller.PollTemplateQueuesAsync(
+            [template], 3, statuses, reportIdx, reportStatus, notifyChange,
+            CancellationToken.None);
+
+        agentDonePrQueues["t-hk"].Should().ContainSingle()
+            .Which.Number.Should().Be(20,
+                "a non-draft human PR with auto-merge on a history-preserving provider should be kept");
+    }
+
+    [Fact]
+    public async Task PollTemplateQueuesAsync_HumanPrWithoutAutoMerge_IsDropped()
+    {
+        var humanPr = MakePr(20, "feature/human", hasAutoMerge: false);
+        var (poller, _, _) = CreatePoller(preservesHistory: true, returnedPrs: [humanPr]);
+        var template = MakeTemplate(housekeepingEnabled: true);
+        var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
+
+        var (_, _, _, agentDonePrQueues, _, _) = await poller.PollTemplateQueuesAsync(
+            [template], 3, statuses, reportIdx, reportStatus, notifyChange,
+            CancellationToken.None);
+
+        agentDonePrQueues["t-hk"].Should().BeEmpty(
+            "a human PR without auto-merge must be dropped regardless of preservesHistory");
+    }
+
+    [Fact]
+    public async Task PollTemplateQueuesAsync_HumanDraftPrWithAutoMerge_IsDropped()
+    {
+        var humanPr = MakePr(20, "feature/human", hasAutoMerge: true, isDraft: true);
+        var (poller, _, _) = CreatePoller(preservesHistory: true, returnedPrs: [humanPr]);
+        var template = MakeTemplate(housekeepingEnabled: true);
+        var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
+
+        var (_, _, _, agentDonePrQueues, _, _) = await poller.PollTemplateQueuesAsync(
+            [template], 3, statuses, reportIdx, reportStatus, notifyChange,
+            CancellationToken.None);
+
+        agentDonePrQueues["t-hk"].Should().BeEmpty(
+            "draft PRs are not ready to merge and must be dropped even when auto-merge is enabled");
+    }
+
+    [Fact]
+    public async Task PollTemplateQueuesAsync_HumanPrWithAutoMerge_ProviderRewritesHistory_IsDropped()
+    {
+        var humanPr = MakePr(20, "feature/human", hasAutoMerge: true);
+        var (poller, _, _) = CreatePoller(preservesHistory: false, returnedPrs: [humanPr]);
+        var template = MakeTemplate(housekeepingEnabled: true);
+        var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
+
+        var (_, _, _, agentDonePrQueues, _, _) = await poller.PollTemplateQueuesAsync(
+            [template], 3, statuses, reportIdx, reportStatus, notifyChange,
+            CancellationToken.None);
+
+        agentDonePrQueues["t-hk"].Should().BeEmpty(
+            "providers that rebase (preservesHistory=false, e.g. GitLab) must not update human branches because rebase rewrites history");
     }
 }

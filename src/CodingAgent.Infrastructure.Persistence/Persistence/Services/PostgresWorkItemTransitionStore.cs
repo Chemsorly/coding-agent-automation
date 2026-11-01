@@ -68,8 +68,13 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
             .Where(w => w.Id == workItemId)
             .Select(w => new
             {
-                w.TaskType, w.K8sJobName, w.AssignedAgentId,
-                w.IssueIdentifier, w.IssueProviderConfigId, w.ProjectId, w.Payload
+                w.TaskType,
+                w.K8sJobName,
+                w.AssignedAgentId,
+                w.IssueIdentifier,
+                w.IssueProviderConfigId,
+                w.ProjectId,
+                w.Payload
             })
             .FirstOrDefaultAsync(ct);
 
@@ -89,6 +94,7 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
             PipelineProviderConfigId = ids.Pipeline,
             ProjectId = row.ProjectId,
             Route = ids.Route,
+            ConsolidationRunType = ids.ConsolidationRunType,
         };
     }
 
@@ -96,7 +102,7 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
     /// Reads the provider config IDs and the pinned route (spec 053) the dispatch request stored in a WorkItem's JSON
     /// payload. The route is null for work items created before spec 053.
     /// </summary>
-    private static (string? Repo, string? Brain, string? Pipeline, CodingAgent.Pipeline.Models.AgentRouteSnapshot? Route) ReadPayloadProviderConfigIds(string payload)
+    private static (string? Repo, string? Brain, string? Pipeline, CodingAgent.Pipeline.Models.AgentRouteSnapshot? Route, CodingAgent.Pipeline.Models.ConsolidationRunType? ConsolidationRunType) ReadPayloadProviderConfigIds(string payload)
     {
         using var doc = JsonDocument.Parse(payload);
         var root = doc.RootElement;
@@ -108,13 +114,22 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
         return (ReadString(root, "repoProviderConfigId"),
                 ReadString(root, "brainProviderConfigId"),
                 ReadString(root, "pipelineProviderConfigId"),
-                route);
+                route,
+                ReadConsolidationRunType(root));
 
         static string? ReadString(JsonElement root, string name) =>
             root.ValueKind == JsonValueKind.Object
             && root.TryGetProperty(name, out var prop)
             && prop.ValueKind == JsonValueKind.String
                 ? prop.GetString()
+                : null;
+
+        static CodingAgent.Pipeline.Models.ConsolidationRunType? ReadConsolidationRunType(JsonElement root) =>
+            root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("consolidationRunType", out var prop)
+            && prop.ValueKind == JsonValueKind.String
+            && Enum.TryParse<CodingAgent.Pipeline.Models.ConsolidationRunType>(prop.GetString(), ignoreCase: false, out var type)
+                ? type
                 : null;
     }
 

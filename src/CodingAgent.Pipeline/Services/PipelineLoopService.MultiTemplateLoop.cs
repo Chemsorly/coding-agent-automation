@@ -568,6 +568,9 @@ public sealed partial class PipelineLoopService
             var limit = Math.Max(1,
                 template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
 
+            var agentDonePrs = donePrs.Where(pr => pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal)).ToList();
+            var humanAutoMergePrs = donePrs.Where(pr => !pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal)).ToList();
+
             await housekeepingService.ExecuteAsync(
                 new HousekeepingRequest
                 {
@@ -575,7 +578,8 @@ public sealed partial class PipelineLoopService
                     RepoProviderId = template.RepoProviderId,
                     IssueProvider = issueProvider,
                     IssueProviderId = template.IssueProviderId,
-                    AgentDonePrs = donePrs,
+                    AgentDonePrs = agentDonePrs,
+                    HumanAutoMergePrs = humanAutoMergePrs,
                     WasInputTruncated = wasTruncated,
                     EffectiveConcurrencyLimit = limit,
                     BranchCleanupEnabled = template.HousekeepingBranchCleanupEnabled,

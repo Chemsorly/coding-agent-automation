@@ -33,6 +33,8 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     /// </summary>
     public int EnsureAgentLabelsCallCount { get; private set; }
 
+    public ProviderFaultPlan Faults { get; } = new();
+
     // Comment storage: per-issue ordered list of (comment, updatedAt)
     private readonly Dictionary<string, List<(IssueComment Comment, DateTime? UpdatedAt)>> _comments = new();
     // TODO [WARNING]: _nextCommentId is mutated with ++_nextCommentId (non-atomic). If PostCommentAsync is ever
@@ -58,10 +60,12 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         InitializeShouldFail = false;
         EnsureAgentLabelsCallCount = 0;
         ClosedIssueIdentifiers.Clear();
+        Faults.Reset();
     }
 
     public Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(GetIssueAsync));
         if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
         var issue = Issues.FirstOrDefault(i => i.Identifier == identifier.Value)
             ?? throw new KeyNotFoundException($"Issue {identifier} not found in fake provider");
@@ -70,6 +74,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
 
     public Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(ListOpenIssuesAsync));
         if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
 
         // TODO [WARNING]: `filtered` is the live Issues reference when labels is null/empty (the
@@ -95,6 +100,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
 
     public Task<IReadOnlyList<IssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(ListCommentsAsync));
         if (!_comments.TryGetValue(identifier.Value, out var list))
             return Task.FromResult<IReadOnlyList<IssueComment>>(Array.Empty<IssueComment>());
         // TODO [WARNING]: Sort is by CreatedAt only. PostCommentAsync stamps DateTime.UtcNow, which can return
@@ -107,6 +113,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
 
     public Task<string?> PostCommentAsync(IssueIdentifier identifier, string body, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(PostCommentAsync));
         var id = ++_nextCommentId;
         var comment = new IssueComment
         {
@@ -129,6 +136,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
 
     public Task UpdateCommentAsync(IssueIdentifier issueIdentifier, long commentId, string body, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(UpdateCommentAsync));
         if (!_comments.TryGetValue(issueIdentifier.Value, out var list))
             throw new KeyNotFoundException($"No comments for issue {issueIdentifier}");
         var idx = list.FindIndex(e => e.Comment.Id == commentId.ToString());
@@ -143,6 +151,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
 
     public Task AddLabelsAsync(IssueIdentifier identifier, IReadOnlyList<string> labels, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(AddLabelsAsync));
         var idx = Issues.FindIndex(i => i.Identifier == identifier.Value);
         if (idx >= 0)
         {
@@ -167,6 +176,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
 
     public Task RemoveLabelAsync(IssueIdentifier identifier, string label, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(RemoveLabelAsync));
         var idx = Issues.FindIndex(i => i.Identifier == identifier.Value);
         if (idx >= 0)
         {
@@ -203,6 +213,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
 
     public Task<CreatedIssueResult> CreateIssueAsync(string title, string body, IReadOnlyList<string>? labels, CancellationToken ct)
     {
+        Faults.ThrowIfPlanned(nameof(CreateIssueAsync));
         if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
         CreatedIssues.Add((title, body, labels));
         var number = (Issues.Count + CreatedIssues.Count).ToString();
