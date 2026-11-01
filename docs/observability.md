@@ -76,7 +76,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.dispatch.linked_issues_resolved` | Counter | `source` (`closing_keyword`, `issue_url`) | Scheduler | Linked issues resolved during dispatch enrichment |
 | `pipeline.dispatch.linked_issue_fetch_failed` | Counter | — | Scheduler | Linked issue lookups that failed (non-fatal) |
 | `consolidation.dispatch.permanent_failures` | Counter | `run.type` | Scheduler | Consolidation dispatches that cannot succeed (e.g. no job template) |
-| `pipeline.housekeeping.triggered` / `.succeeded` / `.failed` | Counter | `repo_provider_id` | Scheduler | Server-side branch updates |
+| `pipeline.housekeeping.triggered` / `.succeeded` / `.failed` | Counter | `repo_provider_id` | Scheduler | Server-side branch updates. `.triggered` also carries `pr_origin` (`pipeline` or `human`) to distinguish pipeline-created PRs from human PRs with auto-merge enabled. `.succeeded` and `.failed` do not carry this tag. |
 | `pipeline.housekeeping.skipped` | Counter | `repo_provider_id`, `skip_reason` | Scheduler | PRs skipped during candidate selection |
 | `pipeline.housekeeping.evicted` | Counter | `repo_provider_id` | Scheduler | In-flight entries removed (CI resolved, PR merged or label removed) |
 | `pipeline.housekeeping.slot_exhausted` | Counter | `repo_provider_id` | Scheduler | Cycles that hit the in-flight slot limit |
