@@ -47,6 +47,42 @@ public partial class LayerBoundaryTests
     }
 
     [Fact]
+    public void AgentImage_KeepsTheAppOwnedByRoot()
+    {
+        var dockerfile = File.ReadAllText(Path.Combine(RepoRoot, "dockerfiles", "agent.Dockerfile"))
+            .Replace("\r\n", "\n");
+
+        // The old ubuntu-owned copy instruction must be gone from every stage.
+        dockerfile.Should().NotContain("--chown=ubuntu:ubuntu /app/publish",
+            "the app must be owned by root in every stage, not by the agent user");
+
+        // The root-owned copy instruction must appear exactly three times (claude, kiro, opencode).
+        var rootCopyCount = CountOccurrences(dockerfile, "--chown=root:root /app/publish .");
+        rootCopyCount.Should().Be(3,
+            "each of the three agent stages must copy the published app with --chown=root:root");
+
+        // The workspaces directory (and only it) is chowned to ubuntu.
+        dockerfile.Should().Contain("chown -R ubuntu:ubuntu /home/ubuntu /app/workspaces",
+            "/app/workspaces must be writable by the agent user");
+
+        // The old broad chown that gave ubuntu ownership of the whole /app tree must be gone.
+        dockerfile.Should().NotContain("chown -R ubuntu:ubuntu /home/ubuntu /app\n",
+            "/app must not be chowned to ubuntu; only /app/workspaces should be");
+    }
+
+    private static int CountOccurrences(string text, string pattern)
+    {
+        var count = 0;
+        var idx = 0;
+        while ((idx = text.IndexOf(pattern, idx, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            idx += pattern.Length;
+        }
+        return count;
+    }
+
+    [Fact]
     public void AgentImage_SetsTheDiagnosticsSetting_InTheClaudeAndKiroStagesOnly()
     {
         var dockerfile = File.ReadAllText(Path.Combine(RepoRoot, "dockerfiles", "agent.Dockerfile"));

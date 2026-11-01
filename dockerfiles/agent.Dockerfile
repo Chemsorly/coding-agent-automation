@@ -77,12 +77,13 @@ COPY --chmod=755 dockerfiles/user-apt.sh /usr/local/bin/user-apt
 
 # JAVA_HOME varies by architecture — set via a symlink. The JDK package installs to
 # java-21-openjdk-amd64 or java-21-openjdk-arm64.
-# Reuse the existing ubuntu user (UID 1000) from the base image. It owns its home and /app,
-# which holds the published Agent app and the run workspaces.
+# Reuse the existing ubuntu user (UID 1000) from the base image. It owns its home and the run
+# workspaces. /app itself, which holds the published Agent app, stays owned by root: the agent
+# may read and run the app, not change it.
 RUN JAVA_ARCH=$(dpkg --print-architecture) && \
     ln -sf /usr/lib/jvm/java-21-openjdk-${JAVA_ARCH} /usr/lib/jvm/java-21-openjdk && \
     mkdir -p /home/ubuntu/.local/bin /app/workspaces && \
-    chown -R ubuntu:ubuntu /home/ubuntu /app
+    chown -R ubuntu:ubuntu /home/ubuntu /app/workspaces
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
 USER ubuntu
@@ -157,8 +158,8 @@ ENV AGENT_LABELS=claude,${STACK_LABELS}
 # AGENT_CLAUDE_API_KEY / AGENT_CLAUDE_OAUTH_TOKEN; outside Kubernetes ANTHROPIC_API_KEY or
 # CLAUDE_CODE_OAUTH_TOKEN work too. No credential volume is needed.
 
-# Copy published Agent app (owned by ubuntu user)
-COPY --from=build --chown=ubuntu:ubuntu /app/publish .
+# Copy published Agent app (owned by root; read-only for the agent)
+COPY --from=build --chown=root:root /app/publish .
 
 # Build args for version tracking — ENV (which persists to runtime) must be set in the runtime
 # stage.
@@ -198,8 +199,8 @@ ENV DOTNET_EnableDiagnostics=0
 # Kubernetes Jobs set them from their job template)
 ENV AGENT_LABELS=kiro,${STACK_LABELS}
 
-# Copy published Agent app (owned by ubuntu user)
-COPY --from=build --chown=ubuntu:ubuntu /app/publish .
+# Copy published Agent app (owned by root; read-only for the agent)
+COPY --from=build --chown=root:root /app/publish .
 
 # Build args for version tracking — ENV (which persists to runtime) must be set in the runtime
 # stage.
@@ -246,8 +247,8 @@ ENV AGENT_LABELS=opencode,${STACK_LABELS}
 # ENV OPENAI_API_KEY=
 # ENV OPENROUTER_API_KEY=
 
-# Copy published Agent app (owned by ubuntu user)
-COPY --from=build --chown=ubuntu:ubuntu /app/publish .
+# Copy published Agent app (owned by root; read-only for the agent)
+COPY --from=build --chown=root:root /app/publish .
 
 # Build args for version tracking — ENV (which persists to runtime) must be set in the runtime
 # stage.
