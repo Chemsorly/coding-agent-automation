@@ -98,13 +98,10 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         Assert.Equal(PipelineRunType.Review, assignment.RunType);
 
         // Agent completes the job
-        // TODO: AcceptAndCompleteJobAsync reports implementation-style step transitions (CloningRepository →
-        // GeneratingCode → Completed). Consider adding a review-specific completion helper that reports
-        // review-appropriate steps for more representative test behavior.
         Exception? completionEx = null;
         try
         {
-            await fakeAgent.AcceptAndCompleteJobAsync(assignment.JobId);
+            await fakeAgent.AcceptAndCompleteReviewJobAsync(assignment.JobId, "https://github.com/e2e-org/e2e-repo/pull/99");
         }
         catch (Exception ex)
         {
@@ -117,6 +114,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "99");
             Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
             Assert.Equal(PipelineRunType.Review, completedRun.RunType);
+            Assert.Null(completedRun.AnalysisRecommendation);
         }
         catch (TimeoutException)
         {

@@ -24,3 +24,15 @@
   related_issues:
     - "#2454"
     - "#2638"
+
+- component: "AgentHub"
+  scenario: "A job asks RequestTokenRefresh for issue permission and is not a refactoring scan asking for its repository token"
+  assertion: >
+    The hub returns the token without the permission. An unknown job counts as not allowed. A failed
+    database read returns no token. See docs/internals/issue-operations-proxy.md.
+  observable_signals:
+    - log_level: Warning
+      message_pattern: "Token refresh for job {JobId} asked for {RequestedPermission} permission; granted without it"
+    - metric: "token_vending.scope_refused"
+      increment: 1
+  last_verified: "2026-10-31"
