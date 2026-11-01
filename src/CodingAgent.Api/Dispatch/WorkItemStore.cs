@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration;
@@ -174,6 +175,44 @@ internal sealed class WorkItemStore(
                  w.Status == WorkItemStatus.Dispatched ||
                  w.Status == WorkItemStatus.Running),
                 ct);
+    }
+
+    /// <summary>
+    /// The most recently created work item's status and final label for the given issue and provider,
+    /// or null when no work item exists. Used by the orphaned-label recovery sweep to distinguish a
+    /// silently-succeeded run (hub completion report was lost) from a genuinely dead one.
+    /// </summary>
+    public async Task<WorkItemLatestOutcome?> GetLatestOutcomeAsync(
+        string issueIdentifier, string issueProviderConfigId, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var row = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.IssueIdentifier == issueIdentifier
+                     && w.IssueProviderConfigId == issueProviderConfigId)
+            .OrderByDescending(w => w.CreatedAt)
+            .Select(w => new { w.Status, w.Result })
+            .FirstOrDefaultAsync(ct);
+
+        if (row is null)
+            return null;
+
+        string? finalLabel = null;
+        if (row.Result is not null)
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<JobCompletionPayload>(
+                    row.Result, PipelineJsonOptions.Default);
+                finalLabel = payload?.FinalLabel;
+            }
+            catch (JsonException)
+            {
+                // Malformed result payload — treat FinalLabel as null rather than propagating.
+            }
+        }
+
+        return new WorkItemLatestOutcome { Status = row.Status, FinalLabel = finalLabel };
     }
 
     private static DateTimeOffset RecentTerminalCutoff() => DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
