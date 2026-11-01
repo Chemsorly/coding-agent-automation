@@ -32,6 +32,13 @@ public class GitLabRepositoryProviderAutoUpdateTests
         ((IRepositoryProvider)provider.Provider).SupportsServerSideBranchUpdate.Should().BeTrue();
     }
 
+    [Fact]
+    public void BranchUpdatePreservesHistory_ReturnsFalse()
+    {
+        var provider = CreateProviderWithMr(DetailedMergeStatus.Mergeable);
+        ((IRepositoryProvider)provider.Provider).BranchUpdatePreservesHistory.Should().BeFalse();
+    }
+
     // ── IsPullRequestBehindBaseAsync — Behind ─────────────────────────────────
 
     [Fact]

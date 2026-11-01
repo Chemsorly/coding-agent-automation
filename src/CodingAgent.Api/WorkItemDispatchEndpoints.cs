@@ -42,6 +42,7 @@ public static class WorkItemDispatchEndpoints
 
         group.MapGet("/is-distributed", GetIsDistributed).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/active-identifiers", GetActiveIdentifiers).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/latest-outcome", GetLatestOutcome).RequireAuthorization(ApiAuthPolicies.Operator);
     }
 
     // ── POST / — create WorkItem ───────────────────────────────────────────
@@ -180,6 +181,25 @@ public static class WorkItemDispatchEndpoints
     /// S1944 suspicious-cast warning and preserves field-name stability on the wire.
     /// </summary>
     internal sealed record ActiveIdentifierDto(string IssueIdentifier, string IssueProviderConfigId);
+
+    // ── GET /latest-outcome ───────────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/latest-outcome?issueIdentifier=...&amp;issueProviderConfigId=...
+    /// Returns the status and final label of the most recently created work item for the given
+    /// issue and provider. Used by the orphaned-label recovery sweep to distinguish a
+    /// silently-succeeded run (hub completion report was lost) from a genuinely dead one.
+    /// 200 with <see cref="WorkItemLatestOutcome"/>, or 404 when no work item exists.
+    /// </summary>
+    internal static async Task<IResult> GetLatestOutcome(
+        string issueIdentifier,
+        string issueProviderConfigId,
+        WorkItemStore store,
+        CancellationToken ct)
+    {
+        var outcome = await store.GetLatestOutcomeAsync(issueIdentifier, issueProviderConfigId, ct);
+        return outcome is null ? TypedResults.NotFound() : TypedResults.Ok(outcome);
+    }
 
     // ── POST /{id}/priority ───────────────────────────────────────────────
 

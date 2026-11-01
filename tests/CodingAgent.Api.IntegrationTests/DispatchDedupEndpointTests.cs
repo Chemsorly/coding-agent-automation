@@ -380,4 +380,92 @@ public sealed class DispatchDedupEndpointTests
                 "is-distributed and active-identifiers must agree about ({0}, {1})", issueId, providerId);
         }
     }
+
+    // ── GET /latest-outcome ───────────────────────────────────────────────────────
+
+    private async Task<(HttpStatusCode StatusCode, WorkItemLatestOutcome? Outcome)> GetLatestOutcomeHttpAsync(
+        string issueIdentifier, string issueProviderConfigId)
+    {
+        var url = $"/api/work-items/latest-outcome?issueIdentifier={Uri.EscapeDataString(issueIdentifier)}"
+                + $"&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId)}";
+        var response = await _client.GetAsync(url);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return (HttpStatusCode.NotFound, null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var outcome = await response.Content.ReadFromJsonAsync<WorkItemLatestOutcome>(PipelineJsonOptions.Default);
+        return (HttpStatusCode.OK, outcome);
+    }
+
+    private void SeedWithCreatedAt(string issueIdentifier, string issueProviderConfigId,
+        WorkItemStatus status, DateTimeOffset createdAt, string? result = null)
+    {
+        using var db = _factory.CreateDbContext();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = issueProviderConfigId,
+            Status = status,
+            Payload = null,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            CreatedAt = createdAt,
+            Result = result,
+        });
+        db.SaveChanges();
+    }
+
+    [Fact]
+    public async Task LatestOutcome_NoWorkItem_Returns404()
+    {
+        var (statusCode, outcome) = await GetLatestOutcomeHttpAsync(NewIssueId(), NewProviderId());
+
+        statusCode.Should().Be(HttpStatusCode.NotFound);
+        outcome.Should().BeNull();
+    }
+
+    /// <summary>
+    /// When two work items exist for the same issue, the endpoint returns the one with the higher
+    /// CreatedAt (the newest). An older Succeeded row and a newer Failed row must yield Failed.
+    /// </summary>
+    [Fact]
+    public async Task LatestOutcome_TwoWorkItems_ReturnsTheNewest()
+    {
+        var issueId = NewIssueId();
+        var providerId = NewProviderId();
+        var older = DateTimeOffset.UtcNow.AddSeconds(-5);
+        var newer = DateTimeOffset.UtcNow;
+
+        SeedWithCreatedAt(issueId, providerId, WorkItemStatus.Succeeded, older);
+        SeedWithCreatedAt(issueId, providerId, WorkItemStatus.Failed, newer);
+
+        var (statusCode, outcome) = await GetLatestOutcomeHttpAsync(issueId, providerId);
+
+        statusCode.Should().Be(HttpStatusCode.OK);
+        outcome.Should().NotBeNull();
+        outcome!.Status.Should().Be(WorkItemStatus.Failed, "the newer Failed row must be returned");
+    }
+
+    /// <summary>
+    /// When a Succeeded work item has a malformed JSON result payload, the endpoint must still
+    /// return 200 with the correct status and a null FinalLabel — the malformed payload must
+    /// not propagate as an error.
+    /// </summary>
+    [Fact]
+    public async Task LatestOutcome_MalformedResult_ReturnsNullFinalLabel()
+    {
+        var issueId = NewIssueId();
+        var providerId = NewProviderId();
+
+        SeedWithCreatedAt(issueId, providerId, WorkItemStatus.Succeeded, DateTimeOffset.UtcNow,
+            result: "{not json");
+
+        var (statusCode, outcome) = await GetLatestOutcomeHttpAsync(issueId, providerId);
+
+        statusCode.Should().Be(HttpStatusCode.OK);
+        outcome.Should().NotBeNull();
+        outcome!.Status.Should().Be(WorkItemStatus.Succeeded);
+        outcome.FinalLabel.Should().BeNull("malformed result payload must yield null FinalLabel");
+    }
 }

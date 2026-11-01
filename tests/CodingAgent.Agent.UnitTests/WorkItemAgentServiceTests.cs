@@ -365,6 +365,50 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             Times.Never);
     }
 
+    /// <summary>
+    /// Covers the production path: the real pipeline executor (LocalPipelineExecutor) catches
+    /// OperationCanceledException internally and returns a Cancelled payload instead of throwing.
+    /// On SIGTERM the pod must still exit 143 and report nothing, even though the executor returned
+    /// a payload rather than propagating the exception.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SigtermWhenExecutorReturnsCancelledPayload_PostsNoStatus_ExitsNonZero()
+    {
+        var client = new Mock<IWorkItemLifecycleClient>();
+        client.Setup(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMinimalAssignment("wi-1", "owner/repo#102"));
+        client.Setup(c => c.PostStatusAsync("wi-1", It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var pipelineStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new Mock<IWorkItemExecutor>();
+        executor.Setup(e => e.ExecuteAsync(
+                It.IsAny<JobAssignmentMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+                It.IsAny<CodingAgent.Infrastructure.OutputBatcher>(), It.IsAny<Action<PipelineStep?>?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (JobAssignmentMessage _, Microsoft.AspNetCore.SignalR.Client.HubConnection _,
+                CodingAgent.Infrastructure.OutputBatcher _, Action<PipelineStep?>? _, CancellationToken ct) =>
+            {
+                pipelineStarted.TrySetResult();
+                try { await Task.Delay(Timeout.Infinite, ct); }
+                catch (OperationCanceledException) { }
+                return new JobCompletionPayload { FinalStep = PipelineStep.Cancelled, CompletedAt = DateTimeOffset.UtcNow, FinalLabel = AgentLabels.Cancelled };
+            });
+        var reporter = new Mock<IJobCompletionReporter>();
+        var service = CreateService(client.Object, executor.Object, reporter.Object);
+
+        var exitCode = await RunUntilStoppedAsync(service, async () =>
+        {
+            await pipelineStarted.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            await service.StopAsync(CancellationToken.None); // what the host does on SIGTERM
+        });
+
+        exitCode.Should().Be(143);
+        client.Verify(c => c.PostStatusAsync("wi-1", It.Is<WorkItemStatusUpdate>(u => u.Status != "Running"), It.IsAny<CancellationToken>()),
+            Times.Never, "SIGTERM must not be reported as Cancelled (or any other status)");
+        reporter.Verify(r => r.ReportCompletionAsync(It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     // ── ForceFlush Return Value Handling ─────────────────────────────────
 
     // TODO: Add a complementary negative-case test that verifies the flush-timeout Warning is
