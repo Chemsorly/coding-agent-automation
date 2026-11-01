@@ -114,4 +114,65 @@ public sealed class TriageDetailPage
 
     /// <summary>The create-issues button (<c>data-testid=triage-create</c>).</summary>
     public ILocator Create => _page.Locator("[data-testid=triage-create]");
+
+    // ── Draft cards ──────────────────────────────────────────────────────
+
+    /// <summary>All individual draft cards (<c>data-testid=triage-draft</c>).</summary>
+    public ILocator Draft => _page.Locator("[data-testid=triage-draft]");
+
+    /// <summary>Draft selection checkboxes (<c>data-testid=triage-draft-select</c>).</summary>
+    public ILocator DraftSelect => _page.Locator("[data-testid=triage-draft-select]");
+
+    /// <summary>Draft edit buttons (<c>data-testid=triage-draft-edit</c>).</summary>
+    public ILocator DraftEdit => _page.Locator("[data-testid=triage-draft-edit]");
+
+    // ── Draft editor (TriageDraftEditor.razor) ───────────────────────────
+
+    /// <summary>The draft editor drawer (<c>data-testid=triage-draft-editor</c>).</summary>
+    public ILocator DraftEditor => _page.Locator("[data-testid=triage-draft-editor]");
+
+    /// <summary>The repository selector in the editor (<c>data-testid=triage-draft-repo</c>).</summary>
+    public ILocator DraftRepo => _page.Locator("[data-testid=triage-draft-repo]");
+
+    /// <summary>The title input in the editor (<c>data-testid=triage-draft-title</c>).</summary>
+    public ILocator DraftTitle => _page.Locator("[data-testid=triage-draft-title]");
+
+    /// <summary>The body textarea in the editor (<c>data-testid=triage-draft-body</c>).</summary>
+    public ILocator DraftBody => _page.Locator("[data-testid=triage-draft-body]");
+
+    /// <summary>The reset button in the editor (<c>data-testid=triage-draft-reset</c>).</summary>
+    public ILocator DraftReset => _page.Locator("[data-testid=triage-draft-reset]");
+
+    /// <summary>The save button in the editor (<c>data-testid=triage-draft-save</c>).</summary>
+    public ILocator DraftSave => _page.Locator("[data-testid=triage-draft-save]");
+
+    // ── Created issues ───────────────────────────────────────────────────
+
+    /// <summary>Links to created issues (<c>data-testid=triage-created-link</c>).</summary>
+    public ILocator CreatedLink => _page.Locator("[data-testid=triage-created-link]");
+
+    // ── Queue ────────────────────────────────────────────────────────────
+
+    /// <summary>The queue checkbox (<c>data-testid=triage-queue</c>).</summary>
+    public ILocator Queue => _page.Locator("[data-testid=triage-queue]");
+
+    // ── Verdict / report (TriageReport.razor) ────────────────────────────
+
+    /// <summary>The verdict summary text (<c>data-testid=triage-verdict</c>).</summary>
+    public ILocator Verdict => _page.Locator("[data-testid=triage-verdict]");
+
+    /// <summary>The verdict pill (<c>data-testid=triage-verdict-pill</c>).</summary>
+    public ILocator VerdictPill => _page.Locator("[data-testid=triage-verdict-pill]");
+
+    /// <summary>The investigated-checks section (<c>data-testid=triage-investigated</c>).</summary>
+    public ILocator Investigated => _page.Locator("[data-testid=triage-investigated]");
+
+    /// <summary>The evidence section (<c>data-testid=triage-evidence</c>).</summary>
+    public ILocator Evidence => _page.Locator("[data-testid=triage-evidence]");
+
+    /// <summary>
+    /// The read-only questions section rendered by TriageReport when the user cannot act
+    /// (<c>data-testid=triage-report-questions</c>).
+    /// </summary>
+    public ILocator ReportQuestions => _page.Locator("[data-testid=triage-report-questions]");
 }
