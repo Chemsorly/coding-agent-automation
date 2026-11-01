@@ -85,7 +85,9 @@ public sealed class TemplateFeatureToggleUiTests : E2ETestBase
         if (await toggleInput.CountAsync() == 0)
         {
             await Page.ClickAsync("button.feature-badge-bar");
-            await toggleInput.WaitForAsync(new() { Timeout = 5_000 });
+            // Use Attached (not Visible) — the toggle input has opacity:0 by CSS design so it
+            // is never "visible". We only need to confirm it was added to the DOM.
+            await toggleInput.WaitForAsync(new() { State = WaitForSelectorState.Attached, Timeout = 5_000 });
         }
 
         var slider = Page.Locator(
@@ -157,7 +159,7 @@ public sealed class TemplateFeatureToggleUiTests : E2ETestBase
         if (await Page.Locator($"input[aria-label='Enable {feature} for {ToggleTemplateName}']").CountAsync() == 0)
         {
             await Page.ClickAsync("button.feature-badge-bar");
-            await Page.Locator($"input[aria-label='Enable {feature} for {ToggleTemplateName}']").WaitForAsync(new() { Timeout = 5_000 });
+            await Page.Locator($"input[aria-label='Enable {feature} for {ToggleTemplateName}']").WaitForAsync(new() { State = WaitForSelectorState.Attached, Timeout = 5_000 });
         }
 
         // Assert: the input's checked state matches the expected value

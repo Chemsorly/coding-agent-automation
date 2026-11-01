@@ -320,9 +320,10 @@ public sealed class RepositoryPageSaveTests : E2ETestBase
         await dialog.WaitForAsync(new() { Timeout = 5_000 });
         Assert.Contains(SaveTemplateName, await dialog.TextContentAsync() ?? "", StringComparison.Ordinal);
 
-        // Select "Tests" focus (RefactoringScanFocus.Tests = 4)
+        // Select "Tests" focus. Blazor renders @RefactoringScanFocus.Tests as the enum name
+        // string "Tests" (via .ToString()), not the integer "4", so match by name.
         await Page.Locator("[data-testid='refactoring-focus']").SelectOptionAsync(
-            new SelectOptionValue { Value = "4" });
+            new SelectOptionValue { Value = "Tests" });
 
         // Check the agent:next auto-dispatch checkbox
         await dialog.Locator("input[type='checkbox']").CheckAsync();
