@@ -221,8 +221,11 @@ public sealed class GitHubAppProviderFormTests : E2ETestBase
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("pem-content")),
             saved.Settings[ProviderSettingKeys.PrivateKeyBase64]);
 
-        // Assert: provider card shows the owner/repo
-        await Assertions.Expect(Page.Locator("div.provider-card").First).ToContainTextAsync("e2e-org/e2e-repo");
+        // Assert: provider card shows the owner/repo (scope to the "GitHub U05" card specifically;
+        // the pre-seeded "E2E Issue Provider" is also present and is the first card on the page)
+        await Assertions.Expect(
+            Page.Locator("div.provider-card:has(strong:has-text('GitHub U05'))"))
+            .ToContainTextAsync("e2e-org/e2e-repo");
     }
 
     /// <summary>
