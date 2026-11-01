@@ -23,6 +23,9 @@ public static partial class PipelineTelemetry
     /// <summary>Counter: token vending failures.</summary>
     public static readonly Counter<long> TokenVendingFailures;
 
+    /// <summary>Counter: token refreshes granted without the issue permission they asked for.</summary>
+    public static readonly Counter<long> TokenVendingScopeRefused;
+
     // ── Loop metrics ─────────────────────────────────────────────────────────────
 
     /// <summary>Counter: pipeline loop poll attempts.</summary>

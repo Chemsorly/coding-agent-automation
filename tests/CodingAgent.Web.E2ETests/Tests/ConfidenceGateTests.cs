@@ -78,8 +78,10 @@ public sealed class ConfidenceGateTests : E2ETestBase
         await fakeAgent.AcceptAndCompleteJobWithPayloadAsync(assignment.JobId, new JobCompletionPayload
         {
             FinalStep = PipelineStep.Failed,
+            FinalLabel = AgentLabels.NeedsRefinement,
             CompletedAt = DateTimeOffset.UtcNow,
-            FailureReason = "Analysis determined issue needs refinement",
+            FailureReason = "Analysis gate: needs refinement — Test not_ready",
+            FailureCategory = FailureReason.GateRejected,
             PullRequestUrl = null,
             RetryCount = 0,
             IsDraftPr = false,
@@ -103,10 +105,14 @@ public sealed class ConfidenceGateTests : E2ETestBase
         Assert.Equal(AnalysisGateResult.NotReady, failedRun.AnalysisRecommendation);
         Assert.Equal(0, failedRun.RetryCount);
         Assert.Null(failedRun.PullRequestUrl);
+        Assert.Equal(FailureReason.GateRejected, failedRun.FailureCategory);
+        var labels = Fixture.IssueProvider.Issues.Single(i => i.Identifier == "42").Labels;
+        Assert.Contains(AgentLabels.NeedsRefinement, labels);
+        Assert.DoesNotContain(AgentLabels.Error, labels);
     }
 
     [Fact]
-    public async Task ConfidenceGate_WontDo_ShowsFailedWithRecommendation()
+    public async Task ConfidenceGate_WontDo_CompletesWithWontDoLabel()
     {
         // Arrange: seed test data
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -162,12 +168,14 @@ public sealed class ConfidenceGateTests : E2ETestBase
         Assert.NotNull(assignment);
         Assert.Equal("42", assignment.IssueIdentifier);
 
-        // Agent reports failure with "wont_do" analysis recommendation
+        // Agent reports completion with the won't-do recommendation
         await fakeAgent.AcceptAndCompleteJobWithPayloadAsync(assignment.JobId, new JobCompletionPayload
         {
-            FinalStep = PipelineStep.Failed,
+            FinalStep = PipelineStep.Completed,
+            FinalLabel = AgentLabels.WontDo,
             CompletedAt = DateTimeOffset.UtcNow,
-            FailureReason = "Analysis determined issue is out of scope",
+            FailureReason = "Analysis gate: won't do — Test wont_do",
+            FailureCategory = FailureReason.GateRejected,
             PullRequestUrl = null,
             RetryCount = 0,
             IsDraftPr = false,
@@ -185,11 +193,14 @@ public sealed class ConfidenceGateTests : E2ETestBase
             CodeReviewSuggestionCount = 0
         });
 
-        // Assert: verify the run was recorded as failed with wont_do recommendation
-        var failedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
-        Assert.Equal(PipelineStep.Failed, failedRun.FinalStep);
-        Assert.Equal(AnalysisGateResult.WontDo, failedRun.AnalysisRecommendation);
-        Assert.Equal(0, failedRun.RetryCount);
-        Assert.Null(failedRun.PullRequestUrl);
+        // Assert: a won't-do run ends Completed, not Failed
+        var completedRun = await WaitForHistoryAsync(r => r.IssueIdentifier == "42");
+        Assert.Equal(PipelineStep.Completed, completedRun.FinalStep);
+        Assert.Equal(AnalysisGateResult.WontDo, completedRun.AnalysisRecommendation);
+        Assert.Equal(0, completedRun.RetryCount);
+        Assert.Null(completedRun.PullRequestUrl);
+        var labels = Fixture.IssueProvider.Issues.Single(i => i.Identifier == "42").Labels;
+        Assert.Contains(AgentLabels.WontDo, labels);
+        Assert.DoesNotContain(AgentLabels.Error, labels);
     }
 }
