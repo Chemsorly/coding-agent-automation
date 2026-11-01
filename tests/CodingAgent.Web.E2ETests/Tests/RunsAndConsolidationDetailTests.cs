@@ -418,8 +418,8 @@ public sealed class RunsAndConsolidationDetailTests : E2ETestBase
         await consolPage.ClickRefactoringScanAsync(templateName);
         Assert.True(await consolPage.WaitForRefactoringModalAsync());
 
-        // Select Correctness focus
-        await Page.SelectOptionAsync("[data-testid='refactoring-focus']", "2"); // RefactoringScanFocus.Correctness = 2
+        // Select Correctness focus — option value is the enum name (Blazor renders @RefactoringScanFocus.Correctness as "Correctness")
+        await Page.SelectOptionAsync("[data-testid='refactoring-focus']", "Correctness");
 
         // Check the agent:next checkbox
         await Page.CheckAsync(".modal-card input[type='checkbox']");
