@@ -287,12 +287,12 @@ public class GitHubIssueProviderCommentVerificationTests : WireMockTestBase
     // ─── Pipeline author verified in every GitHub credential setup (req 8) ────
 
     [Theory]
-    [InlineData("Bot",  "NONE",        null,   true,  "GitHub App installation token")] // bot type → no lookup
-    [InlineData("User", "OWNER",       "write", false, "PAT of repo owner")]
-    [InlineData("User", "MEMBER",      "write", false, "PAT of public org member")]
-    [InlineData("User", "COLLABORATOR","write", false, "PAT of direct collaborator")]
-    [InlineData("User", "CONTRIBUTOR", "write", true,  "PAT of private org member with write")]
-    [InlineData("User", "NONE",        "write", true,  "PAT with no association but write permission")]
+    [InlineData("Bot", "NONE", null, true, "GitHub App installation token")] // bot type → no lookup
+    [InlineData("User", "OWNER", "write", false, "PAT of repo owner")]
+    [InlineData("User", "MEMBER", "write", false, "PAT of public org member")]
+    [InlineData("User", "COLLABORATOR", "write", false, "PAT of direct collaborator")]
+    [InlineData("User", "CONTRIBUTOR", "write", true, "PAT of private org member with write")]
+    [InlineData("User", "NONE", "write", true, "PAT with no association but write permission")]
     public async Task ListCommentsAsync_PipelineAuthorInEveryGitHubCredentialSetup_IsVerified(
         string type, string association, string? permission, bool needsLookup, string scenario)
     {
