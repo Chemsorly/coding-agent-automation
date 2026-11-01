@@ -18,6 +18,8 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///   3. Bad file — Malformed or empty JSON shows an error; config unchanged.
 ///   4. Run history untouched — Seeded run history survives an import.
 ///
+/// These tests cover the page. <see cref="Infrastructure.E2ESettingsShim"/> answers its routes from the harness's
+/// configuration; <see cref="RealSettingsHandlerTests"/> covers the page against the real handlers.
 /// Downloaded files are written to a per-test temp directory and deleted in DisposeAsync.
 /// </summary>
 [Trait("Category", "E2E")]
