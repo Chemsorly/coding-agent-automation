@@ -23,6 +23,12 @@ public sealed record HousekeepingRequest
     public required IReadOnlyList<PullRequestSummary> AgentDonePrs { get; init; }
 
     /// <summary>
+    /// Open human PRs with auto-merge enabled, updated at lower priority than <see cref="AgentDonePrs"/>.
+    /// Used only for branch updates: never for conflict rework, outcome metrics or branch cleanup.
+    /// </summary>
+    public IReadOnlyList<PullRequestSummary> HumanAutoMergePrs { get; init; } = [];
+
+    /// <summary>
     /// True when <see cref="AgentDonePrs"/> was capped by <c>ClosedLoopMaxPagesToFetch</c>.
     /// Forwarded to <see cref="IStaleBranchCleaner"/> — when true, branch cleanup is skipped
     /// with a Warning rather than risking deleting a branch whose PR was beyond the cap.

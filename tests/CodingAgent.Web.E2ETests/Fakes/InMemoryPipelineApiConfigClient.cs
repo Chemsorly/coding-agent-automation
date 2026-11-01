@@ -26,9 +26,16 @@ public sealed class InMemoryPipelineApiConfigClient : IPipelineApiConfigClient
 
     public InMemoryPipelineApiConfigClient(InMemoryConfigurationStore store) => _store = store;
 
+    /// <summary>When true, GetPipelineConfigAsync throws, to model an API the Scheduler cannot read.</summary>
+    public bool FailPipelineConfigLoad { get; set; }
+
     // ── Pipeline config ──────────────────────────────────────────────────
     public Task<PipelineConfiguration> GetPipelineConfigAsync(CancellationToken ct = default)
-        => _store.LoadPipelineConfigAsync(ct);
+    {
+        if (FailPipelineConfigLoad)
+            throw new HttpRequestException("Fake pipeline config load failure");
+        return _store.LoadPipelineConfigAsync(ct);
+    }
 
     public Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct = default)
         => _store.SavePipelineConfigAsync(config, ct);

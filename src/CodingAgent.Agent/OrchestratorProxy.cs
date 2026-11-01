@@ -1,6 +1,7 @@
 using CodingAgent.Infrastructure.Resilience;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Polly;
@@ -34,6 +35,8 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     private readonly Dictionary<(ProviderKind, bool), Task<TokenRefreshResponse>> _tokenInflight = new();
 
     private bool _disposed;
+
+    private IReadOnlyCollection<KeyValuePair<string, string>> _secretsToMask = [];
 
     /// <summary>
     /// Test-only delegate for the hub token-refresh call. When non-null (injected via the
@@ -78,6 +81,15 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
         _tokenCacheLock.Dispose();
     }
 
+    /// <summary>Secrets to remove from text this proxy posts to the tracker. Called once the run's effective secrets are known.</summary>
+    public void SetSecretsToMask(IReadOnlyCollection<KeyValuePair<string, string>> secrets)
+    {
+        ArgumentNullException.ThrowIfNull(secrets);
+        _secretsToMask = secrets;
+    }
+
+    private string MaskSecrets(string text) => SecretMasker.Mask(text, _secretsToMask);
+
     /// <summary>
     /// Posts an analysis comment on the issue via the orchestrator.
     /// </summary>
@@ -88,6 +100,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
         // GitLabIssueProvider, LabelService) would throw NullReferenceException for default(IssueIdentifier).
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(body);
+        body = MaskSecrets(body);
         return _signalRPipeline.ExecuteAsync(async token =>
         {
             await _connection.InvokeAsync(
@@ -285,6 +298,8 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
+        title = MaskSecrets(title);
+        body = MaskSecrets(body);
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<CreatedIssueResult>(
@@ -302,6 +317,8 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
+        title = MaskSecrets(title);
+        body = MaskSecrets(body);
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<CreatedIssueResult>(
@@ -388,6 +405,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(body);
+        body = MaskSecrets(body);
 
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(

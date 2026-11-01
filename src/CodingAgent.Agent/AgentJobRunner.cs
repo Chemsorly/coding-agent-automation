@@ -41,7 +41,17 @@ public static class AgentJobRunner
     {
         try
         {
-            return await req.Execute(req.Assignment, req.Connection, req.OutputBatcher, req.OnStepChanged, req.Ct);
+            var payload = await req.Execute(req.Assignment, req.Connection, req.OutputBatcher, req.OnStepChanged, req.Ct);
+
+            // The pipeline turns a cancellation into a Cancelled payload. When SIGTERM caused it, the pod reports
+            // nothing and exits non-zero, so the Job decides about a retry (decisions.md, "Agent Jobs").
+            if (payload.FinalStep == PipelineStep.Cancelled
+                && req.RethrowOnSigterm != default && req.RethrowOnSigterm.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(req.RethrowOnSigterm);
+            }
+
+            return payload;
         }
         catch (OperationCanceledException) when (req.RethrowOnSigterm != default && req.RethrowOnSigterm.IsCancellationRequested)
         {

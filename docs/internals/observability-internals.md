@@ -9,6 +9,7 @@ These metrics are primarily useful for pipeline developers debugging infrastruct
 | Metric | Type | Description |
 |--------|------|-------------|
 | `token_vending.failures` | Counter | Token vending operation failures |
+| `token_vending.scope_refused` | Counter | Token refreshes granted without the issue permission they asked for (`permission`) |
 | `agent.hub.auth_rejections` | Counter | Hub calls rejected by the auth checks (`reason`) |
 | `workdistribution.progress_write_failures` | Counter | Failed `LastProgressAt` writes |
 

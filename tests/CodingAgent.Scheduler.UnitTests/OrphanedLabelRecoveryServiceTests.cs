@@ -2325,6 +2325,186 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         await service.StopAsync(CancellationToken.None);
     }
 
+
+    // ── Sweep: latest-outcome Succeeded check ────────────────────────────
+
+    /// <summary>
+    /// When the orphan sweep encounters an issue whose latest work item is Succeeded (hub
+    /// completion report was lost), it must swap to agent:done — not agent:error.
+    /// </summary>
+    [Fact]
+    public async Task Sweep_OrphanedIssueWithLatestSucceeded_SwapsToDone()
+    {
+        var issue = new IssueSummary
+        {
+            Identifier = "7001",
+            Title = "Issue with lost hub completion (Succeeded, no FinalLabel)",
+            Labels = [AgentLabels.InProgress]
+        };
+
+        WireProviders(BuildProvider(issue).Object, EmptyProvider().Object);
+
+        _mockWorkItemClient
+            .Setup(w => w.GetLatestOutcomeAsync(
+                It.IsAny<IssueIdentifier>(),
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemLatestOutcome { Status = WorkItemStatus.Succeeded, FinalLabel = null });
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        // Must swap to agent:done — not agent:error.
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.Is<IssueIdentifier>(i => i.Value == "7001"),
+                AgentLabels.Done,
+                LabelTargetKind.Issue,
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "Succeeded work item with no FinalLabel must swap to agent:done");
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(),
+                AgentLabels.Error,
+                It.IsAny<LabelTargetKind>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never,
+            "agent:error must never be applied when the latest work item Succeeded");
+    }
+
+    /// <summary>
+    /// When the Succeeded payload carries a valid FinalLabel (agent:next), the sweep must apply
+    /// that label rather than falling back to agent:done.
+    /// </summary>
+    [Fact]
+    public async Task Sweep_OrphanedIssueWithLatestSucceededAndFinalLabel_SwapsToFinalLabel()
+    {
+        var issue = new IssueSummary
+        {
+            Identifier = "7002",
+            Title = "Issue with lost hub completion (Succeeded, FinalLabel = agent:next)",
+            Labels = [AgentLabels.InProgress]
+        };
+
+        WireProviders(BuildProvider(issue).Object, EmptyProvider().Object);
+
+        _mockWorkItemClient
+            .Setup(w => w.GetLatestOutcomeAsync(
+                It.IsAny<IssueIdentifier>(),
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemLatestOutcome { Status = WorkItemStatus.Succeeded, FinalLabel = AgentLabels.Next });
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.Is<IssueIdentifier>(i => i.Value == "7002"),
+                AgentLabels.Next,
+                LabelTargetKind.Issue,
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "Succeeded with FinalLabel = agent:next must swap to agent:next");
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(),
+                AgentLabels.Done,
+                It.IsAny<LabelTargetKind>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never,
+            "agent:done must not be applied when FinalLabel already resolves to agent:next");
+    }
+
+    /// <summary>
+    /// When the Succeeded payload carries agent:generated as FinalLabel, that label is not in
+    /// SwapTargets, so the sweep must fall back to agent:done.
+    /// </summary>
+    [Fact]
+    public async Task Sweep_OrphanedIssueWithLatestSucceededAndGeneratedLabel_SwapsToDone()
+    {
+        var issue = new IssueSummary
+        {
+            Identifier = "7003",
+            Title = "Issue with lost hub completion (Succeeded, FinalLabel = agent:generated)",
+            Labels = [AgentLabels.InProgress]
+        };
+
+        WireProviders(BuildProvider(issue).Object, EmptyProvider().Object);
+
+        _mockWorkItemClient
+            .Setup(w => w.GetLatestOutcomeAsync(
+                It.IsAny<IssueIdentifier>(),
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemLatestOutcome { Status = WorkItemStatus.Succeeded, FinalLabel = AgentLabels.Generated });
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        // agent:generated is not in SwapTargets — fall back to agent:done.
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.Is<IssueIdentifier>(i => i.Value == "7003"),
+                AgentLabels.Done,
+                LabelTargetKind.Issue,
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "agent:generated is not in SwapTargets — must fall back to agent:done");
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(),
+                AgentLabels.Error,
+                It.IsAny<LabelTargetKind>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never,
+            "agent:error must never be applied when the latest work item Succeeded");
+    }
+
+    /// <summary>
+    /// When GetLatestOutcomeAsync throws (API unreachable), the sweep must skip the issue
+    /// rather than swapping to agent:error — fail-safe to avoid false positives.
+    /// </summary>
+    [Fact]
+    public async Task Sweep_LatestOutcomeCheckThrows_DoesNotSwap()
+    {
+        var issue = new IssueSummary
+        {
+            Identifier = "7004",
+            Title = "Issue whose latest-outcome check throws",
+            Labels = [AgentLabels.InProgress]
+        };
+
+        WireProviders(BuildProvider(issue).Object, EmptyProvider().Object);
+
+        _mockWorkItemClient
+            .Setup(w => w.GetLatestOutcomeAsync(
+                It.IsAny<IssueIdentifier>(),
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API unreachable"));
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        // GetLatestOutcomeAsync failure must not cause any swap at all.
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(),
+                It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never,
+            "latest-outcome API failure must not cause any label swap");
+    }
+
     // ── Leader gate tests ────────────────────────────────────────────────
 
     [Fact]
