@@ -15,7 +15,9 @@ namespace CodingAgent.Scheduler.Services;
 /// Background service that periodically detects and repairs two categories of label problems:
 /// <list type="bullet">
 ///   <item><b>Orphaned issues</b> — issues still labelled <c>agent:in-progress</c> with no
-///   active WorkItem. These are relabelled to <c>agent:error</c>.</item>
+///   active WorkItem. These are relabelled to <c>agent:error</c>, unless the latest work item
+///   is <c>Succeeded</c> (hub completion report was lost), in which case they receive the
+///   run's final label or <c>agent:done</c>.</item>
 ///   <item><b>Dual-label issues</b> — issues carrying more than one <c>agent:*</c> status label
 ///   simultaneously (e.g. <c>agent:in-progress</c> + <c>agent:done</c>), caused by
 ///   <c>AgentLabelOperations.SwapAsync</c> exhausting retries on the remove step. These are
@@ -388,6 +390,37 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         {
             _logger.Debug("Orphaned label recovery: issue {Identifier} already has terminal label, skipping", issue.Identifier);
             return false;
+        }
+
+        // Before assuming genuinely orphaned, check the latest work item's outcome.
+        // If the run actually Succeeded but the hub completion report was lost, applying
+        // agent:error would be a false positive. Use the final label from the result payload
+        // when present (e.g. agent:next for ConflictRestart), falling back to agent:done.
+        WorkItemLatestOutcome? latest;
+        try
+        {
+            latest = await workItemClient.GetLatestOutcomeAsync(issue.Identifier, providerConfigId, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "Orphaned label recovery: latest-outcome check failed for issue {Identifier}, skipping to avoid false-positive",
+                issue.Identifier);
+            return false;
+        }
+
+        if (latest?.Status == WorkItemStatus.Succeeded)
+        {
+            var label = latest.FinalLabel is not null && AgentLabels.SwapTargets.Contains(latest.FinalLabel)
+                ? latest.FinalLabel
+                : AgentLabels.Done;
+            _logger.Warning(
+                "Orphaned label recovery: issue {Identifier} on provider {ProviderId} has a Succeeded work item but no terminal label — swapping to {Label}",
+                issue.Identifier, providerConfigId, label);
+            return await _labelService.TrySwapLabelAsync(
+                providerConfigId, issue.Identifier, label, LabelTargetKind.Issue,
+                _logger, "OrphanedLabelRecovery.TryRecoverSingleIssueAsync", ct);
         }
 
         // Genuinely orphaned — swap to agent:error.
