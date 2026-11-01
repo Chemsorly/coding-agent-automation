@@ -250,6 +250,11 @@ internal static class E2ETestDefaults
               imagePullPolicy: "Always"
               providerType: "opencode"
               maxConcurrent: 5
+            - labels: "jc-limit-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 1
             - labels: "issue-ops"
               image: "chemsorly/coding-agent:opencode-dotnet10-latest"
               imagePullPolicy: "Always"
