@@ -159,6 +159,16 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result?.IsDistributed ?? false;
     }
 
+    public async Task<WorkItemLatestOutcome?> GetLatestOutcomeAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct = default)
+    {
+        var url = $"/api/work-items/latest-outcome?issueIdentifier={Uri.EscapeDataString(issueIdentifier.Value)}&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId.Value)}";
+        using var response = await _http.GetAsync(url, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkItemLatestOutcome>(PipelineJsonOptions.Default, ct);
+    }
+
     public async Task SetPriorityAsync(Guid workItemId, int priorityWeight, CancellationToken ct = default)
     {
         var body = new { priorityWeight };

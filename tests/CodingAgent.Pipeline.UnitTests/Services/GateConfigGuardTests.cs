@@ -45,23 +45,6 @@ public class GateConfigGuardTests
     }
 
     [Fact]
-    public async Task GetChangedFilesAsync_NoGitDirectory_ReturnsEmpty()
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "gate-config-guard-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        try
-        {
-            var result = await GateConfigGuard.GetChangedFilesAsync(dir, CancellationToken.None);
-
-            result.Should().BeEmpty();
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
     public void AppendWarningSection_ListsEachFileAsBullet()
     {
         var result = GateConfigGuard.AppendWarningSection("Original body", ["SonarQube.Analysis.xml", ".editorconfig"]);
@@ -71,5 +54,25 @@ public class GateConfigGuardTests
         result.Should().Contain("- `SonarQube.Analysis.xml`");
         result.Should().Contain("- `.editorconfig`");
         result.Should().Contain("mark the PR ready for review");
+    }
+
+    [Fact]
+    public void AppendWarningSection_KeepsItsHeadingText()
+    {
+        var result = GateConfigGuard.AppendWarningSection("", ["SonarQube.Analysis.xml"]);
+
+        result.Should().Contain(GateConfigGuard.WarningHeading);
+        GateConfigGuard.WarningHeading.Should().Be("## ⚠️ Quality-gate configuration changed");
+    }
+
+    [Fact]
+    public void AppendUnverifiableSection_KeepsBodyAndAddsHeading()
+    {
+        var result = GateConfigGuard.AppendUnverifiableSection("Some body");
+
+        result.Should().StartWith("Some body");
+        result.Should().Contain(GateConfigGuard.UnverifiableHeading);
+        result.Should().Contain("could not read this PR's complete list of changed files");
+        result.Should().Contain("Check the changed files, then mark the PR ready for review.");
     }
 }
