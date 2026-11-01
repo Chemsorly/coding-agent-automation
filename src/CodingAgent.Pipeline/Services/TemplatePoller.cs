@@ -54,7 +54,8 @@ internal sealed class TemplatePoller
 
             // Mark as currently polling
             templateStatuses[template.Id] = (templateStatuses.TryGetValue(template.Id, out var prev) ? prev : ConfigStatusSnapshot.Empty)
-                with { IsCurrentlyPolling = true };
+                with
+            { IsCurrentlyPolling = true };
             notifyChange();
 
             try

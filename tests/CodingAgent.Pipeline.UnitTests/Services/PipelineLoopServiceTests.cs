@@ -1924,19 +1924,29 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var pipelinePr = new PullRequestSummary
         {
-            Number = 1, Identifier = "1", Title = "Pipeline PR",
-            Description = string.Empty, Labels = Array.Empty<string>(),
+            Number = 1,
+            Identifier = "1",
+            Title = "Pipeline PR",
+            Description = string.Empty,
+            Labels = Array.Empty<string>(),
             BranchName = $"{PipelineConstants.BranchPrefix}1-fix",
-            TargetBranch = "main", Url = "https://example.com/pr/1",
-            IsDraft = false, HasAutoMerge = false
+            TargetBranch = "main",
+            Url = "https://example.com/pr/1",
+            IsDraft = false,
+            HasAutoMerge = false
         };
         var humanPr = new PullRequestSummary
         {
-            Number = 2, Identifier = "2", Title = "Human PR",
-            Description = string.Empty, Labels = Array.Empty<string>(),
+            Number = 2,
+            Identifier = "2",
+            Title = "Human PR",
+            Description = string.Empty,
+            Labels = Array.Empty<string>(),
             BranchName = "feature/human",
-            TargetBranch = "main", Url = "https://example.com/pr/2",
-            IsDraft = false, HasAutoMerge = true
+            TargetBranch = "main",
+            Url = "https://example.com/pr/2",
+            IsDraft = false,
+            HasAutoMerge = true
         };
 
         var queues = new Dictionary<string, List<PullRequestSummary>>

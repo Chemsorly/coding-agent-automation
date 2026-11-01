@@ -1722,7 +1722,9 @@ public class HousekeepingServiceTests
                     .ReturnsAsync(new PagedResult<PullRequestSummary>
                     {
                         Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                        Page = 1, PageSize = 100, HasMore = false
+                        Page = 1,
+                        PageSize = 100,
+                        HasMore = false
                     });
         var issueProviderMock = new Mock<IIssueProvider>();
 
