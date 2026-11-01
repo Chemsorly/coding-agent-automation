@@ -247,12 +247,25 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 Logger.Warning(ex, "Brain review validation failed for run {RunId}, continuing", job.JobId);
             }
 
+            // A refused review changes nothing: no commit, no push, and the inbox stays for a later run.
+            if (reviewRefusalReason is not null)
+            {
+                return new ConsolidationJobResult
+                {
+                    JobId = job.JobId,
+                    Success = false,
+                    ErrorMessage = $"Brain review refused: {reviewRefusalReason}",
+                    BrainReviewRefusalReason = reviewRefusalReason,
+                    DiffSummaryTokenUsage = diffSummaryTokenUsage,
+                    ReviewTokenUsage = reviewTokenUsage,
+                    RefinementTokenUsage = refinementTokenUsage
+                };
+            }
+
             // 7. Commit all changes (AFTER review/refinement completes)
             TransitionTo(PipelineStep.PushingBrainChanges);
             Logger.Information("Committing brain consolidation changes for run {RunId}", job.JobId);
-            var commitMessage = reviewRefusalReason is null
-                ? CodingAgent.Pipeline.Brain.BrainLayout.ReviewCommitMessage(job.JobId)
-                : $"brain: review run {job.JobId} (refused: {reviewRefusalReason})";
+            var commitMessage = CodingAgent.Pipeline.Brain.BrainLayout.ReviewCommitMessage(job.JobId);
             using (var commitActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Commit"))
             {
                 commitActivity?.SetTag("pipeline.run_id", job.JobId);
@@ -338,7 +351,6 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 DiffSummaryTokenUsage = diffSummaryTokenUsage,
                 ReviewTokenUsage = reviewTokenUsage,
                 RefinementTokenUsage = refinementTokenUsage,
-                BrainReviewRefusalReason = reviewRefusalReason,
                 BrainOutcome = reviewOutcome ?? new BrainConsolidationOutcome
                 {
                     FilesModified = filesModified,

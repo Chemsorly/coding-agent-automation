@@ -375,6 +375,38 @@ public partial class GitLabRepositoryProvider
         }
     }
 
+    /// <inheritdoc />
+    public async Task<PullRequestChangedFiles?> GetPullRequestChangedFilesAsync(int prNumber, CancellationToken ct)
+    {
+        var mr = await ExecuteWithResilienceAsync(
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                return Task.Run(() => mrClient[prNumber], ct);
+            },
+            "GetMergeRequestForChangedFiles", ct);
+
+        var paths = await ExecuteWithResilienceAsync(
+            async client =>
+            {
+                var result = new List<string>();
+                await foreach (var diff in client.GetMergeRequest(ProjectId).GetDiffsAsync(prNumber).WithCancellation(ct))
+                {
+                    result.Add(diff.NewPath);
+                    if (!string.Equals(diff.OldPath, diff.NewPath, StringComparison.Ordinal))
+                        result.Add(diff.OldPath);
+                }
+                return result;
+            },
+            "ListMergeRequestDiffs", ct);
+
+        // changes_count is a string: "1000+" at the cap, and null while it is still being computed.
+        var isComplete = mr.ChangesCount is { Length: > 0 } count && !count.EndsWith('+');
+
+        // diff_refs belongs to the diff version the list comes from; sha can already be newer.
+        return new PullRequestChangedFiles(paths, isComplete, mr.DiffRefs?.HeadSha ?? string.Empty);
+    }
+
     private static PullRequestSummary ToSummary(MergeRequest mr) => new()
     {
         Number = (int)mr.Iid,

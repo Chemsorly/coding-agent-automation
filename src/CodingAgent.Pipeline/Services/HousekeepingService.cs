@@ -11,6 +11,7 @@ namespace CodingAgent.Pipeline.Services;
 /// Evaluates agent:done PRs, evicts resolved in-flight entries, triggers
 /// server-side branch updates for PRs that are behind base, re-queues
 /// conflicted PRs for rework, and deletes stale agent branches.
+/// Human PRs with auto-merge enabled also get branch updates, at lower priority than pipeline PRs.
 /// </summary>
 /// <remarks>
 /// State: <c>_inFlight</c> is a <c>ConcurrentDictionary&lt;string, HashSet&lt;int&gt;&gt;</c>
@@ -46,6 +47,13 @@ public sealed class HousekeepingService : IHousekeepingService
     /// The slot represents the CI run lifetime, not the HTTP call lifetime.
     /// </summary>
     private readonly ConcurrentDictionary<string, HashSet<int>> _inFlight = new();
+
+    /// <summary>
+    /// In-flight PR numbers for human auto-merge PRs, kept separate from <see cref="_inFlight"/>
+    /// so that <see cref="RecordPrOutcomesAsync"/> never sees human PRs and pipeline outcome
+    /// metrics remain pipeline-only.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, HashSet<int>> _humanInFlight = new();
 
     /// <summary>
     /// Tracks PR numbers for which a <c>pipeline.pull_requests.closed</c> metric has already been
@@ -245,6 +253,13 @@ public sealed class HousekeepingService : IHousekeepingService
         EvictInFlightSlots(inFlight, currentPrNumbers, mergeabilityMap,
             repoProviderId, repoTag, now, triggerCooldown);
 
+        // ── Step 3b: Probe human PRs and evict their resolved in-flight entries ──
+        var humanPrs = request.HumanAutoMergePrs;
+        var humanInFlight = _humanInFlight.GetOrAdd(repoProviderId, _ => new HashSet<int>());
+        var humanMergeability = await BuildMergeabilityMapAsync(repoProvider, repoProviderId, humanPrs, repoTag, ct);
+        EvictInFlightSlots(humanInFlight, humanPrs.Select(p => p.Number).ToHashSet(), humanMergeability,
+            repoProviderId, repoTag, now, triggerCooldown);
+
         // ── Step 4: Get active run branches (for rework exclusion) ───────────
         var (activeRunBranches, activeRunBranchesUnavailable) = await FetchActiveRunBranchesAsync(ct);
 
@@ -277,9 +292,27 @@ public sealed class HousekeepingService : IHousekeepingService
             RepoProvider = repoProvider,
             RepoProviderId = repoProviderId,
             RepoTag = repoTag,
-            Limit = limit,
+            Limit = limit - humanInFlight.Count,
             TriggerCooldown = triggerCooldown,
-            Now = now
+            Now = now,
+            PrOrigin = PipelineTelemetry.HousekeepingPrOrigins.Pipeline
+        });
+
+        // ── Step 6c: Update human PRs with whatever slots pipeline PRs left free ──
+        await SelectAndTriggerBranchUpdatesAsync(new BranchUpdateSweep
+        {
+            Sorted = OrderCandidates(humanPrs, repoProviderId, triggerCooldown, now),
+            InFlight = humanInFlight,
+            MergeabilityMap = humanMergeability,
+            ActiveRunBranches = activeRunBranches,
+            ActiveRunBranchesUnavailable = activeRunBranchesUnavailable,
+            RepoProvider = repoProvider,
+            RepoProviderId = repoProviderId,
+            RepoTag = repoTag,
+            Limit = limit - inFlight.Count,
+            TriggerCooldown = triggerCooldown,
+            Now = now,
+            PrOrigin = PipelineTelemetry.HousekeepingPrOrigins.Human
         });
 
         // ── Step 7: Stale branch cleanup ──────────────────────────────────────
@@ -663,6 +696,7 @@ public sealed class HousekeepingService : IHousekeepingService
         public required int Limit { get; init; }
         public required TimeSpan TriggerCooldown { get; init; }
         public required DateTimeOffset Now { get; init; }
+        public required string PrOrigin { get; init; }
     }
 
     /// <summary>
@@ -753,7 +787,8 @@ public sealed class HousekeepingService : IHousekeepingService
 
             _lastTriggeredAt[(repoProviderId, pr.Number)] = now;
             inFlight.Add(pr.Number);
-            PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
+            PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag,
+                new KeyValuePair<string, object?>("pr_origin", sweep.PrOrigin));
             await FireAndForget(UpdateAsync(sweep.RepoProvider, repoProviderId, pr.Number, repoTag));
         }
     }

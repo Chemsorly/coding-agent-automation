@@ -417,6 +417,7 @@ Setup steps are configured on the **Pipeline Job Template** in the Pipelines pag
 - Steps execute in order; if any step returns a non-zero exit code, the run aborts with `Failed`
 - Secrets are merged: project-level secrets as base, repo-level secrets overlay (repo wins on key collision)
 - Secret values ≥ 4 characters are automatically masked in all subsequent pipeline output
+- Secret values are masked in tracker comments and issues a run writes, and in run output.
 - The step runs in the cloned workspace directory
 - The pipeline step `RunningEnvironmentSetup` appears in the UI during execution
 
