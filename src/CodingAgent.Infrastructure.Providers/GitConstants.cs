@@ -14,6 +14,6 @@ public static class GitConstants
     /// <summary>Username used when constructing authenticated Git clone URLs.</summary>
     public const string TokenUsername = "x-access-token";
 
-    /// <summary>Username used in GitLab authenticated clone URLs (oauth2 token flow).</summary>
+    /// <summary>Username passed to the credentials callback for GitLab tokens.</summary>
     public const string GitLabTokenUsername = "oauth2";
 }

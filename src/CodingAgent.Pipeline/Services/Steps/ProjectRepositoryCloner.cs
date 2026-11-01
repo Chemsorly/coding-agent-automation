@@ -135,12 +135,12 @@ internal static class ProjectRepositoryCloner
     }
 
     /// <summary>
-    /// Makes a clone read-only for the agent: the credentials leave the <c>origin</c> URL, pushing is turned off, and
-    /// <c>FETCH_HEAD</c> and the reflogs go, as git records the clone URL there, credentials included.
+    /// Makes a clone read-only for the agent: any credentials leave the <c>origin</c> URL, pushing is turned off, and
+    /// <c>FETCH_HEAD</c> and the reflogs go, as git records the clone URL there.
     /// </summary>
     /// <remarks>
-    /// The providers clone with LibGit2Sharp, which takes the credentials from a callback, so a token reaches the
-    /// disk only inside a clone URL that carries it (GitLab's), in the places above.
+    /// The providers clone with LibGit2Sharp, which takes the credentials from a callback, and their clone URLs carry
+    /// no token. This stays as a second line of defence, and because it is what turns pushing off.
     /// Every git command names the clone's own git directory. The clone lies inside the workspace's repository, so
     /// with a broken clone git would otherwise find that repository instead and change its remote.
     /// </remarks>
