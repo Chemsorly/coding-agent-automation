@@ -181,7 +181,7 @@ Before each run starts, `SyncBrainPreRunStep` clones the brain and reads up to t
 
 ### Brain consolidation v2 review prompt
 
-The review agent reads `.agent/brain-review-input.md` (which lists up to 100 recent inbox files and the current skill file contents), edits skill files directly, and writes `.agent/brain-review-summary.json` with the changes it made. The pipeline validates the changes with `BrainReviewValidator` before committing and pushing.
+The review agent reads `.agent/brain-review-input.md` (which lists up to 100 recent inbox files and the current skill file contents), edits skill files directly, and writes `.agent/brain-review-summary.json` with the changes it made. The pipeline validates the changes with `BrainReviewValidator` before committing and pushing. A refused review pushes nothing and fails the run; the inbox stays for a later run.
 
 ### Observability
 
