@@ -364,6 +364,26 @@ public partial class GitHubRepositoryProvider
     }
 
     /// <inheritdoc />
+    public async Task<PullRequestChangedFiles?> GetPullRequestChangedFilesAsync(int prNumber, CancellationToken ct)
+    {
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Get(Owner, Repo, prNumber),
+            "GetPullRequestForChangedFiles", ct);
+        var files = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Files(Owner, Repo, prNumber, new ApiOptions { PageSize = 100 }),
+            "ListPullRequestFiles", ct);
+
+        var paths = files
+            .SelectMany(f => string.IsNullOrEmpty(f.PreviousFileName)
+                ? new[] { f.FileName }
+                : new[] { f.FileName, f.PreviousFileName })
+            .ToList();
+
+        // The API lists at most 3000 files and does not flag the cut, so compare with the PR's own count.
+        return new PullRequestChangedFiles(paths, pr.ChangedFiles == files.Count, pr.Head.Sha);
+    }
+
+    /// <inheritdoc />
     public async Task ClosePullRequestAsync(int prNumber, CancellationToken ct)
     {
         await ExecuteWithResilienceAsync(

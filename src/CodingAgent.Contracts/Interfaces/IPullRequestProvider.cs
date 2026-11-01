@@ -42,6 +42,13 @@ public interface IPullRequestProvider : IAsyncDisposable
         => Task.FromResult<string?>(null);
 
     /// <summary>
+    /// The files this pull request changes, read from the provider, never from a local repository.
+    /// Null when unsupported. Throws when the provider call fails.
+    /// </summary>
+    Task<PullRequestChangedFiles?> GetPullRequestChangedFilesAsync(int prNumber, CancellationToken ct)
+        => Task.FromResult<PullRequestChangedFiles?>(null);
+
+    /// <summary>
     /// Searches for open pull requests whose branch name matches the agent branch pattern
     /// for the given issue. Returns metadata including draft state, mergeable state, and review comments.
     /// </summary>

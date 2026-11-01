@@ -31,6 +31,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.Redis" />
     <PackageReference Include="Moq" />
     <!-- CreateBootstrapLogger: the harness builds two hosts in one process and must hand
          Serilog's global logger over twice. See E2ETestDefaults.ResetSerilogBootstrapLogger. -->
