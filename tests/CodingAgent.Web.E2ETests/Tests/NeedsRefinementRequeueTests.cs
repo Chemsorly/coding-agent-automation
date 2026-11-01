@@ -2,6 +2,7 @@ using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.E2ETests.Tests;
@@ -42,18 +43,18 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = $"template-staleness-{agentLabel}",
-            Name  = $"Staleness Test Template ({agentLabel})",
+            Name = $"Staleness Test Template ({agentLabel})",
             IssueProviderId = "issue-e2e",
-            RepoProviderId  = "repo-e2e",
+            RepoProviderId = "repo-e2e",
             Enabled = true
         }, CancellationToken.None);
 
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
-            Id             = $"profile-staleness-{agentLabel}",
-            DisplayName    = $"Staleness Profile ({agentLabel})",
+            Id = $"profile-staleness-{agentLabel}",
+            DisplayName = $"Staleness Profile ({agentLabel})",
             JobTemplate = E2ERouting.Key(agentLabel),
-            Enabled        = true
+            Enabled = true
         });
     }
 
@@ -70,35 +71,29 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         const string agentLabel = "staleness-s1";
         await SeedTemplateAndProfileAsync(agentLabel);
 
-        // TODO [WARNING]: Scenarios 1–4 all use Identifier="42". Isolation relies on
-        // ResetAllAsync() (called by HeadlessE2ETestBase.InitializeAsync) clearing
-        // InMemoryIssueProvider.Issues between tests. The [Collection(E2ECollection.Name)]
-        // attribute serialises execution, so there is no collision in practice. Consider using
-        // distinct identifiers per scenario ("42-s1", "42-s2", …) to make isolation explicit
-        // and independent of the collection's serialisation guarantee.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Re-queue after rejection test",
+            Identifier = "42",
+            Title = "Re-queue after rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // T1: analysis comment — older
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Analysis content",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-30));
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Analysis content",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-30));
 
         // T2: gate-rejection comment — newer than analysis
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_002L,
-            body:            $"{CommentMarkers.GateRejection}\nIssue needs more context.",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-10));
+            commentId: 9_000_000_002L,
+            body: $"{CommentMarkers.GateRejection}\nIssue needs more context.",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-10));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -127,19 +122,19 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "No rejection test",
+            Identifier = "42",
+            Title = "No rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // Only an analysis comment — no rejection comment
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Existing analysis",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-30));
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Existing analysis",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-30));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -152,11 +147,8 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
             "No rejection comment must not force a fresh analysis");
         Assert.Null(assignment.StalenessSignal);
         Assert.NotNull(assignment.ExistingAnalysis);
-        // TODO [WARNING]: Only asserts the AnalysisHeader marker is present, not the specific body
-        // content seeded above ("## Existing analysis"). If ExistingAnalysis were populated from any
-        // comment containing the marker (e.g. stale fixture state), this assertion would still pass.
-        // Consider adding: Assert.Contains("## Existing analysis", assignment.ExistingAnalysis)
         Assert.Contains(CommentMarkers.AnalysisHeader, assignment.ExistingAnalysis);
+        Assert.Contains("## Existing analysis", assignment.ExistingAnalysis);
     }
 
     // ── Scenario 3 ───────────────────────────────────────────────────────
@@ -174,27 +166,27 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Old rejection test",
+            Identifier = "42",
+            Title = "Old rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // T1: gate-rejection comment — older than analysis
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.GateRejection}\nOld rejection reason",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-60));
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.GateRejection}\nOld rejection reason",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-60));
 
         // T2: analysis comment — newer than rejection (user refined and re-ran)
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_002L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Fresh analysis after refinement",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-10));
+            commentId: 9_000_000_002L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Fresh analysis after refinement",
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-10));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -219,30 +211,30 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
     [Fact]
     public async Task BodyChanged_ForcesFreshAnalysis()
     {
-        const string agentLabel          = "staleness-s4";
+        const string agentLabel = "staleness-s4";
         const string originalDescription = "## Original requirements\nBefore the user edited.";
-        const string changedDescription  = "## Updated requirements\nUser edited the description after analysis.";
+        const string changedDescription = "## Updated requirements\nUser edited the description after analysis.";
 
         await SeedTemplateAndProfileAsync(agentLabel);
 
         // Issue carries the *current* (changed) description
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Body changed test",
+            Identifier = "42",
+            Title = "Body changed test",
             Description = changedDescription,
-            Labels      = new[] { "agent:next" }
+            Labels = new[] { "agent:next" }
         });
 
         // Analysis comment embeds hash of the *original* description
         var originalHash = AnalysisBodyHash.Compute(originalDescription);
         Fixture.IssueProvider.SeedComment(
             issueIdentifier: "42",
-            commentId:       9_000_000_001L,
-            body:            $"{CommentMarkers.AnalysisHeader}\n## Prior analysis\n" +
+            commentId: 9_000_000_001L,
+            body: $"{CommentMarkers.AnalysisHeader}\n## Prior analysis\n" +
                              $"<!-- agent:analysis-body-hash:{originalHash} -->",
-            author:          "bot",
-            createdAt:       DateTime.UtcNow.AddMinutes(-30));
+            author: "bot",
+            createdAt: DateTime.UtcNow.AddMinutes(-30));
 
         await using var fakeAgent = new FakeAgentClient($"staleness-agent-{agentLabel}", agentLabel);
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -276,19 +268,19 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
-            Id              = "template-staleness-s5",
-            Name            = "Staleness Test Template (s5)",
+            Id = "template-staleness-s5",
+            Name = "Staleness Test Template (s5)",
             IssueProviderId = "issue-e2e",
-            RepoProviderId  = "repo-e2e",
-            Enabled         = true
+            RepoProviderId = "repo-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
-            Id                    = "profile-staleness-s5",
-            DisplayName           = "Staleness Profile (s5)",
+            Id = "profile-staleness-s5",
+            DisplayName = "Staleness Profile (s5)",
             JobTemplate = E2ERouting.Key("staleness-s5"),
-            Enabled               = true
+            Enabled = true
         });
 
         // Issue has BOTH agent:next and agent:needs-refinement — the loop must skip it.
@@ -298,34 +290,19 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         // even if the agent:needs-refinement skip logic in DispatchScheduler were completely removed.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier  = "42",
-            Title       = "Needs refinement skip test",
+            Identifier = "42",
+            Title = "Needs refinement skip test",
             Description = "## Requirements\nVague requirements.\n\n## Acceptance Criteria\n- [ ] TBD",
-            Labels      = new[] { "agent:next", "agent:needs-refinement", "staleness-s5" }
+            Labels = new[] { "agent:next", "agent:needs-refinement", "staleness-s5" }
         });
 
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
-        // TODO [WARNING]: PipelineLoopService is a singleton. StopLoop() in the finally block
-        // only sets _stopRequested — it does not await loop task completion. If the loop's
-        // DelayOrStop is mid-sleep when StopLoop fires, the background task is still running
-        // when the next test's InitializeAsync/ResetAllAsync clears provider state, which can
-        // cause the in-flight loop iteration to call into reset fakes and produce spurious
-        // failures in subsequent tests. Matches the same pattern in ClosedLoopDispatchTests and
-        // EpicDecompositionTests; a shared fix would be to await IsLoopActive becoming false
-        // in E2EFixture.ResetAllAsync before proceeding (already attempted with a 10s timeout).
         try
         {
             var started = await Fixture.StartLoopAsync();
             Assert.True(started, "StartLoopAsync should return true with valid template config");
 
             // Wait for at least one cycle to complete (up to 15s)
-            // TODO [WARNING]: StatusMessage is a plain auto-property updated inside a lock() in
-            // PipelineLoopService but read here without any memory barrier. On Arm64 release builds
-            // the JIT may cache the field value in a register and never see the updated string.
-            // Using Volatile.Read or making the backing field volatile would guarantee visibility.
-            // In practice the 50 ms poll interval is sufficient on x64, but this is a latent
-            // correctness issue for non-x64 CI environments. Matches the same pattern in
-            // ClosedLoopDispatchTests and EpicDecompositionTests.
             var deadline = DateTime.UtcNow.AddSeconds(15);
             while (!loopService.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
                    && DateTime.UtcNow < deadline)
@@ -341,21 +318,8 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         }
 
         // Assert: no WorkItem was created for this issue
-        var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
-        var active  = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-
-        // TODO [WARNING]: This negative assertion only checks pending/active WorkItems; a WorkItem
-        // that was created and immediately completed/failed (moved to a terminal state) would not
-        // be returned by GetPendingAsync or GetActiveAsync, so the assertion would still pass.
-        // A stronger check would query the database directly via Fixture.DbContextFactory or
-        // assert via WaitForHistoryAsync with a short timeout to confirm no run was created at all.
-        // TODO [WARNING]: The assertion confirms no WorkItem was created, but does not verify that
-        // the loop actually evaluated issue "42" at all. If the loop processed zero issues and still
-        // emitted "Cycle complete", the skip logic never ran and this test passes trivially.
-        // A stronger assertion would verify the issue was seen and skipped (e.g. a SkippedIssues
-        // counter on PipelineLoopService, or a ListOpenIssuesAsync call count on the fake provider).
-        Assert.False(
-            pending.Any(w => w.IssueIdentifier == "42") || active.Any(w => w.IssueIdentifier == "42"),
+        await using var db = Fixture.DbContextFactory.CreateDbContext();
+        Assert.False(await db.WorkItems.AsNoTracking().AnyAsync(w => w.IssueIdentifier == "42"),
             "Issue labelled agent:needs-refinement must be skipped by the closed loop and produce no WorkItem");
     }
 }
