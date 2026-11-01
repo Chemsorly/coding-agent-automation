@@ -126,16 +126,21 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
                 new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxCommentPages }),
             "ListComments", ct);
 
-        return comments
-            .Select(c => new PipelineIssueComment
+        var result = new List<PipelineIssueComment>(comments.Count);
+        foreach (var c in comments)
+        {
+            result.Add(new PipelineIssueComment
             {
                 Id = c.Id.ToString(),
                 Body = c.Body ?? string.Empty,
                 Author = c.User?.Login ?? string.Empty,
-                CreatedAt = c.CreatedAt.UtcDateTime
-            })
-            .ToList()
-            .AsReadOnly();
+                CreatedAt = c.CreatedAt.UtcDateTime,
+                IsVerified = await IsVerifiedAuthorAsync(
+                    c.AuthorAssociation.StringValue, c.User?.Type == AccountType.Bot, c.User?.Login, ct)
+            });
+        }
+
+        return result.AsReadOnly();
     }
 
     /// <inheritdoc />

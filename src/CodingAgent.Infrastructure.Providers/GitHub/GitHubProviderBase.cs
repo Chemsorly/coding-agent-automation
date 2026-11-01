@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Octokit;
 using Polly;
 using Serilog;
@@ -17,6 +18,15 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     private readonly GitHubClientProvider _clientProvider;
     private readonly ResiliencePipeline _resiliencePipeline;
     private readonly TimeProvider _timeProvider;
+
+    private static readonly HashSet<string> VerifiedAssociations =
+        new(StringComparer.OrdinalIgnoreCase) { "OWNER", "MEMBER", "COLLABORATOR" };
+
+    private static readonly HashSet<string> WritePermissions =
+        new(StringComparer.OrdinalIgnoreCase) { "admin", "maintain", "write" };
+
+    /// <summary>Permission lookups of this provider instance, by login.</summary>
+    private readonly ConcurrentDictionary<string, bool> _repositoryWriters = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Repository owner.</summary>
     protected string Owner { get; }
@@ -96,6 +106,59 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     /// <summary>Returns a current token.</summary>
     protected Task<string> GetTokenAsync(CancellationToken ct)
         => _clientProvider.GetTokenAsync(ct);
+
+    /// <summary>
+    /// Whether an author is on the repository: <paramref name="authorAssociation"/> is OWNER, MEMBER or
+    /// COLLABORATOR, or the account is a bot, or the repository permission is admin, maintain or write. The
+    /// permission is read at most once per login per provider instance, since private organization members
+    /// are reported as CONTRIBUTOR or NONE. A login that does not exist is not verified, and neither is an
+    /// author when this token may not ask, since it has no push access. Any other failure of the lookup
+    /// propagates: the caller's listing fails, so a transient failure never reads as "not verified".
+    /// </summary>
+    /// <param name="authorAssociation">The raw string. Pass <c>StringValue</c>, never <c>Value</c>, which throws on values such as MANNEQUIN.</param>
+    /// <param name="isBotAccount">The account type the provider reports. Never derive this from the login.</param>
+    protected async Task<bool> IsVerifiedAuthorAsync(
+        string? authorAssociation, bool isBotAccount, string? login, CancellationToken ct)
+    {
+        if (isBotAccount || (authorAssociation is not null && VerifiedAssociations.Contains(authorAssociation)))
+            return true;
+        if (string.IsNullOrEmpty(login))
+            return false;
+        if (_repositoryWriters.TryGetValue(login, out var known))
+            return known;
+        // TODO: The TryGetValue/store pattern is not atomic across concurrent async calls. Two concurrent
+        // ListCommentsAsync calls on the same provider instance can both pass the TryGetValue check before
+        // either completes, resulting in duplicate ReviewPermission API calls for the same login. The
+        // documented guarantee "at most once per login per provider instance" is therefore best-effort under
+        // concurrency. Storing Task<bool> instead of bool is the standard fix for this pattern; defer until
+        // concurrent dispatches against the same provider instance are common enough to warrant the added
+        // complexity. Data is always correct: both callers store the same value.
+
+        bool isWriter;
+        try
+        {
+            var response = await ExecuteWithResilienceAsync(
+                client => client.Repository.Collaborator.ReviewPermission(Owner, Repo, login),
+                "GetCollaboratorPermission", ct);
+            isWriter = response.Permission is not null && WritePermissions.Contains(response.Permission);
+        }
+        catch (NotFoundException)
+        {
+            isWriter = false; // Not a user. Not retried by the resilience pipeline.
+        }
+        catch (ForbiddenException ex) when (ex.Message.Contains("push access", StringComparison.OrdinalIgnoreCase))
+        {
+            isWriter = false; // This token may not ask. Not transient: the association alone decides.
+            // TODO: This relies on GitHub's exact error message text ("Must have push access to view
+            // collaborator permission."), which is not part of a versioned contract. If GitHub changes this
+            // message, tokens without push access will throw an unhandled ForbiddenException from
+            // ListCommentsAsync instead of returning IsVerified = false. Monitor GitHub API changelog if
+            // this behaviour is ever reported as broken for PAT users without push access.
+        }
+
+        _repositoryWriters[login] = isWriter;
+        return isWriter;
+    }
 
     /// <inheritdoc />
     public virtual async Task ValidateAsync(CancellationToken ct)
