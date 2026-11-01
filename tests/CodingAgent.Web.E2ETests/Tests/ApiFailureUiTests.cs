@@ -68,11 +68,11 @@ public sealed class ApiFailureUiTests : E2ETestBase
     // ── Load error tests (Theory + reload Facts) ──────────────────────────────
 
     [Theory]
-    [InlineData("/work",      "/api/ui/work-items/active", "Failed to load work:",          "tbody tr:has-text('#9102')")]
-    [InlineData("/runs",      "/api/ui/runs",              "Failed to load runs:",           "tbody tr:has-text('#9101')")]
-    [InlineData("/fleet",     "/api/ui/agents",            "Failed to load agents:",         ".cockpit-empty:has-text('No agents registered.')")]
-    [InlineData("/insights",  "/api/ui/runs",              "Failed to load insights:",       "[data-testid='insights-failed']:has-text('1')")]
-    [InlineData("/attention", "/api/ui/runs",              "Failed to load attention items:", "[data-testid='attention-row-9101']")]
+    [InlineData("/work", "/api/ui/work-items/active", "Failed to load work:", "tbody tr:has-text('#9102')")]
+    [InlineData("/runs", "/api/ui/runs", "Failed to load runs:", "tbody tr:has-text('#9101')")]
+    [InlineData("/fleet", "/api/ui/agents", "Failed to load agents:", ".cockpit-empty:has-text('No agents registered.')")]
+    [InlineData("/insights", "/api/ui/runs", "Failed to load insights:", "[data-testid='insights-failed']:has-text('1')")]
+    [InlineData("/attention", "/api/ui/runs", "Failed to load attention items:", "[data-testid='attention-row-9101']")]
     public async Task PageLoadFails_ShowsTheError_AndRefreshRecovers(
         string path, string apiPath, string errorPrefix, string recoveredSelector)
     {
