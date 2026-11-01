@@ -1161,6 +1161,26 @@ public sealed class JobSpecBuilderTests
         labelsEnv.Should().BeNull("Empty labels should not produce an AGENT_LABELS env var");
     }
 
+    // ── Agent pod label (issue #4080) ────────────────────────────────────────
+
+    /// <summary>Every agent pod carries the label the chart's NetworkPolicy selects by.</summary>
+    [Theory]
+    [InlineData("kiro", true)]
+    [InlineData("kiro", false)]
+    [InlineData("opencode", true)]
+    [InlineData("opencode", false)]
+    [InlineData("claude", true)]
+    [InlineData("claude", false)]
+    public void Build_LabelsTheAgentPod_ForEveryProviderAndJobShape(string providerType, bool isWorkItem)
+    {
+        var template = new JobTemplate { Labels = "dotnet", Image = "agent:latest", ProviderType = providerType, MaxConcurrent = 0 };
+
+        var job = JobSpecBuilder.Build(template, BaseCtx(workItemId: isWorkItem ? Guid.NewGuid() : null));
+
+        job.Spec.Template.Metadata.Labels.Should().ContainKey(JobSpecBuilder.AgentPodLabel)
+            .WhoseValue.Should().Be("true");
+    }
+
     // ── Full Job Spec Validation (K8s API compliance) ───────────────
 
     /// <summary>

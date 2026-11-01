@@ -168,6 +168,7 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set database.host=<postgres-host> \
   --set database.auth.existingSecret=<k8s-secret-name> \
   --set signalr.redis.connectionString=<redis-host>:6379 \
+  --set 'agentNetworkPolicy.clusterCidrs={<pod-cidr>,<service-cidr>}' \
   --set scheduler.image.tag=coding-agent-scheduler-<version>
 ```
 

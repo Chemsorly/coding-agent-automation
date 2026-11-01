@@ -16,6 +16,9 @@ public static class JobSpecBuilder
     /// <summary>Name of the agent container in every Job pod.</summary>
     public const string AgentContainerName = "agent";
 
+    /// <summary>Label on every agent pod. The chart's NetworkPolicy selects pods by it.</summary>
+    public const string AgentPodLabel = "caa/agent-pod";
+
     /// <summary>Secret key of the Anthropic API key for claude providerType pods.</summary>
     public const string ClaudeApiKeySecretKey = "claude-api-key";
 
@@ -172,6 +175,10 @@ public static class JobSpecBuilder
                 TtlSecondsAfterFinished = 3600,
                 Template = new V1PodTemplateSpec
                 {
+                    Metadata = new V1ObjectMeta
+                    {
+                        Labels = new Dictionary<string, string> { [AgentPodLabel] = "true" }
+                    },
                     Spec = new V1PodSpec
                     {
                         ServiceAccountName = ctx.AgentServiceAccountName,

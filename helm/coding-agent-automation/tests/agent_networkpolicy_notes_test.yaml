@@ -1,0 +1,62 @@
+# helm unittest suite for the agent NetworkPolicy section of NOTES.txt.
+
+suite: agent network policy notes
+
+templates:
+  - NOTES.txt
+
+release:
+  name: my-release
+  namespace: agents
+
+set:
+  database.host: pg-host
+  database.auth.existingSecret: my-secret
+  agentNetworkPolicy.clusterCidrs:
+    - 10.42.0.0/16
+    - 10.43.0.0/16
+
+tests:
+  - it: describes the policy and warns about nothing by default
+    asserts:
+      - matchRegexRaw:
+          pattern: "anything outside 10.42.0.0/16, 10.43.0.0/16"
+      - notMatchRegexRaw:
+          pattern: "WARNING: no egress rule"
+      - notMatchRegexRaw:
+          pattern: "WARNING: agents connect"
+
+  - it: warns when an endpoint gives no rule
+    set:
+      otel.endpoint: http://10.43.0.5:4318
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: no egress rule was derived from otel.endpoint"
+
+  - it: does not warn when an endpoint gives a rule
+    set:
+      otel.endpoint: http://collector.monitoring.svc.cluster.local:4318
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: no egress rule"
+
+  - it: warns when agents connect elsewhere than this release's API Service
+    set:
+      api.serviceUrl: https://other.example.com
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: agents connect to https://other.example.com"
+
+  - it: does not warn when api.baseUrl is this release's API Service
+    set:
+      api.baseUrl: http://my-release-coding-agent-automation-api.agents.svc.cluster.local:8080
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: agents connect"
+
+  - it: has no section when disabled
+    set:
+      agentNetworkPolicy.enabled: false
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "Agent network policy"

@@ -89,6 +89,22 @@ public class PushErrorClassifierTests
         act.Should().Throw<ArgumentNullException>();
     }
 
+    [Fact]
+    public void Classify_RemoteRefused_ReturnsRemoteRefused()
+    {
+        var message = PushErrorClassifier.RemoteRefusedMarker + " 'x.test'.";
+        PushErrorClassifier.Classify(message).Should().Be(PushErrorClassifier.PushFailureCategory.RemoteRefused,
+            "RemoteRefused must be classified before Auth, which would match on 'credentials'");
+        PushErrorClassifier.Classify(message).Should().NotBe(PushErrorClassifier.PushFailureCategory.Auth);
+    }
+
+    [Fact]
+    public void GetActionableMessage_RemoteRefused_ReturnsExpectedMessage()
+    {
+        var msg = PushErrorClassifier.GetActionableMessage(PushErrorClassifier.PushFailureCategory.RemoteRefused);
+        msg.Should().Contain("provider");
+    }
+
     [Theory]
     [InlineData("refusing to allow a GitHub App to create or update workflow '.github/workflows/ci.yml' without 'workflows' permission")]
     [InlineData("REFUSING TO ALLOW A GITHUB APP TO CREATE OR UPDATE WORKFLOW files")]

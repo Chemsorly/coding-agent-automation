@@ -99,6 +99,8 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `agent.hub.auth_rejections` | Counter | `reason` | Hub calls rejected: `reconnect_race`, `not_registered`, `job_mismatch`. A `DeregisterAgent` from a connection that is not registered is skipped, not rejected. Emitted by API. |
 | `token_vending.failures` | Counter | — | Token vending failures. Emitted by API. |
 
+A refused git credentials callback is a log line, since agents record no metrics: `Refused git credentials for remote host {RefusedRemoteHost}` at Warning. It means a git operation in the workspace pointed at a server other than the repository's provider. No credentials were sent. On the code repository the run fails with a message that says so. Elsewhere, the operation's usual failure handling applies.
+
 ### Tag Schema
 
 | Tag | Values | Description |

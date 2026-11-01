@@ -1,0 +1,292 @@
+# helm unittest suite for the agent NetworkPolicy.
+# Run with: helm unittest helm/coding-agent-automation
+
+suite: agent network policy
+
+templates:
+  - templates/agent-networkpolicy.yaml
+
+release:
+  name: my-release
+  namespace: agents
+
+set:
+  agentNetworkPolicy.clusterCidrs:
+    - 10.42.0.0/16
+    - 10.43.0.0/16
+
+tests:
+  - it: selects agent pods by their label
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: metadata.name
+          value: my-release-coding-agent-automation-agent
+      - equal:
+          path: spec.podSelector
+          value:
+            matchLabels:
+              caa/agent-pod: "true"
+
+  - it: is default deny in both directions
+    asserts:
+      - equal:
+          path: spec.policyTypes
+          value:
+            - Ingress
+            - Egress
+      - isEmpty:
+          path: spec.ingress
+
+  - it: allows DNS over UDP and TCP
+    asserts:
+      - equal:
+          path: spec.egress[0]
+          value:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: kube-system
+                podSelector:
+                  matchLabels:
+                    k8s-app: kube-dns
+            ports:
+              - protocol: UDP
+                port: 53
+              - protocol: TCP
+                port: 53
+
+  - it: uses the configured DNS namespace
+    set:
+      agentNetworkPolicy.dnsSelector.namespaceSelector.matchLabels:
+        kubernetes.io/metadata.name: custom-dns
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: custom-dns
+
+  - it: allows this release's API pods on the API port
+    asserts:
+      - equal:
+          path: spec.egress[1]
+          value:
+            to:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: coding-agent-automation
+                    app.kubernetes.io/instance: my-release
+                    app.kubernetes.io/component: api
+            ports:
+              - protocol: TCP
+                port: 8080
+
+  - it: follows api.service.port
+    set:
+      api.service.port: 9090
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 9090
+
+  - it: still allows the API pods when api.serviceUrl is set
+    set:
+      api.serviceUrl: http://my-release-coding-agent-automation-api.agents.svc.cluster.local:8080
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/component"]
+          value: api
+
+  - it: has no API rule when api.enabled is false
+    set:
+      api.enabled: false
+      api.baseUrl: https://api.example.com
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 2
+
+  - it: opens the outside of the cluster except the cluster CIDRs
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+      - equal:
+          path: spec.egress[2]
+          value:
+            to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+                  except:
+                    - 10.42.0.0/16
+                    - 10.43.0.0/16
+              - ipBlock:
+                  cidr: ::/0
+
+  - it: sorts IPv4 and IPv6 CIDRs by family
+    set:
+      agentNetworkPolicy.clusterCidrs:
+        - 10.42.0.0/16
+        - fd00:42::/56
+        - 10.43.0.0/16
+        - fd00:43::/112
+    asserts:
+      - equal:
+          path: spec.egress[2].to[0].ipBlock.except
+          value:
+            - 10.42.0.0/16
+            - 10.43.0.0/16
+      - equal:
+          path: spec.egress[2].to[1].ipBlock.except
+          value:
+            - fd00:42::/56
+            - fd00:43::/112
+
+  - it: omits except on the IPv4 block with IPv6 CIDRs only
+    set:
+      agentNetworkPolicy.clusterCidrs:
+        - fd00:42::/56
+    asserts:
+      - notExists:
+          path: spec.egress[2].to[0].ipBlock.except
+      - equal:
+          path: spec.egress[2].to[1].ipBlock.except
+          value:
+            - fd00:42::/56
+
+  - it: appends extraEgress as written, last
+    set:
+      agentNetworkPolicy.extraEgress:
+        - to:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: mcp
+          ports:
+            - protocol: TCP
+              port: 9000
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 4
+      - equal:
+          path: spec.egress[3].ports[0].port
+          value: 9000
+      - equal:
+          path: spec.egress[3].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: mcp
+
+  - it: fails with a helpful message without clusterCidrs
+    set:
+      agentNetworkPolicy.clusterCidrs: []
+    asserts:
+      - failedTemplate:
+          errorPattern: "agentNetworkPolicy.clusterCidrs is empty.*docs/deployment.md"
+
+  - it: renders nothing when disabled, also without clusterCidrs
+    set:
+      agentNetworkPolicy.enabled: false
+      agentNetworkPolicy.clusterCidrs: []
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # ── OTel forms ──────────────────────────────────────────────────────────────
+
+  - it: "OTel: FQDN gives its namespace and port"
+    set:
+      otel.endpoint: http://collector.monitoring.svc.cluster.local:4318
+    asserts:
+      - equal:
+          path: spec.egress[2]
+          value:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+            ports:
+              - protocol: TCP
+                port: 4318
+
+  - it: "OTel: svc.ns form gives its namespace"
+    set:
+      otel.endpoint: http://collector.monitoring:4318
+    asserts:
+      - equal:
+          path: spec.egress[2].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: monitoring
+
+  - it: "OTel: bare host means the release namespace"
+    set:
+      otel.endpoint: http://collector:4317
+    asserts:
+      - equal:
+          path: spec.egress[2].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: agents
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 4317
+
+  - it: "OTel: a ClusterIP gives no rule"
+    set:
+      otel.endpoint: http://10.43.0.5:4318
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+
+  - it: "OTel: an external host gives no rule"
+    set:
+      otel.endpoint: https://otlp.example.net:443
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+
+  - it: "OTel: no port gives no rule"
+    set:
+      otel.endpoint: http://collector.monitoring.svc
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+
+  - it: "OTel: empty gives no rule"
+    set:
+      otel.endpoint: ""
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+
+  - it: "OTel: a malformed endpoint gives no rule and does not fail the render"
+    set:
+      otel.endpoint: http://a.b.svc:notaport
+    asserts:
+      - notFailedTemplate: {}
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+
+  - it: "OTel: the override wins over an IP endpoint"
+    set:
+      otel.endpoint: http://10.43.0.5:4318
+      agentNetworkPolicy.otel:
+        namespace: monitoring
+        port: 14318
+    asserts:
+      - equal:
+          path: spec.egress[2].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: monitoring
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 14318
+
+  - it: "OTel: the port override alone replaces the URL's port"
+    set:
+      otel.endpoint: http://collector.monitoring.svc.cluster.local:4318
+      agentNetworkPolicy.otel:
+        port: 14318
+    asserts:
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 14318
