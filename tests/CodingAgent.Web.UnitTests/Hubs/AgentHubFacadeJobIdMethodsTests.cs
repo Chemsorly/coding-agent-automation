@@ -439,6 +439,123 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         result.Value.IssueProviderConfigId.Should().Be("ip-77");
     }
 
+    // ── GetConsolidationRunTypeAsync ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetConsolidationRunTypeAsync_ReadsTheTypeFromTheWorkItemPayload()
+    {
+        var id1 = await SeedWorkItem(payload: """{"consolidationRunType":"RefactoringDetection"}""");
+        var result1 = await _facade.GetConsolidationRunTypeAsync(id1.ToString(), CancellationToken.None);
+        result1.Should().Be(ConsolidationRunType.RefactoringDetection);
+
+        var id2 = await SeedWorkItem(payload: """{"consolidationRunType":"BrainConsolidation"}""");
+        var result2 = await _facade.GetConsolidationRunTypeAsync(id2.ToString(), CancellationToken.None);
+        result2.Should().Be(ConsolidationRunType.BrainConsolidation);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"consolidationRunType":"Bogus"}""")]
+    [InlineData("""{"consolidationRunType":1}""")]
+    [InlineData("[]")]
+    public async Task GetConsolidationRunTypeAsync_OtherOrMalformedPayloads_ReturnNull(string payload)
+    {
+        var id = await SeedWorkItem(payload: payload);
+        var result = await _facade.GetConsolidationRunTypeAsync(id.ToString(), CancellationToken.None);
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetConsolidationRunTypeAsync_UnknownJob_ReturnsNull()
+    {
+        // Random GUID not seeded
+        var result1 = await _facade.GetConsolidationRunTypeAsync(Guid.NewGuid().ToString(), CancellationToken.None);
+        result1.Should().BeNull();
+
+        // Not a valid GUID — facade short-circuits
+        var result2 = await _facade.GetConsolidationRunTypeAsync("not-a-guid", CancellationToken.None);
+        result2.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetConsolidationRunTypeAsync_UsesTheInMemoryRunFirst()
+    {
+        var runId = Guid.NewGuid();
+        var run = new PipelineRun
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            ConsolidationType = ConsolidationRunType.RefactoringDetection,
+        };
+        _facade.AddRun(run);
+        // No seeded work item — DB would return null
+
+        var result = await _facade.GetConsolidationRunTypeAsync(runId.ToString(), CancellationToken.None);
+
+        result.Should().Be(ConsolidationRunType.RefactoringDetection);
+    }
+
+    [Fact]
+    public async Task GetConsolidationRunTypeAsync_InMemoryRunWithoutAType_ReadsTheWorkItem()
+    {
+        var runId = Guid.NewGuid();
+        var run = new PipelineRun
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            ConsolidationType = null,
+        };
+        _facade.AddRun(run);
+
+        // Seed a work item with the SAME ID as the run, so the facade finds it in the DB after
+        // the in-memory run's null ConsolidationType causes it to fall through to the DB.
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = runId,
+                IssueIdentifier = "org/repo#1",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Pending,
+                AgentSelector = "dotnet",
+                TaskType = WorkItemTaskType.Implementation,
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600,
+                Payload = """{"consolidationRunType":"RefactoringDetection"}"""
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _facade.GetConsolidationRunTypeAsync(runId.ToString(), CancellationToken.None);
+
+        result.Should().Be(ConsolidationRunType.RefactoringDetection);
+    }
+
+    [Fact]
+    public async Task GetConsolidationRunTypeAsync_StoreFails_Throws()
+    {
+        // A failed read must not look like "no such work item" — it must propagate.
+        var store = new Mock<IWorkItemTransitionStore>();
+        store.Setup(s => s.GetWorkItemRunRecordAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("connection refused"));
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var facade = new AgentHubFacade(new AgentHubFacadeDependencies(
+            new AgentRegistryService(mockLogger.Object), new OrchestratorRunService(mockLogger.Object),
+            Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance,
+            TransitionStore: store.Object));
+
+        var act = () => facade.GetConsolidationRunTypeAsync(Guid.NewGuid().ToString(), CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
     // ── Helper ────────────────────────────────────────────────────────────
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
