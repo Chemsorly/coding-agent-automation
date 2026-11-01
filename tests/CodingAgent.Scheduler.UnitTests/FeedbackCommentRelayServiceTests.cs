@@ -435,10 +435,10 @@ public sealed class FeedbackCommentRelayServiceTests
         _outboxClient.Verify(c => c.MarkFailedAsync(entry2.Id, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Test: provider config load fails → sweep continues, entries get MarkFailed ──
+    // ── Test: issue provider config load fails → sweep aborts, entries not marked ──
 
     [Fact]
-    public async Task ProviderConfigLoadFails_EntriesGetMarkFailed()
+    public async Task IssueProviderConfigLoadFails_SweepAborts_EntriesNotMarked()
     {
         var entry = MakeEntry();
         SetupConfig(maxAttempts: 5);
@@ -446,17 +446,43 @@ public sealed class FeedbackCommentRelayServiceTests
         _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([entry]);
 
-        // Provider config load fails → LoadProviderConfigsAsync returns empty list
+        // Provider config load fails → LoadProviderConfigsAsync returns null → sweep aborts
         _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("config endpoint down"));
 
         // Should not throw
         await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
 
-        // Entry gets MarkFailed because no issue provider config was found
-        _outboxClient.Verify(
-            c => c.MarkFailedAsync(entry.Id, It.IsAny<string>(), 5, It.IsAny<CancellationToken>()),
-            Times.Once);
+        // Sweep aborts — entries are left Pending, no MarkFailed or MarkCompleted called
+        _outboxClient.Verify(c => c.MarkFailedAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _outboxClient.Verify(c => c.MarkCompletedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _providerFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
+    }
+
+    // ── Test: repo provider config load fails → sweep aborts, entries not marked ──
+
+    [Fact]
+    public async Task RepoProviderConfigLoadFails_SweepAborts_EntriesNotMarked()
+    {
+        var entry = MakeEntry();
+        SetupConfig(maxAttempts: 5);
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+
+        // Issue kind succeeds, repository kind fails → LoadProviderConfigsAsync returns null → sweep aborts
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("config endpoint down"));
+
+        // Should not throw
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // Sweep aborts — entries are left Pending, no MarkFailed or MarkCompleted called
+        _outboxClient.Verify(c => c.MarkFailedAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _outboxClient.Verify(c => c.MarkCompletedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _providerFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
     }
 
     // ── Test: repo config not found → PR append skipped, still marks completed ──

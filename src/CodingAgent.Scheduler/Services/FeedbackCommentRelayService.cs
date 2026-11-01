@@ -165,6 +165,12 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         // Load provider configs once per sweep (all needed kinds: Issue + Repository)
         var issueProviders = await LoadProviderConfigsAsync(configClient, ProviderKind.Issue, sweepCt);
         var repoProviders = await LoadProviderConfigsAsync(configClient, ProviderKind.Repository, sweepCt);
+        if (issueProviders is null || repoProviders is null)
+        {
+            // Nothing is wrong with the rows: leave them Pending, without spending an attempt.
+            _logger.Warning("Feedback comment relay: provider configs could not be loaded — skipping this sweep, {Count} entry/entries stay pending", pending.Count);
+            return;
+        }
 
         foreach (var entry in pending)
         {
@@ -322,7 +328,7 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         }
     }
 
-    private async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(
+    private async Task<IReadOnlyList<ProviderConfig>?> LoadProviderConfigsAsync(
         IPipelineApiConfigClient configClient, ProviderKind kind, CancellationToken ct)
     {
         try
@@ -331,14 +337,8 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Returning an empty list on transient failure causes every pending entry in this sweep
-            // to hit the "provider config not found" path and call MarkFailedAsync with a spurious
-            // error. If this happens maxAttempts times consecutively (e.g. during a prolonged API
-            // outage), entries are permanently marked Failed. The circuit breaker on the HttpClient
-            // reduces probability but does not eliminate the data-loss window. A future improvement
-            // would abort the sweep entirely on provider config load failure so entries stay Pending.
             _logger.Warning(ex, "Feedback comment relay: failed to load {Kind} provider configs", kind);
-            return Array.Empty<ProviderConfig>();
+            return null;
         }
     }
 }
