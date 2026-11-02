@@ -1151,6 +1151,80 @@ public class RunPageComponentTests : BunitContext
         Assert.Equal("Configuration", cut.Find("[data-testid='diagnosis-verdict']").TextContent.Trim());
     }
 
+    /// <summary>
+    /// Issue #4200: when RunDiagnoser produces a non-null diagnosis (e.g. OOMKilled → Configuration),
+    /// the initial summary-failure-callout at line 95 of RunPage.razor must not be rendered.
+    /// The diagnosis card already surfaces the failure reason, so the callout adds nothing.
+    /// See also <see cref="FailureCallout_ShownWhenDiagnosisIsNull"/> for the opposite branch.
+    /// </summary>
+    [Fact]
+    public void FailureCallout_ShownOnlyWithoutDiagnosis()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "4200",
+            IssueTitle = "Failure callout suppression test",
+            FinalStep = PipelineStep.Failed,
+            FailureCategory = FailureReason.ExitCodeFailure,
+            FailureReason = "OOMKilled",
+            StartedAtOffset = new DateTimeOffset(2026, 10, 1, 11, 55, 0, TimeSpan.Zero),
+            CompletedAtOffset = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero),
+        };
+
+        var mockRunClient = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        mockRunClient
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false });
+        RegisterServices(summary, mockRunClient);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Precondition: the diagnosis card is present (RunDiagnoser Rule 2 matched).
+        Assert.NotEmpty(cut.FindAll("[data-testid='diagnosis-card']"));
+
+        // The initial failure callout must be suppressed when _diagnosis is not null.
+        Assert.Empty(cut.FindAll(".summary-failure-callout[role='alert']"));
+    }
+
+    /// <summary>
+    /// Issue #4200 (opposite branch): a GateRejected (NeedsRefinement) run has
+    /// FinalStep == Failed but RunDiagnoser.Diagnose returns null for it (early-return on GateRejected).
+    /// With _diagnosis null and FailureReason non-empty, the callout must still render so the
+    /// rejection reason is visible to the user.
+    /// See also <see cref="FailureCallout_ShownOnlyWithoutDiagnosis"/> for the suppression branch.
+    /// </summary>
+    [Fact]
+    public void FailureCallout_ShownWhenDiagnosisIsNull()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "4200",
+            IssueTitle = "Failure callout visible test",
+            FinalStep = PipelineStep.Failed,
+            FailureCategory = FailureReason.GateRejected,
+            FailureReason = "Analysis gate: needs refinement — issue not ready",
+            StartedAtOffset = new DateTimeOffset(2026, 10, 1, 11, 55, 0, TimeSpan.Zero),
+            CompletedAtOffset = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero),
+        };
+
+        var mockRunClient = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        mockRunClient
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false });
+        RegisterServices(summary, mockRunClient);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // RunDiagnoser.Diagnose returns null for GateRejected → no diagnosis card.
+        Assert.Empty(cut.FindAll("[data-testid='diagnosis-card']"));
+
+        // With _diagnosis null and a non-empty FailureReason, the callout must render.
+        var callout = cut.Find(".summary-failure-callout[role='alert']");
+        Assert.Contains("needs refinement", callout.TextContent);
+    }
+
     // ── Issue #3571: consolidation outcome display ─────────────────────────
 
     /// <summary>
