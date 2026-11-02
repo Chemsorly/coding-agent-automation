@@ -74,6 +74,12 @@
     margin-bottom: 0.5rem;
 }
 
+.action-card-danger { border-color: var(--error); }
+.action-card ::deep input[type="file"]::file-selector-button {
+    margin-right: 10px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface-alt); color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+}
+
 .result-message {
     margin-top: 1rem;
     max-width: 640px;
