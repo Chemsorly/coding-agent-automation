@@ -97,7 +97,7 @@
                     else
                     {
                         @* Stop also withdraws a Start the Scheduler has not applied, e.g. one it refused. *@
-                        <button class="btn-cancel" @onclick="StopLoop" disabled="@(!_loop.RunRequested)">⏹ Stop Loop</button>
+                        <button class="btn-cancel" @onclick="StopLoop" disabled="@(!_loop.RunRequested)">Stop Loop</button>
                     }
                     @if (LoopProgressText is { } progress)
                     {

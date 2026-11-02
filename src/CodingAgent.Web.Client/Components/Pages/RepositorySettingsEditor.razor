@@ -27,7 +27,7 @@
 
     <Collapsible CssClass="secrets-section" HeaderClass="secrets-section-header" BodyClass="secrets-section-body"
                  IsExpanded="_secretsExpanded" IsExpandedChanged="v => _secretsExpanded = v">
-        <Header>🔑 Secrets (@_secrets.Count)</Header>
+        <Header><Icon Name="lock" Size="14" /> Secrets (@_secrets.Count)</Header>
         <ChildContent>
             @if (SecretsWriteOnly)
             {
