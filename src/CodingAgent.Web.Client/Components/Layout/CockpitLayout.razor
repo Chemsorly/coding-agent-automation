@@ -208,6 +208,9 @@
     // Spec 052 Req 5.2: set when an outdated client has started its reload.
     private bool _reloading;
 
+    // Tracks the last navigated path so scroll-to-top is skipped for query-string-only changes.
+    private string _lastPath = "";
+
     // Global keyboard help (ported from the retired MainLayout — the '?' overlay + Escape).
     private DotNetObjectReference<CockpitLayout>? _dotNetRef;
     private bool _showShortcutHelp;
@@ -229,6 +232,7 @@
         // stops abruptly without IAsyncDisposable teardown), the handler keeps the component alive.
         // A synchronous IDisposable.Dispose fallback would close that leak path.
         Nav.LocationChanged += HandleLocationChanged;
+        _lastPath = PathOf(Nav.Uri);
     }
 
     protected override async Task OnInitializedAsync()
@@ -363,6 +367,13 @@
             return;
         }
 
+        var path = PathOf(e.Location);
+        if (path != _lastPath || e.IsNavigationIntercepted)
+        {
+            _lastPath = path;
+            _ = ScrollToTopAsync();
+        }
+
         if (_sidebarOpen)
         {
             _sidebarOpen = false;
@@ -378,6 +389,14 @@
     {
         try { await InvokeAsync(StateHasChanged); }
         catch (ObjectDisposedException) { /* Already disposed. */ }
+    }
+
+    private static string PathOf(string uri) => new Uri(uri).AbsolutePath;
+
+    private async Task ScrollToTopAsync()
+    {
+        try { await JS.InvokeVoidAsync("scrollCockpitBodyToTop"); }
+        catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
     }
 
     // Theme follows the app's shared toggle (data-theme + localStorage). App.razor applies the

@@ -10,11 +10,13 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
 using Serilog;
+using System.Reflection;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
@@ -461,5 +463,89 @@ public class CockpitLayoutComponentTests : BunitContext
         // help is also closed. The three-state priority chain (sidebar → shortcut help → pages) has only
         // one state tested here. A regression that causes Escape to stop propagating to pages when the
         // sidebar is closed would not be detected.
+    }
+
+    // ── Scroll-to-top on navigation tests (issue #4197) ────────────────────
+    // TODO [WARNING]: The tests below use _mockJs.Verify() (Moq) instead of bUnit's
+    // JSInterop.VerifyInvoke()/VerifyNotInvoke() as specified in the issue. This is necessary
+    // because the class constructor registers Services.AddSingleton<IJSRuntime>(_mockJs.Object),
+    // which overrides bUnit's built-in JSInterop in the DI container; calls to JS.InvokeVoidAsync
+    // go to _mockJs, not to this.JSInterop. Migrating the class to bUnit's JSInterop would require
+    // updating the five existing tests that rely on _mockJs.Setup()/Verify(). Tracked for a
+    // follow-up refactor of the test class.
+
+    /// <summary>
+    /// Navigating to a different path scrolls .cockpit-body to the top.
+    /// </summary>
+    [Fact]
+    public async Task Navigation_ToAnotherPath_ScrollsBodyToTop()
+    {
+        var cut = Render<CockpitLayout>();
+        var navManager = Services.GetRequiredService<NavigationManager>();
+
+        // Navigate to a different path — path "/runs" differs from the initial "/".
+        await cut.InvokeAsync(() => navManager.NavigateTo("/runs"));
+
+        _mockJs.Verify(
+            j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                "scrollCockpitBodyToTop", It.IsAny<object[]?>()),
+            Times.AtLeastOnce,
+            "scrollCockpitBodyToTop must be invoked when navigating to a different path");
+    }
+
+    /// <summary>
+    /// A programmatic query-string-only update on the same path must NOT scroll to top,
+    /// so the user is not interrupted while the page rewrites its own URL.
+    /// </summary>
+    [Fact]
+    public async Task Navigation_SamePathQueryFromCode_DoesNotScroll()
+    {
+        var cut = Render<CockpitLayout>();
+        var navManager = Services.GetRequiredService<NavigationManager>();
+
+        // First navigate to /runs so _lastPath is set to "/runs".
+        await cut.InvokeAsync(() => navManager.NavigateTo("/runs"));
+
+        // Clear the recorded invocations so the assertion below only covers the second navigation.
+        _mockJs.Invocations.Clear();
+
+        // Navigate to the same path with a different query string — must not scroll.
+        await cut.InvokeAsync(() => navManager.NavigateTo("/runs?page=2"));
+
+        _mockJs.Verify(
+            j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                "scrollCockpitBodyToTop", It.IsAny<object[]?>()),
+            Times.Never,
+            "scrollCockpitBodyToTop must not be invoked when only the query string changes via programmatic navigation");
+    }
+
+    /// <summary>
+    /// A user-intercepted navigation on the same path (e.g. Settings tree links that stay on
+    /// /settings) must scroll to top because <c>IsNavigationIntercepted</c> is true.
+    /// bUnit's FakeNavigationManager always fires LocationChanged with IsNavigationIntercepted=false,
+    /// so this test invokes HandleLocationChanged directly with a crafted LocationChangedEventArgs.
+    /// </summary>
+    [Fact]
+    public async Task Navigation_SamePathInterceptedLink_ScrollsBodyToTop()
+    {
+        var cut = Render<CockpitLayout>();
+        var navManager = Services.GetRequiredService<NavigationManager>();
+
+        // Navigate to /settings to seed _lastPath = "/settings".
+        await cut.InvokeAsync(() => navManager.NavigateTo("/settings"));
+        _mockJs.Invocations.Clear();
+
+        // Simulate a user-clicked (intercepted) link whose href resolves to the same path.
+        var interceptedArgs = new LocationChangedEventArgs(navManager.Uri, isNavigationIntercepted: true);
+        var handler = typeof(CockpitLayout).GetMethod(
+            "HandleLocationChanged",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await cut.InvokeAsync(() => handler.Invoke(cut.Instance, new object?[] { null, interceptedArgs }));
+
+        _mockJs.Verify(
+            j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                "scrollCockpitBodyToTop", It.IsAny<object[]?>()),
+            Times.AtLeastOnce,
+            "scrollCockpitBodyToTop must be invoked for a user-intercepted link even when the path is unchanged");
     }
 }
