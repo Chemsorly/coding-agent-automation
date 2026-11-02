@@ -195,8 +195,8 @@ public sealed class TriageRerunE2ETests : HeadlessE2ETestBase
 
     [Theory]
     [InlineData(TriageVerdict.Inconclusive, TriageStatus.NeedsInput)]
-    [InlineData(TriageVerdict.NotABug,      TriageStatus.NotABug)]
-    [InlineData(TriageVerdict.Duplicate,    TriageStatus.Duplicate)]
+    [InlineData(TriageVerdict.NotABug, TriageStatus.NotABug)]
+    [InlineData(TriageVerdict.Duplicate, TriageStatus.Duplicate)]
     public async Task WhenAVerdictIsReported_ShouldResolveItsStatus(
         TriageVerdict verdict, TriageStatus expected)
     {
