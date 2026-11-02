@@ -257,11 +257,11 @@
                     <li><code>claude-api-key</code> — Anthropic API key from the Claude Console, billed per token</li>
                     <li><code>claude-oauth-token</code> — one-year subscription token from <code>claude setup-token</code> (Pro, Max, Team or Enterprise). Renew it before it expires; the CLI gives no warning</li>
                 </ul>
-                <p class="help-tip">💡 The CLI also loads the repository's own <code>CLAUDE.md</code>, <code>.claude/</code> settings, hooks and <code>.mcp.json</code>. Pipeline steering goes to <code>~/.claude/rules/</code>, outside the repository.</p>
+                <p class="help-tip"><Icon Name="lightbulb" Size="14" /> The CLI also loads the repository's own <code>CLAUDE.md</code>, <code>.claude/</code> settings, hooks and <code>.mcp.json</code>. Pipeline steering goes to <code>~/.claude/rules/</code>, outside the repository.</p>
             }
             else if (formTool == AgentToolCatalog.OpenCode)
             {
-                <h4>🌐 OpenCode</h4>
+                <h4><Icon Name="bot" /> OpenCode</h4>
                 <p>The agent talks to an OpenCode server over HTTP; it runs as a sidecar in the agent container.</p>
                 <p class="help-heading">Fields:</p>
                 <ul>
@@ -279,7 +279,7 @@
                 <h4><Icon Name="bot" /> Job template</h4>
                 <p>Pick the Helm job template the profile runs on. Its <code>providerType</code> decides the tool and the settings shown here.</p>
             }
-            <p class="help-tip">💡 The model and effort are set per task type in Routing, not on the profile.</p>
+            <p class="help-tip"><Icon Name="lightbulb" Size="14" /> The model and effort are set per task type in Routing, not on the profile.</p>
         </div>
         </div>
     }

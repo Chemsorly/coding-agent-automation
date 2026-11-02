@@ -83,7 +83,7 @@
                 @if (_review.BrainConsolidationOutcome is { } _brain)
                 {
                     <div class="cockpit-card cockpit-card-pad" data-testid="last-brain-review">
-                        <div class="cockpit-card-header" style="margin-bottom:8px;"><h2>Last brain review</h2></div>
+                        <h2 style="margin: 0 0 8px; font-size: 15px; font-weight: 700;">Last brain review</h2>
                         <div style="font-size:13.5px; margin-bottom:6px;">
                             @_review.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                             · @_brain.Promoted promoted · @_brain.Appended appended · @_brain.Retired retired · @_brain.MissedAgain missed again
