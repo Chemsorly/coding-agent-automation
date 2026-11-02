@@ -65,6 +65,12 @@ public class UiFormattersTests
     }
 
     [Fact]
+    public void FormatTimeAgo_TimestampInTheFuture_ShowsZeroSeconds()
+    {
+        UiFormatters.FormatTimeAgo(DateTimeOffset.UtcNow.AddSeconds(30)).Should().Be("0s ago");
+    }
+
+    [Fact]
     public void FormatTimeAgo_Seconds()
     {
         var timestamp = DateTimeOffset.UtcNow.AddSeconds(-30);
