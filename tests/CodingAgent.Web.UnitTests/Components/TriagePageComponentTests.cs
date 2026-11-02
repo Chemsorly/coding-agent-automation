@@ -54,6 +54,17 @@ public class TriagePageComponentTests : BunitContext
         Detail(OperatorRecord(ShopProjectId, Attempt("wi-1", CauseFound(Draft("d1", "Ack after the update"), Draft("d2", "Raise the memory limit")))));
 
     [Fact]
+    public void Report_TablesHaveTriageReportTableClass()
+    {
+        Returns(CauseFoundDetail());
+
+        var cut = RenderPage();
+
+        cut.Find("[data-testid='triage-evidence'] table").GetAttribute("class").Should().Contain("triage-report-table");
+        cut.Find("[data-testid='triage-investigated'] table").GetAttribute("class").Should().Contain("triage-report-table");
+    }
+
+    [Fact]
     public void CauseFound_ShowsTheReportWhatWasInvestigatedAndTheDrafts()
     {
         Returns(CauseFoundDetail());
