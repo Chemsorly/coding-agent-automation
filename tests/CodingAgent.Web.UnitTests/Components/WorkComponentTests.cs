@@ -1011,7 +1011,7 @@ public class WorkComponentTests : BunitContext
     public async Task InFlight_NullDispatchedAt_SortsToEnd()
     {
         var idWithTime = Guid.NewGuid(); // has DispatchedAt — must appear first
-        var idNoTime   = Guid.NewGuid(); // null DispatchedAt — must appear last
+        var idNoTime = Guid.NewGuid(); // null DispatchedAt — must appear last
 
         // Return null-dispatched item first so any sort regression is immediately visible.
         _mockLists
