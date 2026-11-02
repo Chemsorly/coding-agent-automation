@@ -32,6 +32,7 @@
     --border: #E8EAEF;
     --hairline: #F0F1F4;
     --ctl-border: #DADDE4;
+    --input-border: #8A8F9C;   /* field boundary, ≥3:1 on --surface */
     --radius: 10px;
 
     --bg-hover: #F3F5F7;
@@ -80,6 +81,7 @@
     --border: #2A2C39;
     --hairline: #23242F;
     --ctl-border: #363845;
+    --input-border: #62657A;
 
     --bg-hover: #23242F;
     --success-bg: rgba(52, 211, 153, .12);
@@ -105,6 +107,9 @@
 :where(.cockpit) :where(button, input, select, textarea, optgroup) { font-family: inherit; }
 :where(.cockpit) :where(code, kbd, samp, pre) { font-family: var(--font-mono); }
 :where(.cockpit) :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--accent-fill); }
+/* Field boundaries reach 3:1 against the card. The focus rule must follow it: it repeats the accent border. */
+.cockpit :is(input:not([type="checkbox"], [type="radio"], [type="file"]), select, textarea) { border-color: var(--input-border); }
+.cockpit :is(input:not([type="checkbox"], [type="radio"], [type="file"]), select, textarea):focus { border-color: var(--accent); }
 
 .cockpit .mono {
     font-family: var(--font-mono);
@@ -537,6 +542,15 @@
 .cockpit .runs-link-pr { color: var(--success); }
 .cockpit .runs-link-pr:hover { background: var(--success-bg); color: var(--success); }
 
+/* ---- Button sizes: 34px standalone, 28px inside a row ---------------------- */
+.cockpit :is(.btn-save, .btn-cancel, .btn-add, .btn-start-chat, .btn-send, .btn-edit, .btn-delete, .btn-initialize, .btn-trigger, .btn-cancel-small) {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.cockpit :is(.btn-save, .btn-cancel, .btn-add, .btn-start-chat, .btn-send) { min-height: 34px; }
+.cockpit :is(.btn-edit, .btn-delete, .btn-initialize, .btn-trigger, .btn-cancel-small) { min-height: 28px; }
+/* A .btn-cancel inside a row is a row action, not a page action. */
+.cockpit :is(.monitoring-table, .settings-readonly-row) .btn-cancel { min-height: 28px; padding: 4px 12px; font-size: 0.8rem; color: var(--text); }
+
 /* ---- Tables that must fit their card at 1440px ------------------------------ */
 /* .monitoring-table cells are nowrap, and in auto table layout "overflow: hidden; text-overflow: ellipsis"
    on a <td> does not stop long text from widening the column — the tables scrolled sideways and hid their
@@ -873,7 +887,7 @@
 .triage-btn.is-danger { color: var(--error); }
 
 .triage-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; justify-content: space-between; }
-.triage-head h1 { margin: 6px 0 0; }
+.triage-head h1 { margin: 6px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
 .triage-pills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .triage-layout { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
 .triage-main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
@@ -941,6 +955,12 @@ textarea.triage-input.is-md { font-family: var(--font-mono); font-size: 12.5px; 
 .triage-search { border: 1px solid var(--ctl-border); border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 13px; background: var(--surface); color: var(--text); min-width: 220px; }
 .triage-row-title { font-weight: 700; color: var(--text); text-decoration: none; }
 .triage-row-title:hover { color: var(--nav-active-fg); text-decoration: underline; }
+/* Triage text is long sentences: it wraps inside the card instead of widening the table. */
+.cockpit .triage-report-table td { white-space: normal; }
+.cockpit .triage-report-table td.triage-eid { white-space: nowrap; width: 1%; }
+.cockpit .triage-list-table td:nth-child(2) { white-space: normal; }
+.triage-page-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+@media (max-width: 768px) { .triage-page-actions { flex-wrap: wrap; flex-shrink: 1; } }
 .triage-row-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
 .triage-drawer-body { display: flex; flex-direction: column; gap: 16px; }
 .triage-drawer-foot { position: sticky; bottom: -16px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; margin: 16px -16px -16px; padding: 14px 16px; border-top: 1px solid var(--border); background: var(--subtle-bg); }

@@ -26,7 +26,7 @@
             <h1>Triage</h1>
             <span class="cockpit-page-sub">Describe a problem. An agent checks code, logs, metrics and existing issues, then proposes a root cause and fix issues.</span>
         </div>
-        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <div class="triage-page-actions">
             <RefreshBar OnRefresh="RefreshQuietAsync" StorageKey="autoRefresh.triage" />
             @if (Access.Grant.HasAnyOperator)
             {
@@ -75,7 +75,7 @@
         else
         {
             <div class="monitoring-table-wrap">
-                <table class="monitoring-table" data-testid="triage-table">
+                <table class="monitoring-table triage-list-table" data-testid="triage-table">
                     <thead>
                         <tr>
                             <th>Status</th>
