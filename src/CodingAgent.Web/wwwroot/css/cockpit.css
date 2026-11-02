@@ -613,6 +613,9 @@
 .cockpit .settings-content .monitoring-table .sidebar-label { display: inline-block; margin: 1px 3px 1px 0; white-space: nowrap; }
 .cockpit .settings-content .monitoring-table th { white-space: normal; text-overflow: clip; }
 .cockpit .settings-content .monitoring-table :is(th, td) { padding-left: 8px; padding-right: 8px; }
+.cockpit .settings-content .monitoring-table code.monitoring-mono { vertical-align: middle; }
+.cockpit .settings-content .monitoring-table .sidebar-label[data-testid="profile-tool"] { vertical-align: middle; margin-left: 6px; }
+.cockpit .settings-content .monitoring-table th.th-has-hint { white-space: nowrap; }
 
 /* ---- Settings re-shell (scoped tweaks so it sits cleanly in the new frame) -- */
 /* The page uses the shared .cockpit-page chrome. Drop the legacy full-height scroller from app.css: an
