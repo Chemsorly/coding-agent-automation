@@ -338,7 +338,7 @@
     private RenderFragment RenderSecretsTab() => __builder =>
     {
         <div class="provider-form">
-            <h3>🔐 Project Secrets</h3>
+            <h3><Icon Name="lock" Size="14" /> Project Secrets</h3>
             <p class="form-hint">Environment variables injected into every run for this project. Merged with repo-level secrets (repo wins on key collision).</p>
             @if (Access.CanAdminister(ProjectId))
             {

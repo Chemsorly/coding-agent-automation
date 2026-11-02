@@ -107,14 +107,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Labels = new[] { "enhancement", "agent:next" }
         });
 
-        // TODO [WARNING]: This test dispatches issue "53" to the Default project (which never had an
-        // override) to prove global fallback. The issue scenario describes "clearing the override
-        // (back to 'Using global default') gives 10 on the next dispatch" — i.e., mutating the same
-        // project back to null MaxRetries and re-dispatching. These are related but distinct code
-        // paths; the current structure tests a project-with-no-override, not a
-        // previously-overridden-project whose override was cleared. Consider adding a third dispatch
-        // against the same overrideProjectId after setting MaxRetries = null to cover that path.
-
         // Also seed the default-project template and profile so the second dispatch succeeds.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
@@ -143,13 +135,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Guid.Parse(result1.WorkItemId!), WorkItemStatus.Succeeded, TimeSpan.FromSeconds(15));
 
         // ── Second dispatch: no override (Default project) ─────────────────────
-        // TODO [WARNING]: ResetJobAssigned() is called here (after WaitForWorkItemStatusAsync) to
-        // ensure the TCS is fresh before the second dispatch. The ordering is correct but fragile:
-        // if a future edit dispatches the second issue before this reset, or if any retry/requeue
-        // path re-enqueues issue "52", FakeJobController could TrySetResult on the stale TCS,
-        // causing assignment2 to hang until the 10-second timeout fires with the wrong assignment.
-        // Calling ResetJobAssigned() immediately after WaitForWorkItemStatusAsync returns (before any
-        // other awaits) is the safe pattern; verify this ordering is preserved on any future edits.
         agent.ResetJobAssigned();
 
         var result2 = await DispatchIssueAsync("53");
@@ -220,16 +205,8 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         // Non-overridden sub-fields retain their global defaults:
         // FixPrompt global default is null.
-        // TODO [WARNING]: This assertion is too weak to prove deep-merge. Assert.Null(FixPrompt)
-        // passes whether deep-merge correctly left the global null value or whether the merge code
-        // wiped the entire CodeReview object (both produce null). To make the assertion meaningful,
-        // seed a non-null global default for a second CodeReview sub-field (e.g., InlineComments.Enabled
-        // defaults to true) and assert it survives the partial override — Assert.True(
-        // assignment.PipelineConfiguration.CodeReview.InlineComments.Enabled) would fail if the
-        // merge replaces rather than merges. Also consider using MaxIterations = 99 instead of 0
-        // so the override is unambiguous (0 could be treated as "not set" by a resolver using
-        // falsy checks).
         Assert.Null(assignment.PipelineConfiguration.CodeReview.FixPrompt);
+        Assert.True(assignment.PipelineConfiguration.CodeReview.InlineComments.Enabled);
 
         await agent.AcceptAndCompleteJobAsync(assignment.JobId);
     }
@@ -387,9 +364,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
         var serverA = assignment.McpServers.FirstOrDefault(s => s.Name == "a");
         Assert.NotNull(serverA);
         Assert.False(serverA.Disabled);
-        // TODO [WARNING]: serverA.Url is not verified. If the merge swaps server contents or
-        // duplicates profile-b under the name "a", the URL check would catch it. Consider adding:
-        // Assert.Equal("http://profile-a", serverA.Url);
+        Assert.Equal("http://profile-a", serverA.Url);
 
         // "b" — project wins on name collision; URL must be the project's.
         var serverB = assignment.McpServers.FirstOrDefault(s => s.Name == "b");
@@ -401,8 +376,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
         var serverC = assignment.McpServers.FirstOrDefault(s => s.Name == "c");
         Assert.NotNull(serverC);
         Assert.False(serverC.Disabled);
-        // TODO [WARNING]: serverC.Url is not verified. If the merge drops or mutates the URL,
-        // the test passes silently. Consider adding: Assert.Equal("http://project-c", serverC.Url);
+        Assert.Equal("http://project-c", serverC.Url);
 
         // "disabled-server" — present in the assignment with Disabled=true.
         // McpServerMerge.Merge carries the flag through; filtering is the agent's responsibility.
@@ -410,11 +384,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
         Assert.NotNull(serverDisabled);
         Assert.True(serverDisabled.Disabled);
 
-        // TODO [WARNING]: mid-assertion orphaned work item — if any of the assertions above throw,
-        // AcceptAndCompleteJobAsync is never called. The work item remains in Dispatched state and
-        // may interfere with other tests in the same E2ECollection. This structural weakness is
-        // shared with all other scenarios in this file. A try/finally or a fixture-level cleanup
-        // helper would guard against it.
         await agent.AcceptAndCompleteJobAsync(assignment.JobId);
     }
 
@@ -489,10 +458,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
         Assert.NotNull(repoConfig);
         Assert.NotNull(repoConfig.Secrets);
         Assert.Equal("r", repoConfig.Secrets["K2"]);
-        // TODO [WARNING]: K1 is not asserted absent from repoConfig.Secrets. If the implementation
-        // incorrectly copies all project secrets into the repo provider config, this test still
-        // passes because the assertions only verify presence of K2=r, not absence of K1. Add:
-        // Assert.False(repoConfig.Secrets.ContainsKey("K1"), "K1 must not bleed into repo secrets");
+        Assert.False(repoConfig.Secrets.ContainsKey("K1"), "K1 must not bleed into repo secrets");
 
         // The merge (repo K2 wins over project K2) happens on the agent side — not asserted here.
 

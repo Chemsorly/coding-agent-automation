@@ -92,7 +92,7 @@
             </div>
         </div>
 
-        @if (!string.IsNullOrEmpty(run.FailureReason))
+        @if (_diagnosis is null && !string.IsNullOrEmpty(run.FailureReason))
         {
             <div class="summary-failure-callout" role="alert"><Icon Name="alert-triangle" Size="14" /> @run.FailureReason</div>
         }
