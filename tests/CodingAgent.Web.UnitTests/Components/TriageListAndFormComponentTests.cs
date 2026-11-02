@@ -133,6 +133,28 @@ public class TriageListAndFormComponentTests : BunitContext
         cut.FindAll("[data-testid='triage-new']").Should().HaveCount(shown ? 1 : 0);
     }
 
+    [Fact]
+    public void List_TableHasTriageListTableClass()
+    {
+        ListReturns(ListItem(TriageStatus.NeedsReview, "Orders stuck in Pending"));
+        Services.AddTestAccess(TestAccess.Scoped((ShopProjectId, AccessRole.ReadOnly)));
+
+        var cut = Render<Triage>();
+
+        cut.Find("[data-testid='triage-table']").GetAttribute("class").Should().Contain("triage-list-table");
+    }
+
+    [Fact]
+    public void List_ActionsDiv_HasTriagePageActionsClass()
+    {
+        Services.AddTestAccess(TestAccess.Scoped((ShopProjectId, AccessRole.Operator)));
+
+        var cut = Render<Triage>();
+
+        cut.FindAll(".triage-page-actions").Should().HaveCount(1);
+        cut.Find(".triage-page-actions [data-testid='triage-new']");
+    }
+
     // ── New ──────────────────────────────────────────────────────────────────
 
     [Fact]
