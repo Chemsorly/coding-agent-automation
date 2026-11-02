@@ -156,12 +156,16 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         // Phase 1 analysis: writes analysis.md + analysis-assessment.json (recommendation=ready)
         // Phase 1 review: adversarial review agent (also analysis script, just writes files)
         // Phase 2 code gen: implementation agent
-        // Phase 2 PR desc: PR description agent (final step after QG pass)
+        // Phase 2 cleanup: pre-PR cleanup agent (runs after quality gates pass, before PR creation)
+        // PR description: writes .agent/pr-description.md
+        // Feedback: final step after PR creation
         Fixture.AgentProvider
             .EnqueueReadyAnalysis()  // analysis agent
             .EnqueueReadyAnalysis()  // adversarial review agent
             .EnqueueCodeGen()        // code generation agent
-            .EnqueueCodeGen();       // PR description agent
+            .EnqueueCodeGen()        // pre-PR cleanup agent
+            .EnqueueFile(AgentWorkspacePaths.PrDescriptionFilePath, "### Summary\nScripted description")  // PR description agent
+            .EnqueueCodeGen();       // feedback agent
 
         // Quality gates always pass
         Fixture.QualityGateValidator.AlwaysPass();
@@ -185,6 +189,11 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         // ── Wait for completion ────────────────────────────────────────────────────
 
         await harness.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
+
+        Fixture.AgentProvider.UnscriptedCalls.Should().BeEmpty(
+            "every agent call in the run must be scripted; unscripted prompts: {0}",
+            string.Join(" | ", Fixture.AgentProvider.UnscriptedCalls.Select(c => c.Request.Prompt.Split('\n')[0])));
+        Fixture.AgentProvider.Calls.Should().Contain(c => c.Request.Prompt.Contains("## Generate a Pull Request Description"));
 
         var finalItem = await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Succeeded,
             timeout: TimeSpan.FromSeconds(15));
@@ -287,6 +296,10 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
 
         await harness1.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
 
+        Fixture.AgentProvider.UnscriptedCalls.Should().BeEmpty(
+            "every agent call in the first decomposition run must be scripted; unscripted prompts: {0}",
+            string.Join(" | ", Fixture.AgentProvider.UnscriptedCalls.Select(c => c.Request.Prompt.Split('\n')[0])));
+
         var firstItem = await WaitForWorkItemStatusAsync(workItemId1, WorkItemStatus.Succeeded, TimeSpan.FromSeconds(15));
         firstItem.Result.Should().NotBeNullOrEmpty();
 
@@ -325,6 +338,10 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             qualityGateValidator: Fixture.QualityGateValidator);
 
         await harness2.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
+
+        Fixture.AgentProvider.UnscriptedCalls.Should().BeEmpty(
+            "every agent call in the second decomposition run must be scripted; unscripted prompts: {0}",
+            string.Join(" | ", Fixture.AgentProvider.UnscriptedCalls.Select(c => c.Request.Prompt.Split('\n')[0])));
 
         var secondItem = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Succeeded, TimeSpan.FromSeconds(15));
         secondItem.Result.Should().NotBeNullOrEmpty();
