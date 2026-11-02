@@ -96,7 +96,7 @@
     <section class="cockpit-card" aria-label="Evidence" data-testid="triage-evidence">
         <div class="cockpit-card-header"><h2>Evidence</h2><span class="triage-hint">Each claim with the query or code it came from</span></div>
         <div class="monitoring-table-wrap">
-            <table class="monitoring-table">
+            <table class="monitoring-table triage-report-table">
                 <thead><tr><th>#</th><th>Claim</th><th>Source</th></tr></thead>
                 <tbody>
                     @foreach (var e in Result.Evidence)
@@ -145,7 +145,7 @@
     else
     {
         <div class="monitoring-table-wrap">
-            <table class="monitoring-table">
+            <table class="monitoring-table triage-report-table">
                 <thead><tr><th>#</th><th>Check</th><th>Where</th><th>For</th><th>Result</th></tr></thead>
                 <tbody>
                     @for (var i = 0; i < Result.Investigated.Count; i++)
