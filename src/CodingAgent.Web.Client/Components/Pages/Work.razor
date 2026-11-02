@@ -75,7 +75,7 @@
                     <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;">
                         @foreach (var (label, count) in GetTypeBreakdown(_pending.Select(p => p.TaskType)))
                         {
-                            <span class="cockpit-chip">@label <strong style="color: var(--text);">@count</strong></span>
+                            <span class="cockpit-chip">@label <strong style="color: var(--text); margin-left: 4px;">@count</strong></span>
                         }
                     </div>
                     @if (_pending.MinBy(p => p.CreatedAt) is { } oldest)
@@ -168,7 +168,7 @@
                                             }
                                             else
                                             {
-                                                <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                <button class="btn-cancel-small"
                                                         title="Cancel this in-flight run"
                                                         data-testid="cancel-btn-@a.Id"
                                                         @onclick="() => _confirmCancelId = a.Id">Cancel</button>
@@ -237,7 +237,7 @@
                                                    }" />
                                         </td>
                                         <td style="text-align: right;">
-                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                            <button class="btn-cancel-small"
                                                     disabled="@_cancelling.Contains(p.Id)"
                                                     title="Remove this item from the queue"
                                                     @onclick="() => CancelWorkItemAsync(p.Id)">
@@ -430,7 +430,7 @@
     {
         try
         {
-            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _active = SortActive(await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token));
             _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
@@ -512,7 +512,7 @@
     {
         try
         {
-            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _active = SortActive(await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token));
             _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
             _error = null;
         }
@@ -620,6 +620,13 @@
         if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
         return $"{(int)d.TotalDays}d ago";
     }
+
+    /// <summary>
+    /// Sorts in-flight items so the longest-running (oldest DispatchedAt) comes first.
+    /// Items with null DispatchedAt sort to the end; Id provides a stable tie-break.
+    /// </summary>
+    private static IReadOnlyList<ActiveWorkItemDto> SortActive(IEnumerable<ActiveWorkItemDto> items) =>
+        items.OrderBy(a => a.DispatchedAt ?? DateTimeOffset.MaxValue).ThenBy(a => a.Id).ToList();
 
     /// <summary>Returns a short label + count for each distinct task type, ordered by count descending.</summary>
     private static IEnumerable<(string Label, int Count)> GetTypeBreakdown(IEnumerable<WorkItemTaskType> types)

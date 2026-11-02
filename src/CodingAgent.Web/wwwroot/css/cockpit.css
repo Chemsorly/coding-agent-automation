@@ -546,6 +546,10 @@
    text from counting towards the column width), so Cancel/Remove stay in view. */
 .cockpit .work-table td:first-child { width: 100%; max-width: 0; }
 
+/* A destructive action is quiet until hovered: a full column of red read as an error state. */
+.cockpit .work-table .btn-cancel-small { border-color: var(--ctl-border); color: var(--text-muted); }
+.cockpit .work-table .btn-cancel-small:hover { border-color: var(--error); background: var(--error); color: #fff; }
+
 /* Pipelines templates: template and provider names are long repo slugs — wrap them instead. */
 .cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
 .cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
