@@ -44,8 +44,7 @@ public sealed class RunPageSectionsTests : E2ETestBase
         };
         await OpenAsync(run);
 
-        await Assertions.Expect(Page.Locator(".summary-failure-callout[role='alert']"))
-            .ToContainTextAsync("Agent timed out after 30 minutes");
+        await Assertions.Expect(Page.Locator(".summary-failure-callout")).ToHaveCountAsync(0);
         await Assertions.Expect(Page.Locator("[data-testid='diagnosis-verdict']"))
             .ToHaveTextAsync("Configuration");
         await Assertions.Expect(Page.Locator("[data-testid='diagnosis-title']"))
