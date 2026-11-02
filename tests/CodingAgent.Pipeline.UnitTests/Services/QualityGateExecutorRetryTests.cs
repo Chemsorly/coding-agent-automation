@@ -859,6 +859,30 @@ public class QualityGateExecutorRetryTests
             Times.Exactly(11));
     }
 
+    // ── Phase Breakdown ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Cleanup_RecordsCleanupPhaseKey()
+    {
+        // Arrange: quality gates always pass so RunPostRetryCleanupAndFinalizeAsync is entered immediately.
+        // The constructor-level default agent mock returns non-null Usage for all calls, so the cleanup
+        // agent call will write to PhaseBreakdown["cleanup"] via AccumulateTokenUsage.
+        var config = CreateConfig(maxRetries: 1);
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PassingReport);
+
+        // Act: initial pass → RunPostRetryCleanupAndFinalizeAsync → cleanup agent (Phase="cleanup") →
+        // post-cleanup gates pass → FinalizePullRequest
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        // Assert: cleanup agent was dispatched under the cleanup phase key
+        _run.Metrics.PhaseBreakdown.Should().ContainKey("cleanup",
+            "the cleanup agent in RunPostRetryCleanupAndFinalizeAsync must record the cleanup phase key in PhaseBreakdown");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static PipelineConfiguration CreateConfig(int maxRetries) => new()

@@ -4,10 +4,6 @@
     <h2>Projects</h2>
     <p class="section-description">Manage pipeline projects. Each project groups pipeline job templates and can override global pipeline settings.</p>
 
-    <div class="projects-list-actions">
-        <button class="btn-save" @onclick="AddProjectAsync" data-testid="projects-add">+ Add Project</button>
-    </div>
-
     @if (_projects.Count == 0)
     {
         <p class="form-hint">No projects configured yet.</p>
@@ -34,11 +30,11 @@
                                 <div class="projects-name">
                                     @if (isDefault)
                                     {
-                                        <span class="projects-lock-icon"><Icon Name="lock" /></span>
+                                        <span class="projects-lock-icon"><Icon Name="lock" Size="14" /></span>
                                     }
                                     @if (project.EpicIssueProviderId is not null)
                                     {
-                                        <span class="projects-epic-icon"><Icon Name="puzzle" /></span>
+                                        <span class="projects-epic-icon"><Icon Name="puzzle" Size="14" /></span>
                                     }
                                     <span>@project.Name</span>
                                     @if (isDefault)
@@ -78,6 +74,10 @@
             </table>
         </div>
     }
+
+    <div class="projects-list-actions">
+        <button class="btn-add" @onclick="AddProjectAsync" data-testid="projects-add">+ Add Project</button>
+    </div>
 
     @if (_confirmingDelete is not null)
     {

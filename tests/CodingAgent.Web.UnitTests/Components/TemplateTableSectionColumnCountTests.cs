@@ -115,6 +115,17 @@ public class TemplateTableSectionColumnCountTests : BunitContext
             "admins have the 9-column layout (including Actions) which must be reflected in the colspan");
     }
 
+    [Fact]
+    public void ProviderCells_DoNotHaveMonospaceStyling()
+    {
+        var cut = RenderSection(isLoopActive: false, canEdit: true);
+
+        // Issue and Repo provider <td> elements must not carry monitoring-mono (issue #4201).
+        // Brain and CI cells never had the class; this test locks in consistency across all four.
+        cut.FindAll("td.monitoring-mono").Should().BeEmpty(
+            "provider cells must use the normal UI font, not the monospace class");
+    }
+
     // Note: WhenNotAdmin_LabelPreviewRowColspanIsEight was specified in issue #3558 but cannot be
     // implemented with the current test setup. The label preview button is only rendered when
     // LabelResolver.ResolveRequiredLabels returns Labels.Count > 0, which requires label config in

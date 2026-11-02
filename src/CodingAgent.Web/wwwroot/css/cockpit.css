@@ -32,6 +32,7 @@
     --border: #E8EAEF;
     --hairline: #F0F1F4;
     --ctl-border: #DADDE4;
+    --input-border: #8A8F9C;   /* field boundary, ≥3:1 on --surface */
     --radius: 10px;
 
     --bg-hover: #F3F5F7;
@@ -80,6 +81,7 @@
     --border: #2A2C39;
     --hairline: #23242F;
     --ctl-border: #363845;
+    --input-border: #62657A;
 
     --bg-hover: #23242F;
     --success-bg: rgba(52, 211, 153, .12);
@@ -105,6 +107,9 @@
 :where(.cockpit) :where(button, input, select, textarea, optgroup) { font-family: inherit; }
 :where(.cockpit) :where(code, kbd, samp, pre) { font-family: var(--font-mono); }
 :where(.cockpit) :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--accent-fill); }
+/* Field boundaries reach 3:1 against the card. The focus rule must follow it: it repeats the accent border. */
+.cockpit :is(input:not([type="checkbox"], [type="radio"], [type="file"]), select, textarea) { border-color: var(--input-border); }
+.cockpit :is(input:not([type="checkbox"], [type="radio"], [type="file"]), select, textarea):focus { border-color: var(--accent); }
 
 .cockpit .mono {
     font-family: var(--font-mono);
@@ -465,7 +470,11 @@
 .cockpit-run-row:hover { background: var(--bg-hover); }
 .cockpit-row-chevron { color: var(--text-faint); flex-shrink: 0; }
 
-/* consolidation run-type badge (the other run-type-* variants already exist in app.css) */
+/* Run type badges: shared shape, one tone per run type. */
+.cockpit .run-type-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 6px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.cockpit .run-type-impl { color: var(--nav-active-fg); background: var(--bg-active); }
+.cockpit .run-type-review { color: var(--success); background: var(--success-bg); }
+.cockpit .run-type-decomp { color: var(--warning); background: var(--warning-bg); }
 .cockpit .run-type-consolidation { color: #6D28D9; background: var(--bg-active-alt); }
 [data-theme="dark"] .cockpit .run-type-consolidation { color: #C3A6F5; }
 .cockpit .monitoring-row-clickable { cursor: pointer; }
@@ -537,6 +546,15 @@
 .cockpit .runs-link-pr { color: var(--success); }
 .cockpit .runs-link-pr:hover { background: var(--success-bg); color: var(--success); }
 
+/* ---- Button sizes: 34px standalone, 28px inside a row ---------------------- */
+.cockpit :is(.btn-save, .btn-cancel, .btn-add, .btn-start-chat, .btn-send, .btn-edit, .btn-delete, .btn-initialize, .btn-trigger, .btn-cancel-small) {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.cockpit :is(.btn-save, .btn-cancel, .btn-add, .btn-start-chat, .btn-send) { min-height: 34px; }
+.cockpit :is(.btn-edit, .btn-delete, .btn-initialize, .btn-trigger, .btn-cancel-small) { min-height: 28px; }
+/* A .btn-cancel inside a row is a row action, not a page action. */
+.cockpit :is(.monitoring-table, .settings-readonly-row) .btn-cancel { min-height: 28px; padding: 4px 12px; font-size: 0.8rem; color: var(--text); }
+
 /* ---- Tables that must fit their card at 1440px ------------------------------ */
 /* .monitoring-table cells are nowrap, and in auto table layout "overflow: hidden; text-overflow: ellipsis"
    on a <td> does not stop long text from widening the column — the tables scrolled sideways and hid their
@@ -546,8 +564,12 @@
    text from counting towards the column width), so Cancel/Remove stay in view. */
 .cockpit .work-table td:first-child { width: 100%; max-width: 0; }
 
+/* A destructive action is quiet until hovered: a full column of red read as an error state. */
+.cockpit .work-table .btn-cancel-small { border-color: var(--ctl-border); color: var(--text-muted); }
+.cockpit .work-table .btn-cancel-small:hover { border-color: var(--error); background: var(--error); color: #fff; }
+
 /* Pipelines templates: template and provider names are long repo slugs — wrap them instead. */
-.cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
+.cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: break-word; min-width: 120px; }
 .cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
 
 /* Routing editor (RouteTable on Settings → Routing and the repository Binding card): each select was as wide
@@ -591,6 +613,9 @@
 .cockpit .settings-content .monitoring-table .sidebar-label { display: inline-block; margin: 1px 3px 1px 0; white-space: nowrap; }
 .cockpit .settings-content .monitoring-table th { white-space: normal; text-overflow: clip; }
 .cockpit .settings-content .monitoring-table :is(th, td) { padding-left: 8px; padding-right: 8px; }
+.cockpit .settings-content .monitoring-table code.monitoring-mono { vertical-align: middle; }
+.cockpit .settings-content .monitoring-table .sidebar-label[data-testid="profile-tool"] { vertical-align: middle; margin-left: 6px; }
+.cockpit .settings-content .monitoring-table th.th-has-hint { white-space: nowrap; }
 
 /* ---- Settings re-shell (scoped tweaks so it sits cleanly in the new frame) -- */
 /* The page uses the shared .cockpit-page chrome. Drop the legacy full-height scroller from app.css: an
@@ -621,6 +646,19 @@
 /* Section cards match .cockpit-card: 14px radius, faint shadow, plain-text titles. */
 .cockpit .settings-section { padding: 18px 20px; border-radius: 14px; box-shadow: 0 1px 2px rgba(15, 19, 32, .04); }
 .cockpit .settings-section h2 { font-size: 15px; font-weight: 700; color: var(--text); }
+/* A section's own subheadings sit below its 15px h2. Zero-specificity so classed headings keep their size. */
+:where(.cockpit .settings-section) h3 { font-size: 14px; font-weight: 600; color: var(--text); }
+:where(.cockpit .settings-section) h4 { font-size: 13px; font-weight: 600; color: var(--text); }
+
+/* Fields placed directly in a section (no .provider-form) have no flex gap, so they space themselves. */
+.cockpit .settings-section > .form-group,
+.cockpit .settings-section > .form-group + .form-hint { margin-top: 12px; }
+.cockpit .settings-section > .form-hint + .monitoring-table-wrap,
+.cockpit .settings-section > .monitoring-table-wrap + .settings-status,
+.cockpit .settings-section > .monitoring-table-wrap + .form-buttons { margin-top: 12px; }
+.cockpit .settings-section > .form-group + .form-buttons { margin-top: 16px; }
+.cockpit .settings-section > .form-buttons + h3,
+.cockpit .settings-section > .monitoring-table-wrap + h3 { margin-top: 24px; }
 /* A section whose body is a single settings form: the card already frames it, so the form's own box would
    nest a second bordered well inside the card. Add/edit panels under a list keep their frame. */
 .cockpit .settings-section > .section-description + .provider-form { padding: 0; border: 0; background: none; }
@@ -873,7 +911,7 @@
 .triage-btn.is-danger { color: var(--error); }
 
 .triage-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; justify-content: space-between; }
-.triage-head h1 { margin: 6px 0 0; }
+.triage-head h1 { margin: 6px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
 .triage-pills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .triage-layout { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
 .triage-main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
@@ -941,6 +979,12 @@ textarea.triage-input.is-md { font-family: var(--font-mono); font-size: 12.5px; 
 .triage-search { border: 1px solid var(--ctl-border); border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 13px; background: var(--surface); color: var(--text); min-width: 220px; }
 .triage-row-title { font-weight: 700; color: var(--text); text-decoration: none; }
 .triage-row-title:hover { color: var(--nav-active-fg); text-decoration: underline; }
+/* Triage text is long sentences: it wraps inside the card instead of widening the table. */
+.cockpit .triage-report-table td { white-space: normal; }
+.cockpit .triage-report-table td.triage-eid { white-space: nowrap; width: 1%; }
+.cockpit .triage-list-table td:nth-child(2) { white-space: normal; }
+.triage-page-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+@media (max-width: 768px) { .triage-page-actions { flex-wrap: wrap; flex-shrink: 1; } }
 .triage-row-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
 .triage-drawer-body { display: flex; flex-direction: column; gap: 16px; }
 .triage-drawer-foot { position: sticky; bottom: -16px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; margin: 16px -16px -16px; padding: 14px 16px; border-top: 1px solid var(--border); background: var(--subtle-bg); }
