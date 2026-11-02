@@ -133,6 +133,10 @@
             localStorage.setItem('theme', theme);
             document.documentElement.setAttribute('data-theme', theme);
         };
+        window.scrollCockpitBodyToTop = function () {
+            var body = document.querySelector('.cockpit-body');
+            if (body) { body.scrollTop = 0; }
+        };
         // Apply stored theme immediately to avoid flash
         (function() {
             var t = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
