@@ -8,10 +8,6 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// and <see cref="Fakes.InMemoryRepositoryProvider"/> in isolation — no pipeline running.
 /// These tests exercise label mutation, comment storage, comment editing, and Reset() coverage.
 /// </summary>
-// TODO [WARNING]: Test isolation relies entirely on HeadlessE2ETestBase.InitializeAsync calling
-// ResetAllAsync() before each test. If a future test class is added that does not inherit from
-// HeadlessE2ETestBase (or bypasses InitializeAsync), the hardcoded issue IDs ("1001", "1002", etc.)
-// could collide across tests. Prefer unique or random IDs per test run, or add explicit teardown.
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
 public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
@@ -123,9 +119,8 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         var comments = await Fixture.IssueProvider.ListCommentsAsync(issueId, CancellationToken.None);
         Assert.Single(comments);
         Assert.Equal("hello", comments[0].Body);
-        // TODO [WARNING]: Only Body is asserted here. The full round-trip contract also covers Author and Id.
-        // Add: Assert.Equal("e2e-bot", comments[0].Author) and Assert.True(long.Parse(comments[0].Id) > int.MaxValue)
-        // to pin those fields and catch silent regressions if the stored values are wrong.
+        Assert.Equal("e2e-bot", comments[0].Author);
+        Assert.True(long.Parse(comments[0].Id) > int.MaxValue);
 
         // PostedComments log is still populated
         Assert.Contains(Fixture.IssueProvider.PostedComments, c => c.Identifier == issueId && c.Body == "hello");
@@ -137,10 +132,6 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         // Arrange — use SeedComment with explicit CreatedAt for deterministic ordering;
         // DateTime.UtcNow can return the same value for rapid sequential calls on Linux.
         const string issueId = "2002";
-        // TODO [WARNING]: `DateTime.UtcNow.AddDays(-1)` and `DateTime.UtcNow` are evaluated sequentially and
-        // could theoretically be equal on a coarse-clock system (though unlikely with a 1-day offset). For
-        // maximum robustness, replace with fixed values like `new DateTime(2024, 1, 1)` and
-        // `new DateTime(2024, 1, 2)` that are guaranteed to differ regardless of system clock resolution.
         var yesterday = DateTime.UtcNow.AddDays(-1);
         var today = DateTime.UtcNow;
 
@@ -166,10 +157,6 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         Assert.NotNull(url);
 
         // Extract comment id from URL: "…#issuecomment-{id}"
-        // TODO [WARNING]: This URL parsing is brittle — it assumes the fragment is the last component and that no
-        // other '#' appears in the URL. If PostCommentAsync ever changes its URL format, this parser silently
-        // produces a wrong ID and the subsequent UpdateCommentAsync call throws KeyNotFoundException with a
-        // confusing error. Consider using Uri.Fragment or a regex, and assert commentId > int.MaxValue before use.
         var commentId = long.Parse(url!.Split('#').Last().Replace("issuecomment-", ""));
 
         // Act
@@ -179,10 +166,6 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         var comments = await Fixture.IssueProvider.ListCommentsAsync(issueId, CancellationToken.None);
         Assert.Single(comments);
         Assert.Equal("updated body", comments[0].Body);
-        // TODO [WARNING]: The test does not assert that the *original* body ("original body") is no longer
-        // present. Assert.Single provides an indirect guard (only one comment exists), but in a multi-comment
-        // scenario an append-instead-of-replace bug would go undetected. Consider adding:
-        // Assert.NotEqual("original body", comments[0].Body)
 
         // UpdatedComments log is populated
         Assert.Contains(Fixture.IssueProvider.UpdatedComments,
@@ -197,12 +180,8 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         await Fixture.IssueProvider.PostCommentAsync(issueId, "some comment", CancellationToken.None);
 
         // Act & Assert — a non-existent comment id must throw
-        // TODO [WARNING]: The unknown ID 999999999L is below int.MaxValue (2147483647) and also below the fake's
-        // ID start value (5_000_000_000). The spec requires IDs above int.MaxValue specifically so that int casts
-        // fail. Use a value above int.MaxValue as the "unknown" ID (e.g. 99_999_999_999L) to stay within the
-        // defined ID space and avoid masking a potential integer-overflow lookup bug.
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
-            Fixture.IssueProvider.UpdateCommentAsync(issueId, 999999999L, "irrelevant", CancellationToken.None));
+            Fixture.IssueProvider.UpdateCommentAsync(issueId, 99_999_999_999L, "irrelevant", CancellationToken.None));
     }
 
     [Fact]
@@ -223,10 +202,8 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         // Assert — both comments returned; seeded (older) one comes first
         Assert.Equal(2, comments.Count);
         Assert.Equal("old comment", comments[0].Body);
+        Assert.Equal("9999999999", comments[0].Id);
         Assert.Equal("new comment", comments[1].Body);
-        // TODO [WARNING]: The seeded comment's Id field ("9999999999") is not verified through the round-trip.
-        // A bug that reassigns IDs during retrieval (e.g. using list-position as Id) would go undetected.
-        // Add: Assert.Equal("9999999999", comments[0].Id)
     }
 
     [Fact]
