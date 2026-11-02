@@ -32,6 +32,7 @@
     --border: #E8EAEF;
     --hairline: #F0F1F4;
     --ctl-border: #DADDE4;
+    --input-border: #8A8F9C;   /* field boundary, ≥3:1 on --surface */
     --radius: 10px;
 
     --bg-hover: #F3F5F7;
@@ -80,6 +81,7 @@
     --border: #2A2C39;
     --hairline: #23242F;
     --ctl-border: #363845;
+    --input-border: #62657A;
 
     --bg-hover: #23242F;
     --success-bg: rgba(52, 211, 153, .12);
@@ -105,6 +107,9 @@
 :where(.cockpit) :where(button, input, select, textarea, optgroup) { font-family: inherit; }
 :where(.cockpit) :where(code, kbd, samp, pre) { font-family: var(--font-mono); }
 :where(.cockpit) :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--accent-fill); }
+/* Field boundaries reach 3:1 against the card. The focus rule must follow it: it repeats the accent border. */
+.cockpit :is(input:not([type="checkbox"], [type="radio"], [type="file"]), select, textarea) { border-color: var(--input-border); }
+.cockpit :is(input:not([type="checkbox"], [type="radio"], [type="file"]), select, textarea):focus { border-color: var(--accent); }
 
 .cockpit .mono {
     font-family: var(--font-mono);
