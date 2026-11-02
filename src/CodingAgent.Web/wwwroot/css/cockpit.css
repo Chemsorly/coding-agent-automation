@@ -565,7 +565,7 @@
 .cockpit .work-table .btn-cancel-small:hover { border-color: var(--error); background: var(--error); color: #fff; }
 
 /* Pipelines templates: template and provider names are long repo slugs — wrap them instead. */
-.cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
+.cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: break-word; min-width: 120px; }
 .cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
 
 /* Routing editor (RouteTable on Settings → Routing and the repository Binding card): each select was as wide
