@@ -154,7 +154,8 @@ public partial class QualityGateExecutor
                     Config = config,
                     Description = "Pre-PR cleanup agent",
                     Logger = _logger,
-                    EnvironmentVariables = context.InjectedSecrets
+                    EnvironmentVariables = context.InjectedSecrets,
+                    Phase = "cleanup"
                 },
                 callbacks, linkedCt);
 

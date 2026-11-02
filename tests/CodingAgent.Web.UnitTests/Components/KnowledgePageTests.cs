@@ -169,4 +169,42 @@ public class KnowledgePageTests : BunitContext
             Times.Once,
             "a project-scoped user must not trigger the second history call (would 403)");
     }
+
+    [Fact]
+    public void Knowledge_LastBrainReview_HeadingIsNotWrappedInCockpitCardHeader()
+    {
+        // The "Last brain review" card must render an <h2> directly, not nested inside a
+        // cockpit-card-header div (which would add double horizontal padding when inside cockpit-card-pad).
+        Services.AddTestAccess(TestAccess.Global(AccessRole.ReadOnly));
+
+        // First call (PageSize 100, implementation runs): give a non-consolidation run so _total > 0.
+        _mockHistory.Setup(c => c.GetRunHistoryAsync(
+                It.Is<RunHistoryQuery>(q => q.PageSize == 100), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PagedHistory(MakeRun("r1", skillsBytes: 1024)));
+
+        // Second call (PageSize 20, consolidation runs): return a brain consolidation run with outcome.
+        _mockHistory.Setup(c => c.GetRunHistoryAsync(
+                It.Is<RunHistoryQuery>(q => q.PageSize == 20), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PagedHistory(new PipelineRunSummary
+            {
+                RunId = "c1",
+                IssueIdentifier = "0",
+                IssueTitle = "Brain Consolidation",
+                RunType = PipelineRunType.Consolidation,
+                ConsolidationType = ConsolidationRunType.BrainConsolidation,
+                BrainProviderConfigId = "brain-1",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1),
+                InitiatedBy = "auto",
+                BrainConsolidationOutcome = new BrainConsolidationOutcome { Promoted = 1 },
+            }));
+
+        var cut = Render<Knowledge>();
+
+        var card = cut.Find("[data-testid='last-brain-review']");
+        card.QuerySelectorAll(".cockpit-card-header").Should().BeEmpty(
+            "the 'Last brain review' heading must not be wrapped in a cockpit-card-header div (double-padding)");
+        card.QuerySelector("h2")!.TextContent.Trim().Should().Be("Last brain review",
+            "the card must contain an <h2> with the heading text directly inside cockpit-card-pad");
+    }
 }

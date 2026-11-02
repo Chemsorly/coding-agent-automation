@@ -2052,4 +2052,26 @@ public class AgentCodingPageComponentTests : BunitContext
 
         Assert.NotNull(component.Markup);
     }
+
+    [Fact]
+    public void ManualDispatch_BrowseIssuesHasBtnSave_BrowseEpicsAndPrsHaveBtnEdit()
+    {
+        // Render with no enabled templates so auto-preselect does not fire.
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
+
+        var component = Render<AgentCoding>();
+
+        var browseIssuesBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.Contains("btn-save", browseIssuesBtn.GetAttribute("class") ?? "");
+        Assert.DoesNotContain("btn-edit", browseIssuesBtn.GetAttribute("class") ?? "");
+
+        var browseEpicsBtn = component.Find("[data-testid='browse-epics-btn']");
+        Assert.Contains("btn-edit", browseEpicsBtn.GetAttribute("class") ?? "");
+        Assert.DoesNotContain("btn-save", browseEpicsBtn.GetAttribute("class") ?? "");
+
+        var browsePrsBtn = component.Find("[data-testid='browse-prs-btn']");
+        Assert.Contains("btn-edit", browsePrsBtn.GetAttribute("class") ?? "");
+        Assert.DoesNotContain("btn-save", browsePrsBtn.GetAttribute("class") ?? "");
+    }
 }
