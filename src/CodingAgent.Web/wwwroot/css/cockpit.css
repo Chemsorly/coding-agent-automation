@@ -465,7 +465,11 @@
 .cockpit-run-row:hover { background: var(--bg-hover); }
 .cockpit-row-chevron { color: var(--text-faint); flex-shrink: 0; }
 
-/* consolidation run-type badge (the other run-type-* variants already exist in app.css) */
+/* Run type badges: shared shape, one tone per run type. */
+.cockpit .run-type-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 6px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.cockpit .run-type-impl { color: var(--nav-active-fg); background: var(--bg-active); }
+.cockpit .run-type-review { color: var(--success); background: var(--success-bg); }
+.cockpit .run-type-decomp { color: var(--warning); background: var(--warning-bg); }
 .cockpit .run-type-consolidation { color: #6D28D9; background: var(--bg-active-alt); }
 [data-theme="dark"] .cockpit .run-type-consolidation { color: #C3A6F5; }
 .cockpit .monitoring-row-clickable { cursor: pointer; }
