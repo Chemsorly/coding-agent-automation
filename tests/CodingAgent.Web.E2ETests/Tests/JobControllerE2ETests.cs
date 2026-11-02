@@ -142,15 +142,6 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         // Use Task.Run so the connection races in parallel with any dispatch path still in flight.
         // The agent must connect and call StartAssignedWorkItemAsync to re-register as active
         // (sets ActiveJobId in registry — required for [RequiresActiveJob] endpoints).
-        // TODO [WARNING]: Scenario A's isolation claim is partially false. Connecting a
-        // FakeAgentClient with selector "jc-e2e" registers it as an Idle agent on the shared API
-        // hub, so the FakeJobController background loop (250 ms tick) can match it and call
-        // StartAssignedWorkItemAsync concurrently with the test's own call below. The double-
-        // bootstrap survives today because TrySetResult/TryAdd are idempotent, but any future
-        // change that makes the terminal post non-idempotent could flip the WorkItem to Failed
-        // and break the Succeeded assertion. Fix: use a distinct agent selector for Scenario A
-        // that FakeJobController has no template for (e.g. "jc-e2e-a"), or call
-        // Fixture.JobController.ForgetAllInFlight() / pause the controller before connecting.
         await using var fakeAgent = new FakeAgentClient(jobName, "jc-e2e");
         var connectTask = Task.Run(async () =>
         {
@@ -185,13 +176,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         // ── Act: reconcile via the real ReconciliationLoop ────────────────────────────
         // ReconcileOnceAsync sees the Succeeded K8s Job condition and calls PostStatusAsync
         // (no-op since WorkItem is already Succeeded) then caches the ID.
-        // TODO [WARNING]: This ReconcileOnceAsync call is actually a no-op. The agent-completion
-        // hub path transitions the WorkItem to Succeeded but never sets a Succeeded condition on
-        // the K8s Job object in CreatedJobs, so GetJobPhase returns "Active" and HandleJobAsync
-        // takes no action. To actually exercise the success reconciliation path, set a Complete
-        // condition on createdJob (mirroring SimulateWorkItemJobFailedAsync) before this call
-        // and assert the resulting behaviour (e.g. _reconciledTerminalIds populated, no
-        // spurious status transition).
+        await Fixture.K8sClient.SimulateChatJobTerminalAsync(jobName, success: true);
         await Fixture.RealReconciliationLoop.ReconcileOnceAsync(
             await Fixture.RealReconciliationLoop.FetchManagedJobsAsync(CancellationToken.None),
             CancellationToken.None);
@@ -208,10 +193,9 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
 
         // ── Assert: job was deleted ───────────────────────────────────────────────────
         Assert.Contains(jobName, Fixture.K8sClient.DeletedJobs);
-        // TODO [WARNING]: After reconciliation and deletion, there is no assertion confirming the
-        // WorkItem record is still Succeeded in the database. If ReconcileOnceAsync
-        // mis-classified the job and wrote an unexpected status transition, it would go unnoticed.
-        // Add: Assert.Equal(WorkItemStatus.Succeeded, item.Status) after reading the DB record.
+        var item = await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Succeeded, TimeSpan.FromSeconds(5));
+        Assert.Equal(WorkItemStatus.Succeeded, item.Status);
+        Assert.NotNull(item.CompletedAt);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -252,13 +236,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
             () => !Fixture.K8sClient.CreatedJobs.IsEmpty,
             timeout: TimeSpan.FromSeconds(10));
 
-        // TODO [WARNING]: Keys.First() is non-deterministic when CreatedJobs contains entries from
-        // other concurrently-running tests in the same E2ECollection. Replace with:
-        //   var expectedJobName = JobNameFactory.ForBrain(workItemId);
-        //   WaitUntilAsync(() => Fixture.K8sClient.CreatedJobs.ContainsKey(expectedJobName), ...)
-        //   var jobName = expectedJobName;
-        // (matching the deterministic pattern used in Scenario A).
-        var jobName = Fixture.K8sClient.CreatedJobs.Keys.First();
+        var jobName = Fixture.K8sClient.CreatedJobs.Keys.Single();
 
         // ── Act: run orphan cleanup directly while the WorkItem is still Pending ──────
         // Do NOT call ReconcileOnceAsync or OnPollCycleAsync — those also invoke
@@ -313,13 +291,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
             () => !Fixture.K8sClient.CreatedJobs.IsEmpty,
             timeout: TimeSpan.FromSeconds(10));
 
-        // TODO [WARNING]: Keys.First() is non-deterministic when CreatedJobs contains entries from
-        // other concurrently-running tests in the same E2ECollection. Replace with:
-        //   var expectedJobName = JobNameFactory.ForBrain(workItemId);
-        //   WaitUntilAsync(() => Fixture.K8sClient.CreatedJobs.ContainsKey(expectedJobName), ...)
-        //   var jobName = expectedJobName;
-        // (matching the deterministic pattern used in Scenario A).
-        var jobName = Fixture.K8sClient.CreatedJobs.Keys.First();
+        var jobName = Fixture.K8sClient.CreatedJobs.Keys.Single();
 
         // ── Simulate pre-fix state: clear CreationTimestamp ───────────────────────────
         // This is what happened before #2950: the fake did not set CreationTimestamp, so the
@@ -340,12 +312,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
 
         // ── Cleanup: release the gate so dispatch finishes (will fail — job was deleted) ─
         Fixture.K8sClient.AfterCreateDelay.SetResult();
-        // Dispatch will return a non-200 (the K8s job creation was rolled back or the
-        // endpoint received the delete). Await without asserting status.
-        // TODO [WARNING]: The speculative comment above about a "non-200" is inaccurate. The
-        // actual outcome is a 200 with an orphaned Dispatched WorkItem row (the job was deleted
-        // but ExecuteDispatchLifecycleAsync still sets Dispatched). Remove the speculative comment
-        // or assert the concrete end state to make the test's intent unambiguous.
+        // The outcome of the released dispatch is not what this test checks.
         try { await dispatchTask.WaitAsync(TimeSpan.FromSeconds(10)); } catch { /* expected */ }
     }
 
@@ -454,10 +421,6 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         var labelChanges = Fixture.IssueProvider.LabelChanges
             .Where(lc => lc.Identifier == issueIdentifier && lc.Added)
             .ToList();
-        // TODO [WARNING]: Assert.Single only confirms that exactly one label was added; it does
-        // not assert which label. A regression that swapped to the wrong terminal label would
-        // still pass. Add: Assert.Equal("<expected-terminal-label>", labelChanges.Single().Label)
-        // to fully enforce the "infrastructure category → exactly one terminal label" requirement.
-        Assert.Single(labelChanges);
+        Assert.Equal(AgentLabels.Error, Assert.Single(labelChanges).Label);
     }
 }

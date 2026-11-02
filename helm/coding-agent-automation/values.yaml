@@ -243,7 +243,7 @@ secretInit:
     # For production, override with a digest-pinned reference:
     #   e.g. alpine/kubectl@sha256:<digest>
     repository: alpine/kubectl
-    tag: "1.37.1"
+    tag: "1.37.2"
   # Maximum seconds the hook Job may run before it is forcibly failed.
   # Without this bound, a stuck image pull (air-gapped cluster, registry.k8s.io blocked)
   # would freeze `helm install` indefinitely since pre-install hooks block Helm until they
