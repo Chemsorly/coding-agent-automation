@@ -537,6 +537,15 @@
 .cockpit .runs-link-pr { color: var(--success); }
 .cockpit .runs-link-pr:hover { background: var(--success-bg); color: var(--success); }
 
+/* ---- Button sizes: 34px standalone, 28px inside a row ---------------------- */
+.cockpit :is(.btn-save, .btn-cancel, .btn-add, .btn-start-chat, .btn-send, .btn-edit, .btn-delete, .btn-initialize, .btn-trigger, .btn-cancel-small) {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.cockpit :is(.btn-save, .btn-cancel, .btn-add, .btn-start-chat, .btn-send) { min-height: 34px; }
+.cockpit :is(.btn-edit, .btn-delete, .btn-initialize, .btn-trigger, .btn-cancel-small) { min-height: 28px; }
+/* A .btn-cancel inside a row is a row action, not a page action. */
+.cockpit :is(.monitoring-table, .settings-readonly-row) .btn-cancel { min-height: 28px; padding: 4px 12px; font-size: 0.8rem; color: var(--text); }
+
 /* ---- Tables that must fit their card at 1440px ------------------------------ */
 /* .monitoring-table cells are nowrap, and in auto table layout "overflow: hidden; text-overflow: ellipsis"
    on a <td> does not stop long text from widening the column — the tables scrolled sideways and hid their
