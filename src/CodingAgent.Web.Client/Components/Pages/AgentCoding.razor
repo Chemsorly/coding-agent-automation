@@ -130,9 +130,9 @@
                             <option value="@t.Id">@t.Name</option>
                         }
                     </select>
-                    <button @ref="_epicDrawerTrigger" class="btn-save" @onclick="OpenEpicDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse epics" : null)" data-testid="browse-epics-btn">Browse Epics</button>
+                    <button @ref="_epicDrawerTrigger" class="btn-edit" @onclick="OpenEpicDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse epics" : null)" data-testid="browse-epics-btn">Browse Epics</button>
                     <button @ref="_issueDrawerTrigger" class="btn-save" @onclick="OpenDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse issues" : null)" data-testid="browse-issues-btn">Browse Issues</button>
-                    <button @ref="_prDrawerTrigger" class="btn-save" @onclick="OpenPrDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse pull requests" : null)" data-testid="browse-prs-btn">Browse Pull Requests</button>
+                    <button @ref="_prDrawerTrigger" class="btn-edit" @onclick="OpenPrDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse pull requests" : null)" data-testid="browse-prs-btn">Browse Pull Requests</button>
                 </div>
             </section>
         </div>
