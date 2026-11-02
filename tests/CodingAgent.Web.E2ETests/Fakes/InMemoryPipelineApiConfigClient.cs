@@ -29,6 +29,9 @@ public sealed class InMemoryPipelineApiConfigClient : IPipelineApiConfigClient
     /// <summary>When true, GetPipelineConfigAsync throws, to model an API the Scheduler cannot read.</summary>
     public bool FailPipelineConfigLoad { get; set; }
 
+    /// <summary>Kinds whose GetProviderConfigsWithSecretsAsync throws, to model a partial API failure.</summary>
+    public HashSet<ProviderKind> FailProviderConfigLoadFor { get; } = [];
+
     // ── Pipeline config ──────────────────────────────────────────────────
     public Task<PipelineConfiguration> GetPipelineConfigAsync(CancellationToken ct = default)
     {
@@ -53,7 +56,11 @@ public sealed class InMemoryPipelineApiConfigClient : IPipelineApiConfigClient
 
     public Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsWithSecretsAsync(
         ProviderKind kind, CancellationToken ct = default)
-        => _store.LoadProviderConfigsAsync(kind, ct);
+    {
+        if (FailProviderConfigLoadFor.Contains(kind))
+            throw new HttpRequestException("Fake provider config load failure");
+        return _store.LoadProviderConfigsAsync(kind, ct);
+    }
 
     public Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct = default)
         => _store.SaveProviderConfigAsync(config, ct);

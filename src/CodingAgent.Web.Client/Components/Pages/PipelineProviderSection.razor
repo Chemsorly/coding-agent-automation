@@ -52,13 +52,13 @@
                 OnSave="SaveGitLabProvider"
                 OnCancel="CancelForm">
                 <HelpContent>
-                    <h4>🔄 GitLab CI/CD</h4>
+                    <h4><Icon Name="refresh-cw" Size="14" /> GitLab CI/CD</h4>
                     <p>Reads CI/CD pipeline status from GitLab CI. Used as an external quality gate.</p>
                     <p class="help-heading">Token requirements:</p>
                     <ul>
                         <li><strong>read_api</strong> scope — read pipeline and job status</li>
                     </ul>
-                    <p class="help-tip">💡 Use the same access token as the Issue/Repository providers if it has API access.</p>
+                    <p class="help-tip"><Icon Name="lightbulb" Size="14" /> Use the same access token as the Issue/Repository providers if it has API access.</p>
                 </HelpContent>
             </GitLabProviderForm>
         }
@@ -86,13 +86,13 @@
                 OnCancel="CancelForm"
                 OnFetchRepos="FetchRepos">
                 <HelpContent>
-                    <h4>🔄 GitHub Actions CI</h4>
+                    <h4><Icon Name="refresh-cw" Size="14" /> GitHub Actions CI</h4>
                     <p>Reads CI/CD pipeline status from GitHub Actions workflow runs. Used as an external quality gate.</p>
                     <p class="help-heading">Required permissions:</p>
                     <ul>
                         <li><strong>Actions: Read</strong> — read workflow run status and job results</li>
                     </ul>
-                    <p class="help-tip">💡 Use the same GitHub App as the Issue/Repository providers if it has Actions read permission.</p>
+                    <p class="help-tip"><Icon Name="lightbulb" Size="14" /> Use the same GitHub App as the Issue/Repository providers if it has Actions read permission.</p>
                 </HelpContent>
             </GitHubAppProviderForm>
         }
