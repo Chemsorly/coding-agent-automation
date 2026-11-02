@@ -342,4 +342,28 @@ public class InsightsPageComponentTests : BunitContext
         // bUnit's NavigationManager records navigations via its Uri property
         Services.GetRequiredService<NavigationManager>().Uri.Should().EndWith($"runs/{runId}");
     }
+
+    [Fact]
+    public void BarChart_ShowsTallestBarLabel_WithMaxBucketCount()
+    {
+        // One completed run goes into one bucket. _maxBucket = 1, so the label reads "Tallest bar: 1 run(s)".
+        Returns(Run(PipelineStep.Completed));
+
+        var cut = Render<Insights>();
+
+        cut.Markup.Should().Contain("Tallest bar: 1 run(s)",
+            "the chart must display the tallest-bar run count so bar heights are interpretable");
+    }
+
+    [Fact]
+    public void BarChart_BarsContainer_HasBaselineBorder()
+    {
+        // The bars container must carry a bottom border so empty/short bars have a visual baseline.
+        Returns(Run(PipelineStep.Completed));
+
+        var cut = Render<Insights>();
+
+        cut.Markup.Should().Contain("border-bottom: 1px solid var(--hairline)",
+            "the bars container must have a bottom border to anchor bar heights visually");
+    }
 }
