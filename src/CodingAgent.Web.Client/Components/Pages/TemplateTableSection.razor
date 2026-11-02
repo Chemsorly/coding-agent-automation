@@ -107,8 +107,8 @@
                                             </div>
                                         }
                                     </td>
-                                    <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, IssueProviders)</td>
-                                    <td class="monitoring-mono">
+                                    <td>@GetProviderDisplayName(template.IssueProviderId, IssueProviders)</td>
+                                    <td>
                                         @GetProviderDisplayName(template.RepoProviderId, RepoProviders)
                                         @{ var previewLabels = GetLabelPreview(template.RequiredLabels); }
                                         @if (previewLabels.Labels.Count > 0)
