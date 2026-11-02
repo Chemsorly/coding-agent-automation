@@ -44,13 +44,7 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         await page.FillGitLabProviderFormAsync("My GitLab Issues", "test-token", "99999");
         await page.ClickSaveAsync();
 
-        // TODO [WARNING]: Missing save success assertion. The analogous agent-provider test asserts
-        // IsStatusMessageVisibleAsync("saved") immediately after ClickSaveAsync(). Without this, a
-        // silent save failure would produce a confusing "name not found" assertion error below rather
-        // than a clear "save did not succeed" signal. Add:
-        //   Assert.True(await page.IsStatusMessageVisibleAsync("saved"), "Expected save success message after add");
-        // Same gap exists after the Edit and Delete saves in this test and in
-        // Settings_RepositoryProvider_AddEditDelete and Settings_PipelineProvider_AddEditDelete.
+        Assert.True(await page.IsStatusMessageVisibleAsync("saved"), "Expected save success message after add");
 
         // Assert: new provider appears
         var afterAdd = await page.GetProviderNamesAsync();
@@ -89,12 +83,6 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         }, CancellationToken.None);
 
         // Act: Delete the provider
-        // TODO [WARNING]: The seeded "template-orphan-test" template is not cleaned up before calling
-        // ClickDeleteProviderAsync. If the store or application ever adds referential-integrity constraints
-        // (blocking deletion of providers still referenced by templates), this test will fail for a different
-        // reason than what it is pinning (the orphan behavior), making the failure misleading. Consider
-        // wrapping the delete + orphan-pin assertions in a try/finally that deletes the template, or
-        // adding an explicit comment documenting the expected cleanup path.
         await page.ClickDeleteProviderAsync("My GitLab Issues Renamed");
 
         // Assert: removed from UI
@@ -247,14 +235,6 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
     [Fact]
     public async Task Settings_IssueProvider_InitializeProvider_Failure()
     {
-        // TODO [WARNING]: InitializeShouldFail is set here but never reset in a finally block. Because
-        // ResetAll() is called at the *start* of the next test (not the end of this one), any test that
-        // runs immediately after this one fails at an early assertion (before ResetAll is invoked for the
-        // next test) will see a poisoned fake during its own InitializeAsync-to-first-action window.
-        // Mitigate by wrapping the flag assignment and any code that could throw in a try/finally that
-        // resets it, or by moving the assignment into an IAsyncLifetime.InitializeAsync override scoped
-        // to this test class.
-
         // Arrange: set the fake to fail during ValidateAsync (called by InitializeAsync)
         Fixture.IssueProvider.InitializeShouldFail = true;
 
@@ -329,13 +309,6 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         });
 
         // Seed an AgentProfile matching the issue's labels — required by PrepareDistributionRequestAsync
-        // TODO [WARNING]: The seeded AgentProfile "profile-setup-e2e" and the issue "setup-100" are added
-        // to shared fixture state that is only cleaned up by ResetAllAsync on the *next* test. If this test
-        // is abandoned mid-run (e.g. distributor.DistributeAsync throws), these entries remain in the fixture
-        // for subsequent tests in the collection. This is consistent with the rest of the suite's cleanup
-        // pattern (ResetAll at test start), but the stray "profile-setup-e2e" AgentProfile is an untested
-        // side effect that could affect tests that enumerate all agent profiles. Document the assumption that
-        // ResetAll will clean it, or remove it in a finally block if test isolation is required.
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-setup-e2e",
@@ -402,15 +375,6 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         // and that the project secret is also present (at a different value, demonstrating the
         // override scenario).
         //
-        // TODO [WARNING]: This test does NOT verify the actual merge/override behavior. It only asserts
-        // that both values are present in separate fields (repoConfig.Secrets and assignment.ProjectSecrets).
-        // The acceptance criterion "a project secret with the same key is overridden by the repository value"
-        // is only partially covered here — the repo wins on collision, but RunEnvironmentSetupStep.MergeSecrets
-        // (the code that implements the override) is never invoked by this test. The merge itself is covered
-        // by RunEnvironmentSetupStepSecretMergingTests.cs; this E2E test only verifies *delivery* of both
-        // secrets to the assignment. Consider either invoking the merge step with the delivered assignment
-        // to fully close the E2E coverage gap, or updating the scenario docstring to explicitly state that
-        // the override assertion is deferred to the unit tests.
         Assert.NotNull(assignment.ProjectSecrets);
         Assert.Equal("project-value", assignment.ProjectSecrets["FEED_TOKEN"]);
         // The repo secret that will WIN (verified above via repoConfig.Secrets["FEED_TOKEN"])

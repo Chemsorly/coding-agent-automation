@@ -31,10 +31,6 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
         await Fixture.ConfigStore.SaveProjectAsync(nonDefaultProject, CancellationToken.None);
 
         var templateId = "e2e-remove-template";
-        // TODO [WARNING]: Hardcoded template ID risks test pollution in shared/re-run environments.
-        // If two test instances run concurrently or the DB isn't cleaned between runs, SaveTemplateAsync
-        // may update rather than insert, or stale data from a previous run pollutes the Default
-        // project assertion. Use Guid.NewGuid().ToString() for isolation.
         await Fixture.ConfigStore.SaveTemplateAsync(nonDefaultProjectId, new PipelineJobTemplate
         {
             Id = templateId,
@@ -86,8 +82,6 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
     public async Task RemoveTemplate_DefaultProject_XButtonIsNotRendered()
     {
         // The ✕ button must not be visible on the Default project to prevent accidental orphaning.
-        // TODO [WARNING]: Hardcoded template ID "e2e-default-template" risks test pollution in shared
-        // or re-run environments. Use Guid.NewGuid().ToString() for isolation.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "e2e-default-template",
