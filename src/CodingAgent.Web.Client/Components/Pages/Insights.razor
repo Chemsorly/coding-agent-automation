@@ -103,7 +103,7 @@
                     }
                 </div>
             </div>
-            <div style="display: flex; align-items: flex-end; gap: 5px; height: 120px;">
+            <div style="display: flex; align-items: flex-end; gap: 5px; height: 120px; border-bottom: 1px solid var(--hairline);">
                 @foreach (var slot in _days)
                 {
                     <div style="flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; min-width: 0;" title="@FormatSlotLabel(slot.SlotStart) — @slot.Total run(s)">
@@ -116,6 +116,7 @@
             </div>
             <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--text-faint);">
                 <span>@(_days.Count > 0 ? FormatSlotLabel(_days[0].SlotStart) : "")</span>
+                <span>Tallest bar: @_maxBucket run(s)</span>
                 <span>@(_days.Count > 0 ? FormatSlotLabel(_days[^1].SlotStart) : "")</span>
             </div>
         </div>
