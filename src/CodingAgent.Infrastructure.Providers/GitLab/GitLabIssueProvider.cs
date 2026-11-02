@@ -112,16 +112,21 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             },
             "ListComments", ct);
 
-        return notes
-            .Select(n => new PipelineIssueComment
+        var verifier = new AuthorVerifier(this);
+        var result = new List<PipelineIssueComment>(notes.Count);
+        foreach (var n in notes)
+        {
+            result.Add(new PipelineIssueComment
             {
                 Id = n.NoteId.ToString(),
                 Body = n.Body ?? string.Empty,
                 Author = n.Author?.Username ?? string.Empty,
-                CreatedAt = n.CreatedAt.ToUniversalTime()
-            })
-            .ToList()
-            .AsReadOnly();
+                CreatedAt = n.CreatedAt.ToUniversalTime(),
+                IsVerified = await verifier.VerifyAsync(n.Author?.Id, ct)
+            });
+        }
+
+        return result.AsReadOnly();
     }
 
     /// <inheritdoc />
