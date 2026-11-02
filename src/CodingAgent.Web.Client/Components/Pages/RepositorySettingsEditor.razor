@@ -94,7 +94,7 @@
 
     <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
                  IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
-        <Header><Icon Name="settings" /> Setup Steps (@_setupSteps.Count)</Header>
+        <Header><Icon Name="settings" Size="14" /> Setup Steps (@_setupSteps.Count)</Header>
         <ChildContent>
             <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
             @for (var i = 0; i < _setupSteps.Count; i++)
