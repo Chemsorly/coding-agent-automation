@@ -71,7 +71,7 @@
                 <table class="monitoring-table">
                     <colgroup>
                         <col style="width: 110px;" />  @* Result *@
-                        <col style="width: 100px;" />  @* Type *@
+                        <col style="width: 130px;" />  @* Type *@
                         <col style="width: 100px;" />  @* Initiated by *@
                         <col style="width: 300px;" />  @* Run *@
                         <col style="width: 100px;" />  @* Duration *@
@@ -200,7 +200,7 @@
                                     {
                                         @if (TriageConstants.TryParseTriageId(run.IssueIdentifier.Value) is null)
                                         {
-                                            <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
+                                            <span style="font-weight: 600; margin-right: 6px;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
                                         }
                                         <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
                                     }

@@ -186,4 +186,72 @@ public class DispatchDrawerMarkupTests : BunitContext
         cut.Find("[data-testid='pr-row-1']").Click();
         cut.Find("[data-testid='dispatch-pr-btn']");
     }
+
+    [Fact]
+    public void IssueDispatchDrawer_TemplateHeading_HasDispatchTemplateNameClass()
+    {
+        IssueSummary Issue(string id) => new() { Identifier = id, Title = $"Issue {id}", Labels = [], Description = "" };
+        var cut = Render<IssueDispatchDrawer>(p => p
+            .Add(c => c.IsOpen, true)
+            .Add(c => c.Template, Template)
+            .Add(c => c.Issues, new[] { Issue("1") })
+            .Add(c => c.IsLoading, false)
+            .Add(c => c.IsDispatching, false)
+            .Add(c => c.HasMore, false)
+            .Add(c => c.Page, 1)
+            .Add(c => c.AvailableLabels, Array.Empty<string>())
+            .Add(c => c.SelectedLabels, Array.Empty<string>())
+            .Add(c => c.GetProcessingStatus, _ => null));
+
+        var h4 = cut.Find("h4.dispatch-template-name");
+        Assert.NotNull(h4);
+        Assert.Equal("Template: T", h4.TextContent.Trim());
+    }
+
+    [Fact]
+    public void EpicDispatchDrawer_TemplateHeading_HasDispatchTemplateNameClass()
+    {
+        IssueSummary Issue(string id) => new() { Identifier = id, Title = $"Epic {id}", Labels = [], Description = "" };
+        var cut = Render<EpicDispatchDrawer>(p => p
+            .Add(c => c.IsOpen, true)
+            .Add(c => c.Template, Template)
+            .Add(c => c.Issues, new[] { Issue("1") })
+            .Add(c => c.IsLoading, false)
+            .Add(c => c.IsDispatching, false)
+            .Add(c => c.HasMore, false)
+            .Add(c => c.Page, 1)
+            .Add(c => c.AvailableLabels, Array.Empty<string>())
+            .Add(c => c.SelectedLabels, Array.Empty<string>())
+            .Add(c => c.GetProcessingStatus, _ => null));
+
+        var h4 = cut.Find("h4.dispatch-template-name");
+        Assert.NotNull(h4);
+        Assert.Equal("Template: T", h4.TextContent.Trim());
+    }
+
+    [Fact]
+    public void PrDispatchDrawer_TemplateHeading_HasDispatchTemplateNameClass()
+    {
+        PullRequestSummary Pr(string id) => new()
+        {
+            Number = int.Parse(id), Identifier = id, Title = $"PR {id}", Description = "",
+            Labels = [], BranchName = $"feat/{id}", TargetBranch = "main",
+            Url = $"https://example.test/pull/{id}", IsDraft = false
+        };
+        var cut = Render<PrDispatchDrawer>(p => p
+            .Add(c => c.IsOpen, true)
+            .Add(c => c.Template, Template)
+            .Add(c => c.PullRequests, new[] { Pr("1") })
+            .Add(c => c.IsLoading, false)
+            .Add(c => c.IsDispatching, false)
+            .Add(c => c.HasMore, false)
+            .Add(c => c.Page, 1)
+            .Add(c => c.AvailableLabels, Array.Empty<string>())
+            .Add(c => c.SelectedLabels, Array.Empty<string>())
+            .Add(c => c.GetProcessingStatus, _ => null));
+
+        var h4 = cut.Find("h4.dispatch-template-name");
+        Assert.NotNull(h4);
+        Assert.Equal("Template: T", h4.TextContent.Trim());
+    }
 }
