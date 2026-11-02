@@ -873,7 +873,7 @@
 .triage-btn.is-danger { color: var(--error); }
 
 .triage-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; justify-content: space-between; }
-.triage-head h1 { margin: 6px 0 0; }
+.triage-head h1 { margin: 6px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
 .triage-pills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .triage-layout { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
 .triage-main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
@@ -941,6 +941,12 @@ textarea.triage-input.is-md { font-family: var(--font-mono); font-size: 12.5px; 
 .triage-search { border: 1px solid var(--ctl-border); border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 13px; background: var(--surface); color: var(--text); min-width: 220px; }
 .triage-row-title { font-weight: 700; color: var(--text); text-decoration: none; }
 .triage-row-title:hover { color: var(--nav-active-fg); text-decoration: underline; }
+/* Triage text is long sentences: it wraps inside the card instead of widening the table. */
+.cockpit .triage-report-table td { white-space: normal; }
+.cockpit .triage-report-table td.triage-eid { white-space: nowrap; width: 1%; }
+.cockpit .triage-list-table td:nth-child(2) { white-space: normal; }
+.triage-page-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+@media (max-width: 768px) { .triage-page-actions { flex-wrap: wrap; flex-shrink: 1; } }
 .triage-row-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
 .triage-drawer-body { display: flex; flex-direction: column; gap: 16px; }
 .triage-drawer-foot { position: sticky; bottom: -16px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; margin: 16px -16px -16px; padding: 14px 16px; border-top: 1px solid var(--border); background: var(--subtle-bg); }
