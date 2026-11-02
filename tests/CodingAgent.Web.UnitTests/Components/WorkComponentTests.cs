@@ -966,6 +966,72 @@ public class WorkComponentTests : BunitContext
             "both issues should still be counted as open");
     }
 
+    // ── In-flight sort order (issue #4203) ────────────────────────────────────
+
+    /// <summary>
+    /// Items returned from the API in the wrong order must be re-sorted so the
+    /// oldest DispatchedAt (longest-running) appears first.
+    /// </summary>
+    [Fact]
+    public async Task InFlight_SortedLongestRunningFirst()
+    {
+        var idA = Guid.NewGuid(); // oldest — should appear first
+        var idB = Guid.NewGuid(); // newest — should appear last
+        var idC = Guid.NewGuid(); // middle
+
+        // Return items deliberately out of order: newest first, then middle, then oldest.
+        _mockLists
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                MakeActiveItem(idB, "2") with { DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-1) },
+                MakeActiveItem(idC, "3") with { DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5) },
+                MakeActiveItem(idA, "1") with { DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-10) },
+            ]);
+
+        var cut = Render<Work>();
+        await cut.InvokeAsync(() => Task.CompletedTask);
+
+        // Cancel buttons are rendered in in-flight row order; their data-testids encode the item Id.
+        var cancelBtns = cut.FindAll("[data-testid^='cancel-btn-']");
+        cancelBtns.Should().HaveCount(3);
+        cancelBtns[0].GetAttribute("data-testid").Should().Be($"cancel-btn-{idA}",
+            "the oldest item (longest running) must appear first");
+        cancelBtns[1].GetAttribute("data-testid").Should().Be($"cancel-btn-{idC}",
+            "the middle item must appear second");
+        cancelBtns[2].GetAttribute("data-testid").Should().Be($"cancel-btn-{idB}",
+            "the newest item must appear last");
+    }
+
+    /// <summary>
+    /// An item with null DispatchedAt (just dispatched or pre-dates the field) must sort
+    /// to the end — after all items that have a DispatchedAt value — because SortActive
+    /// uses DateTimeOffset.MaxValue as the null sentinel.
+    /// </summary>
+    [Fact]
+    public async Task InFlight_NullDispatchedAt_SortsToEnd()
+    {
+        var idWithTime = Guid.NewGuid(); // has DispatchedAt — must appear first
+        var idNoTime   = Guid.NewGuid(); // null DispatchedAt — must appear last
+
+        // Return null-dispatched item first so any sort regression is immediately visible.
+        _mockLists
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                MakeActiveItem(idNoTime,   "99") with { DispatchedAt = null },
+                MakeActiveItem(idWithTime, "1")  with { DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5) },
+            ]);
+
+        var cut = Render<Work>();
+        await cut.InvokeAsync(() => Task.CompletedTask);
+
+        var cancelBtns = cut.FindAll("[data-testid^='cancel-btn-']");
+        cancelBtns.Should().HaveCount(2);
+        cancelBtns[0].GetAttribute("data-testid").Should().Be($"cancel-btn-{idWithTime}",
+            "the item with a DispatchedAt value must appear before the null-dispatched item");
+        cancelBtns[1].GetAttribute("data-testid").Should().Be($"cancel-btn-{idNoTime}",
+            "the null-DispatchedAt item must sort to the end via the DateTimeOffset.MaxValue sentinel");
+    }
+
     // ── Spec 049: actions follow the role on the item's own project ───────────
 
     private const string AccessProjectP = "6f1c2a9e-0000-0000-0000-00000000000a";
