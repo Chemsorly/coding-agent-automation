@@ -239,13 +239,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // is populated after the RegisterAgent call, so the server may not have confirmed the
         // ActiveJobId when ReportConsolidationCompleteAsync fires, causing the authorization
         // filter to reject the report and the test to time out waiting for Succeeded.
-        // TODO [WARNING]: This relies on the sequencing assumption that JobAssigned.TrySetResult
-        // is called only after the RegisterAgent InvokeAsync round-trip completes (setting
-        // ActiveJobId server-side). If that assumption is violated (e.g. TrySetResult fires before
-        // the server-side confirm), ReportConsolidationCompleteAsync will be rejected by the
-        // AgentAuthorizationFilter and the test will time out waiting for WorkItemStatus.Succeeded.
-        // The same pattern is replicated in Scenarios 2, 3b, and 4. If these tests become flaky
-        // with auth-filter rejections, audit StartAssignedWorkItemAsync to verify call ordering.
         var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(25));
         var jobId = assignment.JobId;
 
@@ -286,13 +279,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var rowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(rowText);
         Assert.Contains("Brain Consolidation", rowText);
-        // TODO [WARNING]: Assert.Contains("Succeeded") matches any occurrence of the word,
-        // including in an error message like "Not succeeded". A more precise assertion would
-        // check the CSS class of the status cell (e.g. QuerySelectorAsync for
-        // ".consolidation-status-succeeded" scoped to the row) rather than free-text substring
-        // matching. The card-level assertion below already uses the CSS-class approach; the
-        // row-level assertion is inconsistently weaker.
         Assert.Contains("Succeeded", rowText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await Page.Locator(".monitoring-table tbody tr").Nth(0).Locator(".consolidation-status-succeeded").CountAsync());
         Assert.Contains("Consolidated 3 files", rowText);
 
         // Assert: template card shows new last-run status (Scenario 1 requirement).
@@ -380,26 +368,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var rowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(rowText);
         Assert.Contains("Brain Consolidation", rowText);
-        // TODO [WARNING]: Assert.Contains("Failed") is a free-text substring match. The word "Failed"
-        // could appear in error messages or adjacent columns and still satisfy the assertion. A more
-        // precise check would query the CSS class of the status cell (e.g. QuerySelectorAsync for
-        // ".consolidation-status-failed" scoped to the row) rather than the full row text string,
-        // consistent with the card-level assertions elsewhere in this class.
         Assert.Contains("Failed", rowText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await Page.Locator(".monitoring-table tbody tr").Nth(0).Locator(".consolidation-status-failed").CountAsync());
         Assert.Contains("Brain provider unavailable", rowText);
 
         // Nothing should remain Pending or Running: verify via WorkItem status (not the
         // ConsolidationRuns store, which is no longer authoritative after issue #3028).
         var finalStatus = await Fixture.WorkItems.GetStatusAsync(workItemGuid);
-        // TODO [WARNING]: The guard below allows WorkItemStatus.Cancelled as a passing value for
-        // a failure-path test. If a bug causes the run to be cancelled instead of failed, this
-        // assertion still passes. The correct guard for a failure-path test is
-        // `finalStatus == WorkItemStatus.Failed` only. The broad guard was introduced to handle
-        // races, but the correct fix is to tighten the assertion and investigate if Cancelled
-        // ever actually appears here. (TestQualityReviewer WARNING:L459)
-        Assert.True(
-            finalStatus == WorkItemStatus.Succeeded || finalStatus == WorkItemStatus.Failed || finalStatus == WorkItemStatus.Cancelled,
-            $"WorkItem should be in a terminal state after completion, but was: {finalStatus}");
+        Assert.Equal(WorkItemStatus.Failed, finalStatus);
     }
 
     [Fact]
@@ -419,25 +395,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var page = new ConsolidationPage(Page, BaseUrl);
         await page.NavigateAsync();
 
-        // TODO [WARNING]: NavigateAsync resolves when the page skeleton is visible, but
-        // OnInitializedAsync may not have finished populating _templates yet. If the Refactoring
-        // Scan button for "S3a Template" is not yet in the DOM when ClickRefactoringScanAsync
-        // fires, Playwright will throw a TimeoutException. All other scenarios that follow
-        // NavigateAsync with WaitForRunHistoryCountAsync or WaitForFunctionAsync are guarded;
-        // this one is not. Fix: add a WaitForFunctionAsync that waits for the template card
-        // button to be visible before clicking, e.g.:
-        //   await Page.WaitForFunctionAsync(
-        //     "() => document.querySelector('.consolidation-card-title') !== null");
-
         // Act: open modal then cancel
         await page.ClickRefactoringScanAsync("S3a Template");
         Assert.True(await page.WaitForRefactoringModalAsync(), "Refactoring modal should be visible after clicking Refactoring Scan");
         await page.CancelRefactoringModalAsync();
-        // TODO [WARNING]: Add Assert.False(await page.IsRefactoringModalVisibleAsync()) here to
-        // confirm the modal was actually dismissed before asserting on work item state. If
-        // CancelRefactoringModalAsync silently fails (button selector mismatch after a Blazor
-        // re-render), the modal stays open and the work-item assertion still passes because no
-        // item was created either way — making the test pass without verifying the cancel path.
+        await WaitUntilAsync(async () => !await page.IsRefactoringModalVisibleAsync(), timeout: TimeSpan.FromSeconds(5));
 
         // CancelRefactoringModal is a synchronous Blazor click: it calls StateHasChanged and
         // sets _showRefactoringModal = false with no async dispatch path. There is no server-side
@@ -521,12 +483,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         var rowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(rowText);
-        // TODO [WARNING]: Assert.Contains("Succeeded") is a free-text substring match. The word
-        // "Succeeded" can appear in error messages or adjacent column text and still satisfy the
-        // assertion. A more precise check would query the CSS class of the status cell (e.g.
-        // QuerySelectorAsync for ".consolidation-status-succeeded" scoped to the row), consistent
-        // with the card-level assertions in Scenario 1.
         Assert.Contains("Succeeded", rowText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await Page.Locator(".monitoring-table tbody tr").Nth(0).Locator(".consolidation-status-succeeded").CountAsync());
 
         // Assert: the two created issues were processed by the hub.
         // The Consolidation page does not render CreatedIssueInfo identifiers in the history row
@@ -534,14 +492,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // of CreatedIssues is the badge increment: 2 issues → BadgeCount == 2.
         // Resolve from the API host: HubConsolidationOperations increments the badge service
         // registered in the API host's DI container, not the Web host's.
-        // TODO [WARNING]: The badge count is a second-order side-effect of created-issue handling.
-        // The acceptance criterion "The history row lists both issue numbers" is not directly
-        // verified here. If the hub increments the badge but does not surface issue identifiers
-        // in the row text, this assertion still passes. If the UI is updated to render created-issue
-        // links or counts in the history row, add an Assert.Contains("42", rowText) assertion here
-        // and replace the badge assertion below.
-        // TODO(WARNING): If the UI is later updated to render created-issue links or counts in the
-        // history row, replace the badge assertion below with a row-text assertion for "42"/"43".
         var badgeService = Fixture.ApiServices.GetRequiredService<ConsolidationBadgeService>();
         Assert.Equal(2, badgeService.BadgeCount);
     }
@@ -564,14 +514,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
         {
             Id = "profile-consol-s5",
             DisplayName = "S5 Profile",
-            // TODO [WARNING]: Empty MatchLabels means FakeJobController.FindIdleAgentFor matches
-            // ANY idle agent connected to the shared fixture — including agents from prior tests
-            // that were disposed but whose SignalR connections are still draining. If such a stale
-            // agent claims the S5 work item, it will not stay Pending, WaitForRunHistoryCountAsync(1)
-            // or ClickCancelRunAsync(0) will operate on the wrong state, and the test may fail or
-            // pass for the wrong reason. Mitigation: assign a unique label (e.g. "consol-s5=true")
-            // to both this profile and a dedicated agent that is intentionally not connected, to
-            // prevent dispatch to any stale agent. (DotNetSpecialist WARNING:L1249)
             JobTemplate = E2ERouting.Key([]),
             Enabled = true
         });
@@ -584,20 +526,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
         await page.WaitForStatusMessageAsync();
 
         // Reload so the Pending row appears in the run history table
-        // TODO [WARNING]: This step assumes the run history table synthesises a row with a
-        // Cancel button for a Pending WorkItem that has no in-memory PipelineRun (because no
-        // agent ever connects). The Cancel button is only rendered when run.WorkItemId.HasValue
-        // (Consolidation.razor:219-223). If RunHistoryClient.GetRunHistoryAsync omits WorkItemId
-        // from synthesised rows for Pending-without-PipelineRun items, WaitForRunHistoryCountAsync(1)
-        // or ClickCancelRunAsync(0) below will time out. This cross-component assumption is not
-        // covered by a lower-level test. (review-findings-correctness.md WARNING:L527)
         await page.NavigateAsync();
-        // TODO [WARNING]: WaitForRunHistoryCountAsync uses >= 1 but does not assert that the total
-        // row count is exactly 1 before acting on row 0. If a stale row from a prior test leaked
-        // into the fixture, WaitForRunHistoryCountAsync(1) resolves on the stale row and
-        // ClickCancelRunAsync(0) cancels the wrong item. Fix: assert
-        // `Assert.Equal(1, await page.GetRunHistoryRowCountAsync())` after the wait, before the
-        // click. (Correctness WARNING:L535)
         await page.WaitForRunHistoryCountAsync(1);
 
         // Act: click Cancel on the Pending row
@@ -630,27 +559,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // not just the transient toast. We reload the page to force LoadDataAsync to re-read the
         // PipelineRun store, then assert the row contains the terminal state.
         await page.NavigateAsync();
-        // TODO [WARNING]: WaitForRunHistoryCountAsync uses >= 1. If a row from a prior test leaked
-        // into the fixture (e.g. because PipelineRuns reset did not synchronise before NavigateAsync),
-        // the wait resolves on the stale row and the Assert.Contains("Cancelled", ...) assertion may
-        // run against the wrong row. This test does not assert the total row count, so a two-row
-        // page would still satisfy WaitForRunHistoryCountAsync(1) and GetRunHistoryRowTextAsync(0)
-        // would return the first (possibly stale) row. Fix: assert that the total history count is
-        // exactly 1 before reading row 0.
         await page.WaitForRunHistoryCountAsync(1);
         var cancelledRowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(cancelledRowText);
-        // TODO [WARNING]: Assert.Contains("Cancelled") depends on GetStatusDisplay(run) returning
-        // "Cancelled", which only happens when run.FinalStep == PipelineStep.Cancelled.
-        // Contrary to an older comment, a PipelineRun IS created for consolidation work items
-        // via PipelineRunFactory.CreateFromWorkItem (issue #3023) and added to IOrchestratorRunService
-        // at WorkItem creation time — so CancelRunAsync DOES find the in-memory run, calls
-        // MarkCompleted() + CurrentStep = Cancelled, and persists it to history. The "Cancelled"
-        // status therefore comes from the serialised PipelineRunSummary.FinalStep, not from a
-        // WorkItem→PipelineRunSummary projection. If the in-memory run is somehow absent (e.g. a
-        // server restart between trigger and cancel), the projection fallback path applies and the
-        // FinalStep value depends on how WorkItemStatus.Cancelled is mapped there. Verify that
-        // fallback mapping if this assertion ever fails with "Running" on a fresh cancellation.
         Assert.Contains("Cancelled", cancelledRowText, StringComparison.OrdinalIgnoreCase);
 
         // Assert: connecting an agent now does NOT dispatch the cancelled item.
@@ -685,14 +596,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
         {
             Id = "profile-consol-s6",
             DisplayName = "S6 Profile",
-            // TODO [WARNING]: Empty MatchLabels means FakeJobController.FindIdleAgentFor matches
-            // ANY idle agent connected to the shared fixture — including agents from prior tests
-            // that were disposed but whose SignalR connections are still draining. If such an
-            // agent receives and claims the work item before this test's WaitUntilAsync fires,
-            // GetPendingAsync returns empty and Assert.Single fails. Mitigation: either assign
-            // a specific label (e.g. "consol-s6=true") to both the profile and the agent
-            // registered below, or use Fixture.JobController.DispatchOnceAsync() deterministically
-            // rather than relying on the polling loop.
             JobTemplate = E2ERouting.Key([]),
             Enabled = true
         });
@@ -725,15 +628,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // whether FakeJobController claimed the item between WaitUntilAsync and these calls.
         // The dedup invariant is "exactly one item in any non-terminal state", not "one Pending item",
         // so combining the two sets is the correct check.
-        // TODO [WARNING]: There is a real race window between WaitUntilAsync returning true and the
-        // two count queries below. The background FakeJobController.PollAsync (250ms) can transition
-        // the item Pending→Dispatched between lines. The assertion sums both sets so the transition
-        // itself does not break the count. However, MatchLabels=[] means FindIdleAgentFor("") returns
-        // any idle[0] — a stale agent still draining from a prior test could claim the item. The
-        // dedup invariant (exactly one DB INSERT survived the unique index) is only exercised at the
-        // DB layer. Consider using a scoped label (e.g. "consol-s6=true") on both the S6 profile and
-        // a dedicated agent to make this test fully deterministic.
-        // (review-findings-correctness.md WARNING:L558, L566-579)
         var pending = await Fixture.WorkItems.GetPendingAsync(10);
         var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600);
         Assert.Equal(1, pending.Count + active.Count);

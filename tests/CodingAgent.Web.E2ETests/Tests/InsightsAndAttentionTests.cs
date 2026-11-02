@@ -229,13 +229,6 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         await Page.WaitForSelectorAsync("[data-testid='overview-attn-needs-refinement']",
             new() { Timeout = 10_000 });
 
-        // TODO [WARNING]: WaitForSelectorAsync confirms the element is present but does not guarantee
-        // Blazor Server's async data load (GetRunHistoryAsync + AttentionAggregator.Aggregate) has finished.
-        // The tile may render with an intermediate value before data arrives. A more reliable wait would
-        // poll until the element's text equals the expected value, e.g.:
-        //   await Page.WaitForFunctionAsync(
-        //       $"() => document.querySelector('[data-testid=\"overview-attn-needs-refinement\"]')?.textContent?.trim() === '{expectedNeedsRefinement}'",
-        //       null, new() {{ Timeout = 10_000 }});
         var overviewNeedsRefinement = await Page.TextContentAsync("[data-testid='overview-attn-needs-refinement']");
         var overviewFailed = await Page.TextContentAsync("[data-testid='overview-attn-failed']");
         var overviewPlans = await Page.TextContentAsync("[data-testid='overview-attn-plans']");
@@ -277,18 +270,10 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         await attention.NavigateAsync();
 
         // The blocked-issues section loads asynchronously after first render
-        // TODO [WARNING]: WaitForBlockedIssuesLoadedAsync polls until the badge text is no longer "checking…".
-        // If BlockedIssuesService throws an unhandled exception and _blockedLoading stays true indefinitely,
-        // this wait will time out after 20s with no meaningful failure message. Check that the Attention page's
-        // exception handler resets _blockedLoading in its finally block, or add a diagnostic assertion here
-        // (e.g. assert no error state is visible before waiting for the badge).
         await attention.WaitForBlockedIssuesLoadedAsync(timeoutMs: 20_000);
 
         var blockedCount = await attention.GetBlockedCountAsync();
-        // TODO [WARNING]: This asserts >= 1 rather than the exact expected count of 1. With only issue 14
-        // seeded and state reset before each test, the correct assertion is == 1. The weaker inequality
-        // would pass silently if a bug caused every open issue to be reported as blocked.
-        Assert.True(blockedCount >= 1, $"Expected at least 1 blocked issue, got {blockedCount}");
+        Assert.Equal(1, blockedCount);
 
         Assert.True(await attention.IsBlockedRowVisibleAsync("14"),
             "Issue 14 should appear under Blocked issues");
@@ -345,11 +330,6 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
 
         // ── 24h window (default): all runs started in last 24h ────────────
         // run1, run2, run3, run4 (run5 is 2 days ago)
-        // TODO [WARNING]: The 24h window boundary is WindowStart(24, now) = start_of_current_hour - 24h, not
-        // UtcNow - 24h. run4 seeded at now.AddHours(-23) is always inside this window because
-        // (now - 23h) >= (now.Hour:00 - 24h) holds for all minute/second offsets within an hour. This
-        // inequality is relied upon but not explicitly asserted; if the seed offset is changed closer to -24h
-        // (e.g. -23.9h) the test could become flaky near hour boundaries.
         var expected24hRuns = new[] { run1, run2, run3, run4 };
         int expected24hTotal = expected24hRuns.Length;
         int? expected24hSuccessRate = RunOutcomeDisplay.SuccessRate(expected24hRuns);
@@ -361,15 +341,12 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         var totalIn24h = await insights.GetTotalAsync();
         Assert.Equal(expected24hTotal, totalIn24h);
 
+        Assert.NotNull(expected24hSuccessRate);
         if (expected24hSuccessRate.HasValue)
         {
             var successRate = await insights.GetSuccessRateAsync();
             Assert.Equal(expected24hSuccessRate.Value, successRate);
         }
-        // TODO [WARNING]: The success-rate assertion above is guarded by HasValue. With the current seed the
-        // rate is always non-null, so the assertion is always reached. If the seed is changed to all-restarted
-        // runs, SuccessRate returns null and the assertion is silently skipped. Add
-        // Assert.NotNull(expected24hSuccessRate) before the guard to make the omission visible.
 
         var succeeded24h = await insights.GetSucceededCountAsync();
         var failed24h = await insights.GetFailedCountAsync();
@@ -379,12 +356,6 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         Assert.Equal(expected24hCancelled, cancelled24h);
 
         // Outcome sum must equal total
-        // TODO [WARNING]: The ?? 0 substitutions below mask a null return from GetSucceededCountAsync,
-        // GetFailedCountAsync, or GetCancelledCountAsync. If any outcome element is absent from the DOM
-        // due to a page rendering bug, the null is silently treated as 0 here. The individual assertions
-        // above (Assert.Equal(expected, actual) on nullable ints) will catch the mismatch, but with an
-        // uninformative "Expected N but got null" message. Consider adding explicit null-checks with
-        // descriptive messages on those individual assertions to improve failure diagnosability.
         Assert.Equal(expected24hTotal,
             (succeeded24h ?? 0) + (failed24h ?? 0) + (cancelled24h ?? 0) + await insights.GetRestartedCountAsync());
 
@@ -395,10 +366,8 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         int expected7dTotal = expected7dRuns.Length;
         int? expected7dSuccessRate = RunOutcomeDisplay.SuccessRate(expected7dRuns);
         int expected7dSucceeded = expected7dRuns.Count(r => RunOutcomeDisplay.Classify(r.FinalStep) == RunOutcome.Succeeded);
-        // TODO [WARNING]: The 7d assertions below only check total and succeeded counts. The outcome mix also
-        // includes run3 (Failed) and run4 (Cancelled) in addition to the 24h set. A regression that
-        // misclassifies a 7d run (e.g. a failed run counted as succeeded) would pass these assertions.
-        // Add assertions for expected7dFailed and expected7dCancelled to provide full coverage.
+        int expected7dFailed = expected7dRuns.Count(r => RunOutcomeDisplay.Classify(r.FinalStep) == RunOutcome.Failed);
+        int expected7dCancelled = expected7dRuns.Count(r => RunOutcomeDisplay.Classify(r.FinalStep) == RunOutcome.Cancelled);
 
         var total7d = await insights.GetTotalAsync();
         Assert.Equal(expected7dTotal, total7d);
@@ -411,15 +380,13 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
 
         var succeeded7d = await insights.GetSucceededCountAsync();
         Assert.Equal(expected7dSucceeded, succeeded7d);
+        Assert.Equal(expected7dFailed, await insights.GetFailedCountAsync());
+        Assert.Equal(expected7dCancelled, await insights.GetCancelledCountAsync());
 
         // ── All window ────────────────────────────────────────────────────
         await insights.SelectWindowAsync("0");
         var totalAll = await insights.GetTotalAsync();
         // All 5 runs should appear in the "All" window
-        // TODO [WARNING]: This assertion is safe within [Collection(E2ECollection.Name)] because tests are
-        // serialized, but the safety is implicit. If collection serialization is ever removed or another test
-        // adds runs without resetting, this hard-coded "5" will fail with no diagnostic about which extra runs
-        // were present. Consider adding an assertion message or computing the expected total from the seed.
         Assert.Equal(5, totalAll);
     }
 
@@ -458,12 +425,6 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
 
         // Now reset and seed 2 runs WITH gate data (all passed → no failures)
         // Reseed: clear history and add fresh runs with gate data
-        // TODO [WARNING]: Calling HistoryService.Reset() mid-test bypasses the standard per-test lifecycle
-        // (ResetAllAsync). If the Blazor page has a background timer refresh that fires between Reset() and
-        // NavigateAsync(), it will find zero runs and render "No completed runs yet.", causing the subsequent
-        // gate-message assertions to fail with a misleading result. Consider splitting this into two
-        // independent tests to eliminate the race, or at minimum ensure the page is navigated away before
-        // resetting state.
         Fixture.HistoryService.Reset();
         await Fixture.HistoryService.AddRunSummaryAsync(MakeRun(NewRunId(), "g3",
             PipelineRunType.Implementation, PipelineStep.Completed, now.AddHours(-1),
