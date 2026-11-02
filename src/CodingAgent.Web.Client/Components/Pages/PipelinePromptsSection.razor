@@ -6,12 +6,12 @@
     <div class="provider-form">
         <div class="form-group" data-setting="@nameof(PipelineConfiguration.AnalysisPrompt)">
             <label>Analysis Prompt</label>
-            <textarea @bind="_analysisPrompt" rows="6"></textarea>
+            <textarea @bind="_analysisPrompt" rows="12"></textarea>
             <button type="button" class="btn-revert" disabled="@(_analysisPrompt == PipelineConfigurationDefaults.DefaultAnalysisPrompt)" @onclick="() => _analysisPrompt = PipelineConfigurationDefaults.DefaultAnalysisPrompt">Reset to default</button>
         </div>
         <div class="form-group" data-setting="@nameof(PipelineConfiguration.ImplementationPrompt)">
             <label>Implementation Prompt</label>
-            <textarea @bind="_implementationPrompt" rows="6"></textarea>
+            <textarea @bind="_implementationPrompt" rows="12"></textarea>
             <button type="button" class="btn-revert" disabled="@(_implementationPrompt == PipelineConfigurationDefaults.DefaultImplementationPrompt)" @onclick="() => _implementationPrompt = PipelineConfigurationDefaults.DefaultImplementationPrompt">Reset to default</button>
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
@@ -23,7 +23,7 @@
         <div class="config-sub-fields" style="margin-top: 1rem;">
             <h3>Analysis Review (Adversarial)</h3>
             <div class="form-hint">
-                <Icon Name="info" /> When enabled, a second agent reviews the analysis in an isolated session and feeds findings back for refinement before implementation begins.
+                <Icon Name="info" Size="14" /> When enabled, a second agent reviews the analysis in an isolated session and feeds findings back for refinement before implementation begins.
             </div>
             <div class="form-group form-checkbox" data-setting="@nameof(PipelineConfiguration.AnalysisReviewEnabled)">
                 <label>
@@ -33,12 +33,12 @@
             </div>
             <div class="form-group" data-setting="@nameof(PipelineConfiguration.AnalysisReviewPrompt)">
                 <label>Analysis Review Prompt</label>
-                <textarea @bind="_analysisReviewPrompt" rows="6" disabled="@(!_analysisReviewEnabled)"></textarea>
+                <textarea @bind="_analysisReviewPrompt" rows="12" disabled="@(!_analysisReviewEnabled)"></textarea>
                 <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisReviewPrompt == PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt)" @onclick="() => _analysisReviewPrompt = PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt">Reset to default</button>
             </div>
             <div class="form-group" data-setting="@nameof(PipelineConfiguration.AnalysisRefinementPrompt)">
                 <label>Analysis Refinement Prompt</label>
-                <textarea @bind="_analysisRefinementPrompt" rows="6" disabled="@(!_analysisReviewEnabled)"></textarea>
+                <textarea @bind="_analysisRefinementPrompt" rows="12" disabled="@(!_analysisReviewEnabled)"></textarea>
                 <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisRefinementPrompt == PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt)" @onclick="() => _analysisRefinementPrompt = PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt">Reset to default</button>
             </div>
         </div>

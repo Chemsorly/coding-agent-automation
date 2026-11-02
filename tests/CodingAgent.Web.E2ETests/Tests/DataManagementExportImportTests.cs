@@ -30,9 +30,6 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
 
     private readonly E2EFixture _fixture;
     private IBrowserContext? _context;
-    // TODO [WARNING]: Declare as IPage? instead of IPage null! to make nullability intent explicit.
-    // If NewPageAsync() throws before _page is assigned, DisposeAsync's `_page is not null` guard
-    // still works at runtime but only by coincidence; the null! suppression is misleading.
     private IPage _page = null!;
 
     /// <summary>Temporary directory for downloaded files; cleaned up in DisposeAsync.</summary>
@@ -53,10 +50,6 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
         Directory.CreateDirectory(_tempDir);
 
         // Guard: verify DI replacement worked
-        // TODO [WARNING]: GetRequiredService<IProviderFactory>() resolves from the root DI
-        // container. If IProviderFactory is registered as Scoped, this creates a captive dependency
-        // that lives for the entire test run (scoped-in-singleton anti-pattern). To validate
-        // per-request DI wiring, perform this check inside a created scope instead.
         var factory = _fixture.ApiServices.GetRequiredService<IProviderFactory>();
         if (factory is not FakeProviderFactory)
             throw new InvalidOperationException(
@@ -127,10 +120,6 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
         var downloadPath = Path.Combine(_tempDir, "export-scenario1.json");
 
         // Act: click Download Config and capture the download
-        // TODO [WARNING]: This duplicates the download-click logic already in
-        // DataManagementSectionHelper.ClickDownloadAndSaveAsync. The same duplication exists in
-        // ImportRoundTrip_RestoresOriginalState_AfterMutation and Import_RunHistoryUntouched_AfterImport.
-        // Consolidate to the helper so selector/logic changes only need one update.
         var download = await _page.RunAndWaitForDownloadAsync(
             async () => await _page.Locator("button:has-text('Download Config')").ClickAsync(),
             new() { Timeout = 15_000 });
@@ -179,10 +168,6 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
                 "Bundle must contain jobTemplates");
 
             // Assert: seeded providers are in the export (check providerConfigs array length)
-            // TODO [WARNING]: This only asserts that the array is non-empty, not that the seeded
-            // provider's identity (display name, kind, ID) is present. The issue requires "containing
-            // the seeded template and provider" — a targeted assertion against a known provider name
-            // is needed to prove the seeded data was actually exported rather than any arbitrary entry.
             var providerConfigsKey = root.TryGetProperty("providerConfigs", out var providerConfigsEl)
                 ? providerConfigsEl
                 : root.GetProperty("ProviderConfigs");
@@ -272,31 +257,17 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
             Assert.DoesNotContain(qgAfterImport, q => q.DisplayName == "Extra QG That Should Disappear");
 
             // Assert: original seeded quality gate is restored
-            // TODO [WARNING]: The name "E2E Quality Gate" is hard-coded and will produce a confusing
-            // failure if the seeded fixture changes. Capture the original quality gate list before
-            // mutation and assert against those entries instead of a magic string literal.
             Assert.Contains(qgAfterImport, q => q.DisplayName == "E2E Quality Gate");
 
             // Assert: setting is restored (MaxRetries should be back to 3)
-            // TODO [WARNING]: Magic literal 3 hard-codes the seeded default. If InMemoryConfigurationStore's
-            // default changes, this assertion fails with a misleading number mismatch. Assert against
-            // originalConfig.MaxRetries (captured before the mutation at step 2) instead.
             var configAfterImport = await _fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             Assert.Equal(3, configAfterImport.MaxRetries);
 
-            // TODO [WARNING]: Projects and job templates are not asserted after import. The issue
-            // requires the round-trip to restore "the seeded template and provider". A regression in
-            // project or template restore in the fake's ImportConfigAsync would not be caught here.
-            // Assert that the original project IDs and template IDs are present after import.
 
             // Assert: page reflects imported state without reload — navigate to Settings to verify
             // the provider list is still there (UI auto-refresh on import)
             var settingsPage = new SettingsPage(_page, BaseUrl);
             await settingsPage.SelectTreeNodeAsync("Quality Gate Configs");
-            // TODO [WARNING]: page.ContentAsync() returns the full HTML (navigation links, scripts,
-            // tooltips, hidden elements). A match against "E2E Quality Gate" anywhere in the DOM
-            // could produce a false positive. Use a targeted locator (specific list/table row) for
-            // a more reliable UI refresh assertion.
             var markup = await _page.ContentAsync();
             Assert.Contains("E2E Quality Gate", markup);
             Assert.DoesNotContain("Extra QG That Should Disappear", markup);
@@ -336,10 +307,6 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
                 .Select(p => p.Id).OrderBy(id => id).ToList();
             var originalProjectIds = (await _fixture.ConfigStore.LoadProjectsAsync(CancellationToken.None))
                 .Select(p => p.Id).OrderBy(id => id).ToList();
-            // TODO [WARNING]: reviewerConfigs are not snapshotted or asserted here. ImportConfigAsync
-            // clears reviewer configs before projects/templates. A partial-clear bug that corrupts
-            // reviewers would be invisible to this test. Add a snapshot of reviewer IDs and a
-            // corresponding Assert.Equal after the import attempt.
 
             // Act: select malformed file
             await section.SelectImportFileAsync(badFilePath);
@@ -406,10 +373,6 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
                 .Select(p => p.Id).OrderBy(id => id).ToList();
             var originalProjectIds = (await _fixture.ConfigStore.LoadProjectsAsync(CancellationToken.None))
                 .Select(p => p.Id).OrderBy(id => id).ToList();
-            // TODO [WARNING]: reviewerConfigs are not snapshotted or asserted here. ImportConfigAsync
-            // clears reviewer configs before projects/templates. A partial-clear bug that corrupts
-            // reviewers would be invisible to this test. Add a snapshot of reviewer IDs and a
-            // corresponding Assert.Equal after the import attempt.
 
             await section.SelectImportFileAsync(emptyFilePath);
             Assert.True(await section.IsImportButtonVisibleAsync(),

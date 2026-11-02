@@ -37,10 +37,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             Labels = new[] { "agent:epic" }
         });
 
-        // TODO [WARNING]: Template Id "template-epic" is reused across Scenarios 1–3. Because
-        // ResetAllAsync clears config between tests this is safe today, but if two tests in this
-        // class ever run without a reset the shared ID could cause interference. Consider using
-        // per-scenario IDs (e.g. "template-epic-s1") for explicit isolation.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-epic",
@@ -51,8 +47,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             DecompositionEnabled = true
         }, CancellationToken.None);
 
-        // TODO [WARNING]: AgentProfile Id "profile-e2e" is saved identically in Scenarios 1, 2, 4, 5.
-        // Consider extracting a shared SeedDefaultAgentProfileAsync helper to keep these in sync.
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
             Id = "profile-e2e",
@@ -74,10 +68,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         await Page.WaitForSelectorAsync("[data-testid='epic-row-501']", new() { Timeout = 10_000 });
 
         // Assert: Phase 1 badge is shown ("Analysis" badge for agent:epic)
-        // TODO [WARNING]: If the Phase 2 badge were erroneously rendered for a Phase 1 issue,
-        // querying ".badge-epic" would find nothing and TextContentAsync would throw a
-        // TimeoutException, giving a misleading failure message instead of a clear assertion
-        // failure. The RunType check on `assignment` below is the definitive correctness guard.
         var badgeText = await Page.TextContentAsync("[data-testid='epic-row-501'] .badge-epic");
         Assert.Contains("Analysis", badgeText, StringComparison.OrdinalIgnoreCase);
 
@@ -112,9 +102,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         Assert.Equal(PipelineRunType.DecompositionAnalysis, assignment.RunType);
 
         // Assert: label goes to agent:in-progress
-        // TODO [WARNING]: EpicDecompositionTests also asserts that the prior "agent:epic" label
-        // was *removed*. Only asserting the addition of "agent:in-progress" would pass even if
-        // label-removal logic were broken. Consider adding an assertion for label removal.
         await WaitUntilAsync(() =>
             Fixture.IssueProvider.LabelChanges.Any(c =>
                 c.Identifier == "501" && c.Added && c.Label == "agent:in-progress"));
@@ -181,11 +168,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         await Page.WaitForSelectorAsync("[data-testid='dispatch-epic-btn']", new() { Timeout = 5_000 });
 
         // Verify Phase 2 description is visible in the selected-item detail area.
-        // TODO [WARNING]: ".agent-detail-section:last-child" is a fragile selector — it matches
-        // the last child of *its parent*, not the last matching element in the document. If Blazor
-        // appends additional elements after the selected-item section, this pseudo-class will not
-        // match the expected div. A more reliable approach would scope the query to the epic
-        // drawer or use a data-testid attribute on the selected-item section.
         var selectedSection = await Page.TextContentAsync(".agent-detail-section:last-child");
         Assert.Contains("Phase 2", selectedSection, StringComparison.OrdinalIgnoreCase);
 
@@ -305,12 +287,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         await using var fakeAgent = new FakeAgentClient("decomp-gate-agent", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // TODO [WARNING]: ReceivedJobIds is populated by OnAssignJob (the AssignJob SignalR push
-        // path). If the scheduler dispatches through the FakeJobController work-item pull path
-        // (Spec 043 / K8s mode), OnAssignJob is never called and ReceivedJobIds remains empty
-        // regardless of how many jobs were dispatched. Assert.Single would pass vacuously in that
-        // topology. The existing EpicDecompositionTests uses the same pattern; if it passes, the
-        // SignalR push path is live — but this is worth re-checking if the dispatch path changes.
 
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
@@ -400,9 +376,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             Assert.True(secondAssignedId == "701" || secondAssignedId == "702",
                 $"Expected the other epic, got {secondAssignedId}");
 
-            // TODO [WARNING]: The second assignment's RunType is asserted above (DecompositionAnalysis).
-            // If the gate were broken in a way that dispatched the second epic as a different RunType,
-            // this check would catch it. (Added as part of WARNING fix for missing second RunType check.)
         }
         finally
         {
@@ -478,9 +451,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             // implAgent gets 802) with a collect-then-assert pattern that is invariant under
             // non-deterministic agent selection. The scheduler may assign either job to either
             // agent; the invariant is only that both jobs are dispatched and have the correct types.
-            // TODO [WARNING]: The two WaitAsync calls are awaited sequentially. If agentB's job
-            // arrives before agentA's, agentA.JobAssigned.Task.WaitAsync(30s) blocks needlessly.
-            // Using Task.WhenAll would make both waits concurrent and halve the worst-case wait.
             var assignmentA = await agentA.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             var assignmentB = await agentB.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
