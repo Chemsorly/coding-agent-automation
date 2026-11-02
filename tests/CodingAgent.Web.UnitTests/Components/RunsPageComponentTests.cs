@@ -1024,4 +1024,25 @@ public class RunsPageComponentTests : BunitContext
         badges.Select(b => b.Text).Should().BeEquivalentTo(["Restarted", "Merged", "Closed"]);
         badges.Should().NotContain(b => b.Class!.Contains("step-running"));
     }
+
+    // ── Issue #4204 — issue number spacing fix ────────────────────────────────
+
+    // 36. Issue number span carries margin-right: 6px so it does not run into the title (issue #4204)
+    [Fact]
+    public void RunsTable_IssueNumberSpan_HasMarginRight()
+    {
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(MakeSummary("r1", issueIdentifier: "42", issueTitle: "My issue")));
+
+        var cut = Render<Runs>();
+
+        // The issue number span is inside the Run column <td>. Without margin-right: 6px, Blazor
+        // drops the whitespace between adjacent spans and renders "#42My issue" as one block.
+        var issueNumberSpan = cut.Find(".monitoring-table tbody tr td span[style*='margin-right: 6px']");
+        issueNumberSpan.Should().NotBeNull(
+            "the issue number span must carry 'margin-right: 6px' so it does not run into the adjacent title (issue #4204)");
+        issueNumberSpan.TextContent.Should().Contain("#42",
+            "the span found by the margin-right style must be the issue number span");
+    }
 }
