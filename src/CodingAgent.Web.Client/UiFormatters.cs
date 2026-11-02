@@ -18,7 +18,7 @@ public static class UiFormatters
     public static string FormatTimeAgo(DateTimeOffset timestamp)
     {
         var ago = DateTimeOffset.UtcNow - timestamp;
-        if (ago.TotalSeconds < 60) return $"{(int)ago.TotalSeconds}s ago";
+        if (ago.TotalSeconds < 60) return $"{Math.Max(0, (int)ago.TotalSeconds)}s ago";
         if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
         if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
         return $"{(int)ago.TotalDays}d ago";

@@ -131,21 +131,10 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
-            // TODO [WARNING]: Assert.Single(ClaimedWorkItemIds) reads the count from the
-            // FakeJobController poll loop (250ms interval). Its soundness depends on
-            // ClaimedWorkItemIds.Add occurring BEFORE the StartAssignedWorkItemAsync bootstrap
-            // that fires the JobAssigned TCS. The JobAssigned await above guarantees the Add
-            // has already happened (the ordering holds today), but if Add is ever moved after
-            // the bootstrap call in DispatchOnceAsync, this assertion could transiently see 0.
             Assert.Single(Fixture.JobController.ClaimedWorkItemIds);
-            // TODO [WARNING]: The assertion above confirms only that the one dispatched item is
-            // issue "1". It does not verify that issues "2" and "3" were never dispatched in a
-            // subsequent cycle. A second loop cycle (possible if StopLoop() fires after a new
-            // cycle begins) could still dispatch "2" or "3" without the test noticing, because
-            // the resolved JobAssigned TCS absorbs only the first dispatch and the count assertion
-            // is always 1 regardless of whether the right issue was skipped. To fully discriminate
-            // the skip-label rule, add a DB assertion after the loop stops confirming no WorkItems
-            // exist for identifiers "2" and "3" (analogous to DisabledProject_NothingDispatched).
+            await using var db = Fixture.DbContextFactory.CreateDbContext();
+            Assert.False(await db.WorkItems.AsNoTracking().AnyAsync(w => w.IssueIdentifier == "2" || w.IssueIdentifier == "3"),
+                "Issues 2 and 3 carry skip labels and must produce no WorkItem");
         }
         finally
         {
@@ -208,19 +197,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
             // FIFO: oldest CreatedAt must be dispatched first (ID "10"), NOT insertion order (ID "30")
             Assert.Equal("10", assignment.IssueIdentifier);
-            // TODO [WARNING]: This test asserts only that the first dispatch is issue "10". It does
-            // not verify that the second dispatch is issue "20" (FIFO-second) rather than "30"
-            // (insertion-first). With budget=1 and a 1s poll interval, a second cycle can race in
-            // before StopLoop() fires; a second dispatch to the same fakeAgent is silently dropped
-            // (TCS already resolved). To fully verify FIFO ordering, add a budget=2 variant with a
-            // longer poll interval (e.g. 60s, matching Scenario 3) and assert that the second
-            // dispatch is "20" — this eliminates both the coincidence risk and the silent-drop problem.
-            // TODO [WARNING]: This test does not cover the null-CreatedAt case. IssueDetail.CreatedAt
-            // is DateTime? (nullable). SortByCreatedAtFifo (CreatedAtExtensions.cs) treats nulls as
-            // "sort last" (newest), so an issue with CreatedAt = null would never be dispatched first.
-            // A variant seeding one null-CreatedAt issue alongside dated issues would confirm that
-            // null-timestamp handling is intentional and stable. Consider adding a separate test
-            // (e.g. Fifo_NullCreatedAt_SortsLast) to lock in this behaviour.
         }
         finally
         {
@@ -296,12 +272,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // budget to 1, causing the floor pass to dispatch an implementation issue instead of the
         // decomposition epic, making Assert.Contains(Decomposition) fail.
         await SetPollIntervalAsync(maxRunsPerCycle: 2, pollInterval: TimeSpan.FromSeconds(60));
-        // TODO [WARNING]: Config-write ordering is intentional but fragile. cfg2 is loaded AFTER
-        // SetPollIntervalAsync persists budget=2 and interval=60s, so both values are preserved in
-        // the MinIssueSlots=0 save. However, PipelineProject.MinIssueSlots (PipelineProject.cs:106)
-        // is a per-project override; if the Default project is ever seeded with MinIssueSlots > 0 in
-        // the fixture setup, it shadows the global MinIssueSlots=0 set here and the floor would
-        // silently reactivate, flipping Assert.DoesNotContain(Implementation) to a failure.
         var cfg2 = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(cfg2 with { MinIssueSlots = 0 }, CancellationToken.None);
 
@@ -343,13 +313,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var claimedIds = Fixture.JobController.ClaimedWorkItemIds.ToList();
 
             // With budget=2 and a 60s poll interval, exactly 2 work items are claimed in cycle 1.
-            // TODO [WARNING]: StopLoop() is non-blocking — it finishes the current cycle first.
-            // There is a window between the two JobAssigned TCS completions and IsLoopActive==false
-            // where a third in-flight orchestration pipeline could push a third work item into
-            // ClaimedWorkItemIds. The 60s poll interval prevents cycle 2 from starting, but if
-            // orchestration within cycle 1 queues a third work item after both TCS fire (before
-            // the cycle ends), Assert.Equal(2, claimedIds.Count) would fail spuriously. This
-            // relies on the scheduler cycle boundary, not the job controller claim boundary.
             Assert.Equal(2, claimedIds.Count);
 
             // Check task types in the database: should have Review + Decomposition, NOT Implementation
@@ -361,14 +324,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Assert.Contains(items, i => i.TaskType == WorkItemTaskType.Review);
             Assert.Contains(items, i => i.TaskType == WorkItemTaskType.Decomposition);
             Assert.DoesNotContain(items, i => i.TaskType == WorkItemTaskType.Implementation);
-            // TODO [WARNING]: Assert.DoesNotContain above queries only claimed work items. If the
-            // scheduler created an Implementation WorkItem but FakeJobController did not claim it
-            // before the snapshot (e.g. it was created after the ClaimedWorkItemIds.Count >= 2 wait
-            // but before StopLoop completed the cycle), the assertion passes vacuously. A stronger
-            // check would query ALL WorkItems created during this test (regardless of claim status)
-            // and assert none has TaskType == Implementation. This would catch cases where the
-            // scheduler correctly excluded the implementation from dispatch but still created a
-            // database row for it (e.g. a dedup race or an off-by-one in the budget check).
+
+            await Fixture.StopLoopAsync();
+            await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(15));
+
+            await using var allItemsDb = Fixture.DbContextFactory.CreateDbContext();
+            Assert.False(await allItemsDb.WorkItems.AsNoTracking().AnyAsync(w => w.TaskType == WorkItemTaskType.Implementation),
+                "Budget 2 is used up by the PR and the epic, so the issue must wait without a WorkItem");
         }
         finally
         {
@@ -385,12 +347,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     [Fact]
     public async Task TypePriority_Budget3_AllThreeTypesDispatched()
     {
-        // TODO [WARNING]: This test duplicates the entire setup from TypePriority_Budget2_PrAndEpicDispatchedIssueWaits
-        // with a different budget and different PR/epic/issue identifiers (43, 201, 301 vs 42, 200, 300).
-        // The shared setup logic is copy-pasted verbatim. If setup requirements change (e.g. the
-        // "do not include agent:next on the PR issue-side seed" constraint), both copies must be
-        // updated in sync. Consider parameterizing these two tests or extracting a shared setup helper.
-
         // Arrange: same as Budget2 test but with budget=3
         Fixture.RepositoryProvider.PullRequests.Add(new PullRequestSummary
         {
@@ -479,13 +435,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var claimedIds = Fixture.JobController.ClaimedWorkItemIds.ToList();
 
             // With budget=3, all three work items should be claimed
-            // TODO [WARNING]: Same cycle-boundary race as TypePriority_Budget2: StopLoop() is
-            // non-blocking and the current cycle finishes before IsLoopActive transitions to false.
-            // Within cycle 1, a fourth in-flight orchestration pipeline (e.g. a re-dispatch of the
-            // PR-as-issue "43" that lacks agent:in-progress suppression) could push a fourth entry
-            // into ClaimedWorkItemIds after all three JobAssigned TCS fire but before IsLoopActive
-            // reaches false. The 60s poll interval prevents cycle 2 from starting, but does not
-            // prevent cycle 1's orchestration from completing extra work within the same cycle.
             Assert.Equal(3, claimedIds.Count);
 
             await using var db = Fixture.DbContextFactory.CreateDbContext();
@@ -525,18 +474,18 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             CreatedAt = DateTime.UtcNow
         });
 
-        // ReviewEnabled=false; no implementation/decomposition work seeded
-        // TODO [WARNING]: Both ReviewEnabled=false AND ImplementationEnabled=false are set here.
-        // This makes Assert.Empty non-discriminating: the assertion would pass even if ReviewEnabled=false
-        // had no effect, because ImplementationEnabled=false alone is sufficient to produce zero dispatches.
-        // A stronger test would seed an implementation issue alongside the PR, keep ImplementationEnabled=true,
-        // and assert that only the PR was skipped while the implementation issue was dispatched — proving
-        // ReviewEnabled=false selectively suppresses review without killing all dispatch. Contrast with
-        // FeatureFlags_DecompositionDisabled_EpicNotDispatched, which uses implementationEnabled: true as
-        // a confounding-variable guard.
-        await SaveDefaultTemplateAsync(reviewEnabled: false, implementationEnabled: false);
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "501",
+            Title = "Issue that should be dispatched",
+            Description = "Implementation stays on",
+            Labels = AgentNextLabel
+        });
+
+        // ReviewEnabled=false, implementation on: only the issue may be dispatched
+        await SaveDefaultTemplateAsync(reviewEnabled: false, implementationEnabled: true);
         await SaveDefaultAgentProfileAsync();
-        await SetPollIntervalAsync(maxRunsPerCycle: 1);
+        await SetPollIntervalAsync(maxRunsPerCycle: 2, pollInterval: TimeSpan.FromSeconds(60));
 
         await using var fakeAgent = new FakeAgentClient("loop-flag-review-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -547,17 +496,17 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
-            // Wait for at least one full poll cycle to complete before asserting emptiness.
-            // CycleCount is incremented after each successful ExecuteCycleAsync call in
-            // RunMultiTemplateLoopAsync, so this wait is non-vacuous: it confirms the loop
-            // actually exercised the ReviewEnabled=false flag path. Without this guard
-            // (previously Task.Delay(2s)), the assertion could pass vacuously if the loop
-            // never completed a cycle under CI load.
+            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal("501", assignment.IssueIdentifier);
+
             await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
             await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
-            Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
+            await using var db = Fixture.DbContextFactory.CreateDbContext();
+            Assert.False(await db.WorkItems.AsNoTracking().AnyAsync(w => w.TaskType == WorkItemTaskType.Review),
+                "ReviewEnabled=false: no review work item must be created");
+            Assert.Equal(1, await db.WorkItems.AsNoTracking().CountAsync(w => w.TaskType == WorkItemTaskType.Implementation));
         }
         finally
         {
@@ -579,16 +528,34 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Labels = AgentNextLabel
         });
 
-        await SaveDefaultTemplateAsync(implementationEnabled: false);
-        // TODO [WARNING]: The template above leaves reviewEnabled at its default (false). This means
-        // no work type is enabled, making Assert.Empty non-discriminating: the assertion passes even
-        // if ImplementationEnabled=false logic were completely absent (there is simply nothing to
-        // dispatch). A non-vacuous test would seed a PR alongside the implementation issue, set
-        // reviewEnabled: true, confirm the PR is dispatched, and confirm the implementation issue is
-        // not — proving ImplementationEnabled=false selectively suppresses implementation without
-        // suppressing review dispatch.
+        Fixture.RepositoryProvider.PullRequests.Add(new PullRequestSummary
+        {
+            Number = 511,
+            Identifier = "511",
+            Title = "PR for review",
+            Description = "PR body",
+            Labels = AgentNextLabel,
+            BranchName = "feature/impl-disabled-test",
+            TargetBranch = "main",
+            Url = "https://github.com/e2e-org/e2e-repo/pull/511",
+            IsDraft = false,
+            CreatedAt = DateTime.UtcNow
+        });
+        // The issue side of the PR must NOT carry agent:next — see ClosedLoopSelectionRulesTests.cs
+        // comments at TypePriority_Budget2 about the MinIssueSlots floor pass conflict.
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "511",
+            Title = "PR for review",
+            Description = "PR body",
+            Labels = Array.Empty<string>()
+        });
+
+        await SaveDefaultTemplateAsync(reviewEnabled: true, implementationEnabled: false);
         await SaveDefaultAgentProfileAsync();
-        await SetPollIntervalAsync(maxRunsPerCycle: 1);
+        await SetPollIntervalAsync(maxRunsPerCycle: 2, pollInterval: TimeSpan.FromSeconds(60));
+        var cfg2 = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        await Fixture.ConfigStore.SavePipelineConfigAsync(cfg2 with { MinIssueSlots = 0 }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("loop-flag-impl-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -599,14 +566,17 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await Fixture.StartLoopAsync();
             Assert.True(started);
 
-            // Wait for at least one full poll cycle to complete before asserting emptiness.
-            // CycleCount is incremented after each successful ExecuteCycleAsync call, so this
-            // wait proves the loop ran and exercised the ImplementationEnabled=false path.
+            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal("511", assignment.IssueIdentifier);
+
             await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
             await Fixture.StopLoopAsync();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
-            Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
+            await using var flagDb = Fixture.DbContextFactory.CreateDbContext();
+            Assert.False(await flagDb.WorkItems.AsNoTracking().AnyAsync(w => w.TaskType == WorkItemTaskType.Implementation),
+                "ImplementationEnabled=false: no implementation work item must be created");
+            Assert.Equal(1, await flagDb.WorkItems.AsNoTracking().CountAsync(w => w.TaskType == WorkItemTaskType.Review));
         }
         finally
         {
@@ -693,14 +663,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // This is the correct and expected behaviour for a disabled template — the loop must not start.
         var started = await Fixture.StartLoopAsync();
         Assert.False(started, "StartLoopAsync must return false when the only configured template is disabled");
-        // TODO [WARNING]: Assert.Empty here is trivially non-vacuous — the loop never started, so
-        // the assertion passes regardless of whether FlattenTemplates correctly skips disabled
-        // templates. If StartLoopAsync returned false for a different reason (e.g. no agent profiles),
-        // the assertion would still pass while a FlattenTemplates filtering bug would go undetected.
-        // The DisabledProject_NothingDispatched test provides stronger coverage because it seeds both
-        // a disabled and an enabled template, starts the loop, and verifies the disabled template's
-        // issue is never dispatched. This test verifies only that StartLoopAsync refuses to start
-        // when zero enabled templates exist (a necessary precondition, but not sufficient on its own).
         Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
     }
 
@@ -1017,25 +979,10 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             throw;
         }
 
-        // TODO [WARNING]: Assert.Empty is evaluated after WaitUntilAsync(!IsLoopActive), but
-        // FakeJobController.PollAsync runs on its own background task with a 250ms interval
-        // and is never stopped between Part A and Part B. There is a narrow window between
-        // WaitUntilAsync(!IsLoopActive) returning and this assertion executing in which the
-        // FakeJobController's next 250ms tick could claim a work item (if orchestration for the
-        // blocked issue completed and a pending work item appeared in the queue during that window),
-        // resulting in a false assertion failure. This is distinct from the CycleCount timing issue
-        // — it arises from FakeJobController's independent poll loop, not PipelineLoopService.
         Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
 
         // Part B: mark blocker closed and run a second cycle.
         Fixture.IssueProvider.ClosedIssueIdentifiers.Add("100");
-        // TODO [WARNING]: ClosedIssueIdentifiers.Add is performed while the Part A loop is stopped
-        // but while FakeJobController.PollAsync (250ms tick) is still running. If the job controller's
-        // poll fires between this Add and loopService.StartLoopAsync below, and if any in-flight work
-        // item from a prior dispatch attempt exists in Pending state, it could be claimed before Part
-        // B's loop cycle runs. This is harmless for the current scenario (issue 60 was not dispatched
-        // in Part A, so no Pending work item exists), but the setup is fragile if a second issue is
-        // added to the test in the future.
 
         // Part B uses fakeAgent (from Part A) directly. Part A never dispatched issue "60"
         // (the blocker was open), so fakeAgent.JobAssigned was never resolved and its TCS is
@@ -1046,14 +993,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         fakeAgent.ResetJobAssigned();
 
         var startedB = await Fixture.StartLoopAsync();
-        // TODO [WARNING]: StartLoopAsync is called immediately after WaitUntilAsync confirms
-        // IsLoopActive==false. PipelineLoopService creates a new CancellationTokenSource and
-        // restarts the hosted loop, but if residual async continuations from the Part-A cycle
-        // are still scheduled on thread-pool threads (e.g. a pending Task.Delay in the polling
-        // helper that hasn't observed cancellation yet), they could race with Part B's startup.
-        // IsLoopActive==false only confirms the status flag, not that all background work from
-        // the prior cycle has fully drained. Low-severity timing hazard in practice given the
-        // loop's cancellation semantics, but worth noting for future loop refactors.
         Assert.True(startedB, "Second StartLoopAsync should succeed after StopLoop");
 
         try
