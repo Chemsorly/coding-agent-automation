@@ -127,23 +127,12 @@ public sealed partial class WorkItemStatusTransitionService
         // Succeeded for every Job that ended Complete, including runs the agent recorded as Failed.
         // The warning cannot be suppressed after TransitionCoreAsync returns Rejected, so a
         // pre-read is required.
-        if (request.Status is WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
+        var incomingIsTerminal = request.Status is WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Succeeded;
+        if (incomingIsTerminal)
         {
             var currentStatus = await _transitionService.GetCurrentStatusAsync(id, ct);
-            if (currentStatus is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded or WorkItemStatus.Failed)
-            {
-                // A consolidation job reports to the hub first, which completes the work item; this HTTP completion
-                // then arrives with the job's usage. Record it here — the hub path records no usage.
-                if (ResolvePayloadAndFailureReason(request).Payload?.PhaseBreakdown is { Count: > 0 })
-                {
-                    var usageTask = EmitConsolidationUsageTelemetryAsync(id, request, _dbFactory, CancellationToken.None);
-                    if (awaitTelemetry)
-                        await usageTask;
-                    else
-                        _ = usageTask;
-                }
-                return StatusTransitionOutcome.AlreadyAtTarget;
-            }
+            if (IsTerminal(currentStatus))
+                return await AlreadyTerminalAsync(id, request, awaitTelemetry);
             // null → item not found; fall through so TransitionDetailedAsync returns NotFound.
             // Any non-terminal current status → fall through for normal processing.
         }
@@ -158,7 +147,15 @@ public sealed partial class WorkItemStatusTransitionService
             return StatusTransitionOutcome.NotFound;
 
         if (transitionResult == TransitionResult.Rejected)
+        {
+            // The pre-read above and the transition are two separate reads. Another terminal report (the agent's
+            // hub completion vs. the JobController's timeout report) can land between them, so the transition
+            // then sees a terminal item and rejects the loser. The first terminal report wins and later ones are
+            // no-ops, so answer exactly as the pre-read would have had it run a moment later, instead of a 400.
+            if (incomingIsTerminal && IsTerminal(await _transitionService.GetCurrentStatusAsync(id, ct)))
+                return await AlreadyTerminalAsync(id, request, awaitTelemetry);
             return StatusTransitionOutcome.Rejected;
+        }
 
         // ── Lifecycle dispatch + telemetry (Transitioned only) ───────────────────────────
         if (transitionResult == TransitionResult.Transitioned)
@@ -172,6 +169,29 @@ public sealed partial class WorkItemStatusTransitionService
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
+
+    private static bool IsTerminal(WorkItemStatus? status)
+        => status is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded or WorkItemStatus.Failed;
+
+    /// <summary>
+    /// Outcome for a terminal report that arrives for an item that is already terminal: the first terminal
+    /// report wins, so this one changes nothing.
+    /// </summary>
+    private async Task<StatusTransitionOutcome> AlreadyTerminalAsync(
+        Guid id, WorkItemStatusRequest request, bool awaitTelemetry)
+    {
+        // A consolidation job reports to the hub first, which completes the work item; this HTTP completion
+        // then arrives with the job's usage. Record it here — the hub path records no usage.
+        if (ResolvePayloadAndFailureReason(request).Payload?.PhaseBreakdown is { Count: > 0 })
+        {
+            var usageTask = EmitConsolidationUsageTelemetryAsync(id, request, _dbFactory, CancellationToken.None);
+            if (awaitTelemetry)
+                await usageTask;
+            else
+                _ = usageTask;
+        }
+        return StatusTransitionOutcome.AlreadyAtTarget;
+    }
 
     private const string PhaseTag = "phase";
     private const string ProviderTag = "provider";
