@@ -185,8 +185,14 @@ public static class PipelineRunExtensions
             CacheWriteTokens = phase.CacheWriteTokens + usage.CacheWriteTokens,
             Turns = phase.Turns + (details?.Turns ?? 0),
             WebSearchRequests = phase.WebSearchRequests + (details?.WebSearchRequests ?? 0),
-            BillingMode = phase.BillingMode ?? details?.BillingMode
+            BillingMode = phase.BillingMode ?? details?.BillingMode,
+            PeakContextTokens = MaxOrNull(phase.PeakContextTokens, details?.PeakContextTokens),
+            ContextWindowTokens = MaxOrNull(phase.ContextWindowTokens, details?.ContextWindowTokens)
         };
+
+    /// <summary>The larger of two optional values; null only when both are null.</summary>
+    private static long? MaxOrNull(long? a, long? b) =>
+        a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
 
     /// <summary>
     /// Records an agent session (invocation) into the per-phase breakdown.

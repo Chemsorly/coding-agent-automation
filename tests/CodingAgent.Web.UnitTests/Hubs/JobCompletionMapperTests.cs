@@ -336,7 +336,9 @@ public sealed class JobCompletionMapperTests
             CacheWriteTokens = 200,
             Turns = 7,
             WebSearchRequests = 2,
-            BillingMode = "subscription"
+            BillingMode = "subscription",
+            PeakContextTokens = 150_000,
+            ContextWindowTokens = 200_000
         };
         var payload = new JobCompletionPayload
         {
@@ -363,6 +365,8 @@ public sealed class JobCompletionMapperTests
         result.Turns.Should().Be(7);
         result.WebSearchRequests.Should().Be(2);
         result.BillingMode.Should().Be("subscription");
+        result.PeakContextTokens.Should().Be(150_000);
+        result.ContextWindowTokens.Should().Be(200_000);
     }
 
     [Fact]

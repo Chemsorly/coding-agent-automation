@@ -24,6 +24,27 @@ internal sealed class SseCallState
 
     /// <summary>Error text of every failed tool call, by call id.</summary>
     public ConcurrentDictionary<string, string> ToolCallErrors { get; } = new(StringComparer.Ordinal);
+
+    private long _peakContextTokens;
+
+    /// <summary>
+    /// Largest context one model call sent (input + cache read + cache write tokens of an assistant
+    /// message's step), or null when no assistant message reported tokens.
+    /// </summary>
+    public long? PeakContextTokens => Interlocked.Read(ref _peakContextTokens) is > 0 and var peak ? peak : null;
+
+    /// <summary>Records the context of one assistant message's latest step.</summary>
+    public void TrackContext(SessionTokenUsage? tokens)
+    {
+        if (tokens is null) return;
+        var context = tokens.Input + (tokens.Cache?.Read ?? 0) + (tokens.Cache?.Write ?? 0);
+        long current;
+        while (context > (current = Interlocked.Read(ref _peakContextTokens)))
+        {
+            if (Interlocked.CompareExchange(ref _peakContextTokens, context, current) == current)
+                return;
+        }
+    }
 }
 
 public sealed partial class OpenCodeAgentProvider
@@ -144,8 +165,11 @@ public sealed partial class OpenCodeAgentProvider
         switch (sseEvent.Type)
         {
             case "message.updated":
-                if (properties.Info is { Role: "assistant", Id: { } messageId })
+                if (properties.Info is { Role: "assistant", Id: { } messageId } info)
+                {
                     state.AssistantMessageIds.TryAdd(messageId, 0);
+                    state.TrackContext(info.Tokens);
+                }
                 break;
 
             case "message.part.delta":

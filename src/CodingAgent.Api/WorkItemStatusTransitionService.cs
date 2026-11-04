@@ -357,6 +357,7 @@ public sealed partial class WorkItemStatusTransitionService
             var model = string.IsNullOrEmpty(usage.Model) ? routeModelTag : usage.Model;
 
             RecordUsageDetailMetrics(runTypeTag, provider, usage);
+            RecordContextMetrics(phase, provider, usage);
 
             if (usage.Tokens > 0)
             {
@@ -431,6 +432,23 @@ public sealed partial class WorkItemStatusTransitionService
             PipelineTelemetry.RunBillingCostUsd.Add((double)cost, runTypeTagPair, providerTagPair,
                 new KeyValuePair<string, object?>("billing", PipelineTelemetry.NormalizeBillingMode(usage.BillingMode)));
         }
+    }
+
+    /// <summary>
+    /// Records <c>pipeline.run.context_peak_tokens</c> for one phase, and
+    /// <c>pipeline.run.context_peak_utilization</c> when the context window is known.
+    /// Tagged by phase and provider only, to keep the histograms' series count small.
+    /// </summary>
+    private static void RecordContextMetrics(string phase, string provider, PhaseUsagePayload usage)
+    {
+        if (usage.PeakContextTokens is not ({ } peak and > 0))
+            return;
+
+        KeyValuePair<string, object?>[] tags = [new(PhaseTag, phase), new(ProviderTag, provider)];
+        PipelineTelemetry.RunContextPeakTokens.Record(peak, tags);
+
+        if (usage.ContextWindowTokens is { } window and > 0)
+            PipelineTelemetry.RunContextPeakUtilization.Record(Math.Clamp((double)peak / window, 0d, 1d), tags);
     }
 
     /// <summary>
