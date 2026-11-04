@@ -190,6 +190,46 @@ public class AccumulateTokenUsageTests
     }
 
     [Fact]
+    public void AccumulateTokenUsage_PeakContext_KeepsTheLargestSessionNotTheSum()
+    {
+        var run = CreateRun();
+        var usage = new TokenUsage { InputTokens = 10, OutputTokens = 20 };
+        AgentResult Session(long? peak, long? window) => new()
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = usage,
+            UsageDetails = new AgentUsageDetails { PeakContextTokens = peak, ContextWindowTokens = window }
+        };
+
+        run.AccumulateTokenUsage(Session(120_000, 200_000), "codegen");
+        run.AccumulateTokenUsage(Session(80_000, 200_000), "codegen");
+        run.AccumulateTokenUsage(Session(null, null), "codegen");
+
+        var phase = run.Metrics.PhaseBreakdown["codegen"];
+        phase.PeakContextTokens.Should().Be(120_000);
+        phase.ContextWindowTokens.Should().Be(200_000);
+    }
+
+    [Fact]
+    public void AccumulateTokenUsage_NoContextReported_LeavesPeakContextNull()
+    {
+        var run = CreateRun();
+
+        run.AccumulateTokenUsage(new TokenUsage { InputTokens = 1, OutputTokens = 2 }, "analysis");
+        run.AccumulateTokenUsage(new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = new TokenUsage { InputTokens = 1 },
+            UsageDetails = new AgentUsageDetails { Turns = 1 }
+        }, "analysis");
+
+        run.Metrics.PhaseBreakdown["analysis"].PeakContextTokens.Should().BeNull();
+        run.Metrics.PhaseBreakdown["analysis"].ContextWindowTokens.Should().BeNull();
+    }
+
+    [Fact]
     public void AccumulateAgentSession_ThenTokenUsage_KeepsBothSides()
     {
         var run = CreateRun();

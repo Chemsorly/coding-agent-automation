@@ -585,6 +585,10 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             Turns = delta.Turns,
             ApiDurationSeconds = delta.ApiDurationMs / 1000d,
             WebSearchRequests = delta.WebSearchRequests,
+            PeakContextTokens = state.PeakContextTokens,
+            StartContextTokens = state.StartContextTokens,
+            EndContextTokens = state.EndContextTokens,
+            ContextWindowTokens = delta.ContextWindowTokens,
             ModelUsage = delta.Models.ToDictionary(
                 kvp => kvp.Key,
                 kvp => new AgentModelUsage
@@ -609,11 +613,14 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             "Claude Code call finished: exit={ExitCode}, session={SessionId}, model={Model}, elapsed={ElapsedSeconds:F1}s, " +
             "input={InputTokens}, output={OutputTokens}, reasoning={ReasoningTokens}, cache_read={CacheReadTokens}, " +
             "cache_write={CacheWriteTokens}, cost_usd={CostUsd}, billing={BillingMode}, turns={Turns}, " +
-            "api_seconds={ApiSeconds:F1}, web_searches={WebSearches}, error_category={ErrorCategory}",
+            "api_seconds={ApiSeconds:F1}, web_searches={WebSearches}, start_context={StartContextTokens}, " +
+            "peak_context={PeakContextTokens}, end_context={EndContextTokens}, context_window={ContextWindowTokens}, " +
+            "error_category={ErrorCategory}",
             exitCode, state.SessionId, state.Model ?? _model, elapsed.TotalSeconds,
             usage?.InputTokens, usage?.OutputTokens, usage?.ReasoningTokens, usage?.CacheReadTokens,
             usage?.CacheWriteTokens, cost, details?.BillingMode, details?.Turns,
-            details?.ApiDurationSeconds, details?.WebSearchRequests, errorCategory);
+            details?.ApiDurationSeconds, details?.WebSearchRequests, state.StartContextTokens,
+            state.PeakContextTokens, state.EndContextTokens, details?.ContextWindowTokens, errorCategory);
 
         if (details is null)
             return;

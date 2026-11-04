@@ -125,6 +125,20 @@ public static partial class PipelineTelemetry
     /// </summary>
     public static readonly Histogram<double> RunRateLimitUtilization;
 
+    /// <summary>
+    /// Histogram: largest context one model call sent in a run phase (input + cache read + cache write tokens),
+    /// from providers that report it (Claude Code, OpenCode).
+    /// Tags: phase, provider.
+    /// </summary>
+    public static readonly Histogram<long> RunContextPeakTokens;
+
+    /// <summary>
+    /// Histogram: <see cref="RunContextPeakTokens"/> as a fraction (0–1) of the model's context window,
+    /// from providers that report the window (Claude Code).
+    /// Tags: phase, provider.
+    /// </summary>
+    public static readonly Histogram<double> RunContextPeakUtilization;
+
     // ── API-side quality gate and CI metrics (issue #2979) ───────────────────────────────────────
 
     /// <summary>
@@ -205,6 +219,18 @@ public static partial class PipelineTelemetry
             advice: new InstrumentAdvice<double>
             {
                 HistogramBucketBoundaries = [0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1.0]
+            });
+        RunContextPeakTokens = Meter.CreateHistogram<long>(
+            "pipeline.run.context_peak_tokens", "{token}", "Largest context one model call sent in a pipeline run phase",
+            advice: new InstrumentAdvice<long>
+            {
+                HistogramBucketBoundaries = [32_000, 64_000, 128_000, 200_000, 400_000, 1_000_000]
+            });
+        RunContextPeakUtilization = Meter.CreateHistogram<double>(
+            "pipeline.run.context_peak_utilization", "1", "Largest context of a pipeline run phase as a fraction of the model's context window",
+            advice: new InstrumentAdvice<double>
+            {
+                HistogramBucketBoundaries = [0.25, 0.5, 0.75, 0.9, 1.0]
             });
 
         // ── Quality gate and CI ──────────────────────────────────────────────────

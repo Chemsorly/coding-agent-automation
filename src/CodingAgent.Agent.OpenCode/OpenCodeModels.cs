@@ -180,6 +180,11 @@ public sealed record SseMessageInfo
 {
     public string? Id { get; init; }
     public string? Role { get; init; }
+
+    /// <summary>
+    /// Tokens of the assistant message's latest step (OpenCode overwrites them per step, it does not add them up).
+    /// </summary>
+    public SessionTokenUsage? Tokens { get; init; }
 }
 
 /// <summary>

@@ -39,6 +39,15 @@ public sealed record PhaseUsage(
     public int WebSearchRequests { get; init; }
 
     /// <summary>
+    /// Largest context one model call sent in this phase (input + cache read + cache write tokens), or null when
+    /// the provider does not report it. The maximum over the phase's sessions, not a sum.
+    /// </summary>
+    public long? PeakContextTokens { get; init; }
+
+    /// <summary>Context window of the phase's main model in tokens, or null when the provider does not report it.</summary>
+    public long? ContextWindowTokens { get; init; }
+
+    /// <summary>
     /// How the phase's LLM calls were paid for (<see cref="AgentBillingModes"/>), or null if unknown.
     /// </summary>
     public string? BillingMode { get; init; }

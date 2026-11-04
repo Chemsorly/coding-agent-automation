@@ -239,7 +239,13 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                 ToolCalls = toolCalls,
                 UnavailableMcpServers = unavailableMcpServers,
                 UsageDetails = sseState.AssistantMessageIds.Count > 0
-                    ? new AgentUsageDetails { Turns = sseState.AssistantMessageIds.Count }
+                    ? new AgentUsageDetails
+                    {
+                        Turns = sseState.AssistantMessageIds.Count,
+                        PeakContextTokens = sseState.PeakContextTokens,
+                        StartContextTokens = sseState.StartContextTokens,
+                        EndContextTokens = sseState.EndContextTokens
+                    }
                     : null
             };
         }

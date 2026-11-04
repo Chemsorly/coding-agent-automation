@@ -22,7 +22,7 @@ public static class AgentBillingModes
 
 /// <summary>
 /// Usage a provider reports for one agent invocation beyond <see cref="AgentResult.Usage"/> and
-/// <see cref="AgentResult.Cost"/>. Every field is a delta for that invocation.
+/// <see cref="AgentResult.Cost"/>. Every field is a delta for that invocation, except the context sizes.
 /// </summary>
 public sealed record AgentUsageDetails
 {
@@ -37,6 +37,27 @@ public sealed record AgentUsageDetails
 
     /// <summary>Web search requests the model made.</summary>
     public int WebSearchRequests { get; init; }
+
+    /// <summary>
+    /// Largest context the main conversation sent in one model call during the invocation (input, cache read
+    /// and cache write tokens), or null when the provider does not report it. Not a delta: a peak.
+    /// </summary>
+    public long? PeakContextTokens { get; init; }
+
+    /// <summary>
+    /// Context of the main conversation's first model call in the invocation: the prompt plus any resumed
+    /// history. Null when the provider does not report it. Session span only; not aggregated per phase.
+    /// </summary>
+    public long? StartContextTokens { get; init; }
+
+    /// <summary>
+    /// Context of the main conversation's last model call in the invocation: roughly what a resumed next
+    /// call starts from. Null when the provider does not report it. Session span only; not aggregated per phase.
+    /// </summary>
+    public long? EndContextTokens { get; init; }
+
+    /// <summary>Context window of the main model in tokens, or null when the provider does not report it.</summary>
+    public long? ContextWindowTokens { get; init; }
 
     /// <summary>Usage per model that served the invocation (the main model, subagents, helper models).</summary>
     public IReadOnlyDictionary<string, AgentModelUsage> ModelUsage { get; init; } =

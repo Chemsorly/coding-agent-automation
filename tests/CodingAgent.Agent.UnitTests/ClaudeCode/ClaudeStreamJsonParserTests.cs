@@ -117,6 +117,93 @@ public class ClaudeStreamJsonParserTests
     }
 
     [Fact]
+    public void ProcessLine_MainAssistantUsage_KeepsThePeakContextAcrossTurns()
+    {
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","parent_tool_use_id":null,"message":{"usage":{"input_tokens":5,"cache_read_input_tokens":40000,"cache_creation_input_tokens":2000,"output_tokens":300},"content":[{"type":"text","text":"a"}]}}""",
+            _state);
+        // After auto-compaction the context shrinks; the peak stays.
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","parent_tool_use_id":null,"message":{"usage":{"input_tokens":3,"cache_read_input_tokens":9000,"cache_creation_input_tokens":0,"output_tokens":50},"content":[{"type":"text","text":"b"}]}}""",
+            _state);
+
+        _state.PeakContextTokens.Should().Be(42005);
+        _state.StartContextTokens.Should().Be(42005);
+        _state.EndContextTokens.Should().Be(9003);
+    }
+
+    [Fact]
+    public void ProcessLine_MainAssistantUsage_RecordsTheFirstAndLastCallsContext()
+    {
+        foreach (var cacheRead in new[] { 20000, 60000, 45000 })
+        {
+            ClaudeStreamJsonParser.ProcessLine(
+                $$$"""{"type":"assistant","message":{"usage":{"input_tokens":0,"cache_read_input_tokens":{{{cacheRead}}}},"content":[]}}""",
+                _state);
+        }
+        // A subagent's call is neither the main conversation's start nor its end.
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"usage":{"input_tokens":5000},"content":[]}}""",
+            _state);
+
+        _state.StartContextTokens.Should().Be(20000);
+        _state.PeakContextTokens.Should().Be(60000);
+        _state.EndContextTokens.Should().Be(45000);
+    }
+
+    [Fact]
+    public void ProcessLine_SubagentUsage_DoesNotCountTowardsTheMainContext()
+    {
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","parent_tool_use_id":null,"message":{"usage":{"input_tokens":10,"cache_read_input_tokens":1000},"content":[]}}""",
+            _state);
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":90000},"content":[]}}""",
+            _state);
+
+        _state.PeakContextTokens.Should().Be(1010);
+    }
+
+    [Fact]
+    public void ProcessLine_NoAssistantUsage_LeavesPeakContextUnknown()
+    {
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}""",
+            _state);
+
+        _state.PeakContextTokens.Should().BeNull();
+        _state.StartContextTokens.Should().BeNull();
+        _state.EndContextTokens.Should().BeNull();
+    }
+
+    [Fact]
+    public void ProcessLine_Result_ReadsTheMainModelsContextWindow()
+    {
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"system","subtype":"init","model":"claude-opus-5-5"}""", _state);
+        ClaudeStreamJsonParser.ProcessLine(
+            """
+            {"type":"result","subtype":"success","is_error":false,
+             "modelUsage":{
+               "claude-haiku-4-5":{"inputTokens":10,"contextWindow":200000},
+               "claude-opus-5-5":{"inputTokens":1000,"contextWindow":1000000}}}
+            """.ReplaceLineEndings(" "),
+            _state);
+
+        _state.Totals!.ContextWindowTokens.Should().Be(1000000);
+    }
+
+    [Fact]
+    public void ProcessLine_ResultWithoutContextWindow_LeavesItUnknown()
+    {
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"result","subtype":"success","is_error":false,"modelUsage":{"m":{"inputTokens":10}}}""",
+            _state);
+
+        _state.Totals!.ContextWindowTokens.Should().BeNull();
+    }
+
+    [Fact]
     public void ProcessLine_ResultWithoutModelUsage_FallsBackToUsage()
     {
         ClaudeStreamJsonParser.ProcessLine(
