@@ -220,8 +220,8 @@ internal class CodeReviewOrchestrator
                 _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting",
                     run.RunId, i + 1);
                 context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
-                await SendFixPromptAsync(context, i, iterationFindingsText,
-                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", "fix_warnings", ct);
+                await SendWarningsFixPromptAsync(context, run, config, i, iterationFindingsText,
+                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
                 return false; // Exit the loop
 
             case AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak:
@@ -326,6 +326,62 @@ internal class CodeReviewOrchestrator
             Role = ChatRole.Agent,
             Content = fixDescription
         });
+        context.Callbacks.NotifyChange();
+    }
+
+    /// <summary>
+    /// Writes review findings to the workspace file and runs the warnings-only fix in a fresh session
+    /// (not the code generation session), then records the fix action to chat history.
+    /// Non-cancellation failures are logged and recorded so the review loop continues.
+    /// </summary>
+    private async Task SendWarningsFixPromptAsync(
+        AgentPhaseContext context,
+        PipelineRun run,
+        PipelineConfiguration config,
+        int iterationIndex,
+        string iterationFindingsText,
+        string fixDescription,
+        CancellationToken ct)
+    {
+        var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
+        await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
+
+        var fixPrompt = PromptBuilder.BuildWarningsFixPrompt(config.CodeReview.FixPrompt!);
+        _logger.Debug("Pipeline {RunId} warnings fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, iterationIndex + 1, fixPrompt);
+
+        var description = $"Code review warnings fix agent (iteration {iterationIndex + 1})";
+        run.ChangedBySeparateAgent = true; // set first: a failed agent may still have changed files
+        try
+        {
+            await AgentPhaseExecutor.ExecuteAgentRawAsync(
+                new AgentExecutionRequest
+                {
+                    AgentProvider = context.AgentProvider,
+                    Prompt = fixPrompt,
+                    Run = run,
+                    Config = config,
+                    Description = description,
+                    Logger = _logger,
+                    Phase = "fix_warnings",
+                    OnChange = context.Callbacks.NotifyChange,
+                    OnOutputLine = line => context.Callbacks.EmitOutputLine(line),
+                    EnvironmentVariables = context.InjectedSecrets,
+                    ReportStallEvent = AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent)
+                },
+                ct);
+            await AgentPhaseExecutor.PreComputeDiffArtifactsAsync(run, _logger, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} {Description} failed", run.RunId, description);
+            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = $"Agent error during {description}: {ex.Message}" });
+        }
+
+        run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = fixDescription });
         context.Callbacks.NotifyChange();
     }
 

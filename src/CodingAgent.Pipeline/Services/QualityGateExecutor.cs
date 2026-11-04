@@ -48,6 +48,12 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     private const string GateStatusPassed = "PASSED";
     private const string GateStatusFailed = "FAILED";
 
+    /// <summary>
+    /// Added to a gate retry prompt when a separate agent changed the branch after the code generation
+    /// session, which the retry resumes and which does not know about those changes.
+    /// </summary>
+    internal const string SeparateAgentRetryHint = $"A separate agent changed the branch after your session, so it may hold changes you did not make. If a failure involves code you do not recognise, read {AgentWorkspacePaths.FullDiffFilePath} first.";
+
     internal static string FormatGateLogValue(GateResult? gate) =>
         gate is null ? "N/A" : gate.Passed.ToString();
 

@@ -859,6 +859,55 @@ public class QualityGateExecutorRetryTests
             Times.Exactly(11));
     }
 
+    // ── Separate Agent Hint ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RetryPrompt_AfterSeparateAgent_HoldsHint()
+    {
+        _run.ChangedBySeparateAgent = true;
+
+        var fixPrompts = await CaptureRetryPromptsAsync();
+
+        fixPrompts.Should().NotBeEmpty();
+        fixPrompts[0].Should().Contain(QualityGateExecutor.SeparateAgentRetryHint,
+            "the resumed codegen session must learn that another agent changed the branch");
+    }
+
+    [Fact]
+    public async Task RetryPrompt_WithoutSeparateAgent_HasNoHint()
+    {
+        var fixPrompts = await CaptureRetryPromptsAsync();
+
+        fixPrompts.Should().NotBeEmpty();
+        fixPrompts[0].Should().NotContain(QualityGateExecutor.SeparateAgentRetryHint);
+    }
+
+    private async Task<List<string>> CaptureRetryPromptsAsync()
+    {
+        var config = CreateConfig(maxRetries: 1);
+        SetupValidatorAlwaysFails();
+        var fixPrompts = new List<string>();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Quality gates failed (attempt"))
+                    fixPrompts.Add(req.Prompt);
+            })
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = AgentFixOutputLines,
+                Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+        return fixPrompts;
+    }
+
     // ── Phase Breakdown ──────────────────────────────────────────────────────
 
     [Fact]

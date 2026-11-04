@@ -431,6 +431,68 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain(PipelineConstants.GateIntegrityRule);
     }
 
+    // --- BuildWarningsFixPrompt tests ---
+
+    [Fact]
+    public void BuildWarningsFixPrompt_IncludesConfiguredInstructions()
+    {
+        var prompt = PromptBuilder.BuildWarningsFixPrompt("Custom fix instructions here.");
+
+        prompt.Should().StartWith("Custom fix instructions here.");
+    }
+
+    [Fact]
+    public void BuildWarningsFixPrompt_IncludesPrecedenceLine()
+    {
+        var prompt = PromptBuilder.BuildWarningsFixPrompt("Fix the issues.");
+
+        prompt.Should().Contain("This round has no [CRITICAL] findings. The rules below take precedence over the instructions above.");
+    }
+
+    [Fact]
+    public void BuildWarningsFixPrompt_IncludesWorkspacePaths()
+    {
+        var prompt = PromptBuilder.BuildWarningsFixPrompt("Fix the issues.");
+
+        prompt.Should().Contain(AgentWorkspacePaths.ReviewFindingsFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.IssueContextFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.DiffStatFilePath);
+        prompt.Should().Contain(AgentWorkspacePaths.FullDiffFilePath);
+    }
+
+    [Fact]
+    public void BuildWarningsFixPrompt_IncludesRestrictionConstants()
+    {
+        var prompt = PromptBuilder.BuildWarningsFixPrompt("Fix the issues.");
+
+        prompt.Should().Contain(PipelineConstants.GitRestrictionFull);
+        prompt.Should().Contain(PipelineConstants.GateIntegrityRule);
+    }
+
+    [Fact]
+    public void BuildWarningsFixPrompt_DoesNotRestrictFixesToCriticalItems()
+    {
+        var prompt = PromptBuilder.BuildWarningsFixPrompt("Fix the issues.");
+
+        prompt.Should().NotContain("fix only items marked [CRITICAL]");
+    }
+
+    [Fact]
+    public void BuildWarningsFixPrompt_RendersLinesInOrder()
+    {
+        var prompt = PromptBuilder.BuildWarningsFixPrompt("Fix the issues.");
+
+        var expected = string.Join(Environment.NewLine,
+            "Fix the issues.",
+            "This round has no [CRITICAL] findings. The rules below take precedence over the instructions above.",
+            "Review findings are in .agent/review-findings.md. For context, read .agent/issue-context.md. .agent/diff-stat.txt and .agent/full-diff.txt show the branch's changes.",
+            "For each [WARNING]: fix it if it is a quick win: small, in one place, no design change. Otherwise add a comment at that location starting with TODO [WARNING] and the finding's text. Ignore [SUGGESTION] items.",
+            "Run only the tests for the code you changed. The quality gates run the full build and test suite after this step.",
+            PipelineConstants.GitRestrictionFull,
+            PipelineConstants.GateIntegrityRule);
+        prompt.Should().Be(expected);
+    }
+
     // --- QualityGatesOutputDirectory constant tests ---
 
     [Fact]
