@@ -1,3 +1,4 @@
+using System.Net;
 using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
@@ -6,10 +7,13 @@ using CodingAgent.Infrastructure.GitLab;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Moq;
 using NGitLab;
 using NGitLab.Mock;
 using NGitLab.Mock.Config;
 using NGitLab.Models;
+using Issue = NGitLab.Models.Issue;
+using Label = NGitLab.Models.Label;
 
 namespace CodingAgent.Infrastructure.UnitTests.GitLab;
 
@@ -548,8 +552,8 @@ public class GitLabIssueProviderTests
     }
 
     /// <summary>
-    /// Property 10: RemoveLabelAsync actually removes the label when present.
-    /// Note: Tests label presence via GetIssueAsync after creation with labels.
+    /// Property 10: RemoveLabelAsync actually removes the label when present
+    /// and leaves the issue's other labels in place.
     /// **Validates: Requirements 6.4**
     /// </summary>
     [Fact]
@@ -568,10 +572,17 @@ public class GitLabIssueProviderTests
 
         var identifier = issue.IssueId.ToString();
 
-        // Verify labels are present initially
         var before = await provider.GetIssueAsync(identifier, CancellationToken.None);
         before.Labels.Should().Contain("bug");
         before.Labels.Should().Contain("enhancement");
+
+        // Act
+        await provider.RemoveLabelAsync(identifier, "bug", CancellationToken.None);
+
+        // Assert
+        var after = await provider.GetIssueAsync(identifier, CancellationToken.None);
+        after.Labels.Should().NotContain("bug");
+        after.Labels.Should().Contain("enhancement");
     }
 
     #endregion
@@ -676,6 +687,300 @@ public class GitLabIssueProviderTests
         {
             labelNames.Should().Contain(expectedLabel);
         }
+    }
+
+    #endregion
+
+    #region Characterization: label removal, closing, creation and project labels (mocked client)
+
+    // These tests use a Moq IGitLabClient instead of NGitLab.Mock so that they can assert
+    // exactly which write requests the provider sends — and that it sends none on the
+    // no-op paths. The in-memory server accepts redundant edits silently, so it cannot
+    // tell a skipped edit from a repeated one.
+
+    private const int MockProjectId = 17;
+    private const long MockIssueIid = 7;
+
+    private static GitLabException StatusException(HttpStatusCode status) =>
+        new($"{(int)status} {status}") { StatusCode = status };
+
+    /// <summary>
+    /// Creates a provider over a mocked client whose Issues.GetAsync returns
+    /// <paramref name="existing"/> for <see cref="MockIssueIid"/> and whose EditAsync succeeds.
+    /// </summary>
+    private static (GitLabIssueProvider Provider, Mock<IIssueClient> Issues, Mock<ILabelClient> Labels)
+        CreateMockedProvider(Issue? existing = null)
+    {
+        var issues = new Mock<IIssueClient>();
+        if (existing is not null)
+        {
+            issues
+                .Setup(c => c.GetAsync(MockProjectId, MockIssueIid, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+        }
+        issues
+            .Setup(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IssueEdit _, CancellationToken _) => existing ?? new Issue());
+
+        var labels = new Mock<ILabelClient>();
+
+        var client = new Mock<IGitLabClient>();
+        client.Setup(c => c.Issues).Returns(issues.Object);
+        client.Setup(c => c.Labels).Returns(labels.Object);
+
+        return (new GitLabIssueProvider(client.Object, MockProjectId), issues, labels);
+    }
+
+    private static Issue ExistingIssue(string state, params string[]? labels) => new()
+    {
+        IssueId = MockIssueIid,
+        Title = "Existing issue",
+        State = state,
+        Labels = labels
+    };
+
+    /// <summary>
+    /// Characterization: when the label is on the issue, RemoveLabelAsync sends one edit
+    /// whose label list is the current list minus that label (matched case-insensitively),
+    /// with the remaining labels kept in their original order.
+    /// </summary>
+    [Theory]
+    [InlineData("agent:in-progress")]
+    [InlineData("AGENT:In-Progress")]
+    public async Task RemoveLabelAsync_LabelPresent_EditsIssueWithLabelRemoved(string labelToRemove)
+    {
+        var (provider, issues, _) = CreateMockedProvider(
+            ExistingIssue("opened", "bug", "agent:in-progress", "enhancement"));
+
+        await provider.RemoveLabelAsync(MockIssueIid.ToString(), labelToRemove, CancellationToken.None);
+
+        issues.Verify(c => c.EditAsync(
+            It.Is<IssueEdit>(e =>
+                e.ProjectId == MockProjectId &&
+                e.IssueId == MockIssueIid &&
+                e.Labels == "bug,enhancement" &&
+                e.State == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+        issues.Verify(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Characterization: when the label is not on the issue, RemoveLabelAsync reads the
+    /// issue and returns without sending any edit.
+    /// </summary>
+    [Fact]
+    public async Task RemoveLabelAsync_LabelAbsent_DoesNotEditIssue()
+    {
+        var (provider, issues, _) = CreateMockedProvider(ExistingIssue("opened", "bug", "enhancement"));
+
+        await provider.RemoveLabelAsync(MockIssueIid.ToString(), "agent:in-progress", CancellationToken.None);
+
+        issues.Verify(c => c.GetAsync(MockProjectId, MockIssueIid, It.IsAny<CancellationToken>()), Times.Once);
+        issues.Verify(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Characterization: an issue whose label list is null is treated as having no labels,
+    /// so RemoveLabelAsync sends no edit.
+    /// </summary>
+    [Fact]
+    public async Task RemoveLabelAsync_IssueHasNullLabels_DoesNotEditIssue()
+    {
+        var (provider, issues, _) = CreateMockedProvider(ExistingIssue("opened", labels: null));
+
+        await provider.RemoveLabelAsync(MockIssueIid.ToString(), "agent:in-progress", CancellationToken.None);
+
+        issues.Verify(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Characterization: a 404 when reading the issue is swallowed — RemoveLabelAsync
+    /// treats a missing issue as a no-op and sends no edit.
+    /// </summary>
+    [Fact]
+    public async Task RemoveLabelAsync_IssueNotFound_IsNoOp()
+    {
+        var (provider, issues, _) = CreateMockedProvider();
+        issues
+            .Setup(c => c.GetAsync(MockProjectId, MockIssueIid, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(StatusException(HttpStatusCode.NotFound));
+
+        var act = () => provider.RemoveLabelAsync(MockIssueIid.ToString(), "bug", CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        issues.Verify(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Characterization: CloseIssueAsync on an already-closed issue sends no edit.
+    /// </summary>
+    [Fact]
+    public async Task CloseIssueAsync_AlreadyClosed_DoesNotEditIssue()
+    {
+        var (provider, issues, _) = CreateMockedProvider(ExistingIssue("closed", "bug"));
+
+        await provider.CloseIssueAsync(MockIssueIid.ToString(), CancellationToken.None);
+
+        issues.Verify(c => c.GetAsync(MockProjectId, MockIssueIid, It.IsAny<CancellationToken>()), Times.Once);
+        issues.Verify(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Characterization: CloseIssueAsync on an open issue sends exactly one edit with the
+    /// "close" state event and leaves the labels untouched.
+    /// </summary>
+    [Fact]
+    public async Task CloseIssueAsync_OpenIssue_EditsWithCloseState()
+    {
+        var (provider, issues, _) = CreateMockedProvider(ExistingIssue("opened", "bug"));
+
+        await provider.CloseIssueAsync(MockIssueIid.ToString(), CancellationToken.None);
+
+        issues.Verify(c => c.EditAsync(
+            It.Is<IssueEdit>(e =>
+                e.ProjectId == MockProjectId &&
+                e.IssueId == MockIssueIid &&
+                e.State == "close" &&
+                e.Labels == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+        issues.Verify(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Characterization: a 404 from the close edit itself (issue deleted between the read
+    /// and the write) surfaces as an <see cref="InvalidOperationException"/> naming the issue.
+    /// </summary>
+    [Fact]
+    public async Task CloseIssueAsync_EditNotFound_ThrowsInvalidOperationException()
+    {
+        var (provider, issues, _) = CreateMockedProvider(ExistingIssue("opened"));
+        var notFound = StatusException(HttpStatusCode.NotFound);
+        issues
+            .Setup(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(notFound);
+
+        var act = () => provider.CloseIssueAsync(MockIssueIid.ToString(), CancellationToken.None);
+
+        var thrown = await act.Should().ThrowAsync<InvalidOperationException>();
+        thrown.Which.Message.Should().Contain($"'{MockIssueIid}'");
+        thrown.Which.InnerException.Should().BeSameAs(notFound);
+    }
+
+    /// <summary>
+    /// Characterization: CreateIssueAsync sends title, body and comma-joined labels for the
+    /// provider's project, and returns the project-scoped IID (not the global ID) and web URL.
+    /// </summary>
+    [Fact]
+    public async Task CreateIssueAsync_SendsRequestAndReturnsIidAndUrl()
+    {
+        var (provider, issues, _) = CreateMockedProvider();
+        issues
+            .Setup(c => c.CreateAsync(It.IsAny<IssueCreate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Issue
+            {
+                Id = 90210,
+                IssueId = 42,
+                WebUrl = "https://gitlab.example.com/group/project/-/issues/42"
+            });
+
+        var result = await provider.CreateIssueAsync(
+            "New issue", "Body text", ["bug", "agent:ready"], CancellationToken.None);
+
+        result.Identifier.Should().Be("42");
+        result.Url.Should().Be("https://gitlab.example.com/group/project/-/issues/42");
+        issues.Verify(c => c.CreateAsync(
+            It.Is<IssueCreate>(i =>
+                i.ProjectId == MockProjectId &&
+                i.Title == "New issue" &&
+                i.Description == "Body text" &&
+                i.Labels == "bug,agent:ready"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Characterization: an empty label list is sent as no labels at all, and a created
+    /// issue without a web URL yields an empty <see cref="CreatedIssueResult.Url"/>.
+    /// </summary>
+    [Fact]
+    public async Task CreateIssueAsync_EmptyLabelsAndNoWebUrl_SendsNullLabelsAndReturnsEmptyUrl()
+    {
+        var (provider, issues, _) = CreateMockedProvider();
+        issues
+            .Setup(c => c.CreateAsync(It.IsAny<IssueCreate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Issue { IssueId = 5, WebUrl = null });
+
+        var result = await provider.CreateIssueAsync("Title", "Body", [], CancellationToken.None);
+
+        result.Identifier.Should().Be("5");
+        result.Url.Should().BeEmpty();
+        issues.Verify(c => c.CreateAsync(
+            It.Is<IssueCreate>(i => i.Labels == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Characterization: a blank title is rejected before any API call is made.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateIssueAsync_BlankTitle_ThrowsWithoutCallingApi(string title)
+    {
+        var (provider, issues, _) = CreateMockedProvider();
+
+        var act = () => provider.CreateIssueAsync(title, "Body", null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>().WithParameterName("title");
+        issues.Verify(c => c.CreateAsync(It.IsAny<IssueCreate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Characterization of EnsureProjectLabelsExistAsync (via AddLabelsAsync): every requested
+    /// label is created as a project label; a 409 Conflict for one label (already exists)
+    /// does not stop the loop, and the issue edit still carries the merged label list.
+    /// </summary>
+    [Fact]
+    public async Task AddLabelsAsync_ProjectLabelConflict_CreatesRemainingLabelsAndEditsIssue()
+    {
+        var (provider, issues, labels) = CreateMockedProvider(ExistingIssue("opened", "existing"));
+        labels
+            .Setup(c => c.CreateProjectLabel(MockProjectId, It.Is<ProjectLabelCreate>(l => l.Name == "bug")))
+            .Throws(StatusException(HttpStatusCode.Conflict));
+        labels
+            .Setup(c => c.CreateProjectLabel(MockProjectId, It.Is<ProjectLabelCreate>(l => l.Name == "agent:ready")))
+            .Returns(new Label { Name = "agent:ready" });
+
+        await provider.AddLabelsAsync(MockIssueIid.ToString(), ["bug", "agent:ready"], CancellationToken.None);
+
+        labels.Verify(c => c.CreateProjectLabel(
+            MockProjectId, It.Is<ProjectLabelCreate>(l => l.Name == "bug" && l.Color == "#428BCA")), Times.Once);
+        labels.Verify(c => c.CreateProjectLabel(
+            MockProjectId, It.Is<ProjectLabelCreate>(l => l.Name == "agent:ready" && l.Color == "#428BCA")), Times.Once);
+        issues.Verify(c => c.EditAsync(
+            It.Is<IssueEdit>(e =>
+                e.ProjectId == MockProjectId &&
+                e.IssueId == MockIssueIid &&
+                e.Labels == "existing,bug,agent:ready"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Characterization: only "already exists" responses (409/400) are swallowed. Any other
+    /// failure creating a project label propagates and the issue is not edited.
+    /// </summary>
+    [Fact]
+    public async Task AddLabelsAsync_ProjectLabelForbidden_PropagatesAndDoesNotEditIssue()
+    {
+        var (provider, issues, labels) = CreateMockedProvider(ExistingIssue("opened"));
+        labels
+            .Setup(c => c.CreateProjectLabel(It.IsAny<long>(), It.IsAny<ProjectLabelCreate>()))
+            .Throws(StatusException(HttpStatusCode.Forbidden));
+
+        var act = () => provider.AddLabelsAsync(MockIssueIid.ToString(), ["bug"], CancellationToken.None);
+
+        var thrown = await act.Should().ThrowAsync<GitLabException>();
+        thrown.Which.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        issues.Verify(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     #endregion
