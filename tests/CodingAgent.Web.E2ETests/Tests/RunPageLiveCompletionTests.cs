@@ -1,4 +1,3 @@
-using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
 using CodingAgent.Pipeline.Models;

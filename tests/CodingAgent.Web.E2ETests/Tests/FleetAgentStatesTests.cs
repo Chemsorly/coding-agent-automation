@@ -2,7 +2,6 @@ using System.Text.RegularExpressions;
 using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
 using Microsoft.Playwright;
