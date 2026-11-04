@@ -208,6 +208,78 @@ public sealed class BrainReviewInputWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task WriteAsync_HeaderListsRepositoryAndTechnologySkills_RendersEachInjectedFileAtThatCommit()
+    {
+        const string sha = "fedcba9876543210fedcba9876543210fedcba98";
+        const string repoSkill = "projects/repo/SKILL.md";
+        const string techSkill = "technology/dotnet/SKILL.md";
+        var inboxRel = WriteInbox("run-a", InboxText("run-a",
+            skillsInjectedFrom: $"{sha} ({BrainLayout.GeneralSkillPath}, {repoSkill}, {techSkill})"));
+        TrackFiles(inboxRel);
+        _brainSvc.Setup(s => s.ReadFileAtCommit(_workspace, sha, BrainLayout.GeneralSkillPath))
+                 .Returns("- [1] General rule (#1).\n");
+        _brainSvc.Setup(s => s.ReadFileAtCommit(_workspace, sha, repoSkill))
+                 .Returns("- [1] Repository rule (#2).\n");
+        _brainSvc.Setup(s => s.ReadFileAtCommit(_workspace, sha, techSkill))
+                 .Returns("- [1] Technology rule (#3).\n");
+
+        var content = await WriteAndReadAsync(null);
+
+        var skills = Section(content, SkillsSection);
+        skills.Should().Contain($"### Commit {sha[..12]}");
+        skills.Should().Contain($"#### {BrainLayout.GeneralSkillPath}\n- [1] General rule (#1).");
+        skills.Should().Contain($"#### {repoSkill}\n- [1] Repository rule (#2).");
+        skills.Should().Contain($"#### {techSkill}\n- [1] Technology rule (#3).");
+        skills.Should().NotContain("unknown commit");
+        _brainSvc.Verify(s => s.ReadFileAtCommit(It.IsAny<string>(), It.IsAny<string>(), BrainLayout.RepositorySkillPath("")),
+            Times.Never, "the repository skill path is taken from the header, never built from an empty short name");
+    }
+
+    [Fact]
+    public async Task WriteAsync_SeveralInboxFilesNameSameCommit_ReadsUnionOfTheirInjectedFiles()
+    {
+        const string sha = "1111111111222222222233333333334444444444";
+        const string alphaSkill = "projects/alpha/SKILL.md";
+        const string betaSkill = "projects/beta/SKILL.md";
+        var alpha = WriteInbox("alpha", InboxText("alpha", "org/alpha",
+            skillsInjectedFrom: $"{sha} ({alphaSkill}, {BrainLayout.GeneralSkillPath})"));
+        var beta = WriteInbox("beta", InboxText("beta", "org/beta",
+            skillsInjectedFrom: $"{sha} ({betaSkill}, {BrainLayout.GeneralSkillPath})"));
+        TrackFiles(alpha, beta);
+        _brainSvc.Setup(s => s.ReadFileAtCommit(_workspace, sha, It.IsAny<string>()))
+                 .Returns((string _, string _, string path) => $"- [1] Rule from {path} (#1).\n");
+
+        var content = await WriteAndReadAsync(null);
+
+        var skills = Section(content, SkillsSection);
+        skills.Split('\n').Count(l => l.StartsWith("### Commit ", StringComparison.Ordinal)).Should().Be(1);
+        skills.Should().Contain($"#### {alphaSkill}");
+        skills.Should().Contain($"#### {betaSkill}");
+        skills.Should().Contain($"#### {BrainLayout.GeneralSkillPath}");
+        foreach (var path in new[] { alphaSkill, betaSkill, BrainLayout.GeneralSkillPath })
+            _brainSvc.Verify(s => s.ReadFileAtCommit(_workspace, sha, path), Times.Once,
+                "a file listed by several inbox files for the same commit is read once");
+    }
+
+    [Fact]
+    public async Task WriteAsync_HeaderListsNonSkillPaths_ReadsOnlySkillPaths()
+    {
+        const string sha = "aaaaaaaaaabbbbbbbbbbccccccccccdddddddddd";
+        var inboxRel = WriteInbox("run-a", InboxText("run-a",
+            skillsInjectedFrom: $"{sha} ({BrainLayout.ReadmePath}, {BrainLayout.GeneralSkillPath}, {BrainLayout.PendingPath}, projects/a/b/SKILL.md)"));
+        TrackFiles(inboxRel);
+        _brainSvc.Setup(s => s.ReadFileAtCommit(_workspace, sha, BrainLayout.GeneralSkillPath))
+                 .Returns("- [1] General rule (#1).\n");
+
+        var content = await WriteAndReadAsync(null);
+
+        Section(content, SkillsSection).Should().Contain($"#### {BrainLayout.GeneralSkillPath}");
+        _brainSvc.Verify(s => s.ReadFileAtCommit(_workspace, sha, BrainLayout.GeneralSkillPath), Times.Once);
+        _brainSvc.Verify(s => s.ReadFileAtCommit(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once,
+            "paths in the header that are not skill paths are never read");
+    }
+
+    [Fact]
     public async Task WriteAsync_InboxWithoutSkillsCommit_RendersNoCommits()
     {
         var inboxRel = WriteInbox("run-a", InboxText("run-a", skillsInjectedFrom: "none"));
