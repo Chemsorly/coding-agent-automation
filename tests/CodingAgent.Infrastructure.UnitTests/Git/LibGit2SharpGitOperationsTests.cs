@@ -19,6 +19,10 @@ namespace CodingAgent.Infrastructure.UnitTests.Git;
 public class LibGit2SharpGitOperationsTests : IDisposable
 {
     private readonly string _repoPath;
+
+    /// <summary>Holds the bare "origin" and its clone for tests that need a remote; created on demand.</summary>
+    private readonly string _remoteRoot = Path.Combine(Path.GetTempPath(), $"libgit2-ops-remote-{Guid.NewGuid():N}");
+
     private readonly LibGit2SharpGitOperations _sut = new();
 
     public LibGit2SharpGitOperationsTests()
@@ -30,7 +34,8 @@ public class LibGit2SharpGitOperationsTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_repoPath, recursive: true); } catch { }
+        DeleteDirectory(_repoPath);
+        DeleteDirectory(_remoteRoot);
     }
 
     // ── StageAllAndCommit: EmptyCommitException wrapping ─────────────────────
@@ -275,6 +280,78 @@ public class LibGit2SharpGitOperationsTests : IDisposable
             "a path not present in the HEAD tree must return null");
     }
 
+    // ── DiscardChangesExcept: restores the tree, keeps only the kept path ────
+
+    [Fact]
+    public void DiscardChangesExcept_ModifiedTrackedAndUntrackedFiles_RestoresTreeAndKeepsKeptFile()
+    {
+        const string keepPath = "inbox/entry.md";
+        const string keepContent = "inbox entry content";
+        File.WriteAllText(Path.Combine(_repoPath, "tracked.txt"), "stray edit");
+        File.WriteAllText(Path.Combine(_repoPath, "stray.txt"), "untracked");
+        WriteFile(_repoPath, keepPath, keepContent);
+
+        var discarded = _sut.DiscardChangesExcept(_repoPath, keepPath);
+
+        File.ReadAllText(Path.Combine(_repoPath, "tracked.txt")).Should().Be("original content",
+            "a modified tracked file must be restored to its HEAD content");
+        File.Exists(Path.Combine(_repoPath, "stray.txt")).Should().BeFalse(
+            "an untracked file other than the kept path must be deleted");
+        File.ReadAllText(Path.Combine(_repoPath, keepPath)).Should().Be(keepContent,
+            "the kept file must survive unchanged");
+        discarded.Should().BeEquivalentTo(["tracked.txt", "stray.txt"],
+            "every discarded path, and only those, must be reported");
+        WorkingTreeStatusPaths(_repoPath).Should().Equal([keepPath],
+            "the kept file must be the only change left in the working tree");
+    }
+
+    [Fact]
+    public void DiscardChangesExcept_DeletedTrackedFile_IsRestoredFromHead()
+    {
+        File.Delete(Path.Combine(_repoPath, "tracked.txt"));
+
+        var discarded = _sut.DiscardChangesExcept(_repoPath, "inbox/entry.md");
+
+        File.ReadAllText(Path.Combine(_repoPath, "tracked.txt")).Should().Be("original content",
+            "a tracked file deleted from the working tree must be checked out again from HEAD");
+        discarded.Should().Equal(["tracked.txt"]);
+    }
+
+    [Fact]
+    public void DiscardChangesExcept_KeptPathIsModifiedTrackedFile_KeepsItsChanges()
+    {
+        CommitFiles(_repoPath, "add other.txt", DateTimeOffset.UtcNow, ("other.txt", "other original"));
+        File.WriteAllText(Path.Combine(_repoPath, "tracked.txt"), "kept edit");
+        File.WriteAllText(Path.Combine(_repoPath, "other.txt"), "stray edit");
+
+        var discarded = _sut.DiscardChangesExcept(_repoPath, "tracked.txt");
+
+        File.ReadAllText(Path.Combine(_repoPath, "tracked.txt")).Should().Be("kept edit",
+            "the kept path must not be restored even though it is a modified tracked file");
+        File.ReadAllText(Path.Combine(_repoPath, "other.txt")).Should().Be("other original",
+            "every other modified tracked file must be restored");
+        discarded.Should().Equal(["other.txt"]);
+    }
+
+    [Fact]
+    public void DiscardChangesExcept_DirectoryHoldingOnlyDiscardedFiles_IsRemoved()
+    {
+        const string keepPath = "inbox/entry.md";
+        WriteFile(_repoPath, keepPath, "inbox entry content");
+        WriteFile(_repoPath, "scratch/nested/note.txt", "untracked");
+        var emptyGitDirs = EmptyDirectoriesUnder(Path.Combine(_repoPath, ".git"));
+
+        _sut.DiscardChangesExcept(_repoPath, keepPath);
+
+        Directory.Exists(Path.Combine(_repoPath, "scratch")).Should().BeFalse(
+            "a directory left empty by the discard must be removed, nested ones included");
+        Directory.Exists(Path.Combine(_repoPath, "inbox")).Should().BeTrue(
+            "the kept file's directory is not empty and must stay");
+        emptyGitDirs.Should().NotBeEmpty("precondition: a fresh repository has empty directories under .git");
+        emptyGitDirs.Should().OnlyContain(dir => Directory.Exists(dir),
+            "empty directories under .git belong to the repository and must never be pruned");
+    }
+
     // ── TryDeleteEmptyDirectories: locked directory is skipped, debug log emitted ──
 
     /// <summary>
@@ -397,6 +474,100 @@ public class LibGit2SharpGitOperationsTests : IDisposable
         }
     }
 
+    // ── StageAndCommit: EmptyCommitException wrapping ─────────────────────────
+
+    [Fact]
+    public void StageAndCommit_NothingStaged_ThrowsDomainEmptyCommitException()
+    {
+        // tracked.txt is unchanged since the initial commit, so staging it stages nothing
+        var act = () => _sut.StageAndCommit(_repoPath, ["tracked.txt"], "brain: empty");
+
+        act.Should().Throw<CodingAgent.Infrastructure.Git.EmptyCommitException>(
+                "LibGit2Sharp.EmptyCommitException must be translated to the domain type")
+            .WithInnerException<LibGit2Sharp.EmptyCommitException>();
+    }
+
+    // ── GetCommitsAheadOfRemote ───────────────────────────────────────────────
+
+    [Fact]
+    public void GetCommitsAheadOfRemote_LocalCommit_ReturnsShaMessageAndFileContents()
+    {
+        CommitFiles(_repoPath, "add obsolete.txt", DateTimeOffset.UtcNow, ("obsolete.txt", "obsolete content"));
+        var (workPath, branch) = CloneThroughBareRemote();
+        var sha = CommitFiles(workPath, "brain: add inbox entry", DateTimeOffset.UtcNow,
+            ("tracked.txt", "updated content"),
+            ("inbox/entry.md", "inbox entry content"),
+            ("obsolete.txt", null));
+
+        var commits = _sut.GetCommitsAheadOfRemote(workPath, branch);
+
+        var commit = commits.Should().ContainSingle("exactly one local commit is not on the remote").Subject;
+        commit.Sha.Should().Be(sha);
+        commit.Message.Should().Be("brain: add inbox entry", "the message must be returned trimmed");
+        commit.Files.Should().BeEquivalentTo(
+            [
+                new CommitFileContent("tracked.txt", "updated content", "original content"),
+                new CommitFileContent("inbox/entry.md", "inbox entry content", null),
+                new CommitFileContent("obsolete.txt", null, "obsolete content"),
+            ],
+            "each changed file carries its content at the commit and at the parent (null = absent)");
+    }
+
+    [Fact]
+    public void GetCommitsAheadOfRemote_SeveralLocalCommits_ReturnsThemOldestFirstWithTheirOwnChanges()
+    {
+        var (workPath, branch) = CloneThroughBareRemote();
+        var start = DateTimeOffset.UtcNow;
+        var first = CommitFiles(workPath, "first", start.AddMinutes(1), ("first.txt", "first content"));
+        var second = CommitFiles(workPath, "second", start.AddMinutes(2), ("second.txt", "second content"));
+
+        var commits = _sut.GetCommitsAheadOfRemote(workPath, branch);
+
+        commits.Select(c => c.Sha).Should().Equal([first, second], "commits must be returned oldest first");
+        commits[1].Files.Select(f => f.Path).Should().Equal(["second.txt"],
+            "each commit's files are diffed against its own parent, not against the remote");
+    }
+
+    [Fact]
+    public void GetCommitsAheadOfRemote_HeadAtRemoteTip_ReturnsEmpty()
+    {
+        var (workPath, branch) = CloneThroughBareRemote();
+
+        _sut.GetCommitsAheadOfRemote(workPath, branch).Should().BeEmpty(
+            "a fresh clone has no commits that are not on the remote");
+    }
+
+    [Fact]
+    public void GetCommitsAheadOfRemote_RemoteBranchMissing_ReturnsEmpty()
+    {
+        // _repoPath has no remotes, so origin/<branch> cannot resolve
+        _sut.GetCommitsAheadOfRemote(_repoPath, "main").Should().BeEmpty(
+            "a missing remote branch must yield no commits rather than throw");
+    }
+
+    // ── GetFileContentAtRemote ────────────────────────────────────────────────
+
+    [Fact]
+    public void GetFileContentAtRemote_FileChangedLocally_ReturnsRemoteVersion()
+    {
+        var (workPath, branch) = CloneThroughBareRemote();
+        CommitFiles(workPath, "local edit", DateTimeOffset.UtcNow, ("tracked.txt", "local content"));
+
+        _sut.GetFileContentAtRemote(workPath, branch, "tracked.txt").Should().Be("original content",
+            "the content must come from the remote tip, not from the local HEAD");
+    }
+
+    [Fact]
+    public void GetFileContentAtRemote_FileOrRemoteBranchMissing_ReturnsNull()
+    {
+        var (workPath, branch) = CloneThroughBareRemote();
+
+        _sut.GetFileContentAtRemote(workPath, branch, "missing.txt").Should().BeNull(
+            "a path absent from the remote tip must return null");
+        _sut.GetFileContentAtRemote(workPath, "no-such-branch", "tracked.txt").Should().BeNull(
+            "a missing remote branch must return null");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void InitRepoWithCommit(string path)
@@ -412,6 +583,78 @@ public class LibGit2SharpGitOperationsTests : IDisposable
         Commands.Stage(repo, "*");
         var sig = new Signature("test-author", "test@example.com", DateTimeOffset.UtcNow);
         repo.Commit("initial commit", sig, sig);
+    }
+
+    private static void WriteFile(string repoPath, string relativePath, string content)
+    {
+        var fullPath = Path.Combine(repoPath, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, content);
+    }
+
+    /// <summary>
+    /// Writes each file (a <c>null</c> content deletes it), stages exactly those paths and commits them
+    /// at <paramref name="when"/>. Returns the new commit's SHA.
+    /// </summary>
+    private static string CommitFiles(
+        string repoPath, string message, DateTimeOffset when, params (string Path, string? Content)[] files)
+    {
+        using var repo = new Repository(repoPath);
+        foreach (var (path, content) in files)
+        {
+            if (content is null)
+                File.Delete(Path.Combine(repoPath, path));
+            else
+                WriteFile(repoPath, path, content);
+            Commands.Stage(repo, path);
+        }
+
+        var sig = new Signature("test-author", "test@example.com", when);
+        return repo.Commit(message, sig, sig).Sha;
+    }
+
+    /// <summary>
+    /// Clones <see cref="_repoPath"/> into a bare "origin" and clones that into a working copy, so the
+    /// working copy has <c>origin/&lt;branch&gt;</c> at the current tip of <see cref="_repoPath"/>.
+    /// </summary>
+    private (string WorkPath, string Branch) CloneThroughBareRemote()
+    {
+        var barePath = Path.Combine(_remoteRoot, "origin.git");
+        var workPath = Path.Combine(_remoteRoot, "work");
+        Repository.Clone(_repoPath, barePath, new CloneOptions { IsBare = true });
+        Repository.Clone(barePath, workPath);
+
+        using var work = new Repository(workPath);
+        return (workPath, work.Head.FriendlyName);
+    }
+
+    /// <summary>Paths with any working-tree or index change, untracked directories expanded to their files.</summary>
+    private static IReadOnlyList<string> WorkingTreeStatusPaths(string repoPath)
+    {
+        using var repo = new Repository(repoPath);
+        return repo.RetrieveStatus(new StatusOptions { IncludeUntracked = true, RecurseUntrackedDirs = true })
+            .Where(e => e.State != FileStatus.Unaltered && e.State != FileStatus.Ignored)
+            .Select(e => e.FilePath.Replace('\\', '/'))
+            .ToList();
+    }
+
+    private static IReadOnlyList<string> EmptyDirectoriesUnder(string path) =>
+        Directory.GetDirectories(path, "*", SearchOption.AllDirectories)
+            .Where(dir => !Directory.EnumerateFileSystemEntries(dir).Any())
+            .ToList();
+
+    /// <summary>Deletes a temp directory, clearing read-only attributes git sets on object files.</summary>
+    private static void DeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path)) return;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(path, recursive: true);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>
