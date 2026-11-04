@@ -192,7 +192,7 @@ public static class PipelineRunExtensions
 
     /// <summary>The larger of two optional values; null only when both are null.</summary>
     private static long? MaxOrNull(long? a, long? b) =>
-        a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
+        a is null || b is null ? a ?? b : Math.Max(a.Value, b.Value);
 
     /// <summary>
     /// Records an agent session (invocation) into the per-phase breakdown.

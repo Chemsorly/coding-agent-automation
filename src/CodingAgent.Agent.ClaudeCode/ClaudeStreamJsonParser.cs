@@ -417,6 +417,23 @@ internal static class ClaudeStreamJsonParser
         return $"⚠ Claude subscription limit {observation.Window}: {observation.Status}{used}{resets}";
     }
 
+    /// <summary>
+    /// The main model's context window from <c>modelUsage</c>; without an <c>init</c> event naming the
+    /// main model, the largest window reported. Null when none is reported.
+    /// </summary>
+    private static long? ReadContextWindow(JsonElement modelUsage, string? mainModel)
+    {
+        var windows = modelUsage.EnumerateObject()
+            .Select(model => (model.Name, Window: GetLong(model.Value, "contextWindow", "context_window")))
+            .Where(model => model.Window > 0)
+            .ToList();
+
+        if (mainModel is not null)
+            return windows.Where(model => model.Name == mainModel).Select(model => (long?)model.Window).FirstOrDefault();
+
+        return windows.Count > 0 ? windows.Max(model => model.Window) : null;
+    }
+
     private static ClaudeUsageTotals ParseTotals(JsonElement result, string? mainModel)
     {
         var models = new Dictionary<string, ClaudeModelTotals>(StringComparer.Ordinal);
@@ -424,13 +441,10 @@ internal static class ClaudeStreamJsonParser
         if ((result.TryGetProperty("modelUsage", out var modelUsage) || result.TryGetProperty("model_usage", out modelUsage))
             && modelUsage.ValueKind == JsonValueKind.Object)
         {
+            contextWindow = ReadContextWindow(modelUsage, mainModel);
             foreach (var model in modelUsage.EnumerateObject())
             {
                 var m = model.Value;
-                // The main model's window; without an init event, the largest one reported.
-                var window = GetLong(m, "contextWindow", "context_window");
-                if (window > 0 && (model.Name == mainModel || (mainModel is null && window > (contextWindow ?? 0))))
-                    contextWindow = window;
                 models[model.Name] = new ClaudeModelTotals
                 {
                     InputTokens = GetLong(m, "inputTokens", "input_tokens"),
