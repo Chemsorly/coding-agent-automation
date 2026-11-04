@@ -145,7 +145,8 @@ public partial class QualityGateExecutor
 
         try
         {
-            var cleanupResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
+            run.ChangedBySeparateAgent = true; // set first: a failed agent may still have changed files
+            var cleanupResult = await AgentPhaseExecutor.ExecuteAgentRawAsync(
                 new AgentExecutionRequest
                 {
                     AgentProvider = context.AgentProvider,
@@ -154,13 +155,21 @@ public partial class QualityGateExecutor
                     Config = config,
                     Description = "Pre-PR cleanup agent",
                     Logger = _logger,
+                    Phase = "cleanup",
+                    OnChange = callbacks.NotifyChange,
+                    OnOutputLine = line => callbacks.EmitOutputLine(line),
                     EnvironmentVariables = context.InjectedSecrets,
-                    Phase = "cleanup"
+                    ReportStallEvent = AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent)
                 },
-                callbacks, linkedCt);
+                linkedCt);
 
-            if (cleanupResult != null)
-                await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
+            var outputSummary = cleanupResult.OutputLines.Count > 0
+                ? string.Join(Environment.NewLine, cleanupResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                : PipelineConstants.NoOutputFallback;
+            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
+
+            await AgentPhaseExecutor.PreComputeDiffArtifactsAsync(run, _logger, linkedCt);
+            await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
