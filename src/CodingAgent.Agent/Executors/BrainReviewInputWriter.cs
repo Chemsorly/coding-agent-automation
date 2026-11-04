@@ -98,7 +98,7 @@ public sealed class BrainReviewInputWriter
             }
         }
 
-        // ── Skills at injected commits (at most 10) ───────────────────────────
+        // ── Skills at injected commits (at most 10, newest first) ─────────────
         var injectedCommits = inboxFiles
             .Select(f => f.Header?.SkillsCommit)
             .Where(sha => sha is not null)
@@ -109,8 +109,16 @@ public sealed class BrainReviewInputWriter
         var skillsAtCommits = new Dictionary<string, IReadOnlyList<SkillFileAtCommit>>(StringComparer.Ordinal);
         foreach (var sha in injectedCommits)
         {
+            // Read the files the runs were actually given at this commit: the union of the
+            // "skills injected from" lists of every inbox header that names it.
+            var injectedPaths = inboxFiles
+                .Where(f => f.Header?.SkillsCommit == sha)
+                .SelectMany(f => f.Header!.SkillsFiles)
+                .Where(BrainLayout.IsSkillPath)
+                .Distinct(StringComparer.Ordinal);
+
             var files = new List<SkillFileAtCommit>();
-            foreach (var skillPath in new[] { BrainLayout.GeneralSkillPath, BrainLayout.RepositorySkillPath("") }.Where(p => !string.IsNullOrEmpty(p)))
+            foreach (var skillPath in injectedPaths)
             {
                 var content = _brainUpdateService.ReadFileAtCommit(workspacePath, sha!, skillPath);
                 if (content is not null)
