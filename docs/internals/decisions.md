@@ -282,7 +282,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Cleanup step before PR is intentional quality polish
 <!-- 2026-07-04; budget 2026-09-06 -->
-**Rule:** After quality gates pass, a cleanup agent call removes debris from fix iterations (debug output, temporary files, verbose logging), and the gates run again. Cleanup shares the retry budget. Its prompt limits it to the changed files and about 10 tool calls; the budget is soft, not enforced.
+**Rule:** After quality gates pass, a cleanup agent call removes debris from fix iterations (debug output, temporary files, verbose logging), and the gates run again. It runs in a fresh session, so it does not carry the run's history. Cleanup shares the retry budget. Its prompt limits it to the changed files and about 10 tool calls; the budget is soft, not enforced.
 **Why:** Passing tests are not enough for a reviewable PR. Without the budget, agents spent hours linting the whole codebase; strict lint and format checks belong in CI. **Accepting:** cleanup failures use the shared retry budget.
 **Not:** no cleanup; advisory cleanup without re-validation; a separate retry budget; removing the tool-call budget.
 **Revisit when:** cleanup rarely changes anything (skip it), or normal-size diffs keep exceeding the budget (raise it or sample files; don't remove it).

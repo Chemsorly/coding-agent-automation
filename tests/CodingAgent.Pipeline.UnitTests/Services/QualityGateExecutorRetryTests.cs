@@ -3,6 +3,7 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Prompts;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -1165,12 +1166,6 @@ public class QualityGateExecutorFailureCategoryTests
 /// Tests for the catch block in RunPostRetryCleanupAndFinalizeAsync that handles
 /// non-cancellation exceptions from the cleanup agent (issue #3706).
 ///
-/// The outer catch in RunPostRetryCleanupAndFinalizeAsync (~L163-168) is unreachable
-/// under the current implementation because ExecuteAgentAndRecordAsync absorbs all
-/// non-OCE exceptions before they can propagate. These tests verify the behavioral
-/// guarantees through ExecuteAgentAndRecordAsync's own catch: Warning logged, error
-/// added to ChatHistory, and execution continues to the final quality gate validation.
-///
 /// AC3 ("a test where ExecuteAgentAndRecordAsync throws directly verifies the returned
 /// RetryDecision has ShouldContinue: false") cannot be satisfied without a production
 /// seam change. The defensive catch in RunFixAgentIterationAsync (~L524-534) is
@@ -1198,6 +1193,12 @@ public class QualityGateExecutorCleanupCatchTests
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly PipelineRun _run;
     private readonly QualityGateExecutor _executor;
+
+    private static readonly QualityGateReport FailingReport = new()
+    {
+        Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build error CS1234" },
+        Tests = new GateResult { GateName = "Tests", Passed = false, Details = "2 tests failed" }
+    };
 
     private static readonly QualityGateReport PassingReport = new()
     {
@@ -1255,22 +1256,9 @@ public class QualityGateExecutorCleanupCatchTests
 
     // ── AC1: Cleanup agent failure does not abort finalization ────────────────
 
-    // TODO: The outer catch in RunPostRetryCleanupAndFinalizeAsync (~L163-168) remains
-    // unreachable by both AC1 and AC2 tests. ExecuteAgentAndRecordAsync absorbs the
-    // exception in its own catch before it can propagate to the outer catch. If the
-    // outer catch body were altered or removed, AC1 and AC2 would still pass — the
-    // observable results (Warning logged, ChatHistory updated, QG still called) are
-    // produced by the inner absorber, not the outer catch. To cover the outer catch
-    // lines, ExecuteAgentAndRecordAsync's absorption would need to be bypassable
-    // (e.g., a virtual wrapper), which requires a production seam (issue #3706).
     [Fact]
     public async Task CleanupAgentThrows_FinalQualityGateValidationIsStillCalled()
     {
-        // Arrange: initial QG passes → enters RunPostRetryCleanupAndFinalizeAsync.
-        // Cleanup agent throws → ExecuteAgentAndRecordAsync absorbs the exception and
-        // returns null → cleanupResult is null → UpdateFileChangeStatsAsync skipped →
-        // execution falls through to the final RunQualityGateValidationAsync call.
-        // Outer catch at ~L163-168 is not reached (absorption happens inside the static helper).
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
@@ -1312,9 +1300,6 @@ public class QualityGateExecutorCleanupCatchTests
     [Fact]
     public async Task CleanupAgentThrows_LogsWarningAndEnqueuesErrorInChatHistory()
     {
-        // Arrange: same path as AC1. ExecuteAgentAndRecordAsync's catch fires, which:
-        //   (a) calls request.Logger.Warning(ex, "Pipeline {RunId} {Description} failed", RunId, Description)
-        //   (b) enqueues ChatEntry: $"Agent error during Pre-PR cleanup agent: {ex.Message}"
         const string errorMessage = "simulated cleanup failure";
 
         // TODO: 3-matcher ValidateAsync setup (omits optional reportEvent). See TODO in
@@ -1336,40 +1321,83 @@ public class QualityGateExecutorCleanupCatchTests
         // Act
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
-        // Assert logger Warning. ExecuteAgentAndRecordAsync calls:
-        //   request.Logger.Warning(ex, "Pipeline {RunId} {Description} failed", run.RunId, request.Description)
-        // RunId and Description are both string → Serilog resolves to Warning<string,string>(Exception, string, string, string),
+        // Assert logger Warning. The catch in RunPostRetryCleanupAndFinalizeAsync calls:
+        //   _logger.Warning(ex, "Pipeline {RunId} cleanup agent call failed, ...", run.RunId)
+        // RunId is a string → Serilog resolves to Warning<string>(Exception, string, string),
         // NOT the params object[] overload. Use typed positional It.IsAny<string>() matchers — see
         // QualityGateExecutorFeedbackTests.cs for the established pattern in this project.
-        // TODO: This verify matches the INNER absorber's 4-arg call, not the outer catch in
-        // RunPostRetryCleanupAndFinalizeAsync. The outer catch uses a 3-arg template:
-        //   _logger.Warning(ex, "Pipeline {RunId} cleanup agent call failed, ...", run.RunId)
-        //   → Warning<string>(Exception, string, string)
-        // If the outer catch's Warning call were removed, this verify would still pass
-        // (satisfied by the inner absorber). To protect the outer catch specifically, a
-        // 3-arg verify would be needed — but the outer catch is unreachable (see class
-        // comment and WARNING TODO above).
         _mockLogger.Verify(l => l.Warning(
             It.IsAny<Exception>(),
-            It.IsAny<string>(),   // message template: "Pipeline {RunId} {Description} failed"
-            It.IsAny<string>(),   // {RunId}
-            It.IsAny<string>()),  // {Description}: "Pre-PR cleanup agent"
+            It.Is<string>(m => m.Contains("cleanup agent call failed")),
+            It.IsAny<string>()),  // {RunId}
             Times.AtLeastOnce);
 
-        // Assert ChatHistory entry. ExecuteAgentAndRecordAsync's catch enqueues:
-        //   $"Agent error during {Description}: {ex.Message}"
-        //   → "Agent error during Pre-PR cleanup agent: simulated cleanup failure"
-        // TODO: This assertion is too weak to anchor to either catch path. The outer catch
-        // enqueues $"Agent error during cleanup: {ex.Message}" while the inner absorber
-        // enqueues $"Agent error during Pre-PR cleanup agent: {ex.Message}". Both contain
-        // the bare errorMessage. If the outer catch's Enqueue were removed, this assertion
-        // would still pass (the inner absorber's entry still contains the error message).
-        // A tighter assertion would check for "Pre-PR cleanup agent" (inner absorber) or
-        // "cleanup:" (outer catch) to distinguish the two — but since the outer catch is
-        // unreachable, the distinction is moot until a seam is added.
+        // Assert ChatHistory entry enqueued by the catch in RunPostRetryCleanupAndFinalizeAsync.
         _run.ChatHistory.Should().Contain(e =>
-            e.Role == ChatRole.System && e.Content.Contains(errorMessage),
+            e.Role == ChatRole.System && e.Content == $"Agent error during cleanup: {errorMessage}",
             "the cleanup exception message must appear in ChatHistory so the run record preserves the failure diagnostic");
+    }
+
+    // ── Fresh session for the cleanup agent (issue #4060) ────────────────────
+
+    [Fact]
+    public async Task Cleanup_RunsInFreshSession()
+    {
+        _run.CodegenSessionId = "codegen-session";
+        var injectedSecrets = new Dictionary<string, string> { ["NUGET_KEY"] = "secret-value" };
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PassingReport);
+        var requests = CaptureAgentRequests();
+
+        await _executor.ProceedToQualityGatesAsync(
+            BuildContext(CreateConfig(maxRetries: 0)) with { InjectedSecrets = injectedSecrets },
+            CancellationToken.None);
+
+        var cleanupRequest = requests.Should().ContainSingle(r => r.Prompt == PromptBuilder.BuildCleanupPrompt()).Subject;
+        cleanupRequest.UseResume.Should().BeFalse("the cleanup must not resume the main session");
+        cleanupRequest.ResumeSessionId.Should().BeNull("the cleanup must not resume the codegen session");
+        cleanupRequest.EnvironmentVariables.Should().BeEquivalentTo(injectedSecrets);
+    }
+
+    [Fact]
+    public async Task Cleanup_AfterwardsGateRetry_ResumesCodegenSession()
+    {
+        _run.CodegenSessionId = "codegen-session";
+        var validateCalls = 0;
+        // First gate run passes (enters the cleanup path); the final gates after cleanup fail.
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ++validateCalls == 1 ? PassingReport : FailingReport);
+        var requests = CaptureAgentRequests();
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 1)), CancellationToken.None);
+
+        var retryRequest = requests.Should().Contain(r => r.Prompt.Contains("Quality gates failed (attempt")).Subject;
+        retryRequest.ResumeSessionId.Should().Be("codegen-session");
+        retryRequest.Prompt.Should().Contain(QualityGateExecutor.SeparateAgentRetryHint,
+            "the cleanup ran in a separate session, so the resumed codegen session must be told");
+    }
+
+    private List<AgentRequest> CaptureAgentRequests()
+    {
+        var requests = new List<AgentRequest>();
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => requests.Add(req))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = new List<string> { "Done." },
+                Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
+            });
+        return requests;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
