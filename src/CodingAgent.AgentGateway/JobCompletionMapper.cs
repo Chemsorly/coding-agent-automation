@@ -97,6 +97,8 @@ internal static class JobCompletionMapper
             WebSearchRequests = p.WebSearchRequests,
             BillingMode = p.BillingMode,
             ToolCalls = p.ToolCalls,
-            UnavailableMcpServers = p.UnavailableMcpServers
+            UnavailableMcpServers = p.UnavailableMcpServers,
+            PeakContextTokens = p.PeakContextTokens,
+            ContextWindowTokens = p.ContextWindowTokens
         };
 }

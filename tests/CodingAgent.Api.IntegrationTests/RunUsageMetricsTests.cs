@@ -453,6 +453,47 @@ public sealed class RunUsageMetricsTests
     }
 
     [Fact]
+    public async Task PhaseBreakdown_PeakContext_EmitsTokensAndUtilizationWhenTheWindowIsKnown()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedRunningItemAsync(opts);
+        var svc = CreateService(opts);
+
+        var (peakListener, peakBag) = SetupLongListener("pipeline.run.context_peak_tokens");
+        var (utilizationListener, utilizationBag) = SetupDoubleListener("pipeline.run.context_peak_utilization");
+        using var _ = peakListener;
+        using var __ = utilizationListener;
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new() { Tokens = 1, Provider = "claude", PeakContextTokens = 137_771, ContextWindowTokens = 200_000 },
+                ["analysis"] = new() { Tokens = 1, Provider = "opencode", PeakContextTokens = 137_772 },
+                ["review"] = new() { Tokens = 1, Provider = "kiro" }
+            }
+        };
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        var codegen = peakBag.Should().ContainSingle(m => m.Value == 137_771).Which.Tags;
+        codegen["phase"].Should().Be("codegen");
+        codegen["provider"].Should().Be("claude");
+        codegen.Should().NotContainKey("run_type", "the histogram carries only phase and provider to bound its series");
+        peakBag.Should().ContainSingle(m => m.Value == 137_772).Which.Tags["provider"].Should().Be("opencode");
+        peakBag.Should().NotContain(m => Equals(m.Tags["provider"], "kiro"), "a phase without a reported peak records nothing");
+
+        utilizationBag.Should().ContainSingle(m => Math.Abs(m.Value - 137_771d / 200_000) < 1e-9)
+            .Which.Tags["provider"].Should().Be("claude");
+        utilizationBag.Should().NotContain(m => Equals(m.Tags["provider"], "opencode"),
+            "without a context window there is no utilization sample");
+    }
+
+    [Fact]
     public async Task PhaseBreakdown_TagsModel_OnTokensCostAndAgentTime()
     {
         var opts = CreateDbOptions();

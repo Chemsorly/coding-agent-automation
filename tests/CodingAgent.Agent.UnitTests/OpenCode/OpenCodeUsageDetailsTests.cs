@@ -81,6 +81,53 @@ public class OpenCodeUsageDetailsTests
         result.UsageDetails!.Turns.Should().Be(1);
     }
 
+    private static string AssistantMessageWithTokens(string messageId, long input, long cacheRead, long cacheWrite) =>
+        Frame("message.updated", new
+        {
+            sessionID = CallSession,
+            info = new
+            {
+                id = messageId, sessionID = CallSession, role = "assistant",
+                tokens = new { input, output = 100, reasoning = 0, cache = new { read = cacheRead, write = cacheWrite } }
+            }
+        });
+
+    [Fact]
+    public async Task ExecuteAsync_ReportsThePeakContextOfTheAssistantMessages()
+    {
+        // Each step overwrites the message's tokens with that step's call; the peak is the largest
+        // input side seen, even when a later (compacted) step is smaller.
+        var sseContent =
+            AssistantMessageWithTokens("msg_a", input: 1000, cacheRead: 30000, cacheWrite: 500)
+            + AssistantMessageWithTokens("msg_a", input: 2000, cacheRead: 50000, cacheWrite: 1000)
+            + AssistantMessageWithTokens("msg_b", input: 500, cacheRead: 8000, cacheWrite: 0);
+
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+        SetupRun(ctx.Handler, CallSession, sseContent);
+
+        var result = await ctx.Provider.ExecuteAsync(
+            OpenCodeTestHelpers.CreateRequest("test prompt"), CancellationToken.None);
+
+        result.UsageDetails!.PeakContextTokens.Should().Be(53000);
+        result.UsageDetails.StartContextTokens.Should().Be(31500);
+        result.UsageDetails.EndContextTokens.Should().Be(8500);
+        result.UsageDetails.ContextWindowTokens.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AssistantMessagesWithoutTokens_LeavePeakContextUnknown()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+        SetupRun(ctx.Handler, CallSession, AssistantMessage("msg_a"));
+
+        var result = await ctx.Provider.ExecuteAsync(
+            OpenCodeTestHelpers.CreateRequest("test prompt"), CancellationToken.None);
+
+        result.UsageDetails!.PeakContextTokens.Should().BeNull();
+        result.UsageDetails.StartContextTokens.Should().BeNull();
+        result.UsageDetails.EndContextTokens.Should().BeNull();
+    }
+
     [Fact]
     public async Task ExecuteAsync_NoAssistantMessages_LeavesUsageDetailsNull()
     {

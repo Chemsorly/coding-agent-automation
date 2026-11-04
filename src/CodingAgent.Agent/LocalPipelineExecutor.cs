@@ -413,7 +413,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 WebSearchRequests = kvp.Value.WebSearchRequests,
                 BillingMode = kvp.Value.BillingMode,
                 ToolCalls = kvp.Value.ToolCalls,
-                UnavailableMcpServers = kvp.Value.UnavailableMcpServers
+                UnavailableMcpServers = kvp.Value.UnavailableMcpServers,
+                PeakContextTokens = kvp.Value.PeakContextTokens,
+                ContextWindowTokens = kvp.Value.ContextWindowTokens
             });
     }
 

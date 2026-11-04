@@ -38,6 +38,8 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.run.web_search_requests` | Counter | `{request}` | `run_type`, `provider` | Web searches the model made per run (Claude Code) |
 | `pipeline.run.rate_limit_events` | Counter | `{event}` | `provider`, `window`, `status` | Latest subscription rate-limit reading per window seen in a run (Claude Code `rate_limit_event`). `window`: `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`, `other`. `status`: `allowed`, `allowed_warning`, `rejected`, `other` |
 | `pipeline.run.rate_limit_utilization` | Histogram | `1` | `provider`, `window`, `status` | Fraction (0–1) of the window used, when the CLI reports it |
+| `pipeline.run.context_peak_tokens` | Histogram | `{token}` | `phase`, `provider` | Largest context one model call sent in a phase: input + cache read + cache write tokens of the main conversation (subagents excluded). The maximum over the phase's sessions, so auto-compaction does not hide it. Claude Code and OpenCode; Kiro does not report it in `--no-interactive` mode |
+| `pipeline.run.context_peak_utilization` | Histogram | `1` | `phase`, `provider` | `context_peak_tokens` as a fraction (0–1) of the model's context window. Claude Code only (OpenCode does not report the window) |
 | `pipeline.run.quality_gate.results` | Counter | `{evaluation}` | `run_type`, `gate`, `result`, `infrastructure_failure` | Quality gate evaluations. `gate`: `compilation`, `tests`, `external_ci` |
 | `pipeline.run.ci.not_started_retriggers` | Counter | `{retrigger}` | `run_type` | Empty commits pushed to restart CI that never started |
 | `pipeline.run.ci.wait` | Histogram | s | `run_type`, `stage`, `result` | Push → CI conclusion. `stage`: `pre_pr`, `post_pr`; `result`: `pass`, `fail` |
@@ -187,6 +189,8 @@ The inner `max by (…, service_instance_id)` must list every tag of the counter
 | `pipeline.run.step.duration` (s) | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800 |
 | `pipeline.run.ci.wait` (s) | 60, 300, 600, 900, 1800, 3600, 7200, 14400 |
 | `pipeline.run.rate_limit_utilization` | 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1.0 |
+| `pipeline.run.context_peak_tokens` | 32000, 64000, 128000, 200000, 400000, 1000000 |
+| `pipeline.run.context_peak_utilization` | 0.25, 0.5, 0.75, 0.9, 1.0 |
 | `pipeline.pull_requests.time_to_merge` (s) | 300, 600, 1800, 3600, 7200, 14400, 28800, 43200, 86400, 172800, 345600, 604800 |
 | `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400 |
 | `workdistribution.timeout_execution_age_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
@@ -269,6 +273,8 @@ Every agent CLI invocation creates a child span of the current step span:
 | `gen_ai.usage.total_tokens`, `gen_ai.usage.reasoning_tokens`, `gen_ai.usage.cache_read_input_tokens`, `gen_ai.usage.cache_creation_input_tokens` | when > 0 |
 | `agent.cost_usd` | provider-reported cost when known |
 | `agent.billing` / `agent.turns` / `agent.api_duration_s` / `agent.web_search_requests` / `agent.error_category` | Claude Code usage details (`agent.error_category` only on provider-side failures) |
+| `agent.context.peak_tokens` / `agent.context.window_tokens` | Largest context one model call sent in the session, and the model's context window; when the provider reports them (peak: Claude Code, OpenCode; window: Claude Code) |
+| `agent.context.start_tokens` / `agent.context.end_tokens` | Context of the session's first model call (prompt plus resumed history) and of its last one (roughly what a resumed next session starts from). Claude Code and OpenCode, main conversation only. Compare them across a trace's session spans to see where context grows; they are not aggregated into metrics |
 
 Stall events are recorded as span events:
 

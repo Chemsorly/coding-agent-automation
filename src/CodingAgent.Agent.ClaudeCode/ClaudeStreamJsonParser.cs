@@ -39,6 +39,10 @@ internal sealed record ClaudeUsageTotals
     public decimal? CostUsd { get; init; }
     public int Turns { get; init; }
     public long ApiDurationMs { get; init; }
+
+    /// <summary>Context window of the main model in tokens (<c>modelUsage[model].contextWindow</c>), or null when not reported.</summary>
+    public long? ContextWindowTokens { get; init; }
+
     public IReadOnlyDictionary<string, ClaudeModelTotals> Models { get; init; } = new Dictionary<string, ClaudeModelTotals>();
 }
 
@@ -95,6 +99,18 @@ internal sealed class ClaudeStreamState
     public int? LastErrorStatus { get; set; }
 
     public ClaudeUsageTotals? Totals { get; set; }
+
+    /// <summary>
+    /// Largest context the main conversation sent in one model call: input + cache read + cache write
+    /// tokens of an assistant message. Null until an assistant message reports usage.
+    /// </summary>
+    public long? PeakContextTokens { get; set; }
+
+    /// <summary>Context of the main conversation's first model call; null until one reports usage.</summary>
+    public long? StartContextTokens { get; set; }
+
+    /// <summary>Context of the main conversation's latest model call; null until one reports usage.</summary>
+    public long? EndContextTokens { get; set; }
 
     /// <summary>Latest rate-limit reading per window.</summary>
     public Dictionary<string, AgentRateLimitObservation> RateLimits { get; } = new(StringComparer.Ordinal);
@@ -230,8 +246,14 @@ internal static class ClaudeStreamJsonParser
         if (!isSubagent)
             TrackMainConversationError(root, state);
 
-        if (!root.TryGetProperty("message", out var message)
-            || !message.TryGetProperty("content", out var content)
+        if (!root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object)
+            return [];
+
+        // Subagents run in their own context window; only the main conversation's counts.
+        if (!isSubagent)
+            TrackContextSize(message, state);
+
+        if (!message.TryGetProperty("content", out var content)
             || content.ValueKind != JsonValueKind.Array)
             return [];
 
@@ -266,6 +288,28 @@ internal static class ClaudeStreamJsonParser
     }
 
     /// <summary>
+    /// Records the context one model call sent: everything on the input side, cached or not.
+    /// Every assistant event of one API message repeats that message's usage, so the maximum,
+    /// the first and the last value are all unaffected by the repeats.
+    /// </summary>
+    private static void TrackContextSize(JsonElement message, ClaudeStreamState state)
+    {
+        if (!message.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object)
+            return;
+
+        var context = GetLong(usage, "input_tokens")
+            + GetLong(usage, "cache_read_input_tokens")
+            + GetLong(usage, "cache_creation_input_tokens");
+        if (context <= 0)
+            return;
+
+        state.StartContextTokens ??= context;
+        state.EndContextTokens = context;
+        if (context > (state.PeakContextTokens ?? 0))
+            state.PeakContextTokens = context;
+    }
+
+    /// <summary>
     /// Only the main conversation's API errors describe the call; a main message without one means any
     /// earlier retried error was recovered from.
     /// </summary>
@@ -290,7 +334,7 @@ internal static class ClaudeStreamJsonParser
         state.ResultSubtype = GetString(root, "subtype");
         state.ResultText = GetString(root, "result");
         state.ApiErrorStatus = GetInt(root, "api_error_status") ?? state.ApiErrorStatus;
-        state.Totals = ParseTotals(root);
+        state.Totals = ParseTotals(root, state.Model);
 
         if (!state.ResultIsError)
             return [];
@@ -384,12 +428,31 @@ internal static class ClaudeStreamJsonParser
         return $"⚠ Claude subscription limit {observation.Window}: {observation.Status}{used}{resets}";
     }
 
-    private static ClaudeUsageTotals ParseTotals(JsonElement result)
+    /// <summary>
+    /// The main model's context window from <c>modelUsage</c>; without an <c>init</c> event naming the
+    /// main model, the largest window reported. Null when none is reported.
+    /// </summary>
+    private static long? ReadContextWindow(JsonElement modelUsage, string? mainModel)
+    {
+        var windows = modelUsage.EnumerateObject()
+            .Select(model => (model.Name, Window: GetLong(model.Value, "contextWindow", "context_window")))
+            .Where(model => model.Window > 0)
+            .ToList();
+
+        if (mainModel is not null)
+            return windows.Where(model => model.Name == mainModel).Select(model => (long?)model.Window).FirstOrDefault();
+
+        return windows.Count > 0 ? windows.Max(model => model.Window) : null;
+    }
+
+    private static ClaudeUsageTotals ParseTotals(JsonElement result, string? mainModel)
     {
         var models = new Dictionary<string, ClaudeModelTotals>(StringComparer.Ordinal);
+        long? contextWindow = null;
         if ((result.TryGetProperty("modelUsage", out var modelUsage) || result.TryGetProperty("model_usage", out modelUsage))
             && modelUsage.ValueKind == JsonValueKind.Object)
         {
+            contextWindow = ReadContextWindow(modelUsage, mainModel);
             foreach (var model in modelUsage.EnumerateObject())
             {
                 var m = model.Value;
@@ -411,6 +474,7 @@ internal static class ClaudeStreamJsonParser
             CostUsd = GetDecimal(result, "total_cost_usd"),
             Turns = (int)GetLong(result, "num_turns"),
             ApiDurationMs = GetLong(result, "duration_api_ms"),
+            ContextWindowTokens = contextWindow,
             Models = models
         };
 

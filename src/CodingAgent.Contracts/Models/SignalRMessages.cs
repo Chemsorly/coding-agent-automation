@@ -720,6 +720,20 @@ public sealed record PhaseUsagePayload
     /// </summary>
     [Key(15)]
     public IReadOnlyDictionary<string, string>? UnavailableMcpServers { get; init; }
+
+    /// <summary>
+    /// Largest context one model call sent in this phase, in tokens, or null when not reported.
+    /// Wire-compat: additive field — old agents omit it.
+    /// </summary>
+    [Key(16)]
+    public long? PeakContextTokens { get; init; }
+
+    /// <summary>
+    /// Context window of the phase's main model in tokens, or null when not reported.
+    /// Wire-compat: additive field — old agents omit it.
+    /// </summary>
+    [Key(17)]
+    public long? ContextWindowTokens { get; init; }
 }
 
 /// <summary>
