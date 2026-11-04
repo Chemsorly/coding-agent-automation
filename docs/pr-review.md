@@ -151,6 +151,8 @@ The Kiro CLI, OpenCode and Claude Code providers all support parallel execution.
 
 All review agents unconditionally run in isolated sessions (`UseResume = false`) with no shared context from the code generation phase. This prevents self-attribution bias — a phenomenon where models evaluate their own output as more correct.
 
+A fix round for [CRITICAL] findings resumes the code generation session, as it may need the implementation's reasoning. A fix round with only [WARNING] findings runs in a fresh session: it fixes quick wins and marks the rest with a TODO [WARNING] comment, which refactoring scans pick up.
+
 ### Output Isolation
 
 Each agent writes findings to a separate file: `.agent/review-findings-{agent-name}.md`, where the agent name is lower-cased and spaces and slashes become hyphens (for example `.agent/review-findings-securityreviewer.md`). Pre-computed diff artifacts (`.agent/diff-stat.txt`, `.agent/full-diff.txt`) are shared read-only across all agents.

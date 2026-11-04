@@ -426,6 +426,8 @@ public partial class QualityGateExecutor
             // second retry on, adds the "Prior attempt failures" history (issue #2364).
             var retryPromptSummary = BuildQualityGateRetryPrompt(report, pendingAttemptNum, config.MaxRetries,
                 attemptFailures);
+            if (run.ChangedBySeparateAgent)
+                retryPromptSummary += $"\n\n{SeparateAgentRetryHint}";
 
             run.ChatHistory.Enqueue(new ChatEntry
             {

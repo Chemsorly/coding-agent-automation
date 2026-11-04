@@ -1558,6 +1558,88 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
     #endregion
 
+    #region Fix Session Tests
+
+    [Fact]
+    public async Task RunReviewLoop_WarningsOnly_FixRunsInFreshSession()
+    {
+        // Arrange
+        _run.CodegenSessionId = "codegen-session";
+        var injectedSecrets = new Dictionary<string, string> { ["NUGET_KEY"] = "secret-value" };
+        var context = BuildContext() with { InjectedSecrets = injectedSecrets };
+        var fixRequest = await CaptureFixRequestAsync(context, "[WARNING] Minor style issue");
+
+        // Assert
+        fixRequest.Should().NotBeNull("a warnings-only round must dispatch a fix agent");
+        fixRequest!.UseResume.Should().BeFalse();
+        fixRequest.ResumeSessionId.Should().BeNull();
+        fixRequest.EnvironmentVariables.Should().NotBeNull();
+        fixRequest.EnvironmentVariables!["NUGET_KEY"].Should().Be("secret-value");
+        _run.ChangedBySeparateAgent.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunReviewLoop_CriticalFindings_FixResumesCodegenSession()
+    {
+        // Arrange
+        _run.CodegenSessionId = "codegen-session";
+        var fixRequest = await CaptureFixRequestAsync(BuildContext(), "[CRITICAL] Critical bug found");
+
+        // Assert
+        fixRequest.Should().NotBeNull("a critical round must dispatch a fix agent");
+        fixRequest!.ResumeSessionId.Should().Be(_run.CodegenSessionId);
+        _run.ChangedBySeparateAgent.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunReviewLoop_WarningsFixThrows_RunContinues()
+    {
+        // Arrange: call 1 = review agent, call 2 = warnings fix agent (throws), call 3 = review summary agent
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns((AgentRequest req, CancellationToken ct, Action<string>? a) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    WriteFindingsFile("Correctness", "[WARNING] Minor style issue");
+                else if (callCount == 2)
+                    throw new InvalidOperationException("fix agent crashed");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "Fix it" } };
+
+        // Act
+        var act = () => _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert
+        await act.Should().NotThrowAsync();
+        callCount.Should().Be(3, "the review summary agent must still run after the warnings fix fails");
+        _run.ChangedBySeparateAgent.Should().BeTrue("a failed agent may still have changed files");
+        _run.ChatHistory.Should().Contain(e => e.Role == ChatRole.System && e.Content.Contains("fix agent crashed"));
+    }
+
+    private async Task<AgentRequest?> CaptureFixRequestAsync(AgentPhaseContext context, string findings)
+    {
+        // Call 1 = review agent, call 2 = fix agent
+        AgentRequest? fixRequest = null;
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    WriteFindingsFile("Correctness", findings);
+                else if (callCount == 2)
+                    fixRequest = req;
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+        return fixRequest;
+    }
+
+    #endregion
+
     #region Diff Re-computation and Findings Deletion Tests
 
     [Fact]

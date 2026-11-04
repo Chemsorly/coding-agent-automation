@@ -209,6 +209,13 @@ public sealed partial class PipelineRun
     /// <summary>Session ID captured from the code generation agent, used for --resume-id in fix prompts.</summary>
     public string? CodegenSessionId { get; set; }
 
+    /// <summary>
+    /// True once an agent outside the code generation session (the warnings-only review fix) may have
+    /// changed the branch. Quality gate retries resume the codegen session, so they add a hint to read
+    /// the full diff. Agent-local: not part of the run hash, payloads or summaries.
+    /// </summary>
+    public bool ChangedBySeparateAgent { get; set; }
+
     /// <summary>Number of files changed during code generation, updated after agent execution.</summary>
     public int FilesChangedCount { get => Metrics.FilesChangedCount; set => Metrics.FilesChangedCount = value; }
 

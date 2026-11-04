@@ -375,6 +375,26 @@ public static partial class PromptBuilder
         return sb.ToString().TrimEnd();
     }
 
+    /// <summary>
+    /// Constructs the fix prompt for a review round with only [WARNING] findings. The agent runs in a
+    /// fresh session, so the prompt points at the workspace files that give it context. The rules after
+    /// the configured instructions override them, since saved installs may hold the old fix text.
+    /// </summary>
+    public static string BuildWarningsFixPrompt(string fixInstructions)
+    {
+        ArgumentNullException.ThrowIfNull(fixInstructions);
+
+        var sb = new StringBuilder();
+        sb.AppendLine(fixInstructions);
+        sb.AppendLine("This round has no [CRITICAL] findings. The rules below take precedence over the instructions above.");
+        sb.AppendLine($"Review findings are in {AgentWorkspacePaths.ReviewFindingsFilePath}. For context, read {AgentWorkspacePaths.IssueContextFilePath}. {AgentWorkspacePaths.DiffStatFilePath} and {AgentWorkspacePaths.FullDiffFilePath} show the branch's changes.");
+        sb.AppendLine("For each [WARNING]: fix it if it is a quick win: small, in one place, no design change. Otherwise add a comment at that location starting with TODO [WARNING] and the finding's text. Ignore [SUGGESTION] items.");
+        sb.AppendLine("Run only the tests for the code you changed. The quality gates run the full build and test suite after this step.");
+        sb.AppendLine(PipelineConstants.GitRestrictionFull);
+        sb.AppendLine(PipelineConstants.GateIntegrityRule);
+        return sb.ToString().TrimEnd();
+    }
+
     private static void AppendIssueContext(StringBuilder sb, IssueDetail issue, ParsedIssue parsed,
         string? issueContextPathOverride = null)
     {
