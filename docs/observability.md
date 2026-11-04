@@ -274,6 +274,7 @@ Every agent CLI invocation creates a child span of the current step span:
 | `agent.cost_usd` | provider-reported cost when known |
 | `agent.billing` / `agent.turns` / `agent.api_duration_s` / `agent.web_search_requests` / `agent.error_category` | Claude Code usage details (`agent.error_category` only on provider-side failures) |
 | `agent.context.peak_tokens` / `agent.context.window_tokens` | Largest context one model call sent in the session, and the model's context window; when the provider reports them (peak: Claude Code, OpenCode; window: Claude Code) |
+| `agent.context.start_tokens` / `agent.context.end_tokens` | Context of the session's first model call (prompt plus resumed history) and of its last one (roughly what a resumed next session starts from). Claude Code and OpenCode, main conversation only. Compare them across a trace's session spans to see where context grows; they are not aggregated into metrics |
 
 Stall events are recorded as span events:
 

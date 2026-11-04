@@ -46,7 +46,7 @@ public class AgentSessionSpanTests : IDisposable
             OutputLines = [],
             Usage = new TokenUsage { InputTokens = 10, OutputTokens = 20, ReasoningTokens = 5, CacheReadTokens = 300, CacheWriteTokens = 40 },
             Cost = 0.12m,
-            UsageDetails = new AgentUsageDetails { BillingMode = AgentBillingModes.Api, Turns = 3, ApiDurationSeconds = 4.5, WebSearchRequests = 2, PeakContextTokens = 90_000, ContextWindowTokens = 200_000 }
+            UsageDetails = new AgentUsageDetails { BillingMode = AgentBillingModes.Api, Turns = 3, ApiDurationSeconds = 4.5, WebSearchRequests = 2, PeakContextTokens = 90_000, StartContextTokens = 30_000, EndContextTokens = 70_000, ContextWindowTokens = 200_000 }
         };
         var provider = CreateMockProvider(AgentProviderType.ClaudeCode, model: "claude-opus-5-5", result: agentResult);
 
@@ -65,6 +65,8 @@ public class AgentSessionSpanTests : IDisposable
         span.GetTagItem("agent.web_search_requests").Should().Be(2);
         span.GetTagItem("agent.context.peak_tokens").Should().Be(90_000L);
         span.GetTagItem("agent.context.window_tokens").Should().Be(200_000L);
+        span.GetTagItem("agent.context.start_tokens").Should().Be(30_000L);
+        span.GetTagItem("agent.context.end_tokens").Should().Be(70_000L);
     }
 
     [Fact]

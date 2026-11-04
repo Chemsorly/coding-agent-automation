@@ -109,6 +109,8 @@ public class OpenCodeUsageDetailsTests
             OpenCodeTestHelpers.CreateRequest("test prompt"), CancellationToken.None);
 
         result.UsageDetails!.PeakContextTokens.Should().Be(53000);
+        result.UsageDetails.StartContextTokens.Should().Be(31500);
+        result.UsageDetails.EndContextTokens.Should().Be(8500);
         result.UsageDetails.ContextWindowTokens.Should().BeNull();
     }
 
@@ -122,6 +124,8 @@ public class OpenCodeUsageDetailsTests
             OpenCodeTestHelpers.CreateRequest("test prompt"), CancellationToken.None);
 
         result.UsageDetails!.PeakContextTokens.Should().BeNull();
+        result.UsageDetails.StartContextTokens.Should().BeNull();
+        result.UsageDetails.EndContextTokens.Should().BeNull();
     }
 
     [Fact]

@@ -44,6 +44,18 @@ public sealed record AgentUsageDetails
     /// </summary>
     public long? PeakContextTokens { get; init; }
 
+    /// <summary>
+    /// Context of the main conversation's first model call in the invocation: the prompt plus any resumed
+    /// history. Null when the provider does not report it. Session span only; not aggregated per phase.
+    /// </summary>
+    public long? StartContextTokens { get; init; }
+
+    /// <summary>
+    /// Context of the main conversation's last model call in the invocation: roughly what a resumed next
+    /// call starts from. Null when the provider does not report it. Session span only; not aggregated per phase.
+    /// </summary>
+    public long? EndContextTokens { get; init; }
+
     /// <summary>Context window of the main model in tokens, or null when the provider does not report it.</summary>
     public long? ContextWindowTokens { get; init; }
 

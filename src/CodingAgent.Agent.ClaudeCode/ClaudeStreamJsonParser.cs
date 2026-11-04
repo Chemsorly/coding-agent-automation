@@ -106,6 +106,12 @@ internal sealed class ClaudeStreamState
     /// </summary>
     public long? PeakContextTokens { get; set; }
 
+    /// <summary>Context of the main conversation's first model call; null until one reports usage.</summary>
+    public long? StartContextTokens { get; set; }
+
+    /// <summary>Context of the main conversation's latest model call; null until one reports usage.</summary>
+    public long? EndContextTokens { get; set; }
+
     /// <summary>Latest rate-limit reading per window.</summary>
     public Dictionary<string, AgentRateLimitObservation> RateLimits { get; } = new(StringComparer.Ordinal);
 
@@ -283,8 +289,8 @@ internal static class ClaudeStreamJsonParser
 
     /// <summary>
     /// Records the context one model call sent: everything on the input side, cached or not.
-    /// Every assistant event of one API message repeats that message's usage, so taking the
-    /// maximum is safe.
+    /// Every assistant event of one API message repeats that message's usage, so the maximum,
+    /// the first and the last value are all unaffected by the repeats.
     /// </summary>
     private static void TrackContextSize(JsonElement message, ClaudeStreamState state)
     {
@@ -294,7 +300,12 @@ internal static class ClaudeStreamJsonParser
         var context = GetLong(usage, "input_tokens")
             + GetLong(usage, "cache_read_input_tokens")
             + GetLong(usage, "cache_creation_input_tokens");
-        if (context > 0 && context > (state.PeakContextTokens ?? 0))
+        if (context <= 0)
+            return;
+
+        state.StartContextTokens ??= context;
+        state.EndContextTokens = context;
+        if (context > (state.PeakContextTokens ?? 0))
             state.PeakContextTokens = context;
     }
 

@@ -162,6 +162,10 @@ internal static class AgentStallMonitor
             sessionSpan.SetTag("agent.context.peak_tokens", peakContext);
         if (details.ContextWindowTokens is { } contextWindow)
             sessionSpan.SetTag("agent.context.window_tokens", contextWindow);
+        if (details.StartContextTokens is { } startContext)
+            sessionSpan.SetTag("agent.context.start_tokens", startContext);
+        if (details.EndContextTokens is { } endContext)
+            sessionSpan.SetTag("agent.context.end_tokens", endContext);
     }
 
     private static void SetTagIfPositive(Activity span, string key, long value)

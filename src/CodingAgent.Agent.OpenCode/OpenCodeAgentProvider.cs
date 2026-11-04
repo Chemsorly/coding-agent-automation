@@ -242,7 +242,9 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                     ? new AgentUsageDetails
                     {
                         Turns = sseState.AssistantMessageIds.Count,
-                        PeakContextTokens = sseState.PeakContextTokens
+                        PeakContextTokens = sseState.PeakContextTokens,
+                        StartContextTokens = sseState.StartContextTokens,
+                        EndContextTokens = sseState.EndContextTokens
                     }
                     : null
             };

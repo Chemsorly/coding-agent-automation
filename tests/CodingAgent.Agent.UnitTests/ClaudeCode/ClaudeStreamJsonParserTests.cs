@@ -128,6 +128,27 @@ public class ClaudeStreamJsonParserTests
             _state);
 
         _state.PeakContextTokens.Should().Be(42005);
+        _state.StartContextTokens.Should().Be(42005);
+        _state.EndContextTokens.Should().Be(9003);
+    }
+
+    [Fact]
+    public void ProcessLine_MainAssistantUsage_RecordsTheFirstAndLastCallsContext()
+    {
+        foreach (var cacheRead in new[] { 20000, 60000, 45000 })
+        {
+            ClaudeStreamJsonParser.ProcessLine(
+                $$$"""{"type":"assistant","message":{"usage":{"input_tokens":0,"cache_read_input_tokens":{{{cacheRead}}}},"content":[]}}""",
+                _state);
+        }
+        // A subagent's call is neither the main conversation's start nor its end.
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"usage":{"input_tokens":5000},"content":[]}}""",
+            _state);
+
+        _state.StartContextTokens.Should().Be(20000);
+        _state.PeakContextTokens.Should().Be(60000);
+        _state.EndContextTokens.Should().Be(45000);
     }
 
     [Fact]
@@ -151,6 +172,8 @@ public class ClaudeStreamJsonParserTests
             _state);
 
         _state.PeakContextTokens.Should().BeNull();
+        _state.StartContextTokens.Should().BeNull();
+        _state.EndContextTokens.Should().BeNull();
     }
 
     [Fact]
