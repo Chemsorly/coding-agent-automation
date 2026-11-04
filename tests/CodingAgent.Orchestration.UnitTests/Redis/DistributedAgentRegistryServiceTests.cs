@@ -3,6 +3,7 @@ using CodingAgent.Orchestration.Redis;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.TestUtilities;
+using Moq;
 using Serilog;
 using StackExchange.Redis;
 
@@ -714,6 +715,86 @@ public sealed class DistributedAgentRegistryServiceTests
         _store.GetHash("agent:agent-1").Should().BeNull(
             "deregistered agent must not be resurrected by a heartbeat");
         _store.GetSet("agents:all").Should().NotContain("agent-1");
+    }
+
+    /// <summary>
+    /// Issue #4250: DeregisterAsync must remove the Redis hash and both set memberships BEFORE it
+    /// clears _localSnapshot. If the snapshot were cleared first, a Register arriving during the
+    /// Redis round-trips would repopulate it and the pending DeleteAsync would then delete the
+    /// freshly written hash, leaving a snapshot with no hash for the next heartbeat to resurrect.
+    /// The order is checked structurally from inside the Redis calls, not by racing threads.
+    /// </summary>
+    [Fact]
+    public async Task Deregister_RemovesRedisHashAndSetMembershipsBeforeClearingLocalSnapshot()
+    {
+        var store = new Mock<IRedisStore>();
+        store.Setup(s => s.HashGetAllAsync(It.IsAny<string>())).ReturnsAsync([]);
+        store.Setup(s => s.HashSetAsync(It.IsAny<string>(), It.IsAny<HashEntry[]>())).Returns(Task.CompletedTask);
+        store.Setup(s => s.ExpireAsync(It.IsAny<string>(), It.IsAny<TimeSpan>())).ReturnsAsync(true);
+        store.Setup(s => s.SetAddAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(1L);
+
+        var sut = new DistributedAgentRegistryService(store.Object, Log.Logger);
+        var snapshotPresentAtRedisCall = new List<(string Call, bool SnapshotPresent)>();
+        store.Setup(s => s.DeleteAsync("agent:agent-1"))
+            .Callback<string>(_ => snapshotPresentAtRedisCall.Add(
+                ("DeleteAsync agent:agent-1", sut.InternalLocalSnapshotContainsForTesting("agent-1"))))
+            .ReturnsAsync(true);
+        store.Setup(s => s.SetRemoveAsync(It.IsAny<string>(), "agent-1"))
+            .Callback<string, string>((key, _) => snapshotPresentAtRedisCall.Add(
+                ($"SetRemoveAsync {key}", sut.InternalLocalSnapshotContainsForTesting("agent-1"))))
+            .ReturnsAsync(1L);
+
+        sut.Register(Msg("agent-1"), "conn-1");
+        sut.InternalLocalSnapshotContainsForTesting("agent-1").Should().BeTrue("Register populates the snapshot");
+        snapshotPresentAtRedisCall.Clear(); // Register's own Redis calls are not under test
+
+        sut.Deregister(new AgentId("agent-1"));
+        await sut.LastDeregisterTask;
+
+        snapshotPresentAtRedisCall.Select(c => c.Call).Should().Equal(
+            ["DeleteAsync agent:agent-1", "SetRemoveAsync agents:all", "SetRemoveAsync agents:idle"],
+            "DeregisterAsync removes the hash and both set memberships, in that order");
+        snapshotPresentAtRedisCall.Should().OnlyContain(c => c.SnapshotPresent,
+            "the snapshot must still hold the agent while the Redis removals run, so that a Register " +
+            "arriving in that window is not followed by a delete of its freshly written hash (issue #4250)");
+        sut.InternalLocalSnapshotContainsForTesting("agent-1").Should().BeFalse(
+            "once DeregisterAsync completes the snapshot is cleared, so a stray heartbeat cannot resurrect the agent");
+    }
+
+    /// <summary>
+    /// Issue #4250 review: because the snapshot is now cleared AFTER the Redis removals, a Redis fault
+    /// in any of them must not leave the snapshot behind. A leaked snapshot would be adopted by the
+    /// next Register of the same agent id and would let a heartbeat re-create the deregistered agent.
+    /// </summary>
+    [Theory]
+    [InlineData("DeleteAsync")]
+    [InlineData("SetRemoveAsync agents:all")]
+    [InlineData("SetRemoveAsync agents:idle")]
+    public async Task Deregister_WhenRedisRemovalFaults_StillClearsLocalSnapshot(string faultingCall)
+    {
+        var store = new Mock<IRedisStore>();
+        store.Setup(s => s.HashGetAllAsync(It.IsAny<string>())).ReturnsAsync([]);
+        store.Setup(s => s.HashSetAsync(It.IsAny<string>(), It.IsAny<HashEntry[]>())).Returns(Task.CompletedTask);
+        store.Setup(s => s.ExpireAsync(It.IsAny<string>(), It.IsAny<TimeSpan>())).ReturnsAsync(true);
+        store.Setup(s => s.SetAddAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(1L);
+        var fault = new InvalidOperationException("Simulated Redis fault during deregister");
+        store.Setup(s => s.DeleteAsync(It.IsAny<string>()))
+            .Returns(faultingCall == "DeleteAsync" ? Task.FromException<bool>(fault) : Task.FromResult(true));
+        store.Setup(s => s.SetRemoveAsync("agents:all", It.IsAny<string>()))
+            .Returns(faultingCall == "SetRemoveAsync agents:all" ? Task.FromException<long>(fault) : Task.FromResult(1L));
+        store.Setup(s => s.SetRemoveAsync("agents:idle", It.IsAny<string>()))
+            .Returns(faultingCall == "SetRemoveAsync agents:idle" ? Task.FromException<long>(fault) : Task.FromResult(1L));
+
+        var sut = new DistributedAgentRegistryService(store.Object, Log.Logger);
+        sut.Register(Msg("agent-1"), "conn-1");
+        sut.InternalLocalSnapshotContainsForTesting("agent-1").Should().BeTrue("Register populates the snapshot");
+
+        sut.Deregister(new AgentId("agent-1"));
+        var act = async () => await sut.LastDeregisterTask;
+
+        await act.Should().ThrowAsync<InvalidOperationException>("the Redis fault still surfaces to the logging continuation");
+        sut.InternalLocalSnapshotContainsForTesting("agent-1").Should().BeFalse(
+            "the snapshot must be cleared even when a Redis removal faults, otherwise a stray heartbeat can resurrect the agent");
     }
 
     [Fact]
