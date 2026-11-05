@@ -52,7 +52,7 @@ public sealed class AgentOrphanRecoveryService(
         return new OrphanRecoveryResult(firstPickupRun);
     }
 
-    /// <returns>The tracked run when the agent was just recorded on it as its first agent.</returns>
+    /// <returns>The tracked run when the agent was just recorded on it as its first agent, or the run restored because its record was missing.</returns>
     private async Task<PipelineRun?> RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId, CancellationToken ct)
     {
         var activeJob = message.ActiveJob!;
@@ -84,8 +84,7 @@ public sealed class AgentOrphanRecoveryService(
 
         if (existingRun is null)
         {
-            await RestoreRunFromAgentStateAsync(agentId, activeJob, identity, ct);
-            return null;
+            return await RestoreRunFromAgentStateAsync(agentId, activeJob, identity, ct);
         }
 
         return await LinkAgentToExistingRunAsync(existingRun, agentId, activeJob, ct);
@@ -124,7 +123,7 @@ public sealed class AgentOrphanRecoveryService(
         }
     }
 
-    private async Task RestoreRunFromAgentStateAsync(
+    private async Task<PipelineRun?> RestoreRunFromAgentStateAsync(
         AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
     {
         // Check history — don't re-register a completed run.
@@ -137,17 +136,18 @@ public sealed class AgentOrphanRecoveryService(
 
         if (!inHistory)
         {
-            await RestoreNewRunAsync(agentId, activeJob, identity, ct);
+            return await RestoreNewRunAsync(agentId, activeJob, identity, ct);
         }
         else
         {
             _logger.Information(
                 "Agent {AgentId} reported active job {RunId} but it's already in history — ignoring stale state",
                 agentId, LogSanitizer.SanitizeForLog(activeJob.RunId));
+            return null;
         }
     }
 
-    private async Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
+    private async Task<PipelineRun?> RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
     {
         // Skip restoration for consolidation runs — they have their own
         // completion path (ReportConsolidationComplete) and should not
@@ -155,10 +155,11 @@ public sealed class AgentOrphanRecoveryService(
         if (identity.IsConsolidation)
         {
             await RestoreConsolidationTrackingAsync(agentId, activeJob, ct);
+            return null;
         }
         else
         {
-            await RestorePipelineRunAsync(agentId, activeJob, identity, ct);
+            return await RestorePipelineRunAsync(agentId, activeJob, identity, ct);
         }
     }
 
@@ -178,7 +179,7 @@ public sealed class AgentOrphanRecoveryService(
         _changeNotifier.NotifyChange();
     }
 
-    private async Task RestorePipelineRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
+    private async Task<PipelineRun> RestorePipelineRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
     {
         var restoredRun = CreateRestoredPipelineRun(agentId.Value, activeJob, identity);
         restoredRun.CurrentStep = activeJob.CurrentStep;
@@ -212,6 +213,7 @@ public sealed class AgentOrphanRecoveryService(
             LogSanitizer.SanitizeForLog(activeJob.RunId), agentId, LogSanitizer.SanitizeForLog(identity.IssueIdentifier), activeJob.CurrentStep);
 
         _changeNotifier.NotifyChange();
+        return restoredRun;
     }
 
     /// <summary>
