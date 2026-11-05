@@ -40,6 +40,15 @@ public static class ChatTelemetry
         Meter.CreateCounter<long>("workdistribution.chat.pod_force_terminations", "{termination}",
             "Chat pod force termination count");
 
+    /// <summary>
+    /// Spec 057: chat launches refused before a pod was created. Tag <c>reason</c>: <c>helm_template_limit</c>,
+    /// <c>helm_global_limit</c> (a Helm agent limit is reached) or <c>agent_count_unavailable</c> (the running agents
+    /// could not be counted).
+    /// </summary>
+    public static readonly Counter<long> LaunchRefusals =
+        Meter.CreateCounter<long>("workdistribution.chat.launch_refusals", "{launch}",
+            "Chat launches refused by an agent limit or an unavailable agent count");
+
     /// <summary>Active PVC claims for chat sessions. +1 after TryClaimAsync, -1 on release.</summary>
     public static readonly UpDownCounter<long> PvcUtilization =
         Meter.CreateUpDownCounter<long>("workdistribution.chat.pvc_utilization", "{pvc}",

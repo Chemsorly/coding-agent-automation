@@ -13,6 +13,8 @@ using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Serilog;
 
+using CodingAgent.Web.TestUtilities;
+
 namespace CodingAgent.Web.UnitTests.Dispatch;
 
 /// <summary>
@@ -118,12 +120,15 @@ public class ChatJobDispatcherTests
         DispatchServiceOptions? options = null,
         CodingAgent.Orchestration.Redis.IRedisStore? redis = null,
         ILogger? logger = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IAgentStartGate? gate = null)
     {
+        var client = jobClient ?? CreateJobClientMock().Object;
         return new ChatJobDispatcher(
-            jobClient ?? CreateJobClientMock().Object,
+            client,
             hubContext ?? CreateHubContextMock().Object,
             templateStore ?? CreateTemplateStore(),
+            gate ?? AgentStartGateFakes.AllowAll(client, TestNamespace),
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
             logger ?? Mock.Of<ILogger>(),
@@ -674,6 +679,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(),
             logger);
@@ -1080,6 +1086,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             options,
             Mock.Of<ILogger>(),
@@ -1143,6 +1150,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(gracePeriod: 1),
             Mock.Of<ILogger>(),
@@ -1392,6 +1400,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             options,
             Mock.Of<ILogger>(),
@@ -2205,6 +2214,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             templateStore,
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             options ?? CreateFaultTestOptions(),
             logger ?? Mock.Of<ILogger>(),
@@ -2425,6 +2435,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             new DispatchServiceOptions
             {
@@ -2656,6 +2667,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(),
             Mock.Of<ILogger>(),
@@ -2893,6 +2905,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             hubContextMock.Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             CreateOptions(gracePeriod: 1),
             logger,
@@ -2997,6 +3010,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             hubContextMock.Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             CreateOptions(gracePeriod: 1),
             Mock.Of<ILogger>(),
@@ -3123,6 +3137,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             hubContextMock.Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             CreateOptions(gracePeriod: 1),
             Mock.Of<ILogger>(),
@@ -3227,6 +3242,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(gracePeriod: 1),   // short grace period → force-delete triggers fast
             Mock.Of<ILogger>(),
@@ -3324,6 +3340,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             hubContextMock.Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             CreateOptions(gracePeriod: 1),
             Mock.Of<ILogger>(),
@@ -3537,6 +3554,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             hubContextMock.Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(gracePeriod: 5),
             Mock.Of<ILogger>(),
@@ -3613,6 +3631,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(gracePeriod: 1),
             Mock.Of<ILogger>(),
@@ -3698,6 +3717,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(),
             Mock.Of<ILogger>(),
@@ -3789,6 +3809,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registry,
             CreateOptions(),
             Mock.Of<ILogger>(),
@@ -3901,6 +3922,7 @@ public class ChatJobDispatcherTests
             jobClientMock.Object,
             hubContextMock.Object,
             CreateTemplateStore(),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             CreateOptions(gracePeriod: 1),
             logger,
@@ -3928,5 +3950,129 @@ public class ChatJobDispatcherTests
             e.MessageTemplate.Text.Contains("CancelChat") &&
             e.MessageTemplate.Text.Contains("failed"),
             "the failure-path Warning must not appear when hub CancelChat succeeds");
+    }
+
+    // ─── Spec 057: the agent start gate ────────────────────────────────────────
+
+    private static (System.Diagnostics.Metrics.MeterListener Listener, List<(string? Selector, string? Reason)> Seen) ListenToLaunchRefusals()
+    {
+        var seen = new List<(string?, string?)>();
+        var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Name == "workdistribution.chat.launch_refusals")
+                    l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string? selector = null, reason = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "agent_selector") selector = tag.Value as string;
+                if (tag.Key == "reason") reason = tag.Value as string;
+            }
+            lock (seen) seen.Add((selector, reason));
+        });
+        listener.Start();
+        return (listener, seen);
+    }
+
+    // req 4.1, 7.3
+    [Theory]
+    [InlineData(CodingAgent.Pipeline.Services.LimitScope.Template, "helm_template_limit",
+        "4 of 4 agents are running for dotnet,kiro (limit set in the Helm chart). Try again when one finishes.")]
+    [InlineData(CodingAgent.Pipeline.Services.LimitScope.Global, "helm_global_limit",
+        "4 of 4 agents are running (limit set in the Helm chart). Try again when one finishes.")]
+    public async Task DispatchChatPodAsync_WhenAHelmLimitIsReached_RefusesWithoutCreatingAJob(
+        CodingAgent.Pipeline.Services.LimitScope scope, string reason, string text)
+    {
+        var jobClientMock = CreateJobClientMock();
+        var decision = new CodingAgent.Pipeline.Services.AgentStartDecision(
+            false, scope, CodingAgent.Pipeline.Services.LimitSource.Helm, 4, 4);
+        var gate = AgentStartGateFakes.Deny(decision);
+        var (listener, seen) = ListenToLaunchRefusals();
+        using var _ = listener;
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, gate: gate);
+
+        var act = () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<CodingAgent.Kubernetes.AgentLimitReachedException>()).Which.Message.Should().Be(text);
+        jobClientMock.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never());
+        gate.Disposed.Should().Be(gate.Entered, "the start lock is released on the refusal path");
+        lock (seen) seen.Should().Contain((TestEncodedSelector, reason));
+    }
+
+    // req 4.1, D5: UI limits never refuse a chat.
+    [Fact]
+    public async Task DispatchChatPodAsync_WhenOnlyAUiLimitIsReached_StartsTheChat()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+                RegisterChatAgent(registry, "agent-ui-limit", j.Metadata.Labels["caa/chat-session-id"]))
+            .Returns(Task.CompletedTask);
+        var inputs = new CodingAgent.Pipeline.Services.AgentCapacityInputs(
+            HelmGlobal: 0,
+            UiLimits: new AgentCapacityLimits { MaxConcurrentAgents = 1 },
+            HelmByTemplate: new Dictionary<string, int> { ["dotnet,kiro"] = 0 },
+            RunningByTemplate: new Dictionary<string, int> { ["dotnet,kiro"] = 3 },
+            RunningTotal: 3);
+        await using var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object, registry: registry, gate: AgentStartGateFakes.FromInputs(inputs));
+
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        agentId.Should().Be("agent-ui-limit");
+    }
+
+    // req 2.4, 7.3
+    [Fact]
+    public async Task DispatchChatPodAsync_WhenAgentsCannotBeCounted_CountsTheRefusal_AndRethrows()
+    {
+        var (listener, seen) = ListenToLaunchRefusals();
+        using var _ = listener;
+        await using var dispatcher = CreateDispatcher(gate: AgentStartGateFakes.Unavailable());
+
+        var act = () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<CodingAgent.Kubernetes.AgentCountUnavailableException>();
+        lock (seen) seen.Should().Contain((TestEncodedSelector, "agent_count_unavailable"));
+    }
+
+    // req 4.2: the start lock is held for the Job's creation only, not while the pod connects. The agent registers only
+    // after the lease is released; were the lease held through the connect wait, the launch would time out.
+    [Fact]
+    public async Task DispatchChatPodAsync_ReleasesTheStartLock_BeforeWaitingForThePod()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        var gate = AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace);
+        int disposedAtCreate = -1;
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                disposedAtCreate = gate.Disposed;
+                var dispatchId = j.Metadata.Labels["caa/chat-session-id"];
+                _ = Task.Run(async () =>
+                {
+                    var deadline = DateTime.UtcNow.AddSeconds(10);
+                    while (gate.Disposed == 0 && DateTime.UtcNow < deadline)
+                        await Task.Delay(10);
+                    if (gate.Disposed > 0)
+                        RegisterChatAgent(registry, "agent-after-release", dispatchId);
+                });
+            })
+            .Returns(Task.CompletedTask);
+        await using var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object, registry: registry, options: CreateOptions(connectTimeoutSeconds: 10), gate: gate);
+
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        disposedAtCreate.Should().Be(0, "the Job is created while the start lock is held");
+        agentId.Should().Be("agent-after-release");
+        gate.Disposed.Should().Be(1);
     }
 }

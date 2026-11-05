@@ -159,6 +159,39 @@ public sealed class AgentStartGateTests
             lease.CheckWorkItem("claude").Should().Be(new AgentStartDecision(false, LimitScope.Global, LimitSource.Helm, 5, 5));
     }
 
+    // req 3.3, 10.2: a work-item start and a chat start racing for the last slot create exactly one Job, because both
+    // take the one lock from the count to the Job's creation.
+    [Fact]
+    public async Task ConcurrentStarts_ForTheLastSlot_CreateExactlyOneJob()
+    {
+        for (var round = 0; round < 25; round++)
+        {
+            var jobs = new List<V1Job>();
+            var client = new Mock<IKubernetesJobClient>();
+            client.Setup(j => j.ListJobsAsync("test", AgentJobPvcs.AgentJobSelector, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => { lock (jobs) return new V1JobList { Items = [.. jobs] }; });
+            var gate = new AgentStartGate(new InProcessDistributedLockProvider(), client.Object,
+                JobTemplateStore.LoadFromYaml(Templates), new DispatchServiceOptions { Namespace = "test", MaxConcurrentAgents = 1 },
+                new AgentCapacityStore(_db), Serilog.Log.Logger);
+
+            async Task<bool> StartAsync(bool chat)
+            {
+                await using var lease = await gate.EnterAsync(CancellationToken.None);
+                var decision = chat ? lease.CheckChat("claude") : lease.CheckWorkItem("dotnet,kiro");
+                if (!decision.Allowed)
+                    return false;
+                await Task.Yield(); // the Job is created while the lock is held
+                lock (jobs) jobs.Add(RunningJob(chat ? "claude" : "dotnet.kiro"));
+                return true;
+            }
+
+            var results = await Task.WhenAll(Task.Run(() => StartAsync(chat: false)), Task.Run(() => StartAsync(chat: true)));
+
+            results.Count(started => started).Should().Be(1, $"round {round}: only one start may pass a global limit of 1");
+            jobs.Should().HaveCount(1);
+        }
+    }
+
     // DD2
     [Fact]
     public void Constructor_WhenTwoTemplateKeysShareAJobLabel_LogsAWarning()

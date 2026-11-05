@@ -45,6 +45,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly IKubernetesJobClient _jobClient;
     private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
     private readonly JobTemplateStore _templateStore;
+    // Spec 057: the one lock every agent start takes, the running-agent count and the Helm limits.
+    private readonly IAgentStartGate _gate;
     private readonly IAgentRegistryService _registry;
     private readonly DispatchServiceOptions _options;
     private readonly ILogger _logger;
@@ -143,13 +145,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         IKubernetesJobClient jobClient,
         IHubContext<AgentHub, IAgentHubClient> hubContext,
         JobTemplateStore templateStore,
+        IAgentStartGate gate,
         IAgentRegistryService registry,
         DispatchServiceOptions options,
         ILogger logger,
         CodingAgent.Orchestration.Redis.IRedisStore? redis = null,
         TimeProvider? timeProvider = null)
         : this(
-            jobClient, hubContext, templateStore, registry, options, logger,
+            jobClient, hubContext, templateStore, gate, registry, options, logger,
             redis is not null ? new ChatHeartbeatTracker(redis, options, logger, timeProvider) : (IChatHeartbeatTracker?)null,
             null,
             timeProvider)
@@ -166,6 +169,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         IKubernetesJobClient jobClient,
         IHubContext<AgentHub, IAgentHubClient> hubContext,
         JobTemplateStore templateStore,
+        IAgentStartGate gate,
         IAgentRegistryService registry,
         DispatchServiceOptions options,
         ILogger logger,
@@ -176,12 +180,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(jobClient);
         ArgumentNullException.ThrowIfNull(hubContext);
         ArgumentNullException.ThrowIfNull(templateStore);
+        ArgumentNullException.ThrowIfNull(gate);
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(logger);
         _jobClient = jobClient;
         _hubContext = hubContext;
         _templateStore = templateStore;
+        _gate = gate;
         _registry = registry;
         _options = options;
         _logger = logger;
@@ -201,9 +207,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var (normalized, selectorLabelValue) = NormalizeSelector(agentSelector);
         activity?.SetTag(TagAgentSelector, normalized);
 
-        // The PVCs that agent Jobs which have not ended mount — chats and pipeline runs alike.
-        var heldPvcs = await AgentJobPvcs.ListHeldAsync(_jobClient, _options.Namespace, cancellationToken);
-
         var template = _templateStore.Resolve(normalized)
             ?? throw new InvalidOperationException($"No template for selector '{normalized}'");
 
@@ -211,7 +214,34 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var dispatchId = Guid.NewGuid();
         var dispatchStart = DateTimeOffset.UtcNow;
 
-        var claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, heldPvcs);
+        // Spec 057: the agent start gate — the lock every agent start takes, the running agents counted from the
+        // agent Jobs (and the PVCs they mount), and the Helm limits. Held from the count to the Job's creation only,
+        // not while the pod connects.
+        IAgentStartLease lease;
+        try
+        {
+            lease = await _gate.EnterAsync(cancellationToken);
+        }
+        catch (AgentCountUnavailableException)
+        {
+            ChatTelemetry.LaunchRefusals.Add(1,
+                new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue),
+                new KeyValuePair<string, object?>("reason", "agent_count_unavailable"));
+            activity?.SetStatus(ActivityStatusCode.Error, "Agent count unavailable");
+            throw;
+        }
+
+        string? claimedPvc;
+        await using (lease)
+        {
+            var decision = lease.CheckChat(normalized);
+            if (!decision.Allowed)
+                throw RefuseForLimit(decision, normalized, selectorLabelValue, activity);
+
+            claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, lease.Jobs.HeldPvcs);
+            await BuildAndSubmitChatJobAsync(normalized, selectorLabelValue, model, effort, jobName, dispatchId, claimedPvc, template, cancellationToken);
+        }
+
         // TODO [WARNING]: poolName derives from template.ProviderType whenever claimedPvc is non-null.
         // Today ClaimPvcForKiroAgent only returns non-null for Kiro providers, so poolName is always
         // "kiro" or null. If a future provider introduces its own PVC pool (i.e. ClaimPvcForKiroAgent
@@ -220,8 +250,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         // pool name" is an implicit assumption. Add an explicit comment or assertion when a second
         // PVC-capable provider is introduced to keep the intent clear.
         var poolName = claimedPvc is not null ? template.ProviderType : null;
-
-        await BuildAndSubmitChatJobAsync(normalized, selectorLabelValue, model, effort, jobName, dispatchId, claimedPvc, template, cancellationToken);
 
         _logger.Information(
             "ChatJobDispatcher: dispatched chat pod {JobName} for selector {AgentSelector} (dispatchId={DispatchId}, pvc={Pvc})",
@@ -236,6 +264,29 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         return await PollForAgentConnectionAsync(
             dispatchId, jobName, claimedPvc, poolName, normalized, selectorLabelValue,
             dispatchStart, activity, cancellationToken);
+    }
+
+    /// <summary>
+    /// Spec 057 req 4.1, 7.3–7.5: a chat refused by a Helm limit — counted, logged and tagged; the returned exception
+    /// carries the user-facing text.
+    /// </summary>
+    private AgentLimitReachedException RefuseForLimit(
+        AgentStartDecision decision, string normalized, string selectorLabelValue, Activity? activity)
+    {
+        var scope = AgentCapacityRules.TagValue(decision.Scope!.Value);
+        var source = AgentCapacityRules.TagValue(decision.Source!.Value);
+        ChatTelemetry.LaunchRefusals.Add(1,
+            new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue),
+            new KeyValuePair<string, object?>("reason", decision.Scope == LimitScope.Global ? "helm_global_limit" : "helm_template_limit"));
+        activity?.SetTag("workdistribution.agents.running", decision.Running);
+        activity?.SetTag("workdistribution.agents.limit", decision.Limit);
+        activity?.SetTag("workdistribution.limit_scope", scope);
+        activity?.SetTag("workdistribution.limit_source", source);
+        activity?.SetStatus(ActivityStatusCode.Error, "Agent limit reached");
+        _logger.Information(
+            "ChatJobDispatcher: {Scope} concurrency limit reached for selector {Selector} ({Current}/{Max}, {LimitSource}) — chat refused",
+            scope, normalized, decision.Running, decision.Limit, source);
+        return new AgentLimitReachedException(decision, AgentStartTexts.ChatRefusal(decision, normalized));
     }
 
     private static (string normalized, string selectorLabelValue) NormalizeSelector(string agentSelector)
