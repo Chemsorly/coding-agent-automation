@@ -39,6 +39,9 @@ public class SettingsPageComponentTests : BunitContext
         settings.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineProject>());
         settings.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new CodingAgent.Contracts.Ui.UiAgentProfilesPage([], []));
         settings.Setup(s => s.GetAgentRoutingAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new CodingAgent.Contracts.Ui.UiAgentRoutingPage(new AgentRouting(), [], []));
+        // Spec 057: the Capacity section.
+        settings.Setup(s => s.GetAgentCapacityAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new CodingAgent.Contracts.Ui.UiAgentCapacityPage(
+            new CodingAgent.Contracts.Ui.UiAgentCapacityRow(null, "", 0, 0, 0, 0, null, null), [], 0, 0, true));
         Services.AddSingleton(settings.Object);
         Services.AddScoped<NotificationService>();
         // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests

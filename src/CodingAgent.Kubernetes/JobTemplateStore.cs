@@ -171,6 +171,13 @@ public sealed class JobTemplateStore
         _templates.ToDictionary(t => t.Key, t => t.Value.ProviderType ?? "", StringComparer.Ordinal);
 
     /// <summary>
+    /// Every template's normalized key and its Helm <c>maxConcurrent</c> (spec 057; 0 = no Helm limit). Holds every
+    /// deployed key, so a UI limit on a template without a Helm limit still applies. Empty when no templates are loaded.
+    /// </summary>
+    public IReadOnlyDictionary<string, int> MaxConcurrentByKey() =>
+        _templates.ToDictionary(t => t.Key, t => t.Value.MaxConcurrent, StringComparer.Ordinal);
+
+    /// <summary>
     /// Normalizes a comma-separated label string: splits, trims, sorts, re-joins.
     /// </summary>
     public static string NormalizeLabels(string labels)

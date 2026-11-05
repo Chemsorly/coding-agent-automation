@@ -1,6 +1,9 @@
 using CodingAgent.Api;
+using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -94,6 +97,23 @@ public sealed class SystemApiFactory : WebApplicationFactory<ApiHostMarker>
             E2ETestDefaults.InstallKubernetesStub(services);
             E2ETestDefaults.InstallJobTemplates(services);
         });
+    }
+
+    /// <summary>
+    /// Spec 057: once the host is built, the fake Job client reports the Job of an ended work item as Complete (a real
+    /// pod exits), using this host's database.
+    /// </summary>
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        var host = base.CreateHost(builder);
+        var dbFactory = host.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
+        Kubernetes.IsWorkItemActive = id =>
+        {
+            using var ctx = dbFactory.CreateDbContext();
+            return ctx.WorkItems.AsNoTracking().Any(w => w.Id == id
+                && (w.Status == WorkItemStatus.Pending || w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running));
+        };
+        return host;
     }
 
     protected override void Dispose(bool disposing)

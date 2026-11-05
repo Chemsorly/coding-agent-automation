@@ -27,6 +27,12 @@ internal static class E2EInMemoryDatabase
             new InMemoryDbContextFactory(databaseName));
     }
 
+    /// <summary>
+    /// A context factory over <paramref name="databaseName"/>, for test code outside a host (spec 057: the fake Job
+    /// client asks it whether a work item is still active).
+    /// </summary>
+    public static IDbContextFactory<PipelineDbContext> Factory(string databaseName) => new InMemoryDbContextFactory(databaseName);
+
     private static void RemoveDbContextRegistrations(IServiceCollection services)
     {
         var toRemove = services

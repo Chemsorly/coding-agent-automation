@@ -155,6 +155,21 @@ internal sealed class ChatService(
         {
             throw new ChatRequestException(StatusCodes.Status502BadGateway, $"Pod did not connect within {ex.TimeoutSeconds}s. Check cluster logs.");
         }
+        catch (AgentLimitReachedException ex)
+        {
+            // Spec 057 req 4.1: a Helm agent limit is reached; the text says which and how many run.
+            throw new ChatRequestException(StatusCodes.Status409Conflict, ex.Message);
+        }
+        catch (AgentCountUnavailableException)
+        {
+            // Spec 057 req 2.4, DD9: 502 like the other launch failures, so the chat window shows the text.
+            throw new ChatRequestException(StatusCodes.Status502BadGateway, "Could not check how many agents are running. Try again.");
+        }
+        catch (TimeoutException)
+        {
+            // Spec 057 req 4.2: the agent start lock was not acquired in time.
+            throw new ChatRequestException(StatusCodes.Status502BadGateway, "Another agent is starting. Try again.");
+        }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             throw new ChatRequestException(StatusCodes.Status502BadGateway, $"Launch failed: {ex.Message}");

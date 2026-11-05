@@ -1,6 +1,5 @@
 using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Common;
-using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -93,36 +92,38 @@ public static class WorkItemDispatchEndpoints
     /// <c>Pending</c> via <c>POST /api/work-items</c> and then dispatches them via this endpoint.
     ///
     /// <para>
-    /// Wraps the snapshot → gate → CAS in a Postgres advisory lock keyed on the normalized
-    /// agent selector to prevent the over-dispatch window where two concurrent calls for
-    /// different Pending items of the same selector both observe capacity available.
+    /// Runs the count → limit checks → PVC gate → CAS → Job creation inside the agent start gate (spec 057): one
+    /// Postgres advisory lock, <c>dispatch-agents</c>, that every agent start takes, chats included, so two starts
+    /// cannot both pass a limit that only one of them may pass.
     /// </para>
     ///
     /// Returns:
     /// <list type="bullet">
-    ///   <item>200 <c>{ "dispatched": true }</c> — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
+    ///   <item>200 <c>{ "dispatched": true, "reason": "none" }</c> — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
     ///   <item>200 <c>{ "dispatched": false, "reason": "not_pending" | "no_template" | "concurrency_limit" }</c>
     ///     — expected backpressure outcome; Scheduler stops this selector for the cycle</item>
+    ///   <item>200 <c>{ "dispatched": false, "reason": "global_concurrency_limit" }</c> — the limit for all agents is
+    ///     reached; the Scheduler ends its cycle</item>
     ///   <item>200 <c>{ "dispatched": false, "reason": "no_route" }</c> — an item stored without a selector (spec 053
     ///     rollout) whose route is refused; it is failed with the reason</item>
     ///   <item>404 Not Found — no WorkItem with this ID</item>
-    ///   <item>503 Service Unavailable — no PVC available, advisory lock timeout, or K8s Job creation failed</item>
+    ///   <item>503 Service Unavailable — no PVC available, lock timeout, running agents not countable, or K8s Job
+    ///     creation failed</item>
     /// </list>
     /// </summary>
     internal static async Task<IResult> DispatchPendingWorkItem(
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
-        IDistributedLockProvider lockProvider,
         DispatchWorkItemService dispatchService,
         RolloutRouting rollout,
         CancellationToken ct = default)
     {
         // Delegate entirely to the service method which owns the full dispatch lifecycle
-        // (fast-path check, advisory lock, concurrency gate, PVC gate, K8s Job creation,
+        // (fast-path check, agent start gate and its limits, PVC gate, K8s Job creation,
         // result interpretation, and telemetry). The static endpoint exists as the ASP.NET
         // Core minimal-API handler that the DI container resolves parameters for.
-        return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, lockProvider, rollout, ct);
+        return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, rollout, ct);
     }
 
     /// <summary>

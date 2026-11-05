@@ -29,6 +29,12 @@ public interface IUiSettingsClient
     /// <summary>Replaces the global routing table. An invalid table is refused with one line per invalid row.</summary>
     Task SaveAgentRoutingAsync(AgentRouting routing, CancellationToken ct = default);
 
+    /// <summary>Spec 057: GET /api/ui/settings/agent-capacity — running agents and the Helm, UI and effective limits.</summary>
+    Task<UiAgentCapacityPage> GetAgentCapacityAsync(CancellationToken ct = default);
+
+    /// <summary>Spec 057: PUT /api/ui/settings/agent-capacity — replaces the UI limits; a 400 throws with the API's reasons.</summary>
+    Task SaveAgentCapacityAsync(AgentCapacityLimits limits, CancellationToken ct = default);
+
     Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default);
     Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct = default);
     Task DeleteQualityGateConfigAsync(string id, CancellationToken ct = default);
@@ -89,6 +95,12 @@ public sealed class UiSettingsClient(HttpClient http, IUiAccessTokenSource token
 
     public Task SaveAgentRoutingAsync(AgentRouting routing, CancellationToken ct = default) =>
         SendJsonAsync(HttpMethod.Put, $"{Settings}/agent-routing", routing, UiJsonContext.Default.AgentRouting, ct);
+
+    public Task<UiAgentCapacityPage> GetAgentCapacityAsync(CancellationToken ct = default) =>
+        GetAsync($"{Settings}/agent-capacity", UiJsonContext.Default.UiAgentCapacityPage, ct);
+
+    public Task SaveAgentCapacityAsync(AgentCapacityLimits limits, CancellationToken ct = default) =>
+        SendJsonAsync(HttpMethod.Put, $"{Settings}/agent-capacity", limits, UiJsonContext.Default.AgentCapacityLimits, ct);
 
     public Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default) =>
         GetAsync($"{Settings}/quality-gate-configs", UiJsonContext.Default.IReadOnlyListQualityGateConfiguration, ct);

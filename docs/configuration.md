@@ -14,9 +14,9 @@ Each setting has one home:
 | Project | Overrides of the settings marked **Project** in the reference, plus secrets, steering and MCP servers | Settings → Projects → (project) |
 | Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly`, the housekeeping limit, and the repository's stack labels, agent routing rows, secrets, setup steps, steering and commit blacklist | Pipelines page |
 | Repository provider | The connection: type, owner and repository, base branch, credentials | Settings → Providers → Repository |
-| Agents | Agent profiles (job template, tool settings, MCP servers) and the global routing table (profile, model and effort per task type) | Settings → Agents |
+| Agents | Agent profiles (job template, tool settings, MCP servers), the global routing table (profile, model and effort per task type) and the UI agent limits (see [Agent Capacity](#agent-capacity)) | Settings → Agents (the limits under Capacity) |
 | Quality catalogs | Quality gate configs and reviewer configs, each chosen by the repository's stack labels | Settings → Quality |
-| Deployment | Images, concurrency per label set, chat pod lifetimes, age-based retention | Helm `values.yaml` and environment variables |
+| Deployment | Images, concurrency ceilings per job template and in total, chat pod lifetimes, age-based retention | Helm `values.yaml` and environment variables |
 
 How the layers combine:
 
@@ -181,6 +181,24 @@ These settings had no effect and were removed: `issuePageSize`, `lastUsedProvide
 
 `defaultRequiredAgentLabels` was removed with agent routing (spec 053): labels no longer pick agents, and a repository without stack labels gets only the quality gate and reviewer configs without match labels. The configuration move wrote the routes it produced down as routing rows; a configuration or export that still contains it loads normally.
 
+## Agent Capacity
+
+Edited under Settings → Agents → Capacity (global admin). These limits are not part of the pipeline configuration: they are stored in one key-value entry, `agent-capacity`, and are part of the config export and import (bundle field `agentCapacity`).
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `maxConcurrentAgents` | 0 | 0–100 | | Max agents running at once, all job templates together; 0 or empty = no UI limit |
+| `maxConcurrentByJobTemplate` | (none) | 0–100 per entry | | Max agents running at once per job template, by template key (for example `dotnet,kiro`); 0 or empty = no UI limit for that template |
+
+How the limits work:
+
+- The Helm chart sets the ceilings: `jobTemplates[].maxConcurrent` per template and `workDistribution.maxConcurrentAgents` for all agents (see [Deployment — Agent Capacity Limits](deployment.md#agent-capacity-limits)). The page shows them next to the UI values, read-only.
+- The lowest limit that is set applies. A UI value above the Helm value is saved, but Helm applies; the page shows "capped by the Helm chart at N".
+- Running agents are counted from the cluster: every agent Job that has not ended, runs and chats. The page shows them per template ("3 runs · 1 chat"); Refresh reloads them.
+- Chats count toward every limit, but only Helm limits refuse a chat. A UI limit only holds pipeline work.
+- A change applies at the next dispatch, without a restart. Lowering a limit does not stop running agents; new ones wait until fewer run.
+- The page lists only the deployed job templates, and saving writes their values only. An imported limit for a template that is not deployed is kept and ignored.
+
 ## Chat Pod Lifecycle
 
 These settings control the lifetime of ephemeral chat session pods. Pod dispatch is handled by `ChatJobDispatcher`; the per-session idle-kill loop and K8s job polling run in `ChatSessionWatcher`; cross-replica heartbeat storage uses `ChatHeartbeatTracker` (only when Redis is configured). Settings map to `workDistribution.dispatch.*` in `values.yaml` and are bound via `WorkDistribution:Dispatch:*` environment variables on the Pipeline API and Job Controller.
@@ -277,7 +295,7 @@ These environment variables are used by the Kubernetes deployment.
 
 Pipeline configuration is managed via **Settings → Data Management**:
 
-- **Export** — Downloads the full configuration as a single JSON bundle (providers, profiles, quality gates, reviewers, projects, templates)
+- **Export** — Downloads the full configuration as a single JSON bundle (providers, profiles, quality gates, reviewers, projects, templates, the agent routing table and the agent capacity limits)
 - **Import** — Uploads a JSON bundle, clears existing config, and inserts from the bundle. Cache is invalidated immediately; UI refreshes automatically.
 
 The bundle format is a flat JSON object with arrays for each entity type. Provider configurations include their inner `configuration` JSON (serialized `ProviderConfig` with full settings including credentials).

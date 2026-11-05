@@ -11,6 +11,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
@@ -239,7 +240,26 @@ public sealed class ChatServiceTests
         { new NoPvcAvailableException(), "No agent credentials available. Try again later." },
         { new ChatPodTimeoutException(120), "Pod did not connect within 120s. Check cluster logs." },
         { new InvalidOperationException("No template for selector 'kiro'"), "Launch failed: No template for selector 'kiro'" },
+        // Spec 057 req 2.4, 4.2, DD9: an uncountable agent set and a busy start lock answer 502 with their text.
+        { new AgentCountUnavailableException(new HttpRequestException("api server down")), "Could not check how many agents are running. Try again." },
+        { new TimeoutException("lock timed out"), "Another agent is starting. Try again." },
     };
+
+    // Spec 057 req 4.1: a Helm agent limit refuses the chat with 409 and the dispatcher's text.
+    [Fact]
+    public async Task Start_WhenAHelmAgentLimitIsReached_Answers409WithTheText()
+    {
+        var decision = new AgentStartDecision(false, LimitScope.Template, LimitSource.Helm, 4, 4);
+        const string text = "4 of 4 agents are running for dotnet,kiro (limit set in the Helm chart). Try again when one finishes.";
+        _dispatcher.Setup(d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AgentLimitReachedException(decision, text));
+
+        var act = () => StartAsync();
+
+        (await act.Should().ThrowAsync<ChatRequestException>())
+            .Which.Should().BeEquivalentTo(new { StatusCode = StatusCodes.Status409Conflict, Message = text });
+        (await _sessions.FindAsync(AgentId)).Should().BeNull();
+    }
 
     [Theory]
     [MemberData(nameof(LaunchFailures))]

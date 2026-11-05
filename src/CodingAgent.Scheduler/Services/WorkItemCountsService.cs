@@ -44,6 +44,10 @@ public sealed class WorkItemCountsService : BackgroundService
     private AgentCounts? _cachedAgentCounts;
     private CredentialPoolCounts? _cachedCredentialPoolCounts;
 
+    // Spec 057: running agents and the limits that apply (GET /api/agents/capacity). Polled in its own try/catch, so
+    // its failure resets only the two agent gauges, and a failure of the other polls does not blank them.
+    private AgentCapacityStatus? _cachedCapacity;
+
     public WorkItemCountsService(
         IServiceScopeFactory scopeFactory,
         ILeaderGate? leaderGate,
@@ -104,6 +108,9 @@ public sealed class WorkItemCountsService : BackgroundService
                 return counts is null ? [] : [new Measurement<int>(counts.Claimed,
                     new KeyValuePair<string, object?>("pool", "kiro"))];
             });
+
+        // Spec 057: the agent capacity gauges (leader-gated inside the callbacks).
+        WorkDistributionTelemetry.RegisterAgentCapacityCallbacks(RunningMeasurements, LimitMeasurements);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -181,7 +188,60 @@ public sealed class WorkItemCountsService : BackgroundService
             Volatile.Write(ref _cachedAgentCounts, null);
             Volatile.Write(ref _cachedCredentialPoolCounts, null);
         }
+
+        try
+        {
+            Volatile.Write(ref _cachedCapacity, await apiClient.GetAgentCapacityAsync(ct));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "WorkItemCountsService: failed to fetch agent capacity — agent gauges reset");
+            Volatile.Write(ref _cachedCapacity, null);
+        }
     }
+
+    /// <summary>
+    /// Spec 057 req 7.2: <c>workdistribution.agents.running</c> — every deployed template and both kinds, zeros included
+    /// (so a series does not vanish when its last agent ends); <c>none</c> only when above 0; nothing when the counts are
+    /// unavailable, before the first poll, or on a non-leader.
+    /// </summary>
+    internal IEnumerable<Measurement<int>> RunningMeasurements()
+    {
+        if (!(_leaderGate is null || _leaderGate.IsLeader)) return [];
+        var capacity = Volatile.Read(ref _cachedCapacity);
+        if (capacity is null || !capacity.CountsAvailable) return [];
+
+        var measurements = new List<Measurement<int>>();
+        foreach (var row in capacity.Templates)
+        {
+            measurements.Add(Running(row.RunningRuns, row.TemplateKey ?? "", "run"));
+            measurements.Add(Running(row.RunningChats, row.TemplateKey ?? "", "chat"));
+        }
+        if (capacity.UnknownTemplateRuns > 0) measurements.Add(Running(capacity.UnknownTemplateRuns, "none", "run"));
+        if (capacity.UnknownTemplateChats > 0) measurements.Add(Running(capacity.UnknownTemplateChats, "none", "chat"));
+        return measurements;
+    }
+
+    /// <summary>Spec 057 req 7.2: <c>workdistribution.agents.limit</c> — one measurement per row where a limit applies.</summary>
+    internal IEnumerable<Measurement<int>> LimitMeasurements()
+    {
+        if (!(_leaderGate is null || _leaderGate.IsLeader)) return [];
+        var capacity = Volatile.Read(ref _cachedCapacity);
+        if (capacity is null) return [];
+
+        return capacity.Templates.Prepend(capacity.All)
+            .Where(r => r.EffectiveLimit is not null)
+            .Select(r => new Measurement<int>(r.EffectiveLimit!.Value,
+                new KeyValuePair<string, object?>("agent_selector", r.TemplateKey ?? "all"),
+                new KeyValuePair<string, object?>("source", r.EffectiveSource)))
+            .ToList();
+    }
+
+    private static Measurement<int> Running(int value, string selector, string kind) =>
+        new(value,
+            new KeyValuePair<string, object?>("agent_selector", selector),
+            new KeyValuePair<string, object?>("kind", kind));
 
     /// <summary>Immutable snapshot of agent counts from a single poll.</summary>
     private sealed record AgentCounts(int Total, int Busy);

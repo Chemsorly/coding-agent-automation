@@ -83,8 +83,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
     private DispatchLifecycleContext BuildContext(
         PipelineDbContext db,
         WorkItemEntity entity,
-        List<string> availablePvcs,
-        Dictionary<string, int> concurrency)
+        List<string> availablePvcs)
     {
         var projection = new PendingWorkItemProjection
         {
@@ -107,7 +106,6 @@ public sealed class DispatchLifecycleServiceAbortPathTests
             template,
             IsKiro: true,
             AvailablePvcs: availablePvcs,
-            ConcurrencyBySelector: concurrency,
             LogPrefix: "test ");
     }
 
@@ -147,7 +145,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         using var service = CreateService();
 
         Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
-            BuildContext(db, entity, pvcs, new Dictionary<string, int>()),
+            BuildContext(db, entity, pvcs),
             Prepare(true),
             onDispatchSuccess: null,
             CancellationToken.None);
@@ -183,7 +181,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         using var service = CreateService();
 
         Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
-            BuildContext(db, entity, pvcs, new Dictionary<string, int>()),
+            BuildContext(db, entity, pvcs),
             Prepare(true),
             onDispatchSuccess: null,
             CancellationToken.None);
@@ -221,7 +219,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
                 new InvalidOperationException("prepare failed"));
 
         Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
-            BuildContext(db, entity, pvcs, new Dictionary<string, int>()),
+            BuildContext(db, entity, pvcs),
             throwingPrepare,
             onDispatchSuccess: null,
             CancellationToken.None);
@@ -253,7 +251,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         using var service = CreateService();
 
         Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
-            BuildContext(db, entity, pvcs, new Dictionary<string, int>()),
+            BuildContext(db, entity, pvcs),
             Prepare(false),
             onDispatchSuccess: null,
             CancellationToken.None);
@@ -293,7 +291,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         using var service = CreateService();
 
         Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
-            BuildContext(db, entity, pvcs, new Dictionary<string, int>()),
+            BuildContext(db, entity, pvcs),
             Prepare(true),
             onDispatchSuccess: null,
             CancellationToken.None);
@@ -328,7 +326,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         using var service = CreateService();
 
         Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
-            BuildContext(db, entity, pvcs, new Dictionary<string, int>()),
+            BuildContext(db, entity, pvcs),
             Prepare(true),
             onDispatchSuccess: null,
             CancellationToken.None);
@@ -354,7 +352,6 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         // Arrange
         var entity = await SeedWorkItemAsync(WorkItemStatus.Pending);
         var pvcs = new List<string> { "pvc-0" };
-        var concurrency = new Dictionary<string, int>();
         var successCalls = 0;
 
         // call 1 = K8sJobName pre-write (must succeed); call 2 = Dispatched write (must fail)
@@ -374,7 +371,7 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         using var service = CreateService();
 
         Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
-            BuildContext(db, entity, pvcs, concurrency),
+            BuildContext(db, entity, pvcs),
             Prepare(true),
             onDispatchSuccess: _ => { successCalls++; return Task.CompletedTask; },
             CancellationToken.None);
@@ -395,8 +392,6 @@ public sealed class DispatchLifecycleServiceAbortPathTests
         // Success callback was not invoked
         successCalls.Should().Be(0, "onDispatchSuccess must not be invoked when the Dispatched write fails");
 
-        // ConcurrencyBySelector remains empty (incremented only after a successful Dispatched save)
-        concurrency.Should().BeEmpty("concurrency tracking must not be updated when the Dispatched write fails");
 
         // The database row is still Pending with no ClaimedPvcName
         // (the concurrency conflict means our Dispatched write did not land)

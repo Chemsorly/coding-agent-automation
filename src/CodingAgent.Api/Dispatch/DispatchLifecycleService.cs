@@ -71,27 +71,18 @@ internal sealed class DispatchLifecycleService : IDisposable
     /// <summary>
     /// The PVCs of the pool a dispatch can take: not claimed by an active WorkItem
     /// (<see cref="QueryAvailablePvcsAsync"/>), and not mounted by an agent Job that has not ended
-    /// (<see cref="AgentJobPvcs"/>). The second covers chats, which have no WorkItem. When the Jobs cannot
-    /// be read, the WorkItem claims alone decide, as before.
+    /// (<paramref name="heldPvcs"/>, from the agent start gate's Job list, spec 057 DD1). The second covers chats,
+    /// which have no WorkItem. The gate lists the Jobs once per start and refuses the start when it cannot.
     /// </summary>
-    public async Task<PvcAvailabilityResult> QueryDispatchablePvcsAsync(PipelineDbContext db, CancellationToken ct)
+    public async Task<PvcAvailabilityResult> QueryDispatchablePvcsAsync(
+        PipelineDbContext db, IReadOnlySet<string> heldPvcs, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(heldPvcs);
         var result = await QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
         if (result.AvailablePvcs.Count == 0)
             return result;
 
-        IReadOnlySet<string> heldByJobs;
-        try
-        {
-            heldByJobs = await AgentJobPvcs.ListHeldAsync(_kubeClient, _options.Namespace, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.Warning(ex, "DispatchLifecycleService: could not list the agent Jobs, so the PVCs chats hold are not left out");
-            return result;
-        }
-
-        return result with { AvailablePvcs = [.. result.AvailablePvcs.Where(p => !heldByJobs.Contains(p))] };
+        return result with { AvailablePvcs = [.. result.AvailablePvcs.Where(p => !heldPvcs.Contains(p))] };
     }
 
 
@@ -250,7 +241,8 @@ internal sealed class DispatchLifecycleService : IDisposable
 
     /// <summary>
     /// Saves the Dispatched status transition, records metrics, updates concurrency tracking,
-    /// and invokes the variant-specific post-dispatch success callback.
+    /// and invokes the variant-specific post-dispatch success callback. Running agents are counted from the Kubernetes
+    /// Jobs (spec 057), so nothing is tracked here.
     /// </summary>
     private static async Task FinalizeDispatchAsync(
         DispatchLifecycleContext ctx,
@@ -262,7 +254,6 @@ internal sealed class DispatchLifecycleService : IDisposable
         var db = ctx.Db;
         var item = ctx.Item;
         var logPrefix = ctx.LogPrefix;
-        var concurrencyBySelector = ctx.ConcurrencyBySelector;
         var jobName = workItem.K8sJobName!;
         try
         {
@@ -270,10 +261,6 @@ internal sealed class DispatchLifecycleService : IDisposable
 
             // Record dispatch latency / pending duration metric
             WorkDistributionTelemetry.RecordDispatchLatency(workItem.DispatchedAt!.Value, workItem.OriginalEnqueuedAt, workItem.CreatedAt, item.AgentSelector);
-
-            // Track concurrency
-            concurrencyBySelector[item.AgentSelector ?? ""] =
-                concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
             log.Information(
                 "DispatchLifecycleService: {LogPrefix}WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",

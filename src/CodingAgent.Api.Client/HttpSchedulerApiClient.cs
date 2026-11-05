@@ -57,4 +57,8 @@ public sealed class HttpSchedulerApiClient : ISchedulerApiClient
             "/api/agents/credential-pool", PipelineJsonOptions.Default, ct);
         return status ?? new CredentialPoolStatus(0, 0, 0);
     }
+
+    /// <summary>Spec 057: null on a null body, so the gauges emit nothing rather than zeros (the #3555 advice).</summary>
+    public Task<AgentCapacityStatus?> GetAgentCapacityAsync(CancellationToken ct = default) =>
+        _http.GetFromJsonAsync<AgentCapacityStatus>("/api/agents/capacity", PipelineJsonOptions.Default, ct);
 }

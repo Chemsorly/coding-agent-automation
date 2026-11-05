@@ -243,8 +243,11 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         // cycle. A garbled success body is treated as backpressure rather than surfacing as an
         // error, which could mask a server/serialization bug. Consider treating a null dto as
         // Transient (retry next cycle) or throwing, to make the failure mode visible.
-        return dto?.Dispatched == true
-            ? DispatchPendingResult.Dispatched
+        if (dto?.Dispatched == true)
+            return DispatchPendingResult.Dispatched;
+        // Spec 057: the limit for all agents is reached — the Scheduler ends its cycle.
+        return dto?.Reason == GlobalConcurrencyLimitReason
+            ? DispatchPendingResult.GlobalLimitReached
             : DispatchPendingResult.PermanentRejection;
     }
 
@@ -264,6 +267,9 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     /// <c>Dispatched=true</c> means the item was dispatched; <c>false</c> means it was deferred
     /// for an expected reason (concurrency limit, not Pending, no template).
     /// </summary>
+    // Spec 057: the dispatch reason that ends the Scheduler's cycle (AgentCapacityRules.GlobalLimitReason in the API).
+    private const string GlobalConcurrencyLimitReason = "global_concurrency_limit";
+
     private sealed record DispatchPendingResponse(bool Dispatched, string? Reason);
 
     private sealed record ActiveDecompositionCountResponse(int Count);
