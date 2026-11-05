@@ -5,7 +5,7 @@
 <details class="cockpit-user-menu" data-testid="user-menu">
     <summary title="Signed in as @Access.Username">
         <Icon Name="user" Size="14" />
-        <span data-testid="user-menu-name">@(Access.Username ?? "Account")</span>
+        <span class="cockpit-user-name" data-testid="user-menu-name">@(Access.Username ?? "Account")</span>
     </summary>
     <div class="cockpit-user-menu-panel">
         <a href="@AuthPaths.Profile.TrimStart('/')" data-testid="user-menu-profile">Profile</a>
