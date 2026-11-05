@@ -1,4 +1,5 @@
 GET /api/agents/ -> Service: OperatorApiKey
+GET /api/agents/capacity -> Service: OperatorApiKey
 GET /api/agents/credential-pool -> Service: OperatorApiKey
 GET /api/config/export -> Service: OperatorApiKey
 POST /api/config/import -> Service: OperatorApiKey
@@ -42,6 +43,8 @@ GET /api/ui/projects/{projectId}/templates -> Ui: Ui.AnyAccess
 GET /api/ui/runs -> Ui: Ui.AnyAccess
 GET /api/ui/runs/{runId:guid} -> Ui: Ui.AnyAccess
 POST /api/ui/runs/{runId:guid}/redispatch -> Ui: Ui.AnyAccess, Ui.AnyOperator
+GET /api/ui/settings/agent-capacity -> Ui: Ui.Admin, Ui.AnyAccess
+PUT /api/ui/settings/agent-capacity -> Ui: Ui.Admin, Ui.AnyAccess
 GET /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
 PUT /api/ui/settings/agent-profiles -> Ui: Ui.Admin, Ui.AnyAccess
 DELETE /api/ui/settings/agent-profiles/{id} -> Ui: Ui.Admin, Ui.AnyAccess

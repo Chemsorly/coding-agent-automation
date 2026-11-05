@@ -148,6 +148,13 @@ public static class ApiDispatchServiceExtensions
             sp.GetRequiredService<DispatchServiceOptions>(),
             sp.GetRequiredService<AgentCapacityStore>(),
             Log.Logger));
+        // The read-only view of running agents and limits for the Capacity page and the Scheduler's gauges.
+        services.AddSingleton(sp => new CodingAgent.Api.Dispatch.AgentCapacityReader(
+            sp.GetRequiredService<IKubernetesJobClient>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            sp.GetRequiredService<DispatchServiceOptions>(),
+            sp.GetRequiredService<AgentCapacityStore>(),
+            Log.Logger));
 
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
         // The dispatch of a Pending item (DispatchPendingWorkItem): the agent start gate, the PVC gate and the
