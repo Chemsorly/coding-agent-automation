@@ -40,4 +40,10 @@ public interface ISchedulerApiClient
     /// and <c>workdistribution.credential_pool_claimed</c> gauges from the Scheduler leader.
     /// </summary>
     Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// GET /api/agents/capacity on the API (spec 057) — running agents and the limits that apply, for the
+    /// <c>workdistribution.agents.running</c> and <c>workdistribution.agents.limit</c> gauges. Null on a null body.
+    /// </summary>
+    Task<AgentCapacityStatus?> GetAgentCapacityAsync(CancellationToken ct = default);
 }

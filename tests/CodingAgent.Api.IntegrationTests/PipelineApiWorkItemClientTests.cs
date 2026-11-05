@@ -695,6 +695,22 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
             "200 with dispatched:false must return PermanentRejection (stop selector this cycle)");
     }
 
+    // Spec 057 req 3.5: the all-agents limit ends the Scheduler's cycle.
+    [Fact]
+    public async Task DispatchPendingAsync_200WithDispatchedFalse_GlobalConcurrencyLimit_ReturnsGlobalLimitReached()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"global_concurrency_limit"}"""));
+
+        var result = await _client.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.GlobalLimitReached);
+    }
+
     [Fact]
     public async Task DispatchPendingAsync_200WithDispatchedFalse_NotPending_ReturnsPermanentRejection()
     {

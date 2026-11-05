@@ -233,6 +233,39 @@ public sealed class WorkItemDispatchLoopTests : IDisposable
         poller.Dispose();
     }
 
+    // Spec 057 req 3.5: the all-agents limit ends the cycle — no item of any selector can start — without a warning.
+    [Fact]
+    public async Task WhenGlobalLimitReached_ShouldEndTheCycleWithoutAWarning()
+    {
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+        var id3 = Guid.NewGuid();
+
+        _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
+        _mockClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeItem(id1, "kiro"), MakeItem(id2, "kiro"), MakeItem(id3, "opencode")]);
+        _mockClient
+            .Setup(c => c.DispatchPendingAsync(id1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DispatchPendingResult.GlobalLimitReached);
+
+        var poller = new WorkItemDispatchLoop(
+            _mockClient.Object,
+            _mockLeaderGate.Object,
+            _mockLogger.Object,
+            rateLimitPerSecond: 100);
+
+        await poller.PollAndDispatchAsync(CancellationToken.None);
+
+        _mockClient.Verify(c => c.DispatchPendingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once(),
+            "the first answer ends the cycle: the other selector's item is not tried either");
+        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<Guid>()), Times.Never());
+        _capturedActivities.Should().Contain(a => a.OperationName == "Dispatch.Attempt"
+            && (string?)a.GetTagItem("result") == nameof(DispatchPendingResult.GlobalLimitReached));
+
+        poller.Dispose();
+    }
+
     [Fact]
     public async Task WhenTransient503_ShouldAbortCycleAndNotDispatchRemainingItems()
     {
