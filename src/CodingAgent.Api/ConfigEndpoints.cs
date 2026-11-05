@@ -554,6 +554,10 @@ public static class ConfigEndpoints
             AgentRouting = await db.KeyValueStore.AsNoTracking()
                 .Where(kv => kv.Key == AgentRouting.StorageKey)
                 .Select(kv => kv.Value)
+                .FirstOrDefaultAsync(ct),
+            AgentCapacity = await db.KeyValueStore.AsNoTracking()
+                .Where(kv => kv.Key == AgentCapacityLimits.StorageKey)
+                .Select(kv => kv.Value)
                 .FirstOrDefaultAsync(ct)
         };
 
@@ -684,7 +688,29 @@ public static class ConfigEndpoints
         if (routingErrors.Count > 0)
             return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid agent routing: {string.Join(" ", routingErrors)}" }));
 
+        var capacityErrors = ValidateImportedCapacity(bundle);
+        if (capacityErrors.Count > 0)
+            return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid agent capacity: {string.Join(" ", capacityErrors)}" }));
+
         return (bundle, null);
+    }
+
+    /// <summary>
+    /// The problems with the bundle's agent capacity limits (spec 057 req 6.5). A job template key this cluster does not
+    /// have is not refused, so a bundle from another cluster imports; such a limit is ignored at dispatch.
+    /// </summary>
+    private static IReadOnlyList<string> ValidateImportedCapacity(ConfigBundle bundle)
+    {
+        try
+        {
+            return AgentCapacityStore.Deserialize(bundle.AgentCapacity) is { } limits
+                ? AgentCapacityLimitsValidator.Validate(limits)
+                : [];
+        }
+        catch (JsonException ex)
+        {
+            return [$"The agent capacity limits cannot be read: {ex.Message}"];
+        }
     }
 
     /// <summary>
@@ -785,8 +811,10 @@ public static class ConfigEndpoints
         db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
         db.Projects.RemoveRange(db.Projects);
         db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
-        // Of the key-value rows only the routing table is configuration; loop state and the rest stay.
-        db.KeyValueStore.RemoveRange(db.KeyValueStore.Where(kv => kv.Key == AgentRouting.StorageKey));
+        // Of the key-value rows only the routing table and the agent capacity limits are configuration; loop state and
+        // the rest stay.
+        db.KeyValueStore.RemoveRange(db.KeyValueStore.Where(kv =>
+            kv.Key == AgentRouting.StorageKey || kv.Key == AgentCapacityLimits.StorageKey));
         await db.SaveChangesAsync(ct);
     }
 
@@ -876,6 +904,10 @@ public static class ConfigEndpoints
         // Validated before anything was cleared (ValidateImportedRouting); stored in this release's shape.
         if (AgentRoutingStore.Deserialize(bundle.AgentRouting) is { } routing)
             db.KeyValueStore.Add(new KeyValueEntity { Key = AgentRouting.StorageKey, Value = AgentRoutingStore.Serialize(routing) });
+
+        // Validated before anything was cleared (ValidateImportedCapacity). Keys this cluster does not deploy are kept.
+        if (AgentCapacityStore.Deserialize(bundle.AgentCapacity) is { } capacity)
+            db.KeyValueStore.Add(new KeyValueEntity { Key = AgentCapacityLimits.StorageKey, Value = AgentCapacityStore.Serialize(capacity) });
 
         await db.SaveChangesAsync(ct);
     }
@@ -1002,6 +1034,9 @@ public sealed class ConfigBundle
 
     /// <summary>The global routing table as its stored JSON (spec 053); absent in older bundles, which the move converts.</summary>
     public string? AgentRouting { get; set; }
+
+    /// <summary>The UI agent capacity limits as their stored JSON (spec 057); absent in older bundles (no UI limits).</summary>
+    public string? AgentCapacity { get; set; }
 }
 
 /// <summary>Provider config row — Configuration is a serialized ProviderConfig JSON blob.</summary>

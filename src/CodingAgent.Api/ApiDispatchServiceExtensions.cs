@@ -74,6 +74,8 @@ public static class ApiDispatchServiceExtensions
         // into the API; nothing here resolved an IWorkDistributor before.
         // Spec 053: the routing table, and the router that pins a route on every work item when it is created.
         services.AddSingleton<AgentRoutingStore>();
+        // Spec 057: the UI agent capacity limits, read at every agent start.
+        services.AddSingleton<AgentCapacityStore>();
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemRouter>();
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
         services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
