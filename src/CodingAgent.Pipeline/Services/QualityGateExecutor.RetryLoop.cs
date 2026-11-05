@@ -41,7 +41,7 @@ public partial class QualityGateExecutor
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
             if (report.AllPassed)
-                await RunPostRetryCleanupAndFinalizeAsync(context, linkedCt);
+                await RunPostRetryCleanupAndFinalizeAsync(context, report, linkedCt);
             else
                 await FinalizeDraftPrAsync(context, run, report, "exhausted", linkedCt);
         }
@@ -129,8 +129,9 @@ public partial class QualityGateExecutor
     /// <summary>
     /// Runs the pre-PR cleanup agent, then the final quality gate pass, and finalizes the PR.
     /// Called after the initial retry loop passes all quality gates.
+    /// The final pass only runs when the cleanup changed something: otherwise <paramref name="passedReport"/> already covers this code.
     /// </summary>
-    private async Task RunPostRetryCleanupAndFinalizeAsync(QualityGateContext context, CancellationToken linkedCt)
+    private async Task RunPostRetryCleanupAndFinalizeAsync(QualityGateContext context, QualityGateReport passedReport, CancellationToken linkedCt)
     {
         var run = context.Run;
         var config = context.Config;
@@ -143,6 +144,7 @@ public partial class QualityGateExecutor
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = cleanupPrompt });
         callbacks.NotifyChange();
 
+        var treeBeforeCleanup = await TryCaptureTreeStateAsync(context, linkedCt);
         try
         {
             run.ChangedBySeparateAgent = true; // set first: a failed agent may still have changed files
@@ -178,15 +180,25 @@ public partial class QualityGateExecutor
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = $"Agent error during cleanup: {ex.Message}" });
         }
 
-        callbacks.EmitOutputLine("🏗️ Running final quality gates after cleanup...");
-        callbacks.TransitionTo(PipelineStep.RunningQualityGates);
-        var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, linkedCt);
-        report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
-        if (run.CurrentStep.IsQualityGateExitState()) return;
+        var report = passedReport;
+        var treeAfterCleanup = await TryCaptureTreeStateAsync(context, linkedCt);
+        if (IsSameTreeState(treeBeforeCleanup, treeAfterCleanup))
+        {
+            _logger.Information("Pipeline {RunId} final quality gates skipped: the cleanup left the code unchanged", run.RunId);
+            callbacks.EmitOutputLine("⏭️ Final quality gates skipped — the cleanup changed nothing");
+        }
+        else
+        {
+            callbacks.EmitOutputLine("🏗️ Running final quality gates after cleanup...");
+            callbacks.TransitionTo(PipelineStep.RunningQualityGates);
+            report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, linkedCt);
+            report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
+            if (run.CurrentStep.IsQualityGateExitState()) return;
 
-        LogAndRecordReport(context, report, "final quality gates");
-        report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
-        if (run.CurrentStep.IsQualityGateExitState()) return;
+            LogAndRecordReport(context, report, "final quality gates");
+            report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
+            if (run.CurrentStep.IsQualityGateExitState()) return;
+        }
 
         if (report.AllPassed)
         {
@@ -500,6 +512,26 @@ public partial class QualityGateExecutor
             return null;
         }
     }
+
+    /// <summary>
+    /// Captures the commit and the working-tree fingerprint, so a comparison also notices an agent that
+    /// committed its change. Returns null when either is unavailable.
+    /// </summary>
+    private async Task<TreeState?> TryCaptureTreeStateAsync(QualityGateContext context, CancellationToken ct)
+    {
+        var head = await _ciPollingCoordinator.TryReadHeadShaAsync(context, "could not read HEAD to detect cleanup changes", ct);
+        var files = await TryFingerprintAsync(context, ct);
+        return head is null || files is null ? null : new TreeState(head, files);
+    }
+
+    /// <summary>True only when both states are known and equal: an unknown state counts as changed.</summary>
+    private static bool IsSameTreeState(TreeState? before, TreeState? after) =>
+        before is not null && after is not null
+        && before.Head == after.Head
+        && before.Files.Count == after.Files.Count
+        && before.Files.All(f => after.Files.TryGetValue(f.Key, out var hash) && hash == f.Value);
+
+    private sealed record TreeState(string Head, IReadOnlyDictionary<string, string> Files);
 
     private async Task<RetryDecision> RunFixAgentIterationAsync(
         QualityGateContext context,
