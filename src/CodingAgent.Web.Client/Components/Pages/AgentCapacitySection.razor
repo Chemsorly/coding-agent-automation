@@ -1,0 +1,195 @@
+@using CodingAgent.Pipeline.Models
+@implements IDisposable
+
+<section class="settings-section" data-testid="agent-capacity-section">
+    <h2>Capacity</h2>
+    <p class="section-description">
+        How many agents may run at the same time, for all agents together and per job template.
+    </p>
+    <p class="form-hint" data-testid="capacity-help">
+        The lowest limit applies. Helm limits come from the chart and change with a deployment; here you can set a lower
+        limit. Chats count toward every limit, but only Helm limits refuse a chat. Lowering a limit does not stop running
+        agents; new ones wait until fewer run. 0 or empty means no limit.
+    </p>
+
+    @if (_page is null)
+    {
+        @if (_loadError is not null)
+        {
+            <div class="settings-status status-error" data-testid="capacity-load-error">@_loadError</div>
+        }
+        else
+        {
+            <div class="monitoring-empty">Loading…</div>
+        }
+    }
+    else
+    {
+        @if (!_page.CountsAvailable)
+        {
+            <div class="settings-status status-error" data-testid="capacity-counts-unavailable">Could not read the running agents from the cluster.</div>
+        }
+
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table" data-testid="capacity-table">
+                <colgroup>
+                    <col style="width: 260px;" />  @* Job template *@
+                    <col style="width: 140px;" />  @* Running *@
+                    <col style="width: 100px;" />  @* Helm limit *@
+                    <col style="width: 110px;" />  @* UI limit *@
+                    <col style="width: 220px;" />  @* Applies *@
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Job template</th>
+                        <th>Running</th>
+                        <th>Helm limit</th>
+                        <th>UI limit</th>
+                        <th>Applies</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Rows())
+                    {
+                        var key = row.TemplateKey;
+                        <tr data-testid="@(key is null ? "capacity-row-all" : $"capacity-row-{key}")">
+                            <td>
+                                @if (key is null)
+                                {
+                                    <strong>All agents</strong>
+                                }
+                                else
+                                {
+                                    <code class="monitoring-mono">@(key.Length == 0 ? "(no labels)" : key)</code>
+                                    @if (AgentToolCatalog.Find(row.Tool) is { } tool)
+                                    {
+                                        <span class="sidebar-label">@tool.DisplayName</span>
+                                    }
+                                }
+                            </td>
+                            <td data-testid="capacity-running">@RunningText(row)</td>
+                            <td data-testid="capacity-helm">@(row.HelmLimit > 0 ? row.HelmLimit.ToString() : "none")</td>
+                            <td>
+                                <input type="number" min="@AgentCapacityLimits.MinLimit" max="@AgentCapacityLimits.MaxLimit"
+                                       data-capacity-key="@(key ?? AllKey)" style="width: 80px;"
+                                       value="@InputValue(key)" @onchange="e => SetInput(key, e.Value?.ToString())" />
+                            </td>
+                            <td data-testid="capacity-applies">
+                                @AppliesText(row)
+                                @if (row.HelmLimit > 0 && row.UiLimit > row.HelmLimit)
+                                {
+                                    <div class="form-hint" data-testid="capacity-capped">capped by the Helm chart at @row.HelmLimit</div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_saveError))
+        {
+            <div class="settings-status status-error" data-testid="capacity-save-error" style="white-space: pre-line;">@_saveError</div>
+        }
+        <div class="form-buttons">
+            <button class="btn-save" data-testid="capacity-save" @onclick="SaveAsync" disabled="@_saving">Save</button>
+            <button class="btn-edit" data-testid="capacity-refresh" @onclick="LoadAsync" disabled="@_saving">Refresh</button>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IUiSettingsClient SettingsClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    // The data-capacity-key of the "All agents" input.
+    private const string AllKey = "all";
+
+    private readonly CancellationTokenSource _cts = new();
+    private UiAgentCapacityPage? _page;
+    private readonly Dictionary<string, string> _inputs = new(StringComparer.Ordinal);
+    private string? _loadError;
+    private string? _saveError;
+    private bool _saving;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private IEnumerable<UiAgentCapacityRow> Rows() => _page is null ? [] : _page.Templates.Prepend(_page.All);
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            var page = await SettingsClient.GetAgentCapacityAsync(_cts.Token);
+            if (page is null)
+            {
+                _page = null;
+                _loadError = "Could not load the agent capacity.";
+                return;
+            }
+            _page = page;
+            _inputs.Clear();
+            foreach (var row in Rows())
+                _inputs[row.TemplateKey ?? AllKey] = row.UiLimit > 0 ? row.UiLimit.ToString() : "";
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception)
+        {
+            _page = null;
+            _loadError = "Could not load the agent capacity.";
+        }
+    }
+
+    private string InputValue(string? key) => _inputs.GetValueOrDefault(key ?? AllKey, "");
+
+    private void SetInput(string? key, string? value) => _inputs[key ?? AllKey] = value?.Trim() ?? "";
+
+    private static string RunningText(UiAgentCapacityRow row) =>
+        $"{row.RunningRuns} {(row.RunningRuns == 1 ? "run" : "runs")} · {row.RunningChats} {(row.RunningChats == 1 ? "chat" : "chats")}";
+
+    private static string AppliesText(UiAgentCapacityRow row) => row.EffectiveLimit is { } limit
+        ? $"{limit} ({(row.EffectiveSource == "ui" ? "UI" : "Helm")})"
+        : "none";
+
+    // An empty field is 0 (no limit); text that is not a number is sent as -1 so the API refuses it with its reason.
+    private static int Parse(string? text) =>
+        string.IsNullOrWhiteSpace(text) ? 0 : int.TryParse(text, out var value) ? value : -1;
+
+    private async Task SaveAsync()
+    {
+        if (_page is null) return;
+        _saveError = null;
+        _saving = true;
+        try
+        {
+            var byTemplate = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var row in _page.Templates)
+            {
+                var value = Parse(InputValue(row.TemplateKey));
+                if (value != 0)
+                    byTemplate[row.TemplateKey!] = value;
+            }
+            var limits = new AgentCapacityLimits { MaxConcurrentAgents = Parse(InputValue(null)), MaxConcurrentByJobTemplate = byTemplate };
+            await SettingsClient.SaveAgentCapacityAsync(limits, _cts.Token);
+            await LoadAsync();
+            await OnShowStatus.InvokeAsync(("Saved.", false));
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            // The API refuses invalid limits with one line per problem.
+            _saveError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}
