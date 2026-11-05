@@ -63,6 +63,8 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 
 ### Install
 
+> **Upgrading to the release with agent capacity limits (Spec 057):** chats now count toward `jobTemplates[].maxConcurrent`: an open chat takes a slot that pipeline work had before, and a template at its limit refuses a new chat. A change to `jobTemplates` now restarts the API and the Job Controller. Settings → Agents → Capacity can set lower limits, per job template and for all agents, without a restart; every UI limit is empty after the upgrade. The alerts `WorkItemsPendingTooLong` and `DispatchLatencyHigh` fire more often when limits hold work longer. Running agents are counted per namespace: two releases in one namespace count each other's agents. No chart change is needed. See [Agent Capacity Limits](#agent-capacity-limits).
+
 > **Upgrading to the release that writes the brain inbox by API:** a brain repository on GitLab needs an access token with the `api` scope, because each run's inbox file is written through GitLab's API. With `write_repository` alone the run still completes, but its inbox file is not written, and the run reports a failed brain push. GitHub needs no change.
 
 > **Upgrading to the release with a read-only agent app:** in the agent images `/app` is now owned by root, and only `/app/workspaces` is writable by the agent user. A custom image built on these that writes under `/app` at runtime must write under `/app/workspaces` instead. Nothing changes for the standard images.
@@ -125,7 +127,7 @@ The chart deploys:
 | `web.ingress.annotations` | Annotations on the web Ingress. With ingress-nginx, set `nginx.ingress.kubernetes.io/proxy-read-timeout: "300"` and `nginx.ingress.kubernetes.io/proxy-body-size: "16m"` for the UI's long calls and the config import. See [Authentication](authentication.md#exposing-the-ui). |
 | `web.ingress.httpsRedirect` | With a `tls` section on the Ingress, redirect clients that reached it over plain HTTP to HTTPS (default: `true`). Set `false` when TLS ends in front of the ingress. See [Authentication](authentication.md#exposing-the-ui). |
 | `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
-| `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
+| `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. `maxConcurrent` is the infrastructure ceiling for the template's agent pods, chats included (0 or no value = no limit). See [Agent Capacity Limits](#agent-capacity-limits). |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `userToken.existingSecret` | Existing Secret with `signing-key` and `data-protection-key` (default: empty — the secret-init hook creates `<release>-coding-agent-automation-web-user-token`). See [User Token Secret](#user-token-secret). |
 | `secrets.otelHeaders` | OTLP auth headers |
@@ -155,6 +157,7 @@ The chart deploys:
 | `workDistribution.dispatch.chatIdleTimeoutSeconds` | Seconds a chat pod may remain idle (no client keepalive) before automatic termination (default: `90`). Minimum: `10`. |
 | `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles (default: `30`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
+| `workDistribution.maxConcurrentAgents` | Infrastructure ceiling for all agent pods together: pipeline runs, consolidation, triage and chats (default: `0` = no limit). Passed to the API as `WorkDistribution__MaxConcurrentAgents`. Settings → Agents → Capacity can set a lower limit, never a higher one. See [Agent Capacity Limits](#agent-capacity-limits). |
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. The pipeline API claims one PVC per dispatched Job. |
 | `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
@@ -167,7 +170,7 @@ The chart deploys:
 
 ### Defining Agent Pod Templates
 
-All agent pod specs are defined in `jobTemplates[]`. Each entry produces a K8s Job spec rendered into a ConfigMap that the Pipeline API reads when it creates agent Jobs. `maxConcurrent` controls parallelism per label set:
+All agent pod specs are defined in `jobTemplates[]`. Each entry produces a K8s Job spec rendered into a ConfigMap that the Pipeline API reads when it creates agent Jobs. `maxConcurrent` caps how many agent pods of that template run at once (see [Agent Capacity Limits](#agent-capacity-limits)):
 
 ```yaml
 jobTemplates:
@@ -199,6 +202,24 @@ jobTemplates:
 ```
 
 Each agent tool has one image with every tech stack (`coding-agent-kiro`, `coding-agent-opencode`, `coding-agent-claude`), so one job template per tool is enough; add another template of a tool only for different capacity or resources. Agent profiles name their job template, and the routing table names the profiles. A repository whose work should run on another template than the default route's needs its own routing rows (see [Agent Routing — Repository Rows](agent-routing.md#repository-rows)). See [Agent Routing — Agent Images](agent-routing.md#agent-images).
+
+#### Agent Capacity Limits
+
+Four optional limits cap how many agents run at once:
+
+|  | Per job template | All agents |
+|---|---|---|
+| **Helm chart** (infrastructure ceiling) | `jobTemplates[].maxConcurrent` | `workDistribution.maxConcurrentAgents` |
+| **UI** (the operator's limit) | Settings → Agents → Capacity | Settings → Agents → Capacity |
+
+- The Helm values say what the infrastructure can carry, for example 4 Kiro credential PVCs → at most 4 Kiro pods. The UI values say how much of that the agents may use now.
+- The lowest limit that is set applies. A UI value above the Helm value is saved, but Helm applies; the page shows "capped by the Helm chart at N". 0 or no value means no limit, in Helm and in the UI.
+- Running agents are counted from the agent Jobs in the namespace (label `app.kubernetes.io/component=agent-job`) that have not ended: pipeline runs, consolidation, triage and chats. Model-fetch Jobs are not counted.
+- Chats count toward every limit. A Helm limit refuses a new chat; a UI limit never does, it only holds pipeline work.
+- Lowering a limit never stops a running agent; new agents wait until fewer run than the limit.
+- When the all-agents limit is reached, the Scheduler ends its dispatch cycle; when a template limit is reached, it stops that template for the cycle. Held work stays Pending on the Work page.
+- A UI change applies at the next dispatch on every API replica, without a restart. The API reads the Helm values at start. The API and Job Controller pods carry a `checksum/job-templates` annotation, so a change to `jobTemplates` restarts them; `maxConcurrentAgents` is an environment variable of the API, so a change to it restarts the API.
+- Counting is per namespace. Job labels carry no release, so two releases in one namespace count each other's agents, as the PVC check does.
 
 ### Agent network policy
 
@@ -242,7 +263,7 @@ When the Kubernetes client is unavailable (e.g., local `dotnet run`), `ILeaderEl
 
 > **Note on Redis and multi-replica API:** When Redis is configured (`signalr.redis.connectionString` is set), `AgentRegistryService` and `OrchestratorRunService` switch to distributed Redis-backed implementations (`DistributedAgentRegistryService` / `DistributedRunService`). This enables safe agent selection and run tracking across multiple API replicas. The in-process implementations are used only when Redis is absent (local dev or single-replica deployments).
 >
-> **Note:** Redis does **not** eliminate the PVC dispatch race. All work is queued and started by the Scheduler, which takes a per-selector Postgres advisory lock; two Kiro selectors that share the PVC pool are not serialised against each other. An occasional `503` from a dispatch is transient: the work stays queued and is retried on the next cycle. See [Concurrency Model — PVC Dispatch Race in Multi-Replica Deployments](architecture/concurrency-model.md#pvc-dispatch-race-in-multi-replica-deployments) for details.
+> **Note:** Redis is not what prevents the PVC dispatch race. Every agent start, work-item dispatch and chat launch alike, takes one Postgres advisory lock, `dispatch-agents`, from the count of running agents to the creation of the Job, so two starts cannot claim the same PVC. Model-fetch Jobs still pick a PVC outside this lock. An occasional `503` from a dispatch is transient: the work stays queued and is retried on the next cycle. See [Concurrency Model — PVC Dispatch Race in Multi-Replica Deployments](architecture/concurrency-model.md#pvc-dispatch-race-in-multi-replica-deployments) for details.
 
 > **Note on Data Protection:** The web host uses ASP.NET Core Data Protection to encrypt the login cookie and antiforgery tokens. Its key ring is read-only and holds one key, built from `DataProtection__Key` (the `data-protection-key` of the [User Token Secret](#user-token-secret)). Every replica builds the same key, so a cookie issued by one replica is accepted by the others and after restarts. Nothing can add a key to the ring. The web host has no Redis connection and keeps no page state, so several web replicas need no sticky sessions. The sidebar's database and Redis indicators show the Pipeline API's view (`GET /api/ui/health`).
 
@@ -273,7 +294,7 @@ Two independent leases are used — one per relevant process (the Pipeline API a
 |---------|---------------------|--------------------------|
 | `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 
-**Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` dispatches without a per-selector guard — each API replica may dispatch independently. Set `signalr.redis.connectionString` when running more than one API replica.
+**Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` launches chats on any replica; it takes the same `dispatch-agents` lock as work-item dispatch and is refused by the Helm limits (see [Agent Capacity Limits](#agent-capacity-limits)). Set `signalr.redis.connectionString` when running more than one API replica.
 
 **Web host** — No leader election and no Kubernetes API access. It reads and controls the loop through the Pipeline API's `/api/ui` surface with the signed-in user's token, and calls no Scheduler. Its pod mounts no service account token.
 
@@ -284,7 +305,7 @@ Two independent leases are used — one per relevant process (the Pipeline API a
 | `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
 | `OrphanedLabelRecoveryService` | Sweeps for issues with stale `agent:in-progress` labels | Waits |
 | `HousekeepingService` | Manages `agent:done` PRs, branch updates, and stale branch cleanup | Waits |
-| `WorkItemCountsService` | Emits work-item count metrics to `CodingAgent.WorkDistribution` | Waits |
+| `WorkItemCountsService` | Emits work-item count metrics and the agent capacity gauges to `CodingAgent.WorkDistribution` | Waits |
 | `WorkItemDispatchLoop` | Dispatches Pending work items through `POST /api/work-items/{id}/dispatch` (Triage, then Review, then Decomposition, then Implementation, then Consolidation) | Waits |
 | `RetentionSweepSchedulerService` | Triggers the hourly retention sweep in the Pipeline API | Waits |
 

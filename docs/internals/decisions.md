@@ -118,8 +118,8 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** a stack needs two versions side by side (for example Java 17 and 21), or image size measurably slows pod start.
 
 ### Projects share the agents, their capacity and the namespace; the operator sizes them
-<!-- 2026-10-10 -->
-**Rule:** One deployment serves several teams, each with its own projects. The operator runs the deployment and owns the agents. Capacity is global: each job template's `maxConcurrent`, the decomposition cap and the loop's limits apply across all projects, with no quota or fair share per project. All agent pods run in the release's namespace, and the chart adds no network isolation between the pods of different projects.
+<!-- 2026-10-10; updated 2026-11-05 (agent limits) -->
+**Rule:** One deployment serves several teams, each with its own projects. The operator runs the deployment and owns the agents. Capacity is global: the four agent limits (per job template and for all agents, each in the Helm chart and on Settings → Agents → Capacity; see [Agent concurrency](#agent-concurrency-helm-sets-the-ceiling-the-ui-the-operators-limit-chats-count)), the decomposition cap and the loop's limits apply across all projects, with no quota or fair share per project. All agent pods run in the release's namespace, and the chart adds no network isolation between the pods of different projects.
 **Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-one-configurable-order-by-task-type)); an agent pod reaches whatever the other projects' pods reach in the namespace.
 **Not:** quotas or fair-share dispatch per project; a namespace or network policy per project.
 **Revisit when:** one project's work measurably starves another's, or a team must not share a network with another team's repositories.
@@ -208,8 +208,8 @@ The rules a plausible change could break. Details are in the linked entries.
 ## Dispatch and scheduling
 
 ### Dispatch priority: one configurable order by task type
-<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 (triage), 2026-10-11 (triage first; configurable) -->
-**Rule:** Pending work dispatches by task type in one global order, the `DispatchOrder` setting on the Pipeline Loop page. The default is Triage, then Review, then Decomposition, then Implementation, then Consolidation. Within a type, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The loop takes new work in the same order (consolidation has no turn there), and `MinIssueSlots` still reserves implementation slots. All projects share this one queue, so a project can't override the order. Triage has no concurrency cap of its own.
+<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 (triage), 2026-10-11 (triage first; configurable), 2026-11-05 (agent limits) -->
+**Rule:** Pending work dispatches by task type in one global order, the `DispatchOrder` setting on the Pipeline Loop page. The default is Triage, then Review, then Decomposition, then Implementation, then Consolidation. Within a type, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The loop takes new work in the same order (consolidation has no turn there), and `MinIssueSlots` still reserves implementation slots. All projects share this one queue, so a project can't override the order. Triage has no concurrency cap of its own; its runs count toward the job template and all-agents limits.
 **Why:** The default serves whoever waits first: a triage answers someone waiting on a problem, review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. Another deployment may weigh its work differently, so the operator can reorder the types. **Accepting:** lower types can starve; urgency never crosses a type; a burst of the first type delays every other. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
 **Not:** weights per run type; age-based promotion; round-robin; label-based priority; fair share between projects; an order per project.
 **Revisit when:** lower tiers or one project's work visibly starve in practice, or someone needs cross-tier urgency.
@@ -222,9 +222,9 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** one project measurably takes all decomposition slots; then add per-project quotas with sub-queues.
 
 ### MaxRunsPerCycle=0 (unlimited) is intentional — other mechanisms bound concurrency
-<!-- 2026-07-04 -->
+<!-- 2026-07-04; updated 2026-11-05 (agent limits) -->
 **Rule:** By default, a dispatch cycle has no cap on the number of runs it starts.
-**Why:** Per-selector pod limits and the decomposition cap already bound concurrency; a per-cycle cap would only throttle the common case. Users who want a cap set one.
+**Why:** The per-template and global agent limits and the decomposition cap already bound concurrency; a per-cycle cap would only throttle the common case. Users who want a cap set one.
 **Not:** a positive default as a safety net; a cap derived from cluster capacity.
 **Revisit when:** unbounded dispatch causes scheduling pressure in the cluster.
 
@@ -648,6 +648,14 @@ A setting's limits are standard `[Range]` attributes, the one source for the API
 **Why:** Routing ownership stays unambiguous, for the same reason as 1:1:1.
 **Not:** an opt-in cross-repo flag for template epics; the dispatching template's scope.
 **Revisit when:** an epic in a repository tracker needs cross-repo routing without the project tracker; then add an explicit mechanism, and don't loosen the tracker check.
+
+### Agent concurrency: Helm sets the ceiling, the UI the operator's limit; chats count
+<!-- 2026-11-05 -->
+**Rule:** Four optional limits cap how many agents run at once: one per job template and one for all agents, each set in the Helm chart (`jobTemplates[].maxConcurrent`, `workDistribution.maxConcurrentAgents`) and on Settings → Agents → Capacity. A Helm value is a ceiling: the lowest limit that is set applies, so the UI can lower a limit but never raise it, and a UI value above Helm is kept but does not apply. 0 or no value means no limit. Running agents are counted from the agent Jobs that have not ended: pipeline runs, consolidation, triage and chats. A Helm limit refuses a chat; a UI limit never does, it only holds pipeline work. One lock covers every agent start, work items and chats alike, from the count to the Job's creation. A UI change applies at the next dispatch without a restart; a change to the job templates restarts the API and the Job Controller.
+**Why:** The Helm values say what the infrastructure can carry (four Kiro PVCs, at most four Kiro pods); the UI values say how much of that the operator lets the agents use today. The one limit before, `maxConcurrent` per template, had no total, needed a Helm change and a restart, ignored chats and counted database rows instead of pods. The UI limits are stored next to the routing table, not in `PipelineConfiguration`: they belong to the Agents settings, and the configuration record goes to every agent pod. The Helm global limit is an infrastructure fact like `maxConcurrent`, so "system settings are not moved to Helm" still holds.
+**Accepting:** counting is per namespace, so two releases in one namespace count each other's agents; a chat launch may wait up to a minute for the lock; with UI limits reached, an open chat makes pipeline work wait longer.
+**Not:** a UI value that overrides Helm upward; the limits in `PipelineConfiguration`; counting work-item rows in the database; slots reserved per job template.
+**Revisit when:** limits per project are needed.
 
 ## Observability
 

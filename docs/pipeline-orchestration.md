@@ -508,7 +508,7 @@ When multiple work types are queued in the same poll cycle, the loop uses a fixe
 
 | Priority | Work Type | Notes |
 |----------|-----------|-------|
-| 1 (highest) | Triage | `agent:triage` issues; no concurrency cap of its own |
+| 1 (highest) | Triage | `agent:triage` issues; no concurrency cap of its own, but counts toward the job template and all-agents limits |
 | 2 | Pull Requests (Review) | Dispatched each cycle |
 | 3 | Decomposition | Phase 1 and Phase 2 epics |
 | 4 | Issues (Implementation) | Dispatched last |

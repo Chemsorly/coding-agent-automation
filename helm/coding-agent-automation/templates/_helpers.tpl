@@ -200,6 +200,8 @@ Usage (inside an env: list, indented to 12):
   value: {{ include "coding-agent-automation.secretName" . | quote }}
 - name: WorkDistribution__JobTemplatesPath
   value: "/app/config/job-templates.yaml"
+- name: WorkDistribution__MaxConcurrentAgents
+  value: {{ .Values.workDistribution.maxConcurrentAgents | default 0 | quote }}
 {{- /* TODO [WARNING]: WorkDistribution__Dispatch__IntervalSeconds and the other Dispatch__* env vars
      below are injected into the API container but the WorkItemDispatchService that consumed them was
      removed in issue #2547. The API no longer starts a dispatch background loop, so these values are

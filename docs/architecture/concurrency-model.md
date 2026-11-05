@@ -267,31 +267,39 @@ Scheduler, the Job Controller or Agent pods.
 
 ## PVC Dispatch Race in Multi-Replica Deployments
 
-Kiro agents mount a credential PVC from the configured pool (`KiroPvcPool`). Every dispatch picks it in
-`DispatchLifecycleService`: `QueryDispatchablePvcsAsync` computes the free PVCs from the `ClaimedPvcName` of
-active WorkItems and leaves out the PVCs that agent Jobs which have not ended mount (`AgentJobPvcs`), which
-covers chats: they have no WorkItem. `SelectPvcAsync` takes one from that list under `_pvcSelectLock`. A chat
-(`ChatJobDispatcher`) takes the first pool PVC that no agent Job which has not ended mounts, so it skips the
-PVCs of pipeline, consolidation and triage runs too. The PVCs are `ReadWriteOnce`: a pod that mounts a PVC
-another node holds stays `Pending` (`FailedAttachVolume`). `_pvcSelectLock` is
-an in-process `SemaphoreSlim`, so it serialises requests within one API pod only. Redis
-(`signalr.redis.connectionString`) makes agent selection and run tracking safe across replicas, but it
-plays no part in PVC selection.
+Kiro agents mount a credential PVC from the configured pool (`KiroPvcPool`). Every agent start goes through
+the agent start gate (`AgentStartGate`): it takes the Postgres advisory lock `dispatch-agents` and lists the
+agent Jobs (`app.kubernetes.io/component=agent-job`) once. That list gives both the running agents, for the
+[agent limits](../deployment.md#agent-capacity-limits), and the PVCs that agent Jobs which have not ended
+mount. A work-item dispatch picks its PVC in `DispatchLifecycleService`: `QueryDispatchablePvcsAsync`
+computes the free PVCs from the `ClaimedPvcName` of active WorkItems and leaves out the PVCs from the gate's
+Job list, which covers chats: they have no WorkItem. `SelectPvcAsync` takes one from that list under
+`_pvcSelectLock`. A chat (`ChatJobDispatcher`) takes the first pool PVC that the gate's Job list does not
+show as mounted, so it skips the PVCs of pipeline, consolidation and triage runs too. The PVCs are
+`ReadWriteOnce`: a pod that mounts a PVC another node holds stays `Pending` (`FailedAttachVolume`).
+`_pvcSelectLock` is an in-process `SemaphoreSlim`, so it serialises requests within one API pod only; the
+advisory lock serialises them across replicas. Redis (`signalr.redis.connectionString`) makes agent
+selection and run tracking safe across replicas, but it plays no part in PVC selection.
 
 All work, including a manual dispatch from the drawers and a re-dispatch from the Run page, is queued as
-`Pending` and started by one endpoint:
+`Pending` and started by one endpoint. Chats are started by the chat launch. Both take the same lock:
 
 | Endpoint | Caller | Cross-replica guard |
 |---|---|---|
-| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop` | Postgres advisory lock `dispatch-selector:{selector}`, held from before the PVC query until the WorkItem is `Dispatched`. A lock timeout (60 s) returns an empty `503`, counted as a `lock_timeout` dispatch attempt. |
+| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop` | Postgres advisory lock `dispatch-agents`, held from before the Job list (running agents and held PVCs) until the WorkItem is `Dispatched`. A lock timeout (60 s) returns an empty `503`, counted as a `lock_timeout` dispatch attempt. |
+| `POST /api/ui/chat` (`ChatJobDispatcher.DispatchChatPodAsync`) | Chat window, on any API replica | The same `dispatch-agents` lock, from the Job list until the chat Job is created; it is released before the wait for the pod to connect. A lock timeout (60 s) answers `502` "Another agent is starting. Try again." |
 
 The synchronous `POST /api/work-items/dispatch`, which the Run page's re-dispatch used and which took no
-lock, was removed in spec 051 2.3c.
+lock, was removed in spec 051 2.3c. The lock replaced the per-selector lock `dispatch-selector:{selector}`
+(spec 057), which let two Kiro selectors that draw from the same pool, and every chat, race each other.
 
 ### Remaining race window
 
-- **Different selectors.** The advisory lock is keyed by selector, so two Kiro selectors (for example
-  `dotnet,kiro` and `python,kiro`) that draw from the same pool are not serialised against each other.
+- **Model-fetch Jobs.** `ModelFetchJobService` picks its PVC outside the lock: the first pool PVC that no
+  agent Job mounts, or the first PVC of the pool when all are taken. Its Jobs carry
+  `app.kubernetes.io/component=model-fetch`, so the gate's Job list does not see them. A run or chat started
+  while a model-fetch Job runs can pick the same PVC; on another node its pod stays `Pending` until that Job
+  ends.
 
 ### Detection and cleanup
 
@@ -304,8 +312,10 @@ A `503` is transient: the item stays `Pending`, and the Scheduler retries it on 
 
 ### Improvement path
 
-Keying the advisory lock by PVC pool instead of by selector would close the cross-selector window. It
-lengthens the time dispatches for unrelated selectors wait on each other.
+One lock for every agent start closed the cross-selector and chat windows. Work-item dispatch was already
+sequential (one Scheduler leader), so its throughput did not change; a chat launch may wait behind one
+dispatch. Model-fetch Jobs stay outside the lock and the count (spec 057 D4): they are short and started by
+an operator on the settings page.
 
 ## Anti-patterns — Don't Do This
 

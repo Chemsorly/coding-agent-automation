@@ -196,8 +196,7 @@ public static class WorkDistributionTelemetry
     /// Recorded at every outcome of <c>DispatchPendingWorkItem</c>.
     /// Tags: <c>result</c> (dispatched | deferred | transient),
     ///       <c>reason</c> (none | concurrency_limit | global_concurrency_limit | not_pending | no_template |
-    ///                      no_route | pvc_unavailable | lock_timeout | agent_count_unavailable | k8s_error).| concurrency_limit | not_pending | no_template |
-    ///                      pvc_unavailable | lock_timeout | k8s_error).
+    ///                      no_route | pvc_unavailable | lock_timeout | agent_count_unavailable | k8s_error).
     /// </summary>
     public static readonly Counter<long> DispatchAttempts =
         Meter.CreateCounter<long>("workdistribution.dispatch.attempts", "{attempt}",
